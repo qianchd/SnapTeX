@@ -1,7 +1,7 @@
 /* preview_style.css */
 
 :root {
-    --base-font-size: 2.2vw;
+    --base-font-size: 2.3vw;
     --base-line-height: 1.5;
     --content-max-width: 3000px;
 }
@@ -15,81 +15,313 @@ body {
     line-height: var(--base-line-height);
     color: var(--vscode-editor-foreground);
     background-color: var(--vscode-editor-background);
+    /* --- 优化两端对齐的核心设置 --- */
     text-align: justify;
+    text-justify: auto;
+
+    /* 开启自动连字符（非常重要） */
+    hyphens: manual;
+    -webkit-hyphens: manual;
+    -moz-hyphens: manual;
+
+    /* 辅助设置：防止 URL 或超长单词撑破布局 */
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
-h1, h2, h3 {
+h1, h2, h3, h4 {
     font-family: inherit;
     font-weight: bold;
     margin-top: 1.5em;
     border-bottom: none;
+    line-height: 1.3;
 }
 
-h1 {
-    font-size: 2.2em;
+/* 对应 \maketitle 的 title */
+h1.latex-title {
+    font-size: calc(var(--base-font-size) * 1.5);
     text-align: center;
+    margin-bottom: 0.5em;
 }
 
+/* 对应 \maketitle 的 author */
+div.latex-author {
+    font-size: var(--base-font-size);
+    text-align: center;
+    margin-bottom: 2em;
+    font-style: italic;
+}
+
+/* 对应 \section (##) */
 h2 {
-    font-size: 1.5em;
+    font-size: calc(var(--base-font-size) * 1.4);
     border-bottom: 1px solid var(--vscode-widget-border);
     padding-bottom: 0.3em;
 }
 
-/* KaTeX 字体调整 */
-.katex {
-    font-size: 1.1em !important;
+/* 对应 \subsection (###) */
+h3 {
+    font-size: calc(var(--base-font-size) * 1.2);
+    margin-top: 1.2em;
 }
-.katex-mathml {
+
+/* 对应 \subsubsection (####) */
+h4 {
+    font-size: calc(var(--base-font-size) * 1.0);
+    margin-top: 1em;
+    font-style: italic;
+}
+
+/* 全局段落缩进 */
+.latex-block p {
+    text-indent: 2em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    line-height: 1.6;
+}
+
+/* 取消缩进的情况 */
+/* 1. 标题后、摘要后 */
+h1 + p, h2 + p, h3 + p, h4 + p,
+.latex-title + div + p,
+.latex-abstract + p {
+    text-indent: 0;
+}
+
+/* 2. 定理环境开头 */
+.latex-block p:has(.latex-thm-head) {
+    text-indent: 0;
+}
+
+/* 3. 列表内部及其紧随其后的段落 */
+li p, li .latex-block p { text-indent: 0 !important; }
+ul + p, ol + p { text-indent: 0; }
+
+/* 4. 关键：行间公式（Display Math）后紧跟的内容不缩进 */
+/* 如果段落是以标记开头的（由 TS 注入），则不缩进 */
+p:has(> .no-indent-marker:first-child) {
+    text-indent: 0 !important;
+}
+/* 标记本身不显示 */
+.no-indent-marker {
     display: none;
 }
 
-/* --- 核心排版修复：消除过大的垂直间距 --- */
+/* 核心逻辑：如果段落内部含有 no-indent-marker 标记，则取消首行缩进 */
+.latex-block p:has(.no-indent-marker) {
+    text-indent: 0 !important;
+}
 
-/* 1. Block 容器：移除外边距，仅保留微小的内边距防止 collapsing */
+/* 隐藏标记本身，确保不占位 */
+.no-indent-marker {
+    display: none;
+}
+
+/* --- 定理头部样式 --- */
+.latex-thm-head {
+    display: inline;
+    white-space: nowrap; /* 强制名称不换行 */
+    margin-right: 0.2em;
+}
+
+/* --- 块级间距统一 --- */
 .latex-block {
     margin: 0;
     padding: 0;
-    overflow: hidden; /* 清除浮动，包含内部 margin */
+    border-width: 3px;
+    border-style: dashed;
+    border-color: red;
 }
 
-/* 2. Markdown 段落：大幅减小默认间距 */
+
+/* KaTeX 调整 */
+.katex {
+    font-size: calc(var(--base-font-size) * 1.0) !important;
+    white-space: normal !important; /* 处理换行问题 */
+}
+.katex-mathml { display: none; }
+
+.katex-html {
+    display: inline-block; /* 维持行内特征 */
+    white-space: normal;
+    word-break: break-all; /* 强制在任意字符间断行 */
+}
+
+/* 基础排版修复 */
+.latex-block { margin: 0; padding: 0; overflow: hidden; }
 .latex-block p {
-    margin-top: 0.2em;
-    margin-bottom: 0.2em;
+    margin-top: calc(var(--base-font-size) * 0.5);
+    margin-bottom: calc(var(--base-font-size) * 0.5);
+    /* 允许在长单词/字符串内部断行 */
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+.katex-display { margin: calc(var(--base-font-size) * 0.5) 0 !important; }
+.latex-block > :first-child { margin-top: 0; }
+.latex-block > :last-child { margin-bottom: 0; }
+
+/* --- Theorem / Lemma 等环境样式 --- */
+
+.latex-thm-head {
+    /* 强制标题部分作为一个整体，不允许中途换行 */
+    display: inline;
+    white-space: nowrap;
+
+    /* 增加一点右侧间距，让内容看起来不那么拥挤 */
+    margin-right: 0.2em;
 }
 
-/* 3. KaTeX 公式：强制压缩 display math 的上下边距 */
-.katex-display {
-    margin: 0.3em 0 !important;
+.latex-theorem-header {
+    /* 定理名称（如 Theorem, Lemma）的样式 */
+    font-weight: bold;
+    color: var(--vscode-editor-foreground);
+    display: inline-block; /* 稍微像个标题 */
+    margin-right: calc(var(--base-font-size) * 0.5);
 }
 
-/* 4. 消除块首尾的多余 margin，实现紧凑拼接 */
-.latex-block > :first-child {
-    margin-top: 0;
-}
-.latex-block > :last-child {
-    margin-bottom: 0;
+/* 针对定理块的整体优化 */
+.latex-block p:has(.latex-thm-head) {
+    /* 如果段落是以定理标题开头的，可以稍微增加行高 */
+    line-height: 1.7;
 }
 
-/* -------------------------------------- */
-
-.katex-error {
-    color: #cc0000;
-    background-color: #ffe6e6;
-    padding: 2px;
-    border-radius: 2px;
+/* --- Figure / Table 红色占位符 --- */
+.latex-float-placeholder {
+    display: block;
+    border: 2px dashed #ff7875; /* 红色虚线 */
+    background-color: rgba(255, 120, 117, 0.05); /* 极淡的红背景 */
+    color: #cf1322;
+    padding: 12px;
+    margin: calc(var(--base-font-size) * 1.5)em 0; /* 底部留白 */
+    border-radius: 6px;
+    font-family: "Courier New", monospace;
+    font-size: calc(var(--base-font-size) * 0.7);
+    line-height: 1.1;
+    white-space: pre-wrap; /* 保留内部的 LaTeX 源码格式 */
+    overflow-x: auto;
 }
 
-code {
-    font-family: "Courier New", Courier, monospace;
-    background: var(--vscode-textBlockQuote-background);
-    padding: 2px 4px;
+/* 占位符的标题部分 */
+.latex-float-placeholder strong {
+    display: block;
+    margin-bottom: calc(var(--base-font-size) * 0.4);
+    text-decoration: underline;
+}
+
+/* --- Abstract 摘要样式 --- */
+.latex-abstract, .latex-abstract>.katex {
+    margin: calc(var(--base-font-size) * 0.7) 3em;       /* 左右缩进，比正文窄 */
+    font-size: calc(var(--base-font-size) * 0.9);      /* 字号稍小 */
+    line-height: 1.5;
+}
+
+/* 摘要标题 "Abstract" */
+.latex-abstract-title {
+    display: block;
+    text-align: center;
+    font-weight: bold;
+    font-size: calc(var(--base-font-size) * 1);
+    margin-bottom: calc(var(--base-font-size) * 0.5);
+    font-variant: small-caps; /* 小型大写字母，更有学术感 */
+}
+
+/* --- Keywords 关键词样式 --- */
+.latex-keywords {
+    margin: 0 3em;       /* 保持和 Abstract 一样的缩进 */
+    font-size: calc(var(--base-font-size) * 0.9);
+    font-style: italic;
+}
+
+/* 关键词标题 "Keywords:" */
+.latex-keywords strong {
+    font-style: normal;    /* 标题不斜体 */
+    font-weight: bold;
+    margin-right: 0.5em;
+}
+
+
+/* --- 列表样式优化 --- */
+
+/* 调整列表间距，使其更紧凑 */
+ul, ol {
+    padding-left: 2em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+}
+
+li {
+    margin-bottom: 0.3em;
+}
+
+/* 有序列表嵌套样式 (学术风格) */
+/* 第一层: 1, 2, 3 */
+ol { list-style-type: decimal; }
+
+/* 第二层: a, b, c */
+ol ol { list-style-type: lower-alpha; }
+
+/* 第三层: i, ii, iii */
+ol ol ol { list-style-type: lower-roman; }
+
+/* 修复自定义标签列表 (\item[Label]) 的对齐 */
+ul li strong:first-child {
+    margin-right: 0.5em;
+}
+
+
+/* 引用链接通用基础样式 */
+.latex-link {
+    color: #007acc;
+    text-decoration: none;
+    padding: 0 3px;
     border-radius: 3px;
+    transition: all 0.2s;
 }
 
-div:empty {
-    display: none;
+/* \cite, \citet, \citep 的文献样式 (绿色系) */
+.latex-cite, .latex-citep, .latex-citet {
+    color: #2e7d32;
+    font-size: 0.95em;
+}
+
+/* 【核心区分】citep 自动加括号 */
+.latex-citep-container::before { content: "("; color: #2e7d32; }
+.latex-citep-container::after { content: ")"; color: #2e7d32; }
+
+
+
+/* eqref 自动加圆括号 */
+.latex-eqref::before {
+    content: "(";
+}
+.latex-eqref::after {
+    content: ")";
+}
+
+/* 悬停效果 */
+.latex-link:hover {
+    background-color: rgba(0, 122, 204, 0.2);
+    text-decoration: underline;
+}
+
+/* 跳转高亮动画 */
+@keyframes flash-highlight {
+    0% { background-color: transparent; }
+    20% { background-color: rgba(255, 235, 59, 0.4); }
+    100% { background-color: transparent; }
+}
+
+.jump-highlight {
+    animation: flash-highlight 2s ease-out;
+    border-radius: 4px;
+}
+
+/* 确保锚点不会撑开额外的行高 */
+.latex-label-anchor {
+    width: 0;
+    height: 0;
+    display: inline-block;
+    overflow: hidden;
 }
 
 
