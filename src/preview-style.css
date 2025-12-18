@@ -1,0 +1,129 @@
+/* preview_style.css */
+
+:root {
+    --base-font-size: 2.2vw;
+    --base-line-height: 1.5;
+    --content-max-width: 3000px;
+}
+
+body {
+    font-family: "Latin Modern Roman", "Times New Roman", "Cambria", "Georgia", serif;
+    padding: 30px 40px;
+    margin: 0 auto;
+    max-width: var(--content-max-width);
+    font-size: var(--base-font-size);
+    line-height: var(--base-line-height);
+    color: var(--vscode-editor-foreground);
+    background-color: var(--vscode-editor-background);
+    text-align: justify;
+}
+
+h1, h2, h3 {
+    font-family: inherit;
+    font-weight: bold;
+    margin-top: 1.5em;
+    border-bottom: none;
+}
+
+h1 {
+    font-size: 2.2em;
+    text-align: center;
+}
+
+h2 {
+    font-size: 1.5em;
+    border-bottom: 1px solid var(--vscode-widget-border);
+    padding-bottom: 0.3em;
+}
+
+/* KaTeX 字体调整 */
+.katex {
+    font-size: 1.1em !important;
+}
+.katex-mathml {
+    display: none;
+}
+
+/* --- 核心排版修复：消除过大的垂直间距 --- */
+
+/* 1. Block 容器：移除外边距，仅保留微小的内边距防止 collapsing */
+.latex-block {
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* 清除浮动，包含内部 margin */
+}
+
+/* 2. Markdown 段落：大幅减小默认间距 */
+.latex-block p {
+    margin-top: 0.2em;
+    margin-bottom: 0.2em;
+}
+
+/* 3. KaTeX 公式：强制压缩 display math 的上下边距 */
+.katex-display {
+    margin: 0.3em 0 !important;
+}
+
+/* 4. 消除块首尾的多余 margin，实现紧凑拼接 */
+.latex-block > :first-child {
+    margin-top: 0;
+}
+.latex-block > :last-child {
+    margin-bottom: 0;
+}
+
+/* -------------------------------------- */
+
+.katex-error {
+    color: #cc0000;
+    background-color: #ffe6e6;
+    padding: 2px;
+    border-radius: 2px;
+}
+
+code {
+    font-family: "Courier New", Courier, monospace;
+    background: var(--vscode-textBlockQuote-background);
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+div:empty {
+    display: none;
+}
+
+
+/* 针对 VS Code (Webkit) 的样式 */
+/* 强制应用到所有元素 */
+html, body {
+    scrollbar-width: unset !important;
+    scrollbar-color: unset !important;
+}
+
+::-webkit-scrollbar {
+    width: 10px !important;
+    height: 10px !important;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--vscode-scrollbarSlider-background) !important;
+    border-radius: 5px !important;
+    border: 2px solid transparent !important;
+    background-clip: content-box !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--vscode-scrollbarSlider-hoverBackground) !important;
+}
+
+::-webkit-scrollbar-thumb:active {
+    background-color: var(--vscode-scrollbarSlider-activeBackground) !important;
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent !important;
+}
