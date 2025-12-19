@@ -54,21 +54,27 @@ div.latex-author {
 /* 对应 \section (##) */
 h2 {
     font-size: calc(var(--base-font-size) * 1.4);
-    /* border-bottom: 1px solid var(--vscode-widget-border); */
-    margin: 2em 0em;
+    /* 使用 !important 强制覆盖 .latex-block > :first-child 的重置 */
+    margin-top: 1em !important;
+    margin-bottom: 0.7em !important;
+    line-height: 1;
 }
 
 /* 对应 \subsection (###) */
 h3 {
     font-size: calc(var(--base-font-size) * 1.2);
-    margin: 2em 0em;
+    margin-top: 1.0em !important;
+    margin-bottom: 0.7em !important;
+    line-height: 1;
 }
 
 /* 对应 \subsubsection (####) */
 h4 {
     font-size: calc(var(--base-font-size) * 1.0);
-    margin: 2em 0em;
+    margin-top: 0.5em !important;
+    margin-bottom: 0.5em !important;
     font-style: italic;
+    line-height: 1;
 }
 
 /* 全局段落缩进 */
