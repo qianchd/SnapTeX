@@ -11,36 +11,48 @@ interface PreambleData {
     author?: string;
 }
 
-// --- 1. 增强版 Preamble 解析器 (支持 macros, title, author) ---
-function parsePreamble(preamble: string): PreambleData {
-    const cleanText = preamble.replace(/(?<!\\)%.*/gm, '');
+// --- 修改后的元数据接口 ---
+interface MetadataResult {
+    data: PreambleData;
+    cleanedText: string;
+}
 
-    // 提取 Title
-    const titleMatch = cleanText.match(/\\title\{((?:[^{}]|{[^{}]*})*)\}/);
-    const title = titleMatch ? titleMatch[1].replace(/\\\\/g, '<br/>') : undefined;
+function extractMetadata(text: string): MetadataResult {
+    // 1. 预清洗注释，防止匹配到注释掉的标题
+    let cleanedText = text.replace(/(?<!\\)%.*/gm, '');
 
-    // 提取 Author
-    const authorMatch = cleanText.match(/\\author\{((?:[^{}]|{[^{}]*})*)\}/);
-    const author = authorMatch ? authorMatch[1].replace(/\\\\/g, '<br/>') : undefined;
+    let title: string | undefined;
+    let author: string | undefined;
 
-    // 提取 Macros
+    // 2. 提取并移除 \title
+    // 使用非贪婪匹配处理嵌套花括号
+    const titleRegex = /\\title\{((?:[^{}]|{[^{}]*})*)\}/g;
+    cleanedText = cleanedText.replace(titleRegex, (match, content) => {
+        title = content.replace(/\\\\/g, '<br/>').trim();
+        return ""; // 从文中移除
+    });
+
+    // 3. 提取并移除 \author
+    const authorRegex = /\\author\{((?:[^{}]|{[^{}]*})*)\}/g;
+    cleanedText = cleanedText.replace(authorRegex, (match, content) => {
+        author = content.replace(/\\\\/g, '<br/>').trim();
+        return ""; // 从文中移除
+    });
+
+    // 4. 提取 Macros (保持原有逻辑，但不移除，因为渲染器需要它们)
     const macros: Record<string, string> = {};
     const macroRegex = /\\(newcommand|renewcommand|def|gdef|DeclareMathOperator)(\*?)\s*\{?(\\[a-zA-Z0-9]+)\}?(?:\[(\d+)\])?/g;
-
     let match;
-    while ((match = macroRegex.exec(cleanText)) !== null) {
+    while ((match = macroRegex.exec(cleanedText)) !== null) {
+        // ... 此处保留你原有的宏提取逻辑代码 ...
         const cmdType = match[1];
         const star = match[2];
         const cmdName = match[3];
         const matchEndIndex = match.index + match[0].length;
+        let openBraces = 0, contentStartIndex = -1, contentEndIndex = -1, foundStart = false;
 
-        let openBraces = 0;
-        let contentStartIndex = -1;
-        let contentEndIndex = -1;
-        let foundStart = false;
-
-        for (let i = matchEndIndex; i < cleanText.length; i++) {
-            const char = cleanText[i];
+        for (let i = matchEndIndex; i < cleanedText.length; i++) {
+            const char = cleanedText[i];
             if (char === '{') {
                 if (!foundStart) { contentStartIndex = i + 1; foundStart = true; }
                 openBraces++;
@@ -49,19 +61,20 @@ function parsePreamble(preamble: string): PreambleData {
                 if (foundStart && openBraces === 0) { contentEndIndex = i; break; }
             }
         }
-
         if (contentStartIndex !== -1 && contentEndIndex !== -1) {
-            const definition = cleanText.substring(contentStartIndex, contentEndIndex).trim();
+            const definition = cleanedText.substring(contentStartIndex, contentEndIndex).trim();
             if (cmdType === 'DeclareMathOperator') {
-                if (star === '*') macros[cmdName] = `\\operatorname*{${definition}}`;
-                else macros[cmdName] = `\\operatorname{${definition}}`;
+                macros[cmdName] = star === '*' ? `\\operatorname*{${definition}}` : `\\operatorname{${definition}}`;
             } else {
                 macros[cmdName] = definition;
             }
         }
     }
 
-    return { macros, title, author };
+    return {
+        data: { macros, title, author },
+        cleanedText: cleanedText
+    };
 }
 
 // --- 分块器 ---
@@ -186,6 +199,8 @@ interface PatchPayload {
 // --- 智能渲染器 ---
 class SmartRenderer {
     private lastBlocks: { text: string, html: string }[] = [];
+    // 存储上一次的宏定义，用于对比是否需要重载引擎
+    private lastMacrosJson: string = "";
     private lastPreambleHash: string = "";
     private currentTitle: string | undefined = undefined;
     private currentAuthor: string | undefined = undefined;
@@ -229,7 +244,7 @@ class SmartRenderer {
         return string.charAt(0).toUpperCase() + string.slice(1);
     }
 
-// HTML 后处理：替换占位符
+    // HTML 后处理：替换占位符
     private postProcessHtml(html: string): string {
         // Abstract
         html = html.replace(/<p>\s*%%%ABSTRACT_START%%%\s*<\/p>/g, '<div class="latex-abstract"><span class="latex-abstract-title">Abstract</span>');
@@ -352,7 +367,7 @@ class SmartRenderer {
         text = text.replace(thmRegex, (match, envName, optArg, content) => {
                 const displayName = this.capitalizeFirstLetter(envName);
                 let header = `\n<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName}</strong>`;
-                if (optArg) header += `&nbsp;(${optArg})`;
+                if (optArg) {header += `&nbsp;(${optArg})`;}
                 header += `.</span>&nbsp; `;
                 return `${header}${content.trim()}\n`;
             });
@@ -367,9 +382,11 @@ class SmartRenderer {
         // --- Step 6: 文章元数据与结构 ---
         if (text.includes('\\maketitle')) {
             let titleBlock = '';
-            if (this.currentTitle) titleBlock += `<h1 class="latex-title">${this.currentTitle}</h1>`;
-            if (this.currentAuthor) titleBlock += `<div class="latex-author">${this.currentAuthor}</div>`;
-            text = text.replace(/\\maketitle/g, titleBlock);
+            if (this.currentTitle) {titleBlock += `<h1 class="latex-title">${this.currentTitle}</h1>`;}
+            if (this.currentAuthor) {titleBlock += `<div class="latex-author">${this.currentAuthor}</div>`;}
+
+            // 即使 title 为空，也要替换掉整个带指纹的字符串，防止指纹露出
+            text = text.replace(/\\maketitle.*/g, `\n\n${titleBlock}\n\n`);
         }
 
         text = text.replace(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/gi, (match, content) => {
@@ -424,7 +441,7 @@ class SmartRenderer {
                 const depth = listStack.length;
                 const indent = '  '.repeat(Math.max(0, depth - 1));
                 const currentType = listStack[listStack.length - 1] || 'ul';
-                if (pLabel) return `\n${indent}- **${pLabel}** `;
+                if (pLabel) {return `\n${indent}- **${pLabel}** `;}
                 return `\n${indent}${currentType === 'ul' ? '-' : '1.'} `;
             }
             return match;
@@ -493,47 +510,59 @@ class SmartRenderer {
         this.lastPreambleHash = "";
     }
 
-    public render(fullText: string): PatchPayload {
-        // --- Step 1: 基础清洗：彻底处理 LaTeX 注释 ---
-        // 1. 匹配未转义的 % 及其后的整行内容
-        // 2. 特别处理：如果 % 后面紧跟换行符，LaTeX 实际上会将下一行上移。
-        // 这里我们先将其统一替换，同时保留换行符结构以维持行号大致对应（可选）
-        let cleanText = fullText.replace(/\r\n/g, '\n');
+public render(fullText: string): PatchPayload {
+        // --- Step 1: 统一换行符 ---
+        const normalizedText = fullText.replace(/\r\n/g, '\n');
 
-        // 正则解析：
-        // (?<!\\)  -> 断言前面不是反斜杠（排除 \%）
-        // %        -> 匹配百分号
-        // .* -> 匹配该行剩余所有内容
-        cleanText = cleanText.replace(/(?<!\\)%.*/g, '');
+        // --- Step 2: 全局元数据提取与清洗 ---
+        // 这步会获取 title/author 并从 text 中删掉它们
+        const { data, cleanedText } = extractMetadata(normalizedText);
 
+        // --- Step 3: 数据驱动的重载判断 ---
+        // 不再对比 raw text，而是对比提取出的 macros 对象
+        const currentMacrosJson = JSON.stringify(data.macros);
+        if (currentMacrosJson !== this.lastMacrosJson) {
+            this.rebuildMarkdownEngine(data.macros);
+            this.currentTitle = data.title;
+            this.currentAuthor = data.author;
+            this.lastBlocks = []; // 宏改变，强制重置所有块缓存
+            this.lastMacrosJson = currentMacrosJson;
+        } else {
+            // 即使宏没变，标题和作者可能有微调
+            this.currentTitle = data.title;
+            this.currentAuthor = data.author;
+        }
+
+        // --- Step 4: 截取正文 Body ---
+        // 在已经被删掉 title/author 的 cleanedText 中寻找 document 边界
         const docStartRegex = /\\begin\{document\}/i;
-        const match = cleanText.match(docStartRegex);
+        const docMatch = cleanedText.match(docStartRegex);
 
         let bodyText = "";
-        let currentPreamble = "";
-
-        if (match && match.index !== undefined) {
-            currentPreamble = cleanText.substring(0, match.index);
-            bodyText = cleanText.substring(match.index + match[0].length).replace(/\\end\{document\}[\s\S]*/i, '');
+        if (docMatch && docMatch.index !== undefined) {
+            bodyText = cleanedText.substring(docMatch.index + docMatch[0].length)
+                                  .replace(/\\end\{document\}[\s\S]*/i, '');
         } else {
-            bodyText = cleanText;
+            bodyText = cleanedText;
         }
 
-        // --- 2. Preamble 宏更新检测 ---
-        if (currentPreamble !== this.lastPreambleHash) {
-            const preambleData = parsePreamble(currentPreamble);
-            this.currentTitle = preambleData.title;
-            this.currentAuthor = preambleData.author;
-            this.rebuildMarkdownEngine(preambleData.macros);
-            this.lastBlocks = []; // 宏变化时必须强制全量刷新
-            this.lastPreambleHash = currentPreamble;
-        }
+        // --- Step 5: 分块与增量比对 (保持原有逻辑) ---
+        // 【核心技巧】：构造指纹签名
+        const metaFingerprint = `[meta:${data.title}|${data.author}]`;
 
-        // --- 3. 文本分块 (仅分块，不渲染) ---
-        const rawBlocks = LatexBlockSplitter.split(bodyText).map(t => t.trim()).filter(t => t.length > 0);
-        const oldBlocks = this.lastBlocks; // 此时 oldBlocks 存储的是上一轮的 {text, html}
+        // 标准化分块，并给 \maketitle 块打上指纹标签
+        const rawBlocks = LatexBlockSplitter.split(bodyText)
+            .map(t => t.trim())
+            .filter(t => t.length > 0)
+            .map(t => {
+                // 如果块中包含 \maketitle，就强行改变它的文本标识
+                // 这样当标题改变时，Diff 算法会认为这个特定的块“变了”
+                return t.includes('\\maketitle') ? t + metaFingerprint : t;
+            });
 
-        // --- 4. 文本层面的 Diff (对比 text 字段) ---
+        const oldBlocks = this.lastBlocks;
+
+        // --- Step 6. 文本层面的 Diff (对比 text 字段) ---
         let start = 0;
         const minLen = Math.min(rawBlocks.length, oldBlocks.length);
         while (start < minLen && rawBlocks[start] === oldBlocks[start].text) {
@@ -545,24 +574,20 @@ class SmartRenderer {
         while (end < maxEnd) {
             const oldIdx = oldBlocks.length - 1 - end;
             const newIdx = rawBlocks.length - 1 - end;
-            if (oldBlocks[oldIdx].text !== rawBlocks[newIdx]) break;
+            if (oldBlocks[oldIdx].text !== rawBlocks[newIdx]) {break;}
             end++;
         }
-
-
 
         // if (end < 1) {
         //     console.log(oldBlocks[oldBlocks.length - 1 - end]);
         //     console.log(rawBlocks[rawBlocks.length - 1 - end]);
         // }
 
-        // --- 5. 局部渲染 (核心：仅渲染差异部分) ---
+        // --- Step 7. 局部渲染 (核心：仅渲染差异部分) ---
         const deleteCount = oldBlocks.length - start - end;
         const rawInsertTexts = rawBlocks.slice(start, rawBlocks.length - end);
 
         console.log("start", start, "   end", end, "    length", deleteCount, "   ", rawInsertTexts.length);
-
-        console.log(cleanText);
 
         // 【关键】只对发生变化的 rawInsertTexts 调用 markdown-it 渲染
         const insertedBlocksData = rawInsertTexts.map(text => {
@@ -610,7 +635,7 @@ export function activate(context: vscode.ExtensionContext) {
     const DEBOUNCE_DELAY = 100;
     vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
-            if (debounceTimer) clearTimeout(debounceTimer);
+            if (debounceTimer) {clearTimeout(debounceTimer);}
             debounceTimer = setTimeout(() => {
                 TexPreviewPanel.currentPanel?.update();
             }, DEBOUNCE_DELAY);
@@ -670,7 +695,7 @@ class TexPreviewPanel {
 
     public update() {
         const editor = vscode.window.activeTextEditor;
-        if (!editor) return;
+        if (!editor) {return;}
         const text = editor.document.getText();
         const payload = renderer.render(text);
         this._panel.webview.postMessage({ command: 'update', payload: payload });
