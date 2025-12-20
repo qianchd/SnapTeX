@@ -1,4 +1,4 @@
-import { toRoman, capitalizeFirstLetter, applyStyleToTexList } from './utils';
+import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels } from './utils';
 import { PreprocessRule } from './types';
 
 /**
@@ -39,7 +39,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             const mathBlockRegex = /(\$\$([\s\S]*?)\$\$)|(\\\[([\s\S]*?)\\\])|(\\begin\{(equation|align|gather|multline|flalign|alignat)(\*?)\}([\s\S]*?)\\end\{\6\7\})/gi;
             return text.replace(mathBlockRegex, (match, m1, c1, m3, c4, m5, envName, star, c8, offset, fullString) => {
                 let content = c1 || c4 || c8 || match;
-                const { cleanContent, hiddenHtml } = renderer.extractAndHideLabels(content);
+                const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
                 let finalMath = cleanContent.trim();
 
                 if (envName) {
@@ -101,8 +101,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             // 1. 处理 \maketitle (保持之前的逻辑)
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                if (renderer.currentTitle) titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`;
-                if (renderer.currentAuthor) titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`;
+                if (renderer.currentTitle) {titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`;}
+                if (renderer.currentAuthor) {titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`;}
                 text = text.replace(/\\maketitle.*/g, `\n\n${titleBlock}\n\n`);
             }
 

@@ -6,6 +6,16 @@ export function capitalizeFirstLetter(string: string): string {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
 
+export function extractAndHideLabels(content: string) {
+        const labels: string[] = [];
+        const cleanContent = content.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
+            const safeLabel = labelName.replace(/"/g, '&quot;');
+            labels.push(`<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="display:none"></span>`);
+            return '';
+        });
+        return { cleanContent, hiddenHtml: labels.join('') };
+    }
+
 /**
  * 增强型 LaTeX 命令查找工具
  * 支持：\command{...}, \command[...]{...}, 以及多行嵌套
@@ -31,11 +41,11 @@ export function findCommand(text: string, tagName: string) {
                 const isEscaped = bsCount % 2 !== 0;
 
                 if (!isEscaped) {
-                    if (char === '{') depth++;
-                    else depth--;
+                    if (char === '{') {depth++;}
+                    else {depth--;}
                 }
             }
-            if (depth === 0) break;
+            if (depth === 0) {break;}
         }
 
         if (depth === 0) {

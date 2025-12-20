@@ -27,6 +27,7 @@ export class SmartRenderer {
 
     public rebuildMarkdownEngine(macros: Record<string, string>) {
         this.md = new MarkdownIt({ html: true, linkify: true });
+        this.md.disable('code');
         this.md.use(mdKatex, { macros, globalGroup: true, throwOnError: false });
     }
 
@@ -105,20 +106,6 @@ export class SmartRenderer {
     public pushDisplayProtected(content: string) {
         this.protectedBlocks.push(content);
         return `\n\n%%%PROTECTED_BLOCK_${this.protectedBlocks.length - 1}%%%\n\n`;
-    }
-
-    public toRoman(num: number, uppercase: boolean): string {
-        return toRoman(num, uppercase);
-    }
-
-    public extractAndHideLabels(content: string) {
-        const labels: string[] = [];
-        const cleanContent = content.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
-            const safeLabel = labelName.replace(/"/g, '&quot;');
-            labels.push(`<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="display:none"></span>`);
-            return '';
-        });
-        return { cleanContent, hiddenHtml: labels.join('') };
     }
 
     // --- 核心渲染流水线 ---
