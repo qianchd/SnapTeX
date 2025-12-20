@@ -1,21 +1,28 @@
 import { MetadataResult } from './types';
+import { findCommand } from './utils';
 
 export function extractMetadata(text: string): MetadataResult {
+    // 1. 预清洗：移除所有注释（%），防止注释里的花括号干扰匹配
     let cleanedText = text.replace(/(?<!\\)%.*/gm, '');
+
     let title: string | undefined;
     let author: string | undefined;
 
-    const titleRegex = /\\title\{((?:[^{}]|{[^{}]*})*)\}/g;
-    cleanedText = cleanedText.replace(titleRegex, (match, content) => {
-        title = content.replace(/\\\\/g, '<br/>').trim();
-        return "";
-    });
+    // 2. 提取 Title 并从正文中抹除
+    const titleRes = findCommand(cleanedText, 'title');
+    if (titleRes) {
+        title = titleRes.content.replace(/\\\\/g, '<br/>');
+        // 物理删除：保留 start 之前和 end 之后的内容
+        cleanedText = cleanedText.substring(0, titleRes.start) + cleanedText.substring(titleRes.end + 1);
+    }
 
-    const authorRegex = /\\author\{((?:[^{}]|{[^{}]*})*)\}/g;
-    cleanedText = cleanedText.replace(authorRegex, (match, content) => {
-        author = content.replace(/\\\\/g, '<br/>').trim();
-        return "";
-    });
+    // 3. 提取 Author 并从正文中抹除
+    const authorRes = findCommand(cleanedText, 'author');
+    if (authorRes) {
+        author = authorRes.content; // 这里保留原始提取内容，交给 rules.ts 渲染
+        // 物理删除：确保整个 \author{...} 块在正文中消失
+        cleanedText = cleanedText.substring(0, authorRes.start) + cleanedText.substring(authorRes.end + 1);
+    }
 
     const macros: Record<string, string> = {};
     const macroRegex = /\\(newcommand|renewcommand|def|gdef|DeclareMathOperator)(\*?)\s*\{?(\\[a-zA-Z0-9]+)\}?(?:\[(\d+)\])?/g;

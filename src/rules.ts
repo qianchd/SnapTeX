@@ -98,23 +98,33 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'maketitle_and_abstract',
         priority: 60,
         apply: (text, renderer) => {
+            // 1. 处理 \maketitle (保持之前的逻辑)
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                if (renderer.currentTitle) { titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`; }
-                if (renderer.currentAuthor) { titleBlock += `<div class="latex-author">${renderer.currentAuthor}</div>`; }
+                if (renderer.currentTitle) titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`;
+                if (renderer.currentAuthor) titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`;
                 text = text.replace(/\\maketitle.*/g, `\n\n${titleBlock}\n\n`);
             }
 
+            // 2. 增强型 Abstract 识别
             text = text.replace(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/gi, (match, content) => {
+                // 明确加上换行，确保不会和上下文连在一起被 MD 引擎误判
                 return `\n\n%%%ABSTRACT_START%%%\n\n${content.trim()}\n\n%%%ABSTRACT_END%%%\n\n`;
             });
 
-            return text.replace(/\\begin\{keywords?\}([\s\S]*?)\\end\{keywords?\}/gi, (match, content) => {
-                return `\n\n%%%KEYWORDS_START%%%${content.replace(/\\sep/g, ', ').trim()}%%%KEYWORDS_END%%%\n\n`;
+            // 3. 兼容两种 Keywords 写法
+            // 写法 A: \begin{keywords} ... \end{keywords}
+            // 写法 B: \noindent{\bf Keywords}: ... 或 Keywords: ...
+            const keywordsRegex = /(?:\\begin\{keywords?\}([\s\S]*?)\\end\{keywords?\}|\\noindent\{\\bf Keywords\}:\s*(.*))/gi;
+
+            text = text.replace(keywordsRegex, (match, contentA, contentB) => {
+                const content = (contentA || contentB || '').trim();
+                return `\n\n%%%KEYWORDS_START%%%${content}%%%KEYWORDS_END%%%\n\n`;
             });
+
+            return text;
         }
     },
-
     // --- Step 7: 章节标题 ---
     {
         name: 'sections',

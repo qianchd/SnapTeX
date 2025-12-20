@@ -83,7 +83,6 @@ export class TexPreviewPanel {
     private _getWebviewSkeleton() {
         const paths = this.getKatexPaths();
         const katexCssUri = this._panel.webview.asWebviewUri(paths.cssFile);
-        // 对齐 ext-old 的样式路径
         const stylePath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'preview-style.css'));
         const styleUri = this._panel.webview.asWebviewUri(stylePath);
         const baseUri = paths.distDirUri + '/';
@@ -104,34 +103,58 @@ export class TexPreviewPanel {
                     const vscode = acquireVsCodeApi();
                     const contentRoot = document.getElementById('content-root');
 
-                    // 【移植 ext-old】字体防抖系统
+                    // --- 方案 C: 纯防抖字号更新系统 (无 Transform) ---
                     (function() {
                         try {
                             const root = document.documentElement;
+                            // 获取 CSS 中定义的原始 vw/vh 字符串
                             const computedStyle = getComputedStyle(root);
                             const rawValue = computedStyle.getPropertyValue('--base-font-size').trim();
+
                             if (!rawValue) return;
+
                             const match = rawValue.match(/^([\\d.]+)(vw|vh)$/);
                             if (match) {
                                 const value = parseFloat(match[1]);
                                 const unit = match[2];
                                 const ratio = value / 100;
                                 let resizeTimer;
+
+                                /**
+                                 * 执行物理像素更新
+                                 * 只有在停止拉动后触发，产生一次全量重排
+                                 */
                                 function updateFixedSize() {
                                     const viewportSize = unit === 'vw' ? window.innerWidth : window.innerHeight;
                                     let newPx = viewportSize * ratio;
+
+                                    // 最小/最大字号限制，防止极端情况
                                     if (newPx < 12) newPx = 12;
+                                    if (newPx > 40) newPx = 40;
+
+                                    // 直接更新 CSS 变量
                                     root.style.setProperty('--base-font-size', newPx + 'px');
+                                    console.log('[Preview] Font resized to:', newPx.toFixed(1) + 'px');
                                 }
+
+                                // 初始执行一次
                                 updateFixedSize();
+
+                                // 监听窗口调整
                                 window.addEventListener('resize', () => {
+                                    // 拉动过程中不进行任何计算，直接清除计时器
                                     if (resizeTimer) clearTimeout(resizeTimer);
-                                    resizeTimer = setTimeout(updateFixedSize, 200);
+
+                                    // 停止拉动 150ms 后执行一次
+                                    resizeTimer = setTimeout(updateFixedSize, 150);
                                 });
                             }
-                        } catch (e) {}
+                        } catch (e) {
+                            console.error('Resize error:', e);
+                        }
                     })();
 
+                    // --- 消息监听：处理内容更新 ---
                     window.addEventListener('message', event => {
                         const { command, payload } = event.data;
                         if (command === 'update') {
@@ -158,7 +181,7 @@ export class TexPreviewPanel {
                         }
                     });
 
-                    // 【移植 ext-old】跳转监听
+                    // --- 跳转监听 ---
                     document.addEventListener('click', e => {
                         const target = e.target.closest('a');
                         if (target && target.getAttribute('href')?.startsWith('#')) {
