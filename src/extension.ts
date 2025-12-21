@@ -4,79 +4,78 @@ import * as os from 'os';
 import { SmartRenderer } from './renderer';
 import { TexPreviewPanel } from './panel';
 
-// 全局唯一的渲染引擎实例
+// Global unique rendering engine instance
 const renderer = new SmartRenderer();
 
 /**
- * 智能获取当前项目根目录
- * 确保能准确找到用户 .tex 文件所在文件夹下的 config.js
+ * Smartly get the current project root directory
+ * Ensure accurate finding of config.js in the folder where the user's .tex file is located
  */
 function getProjectRoot(): string | undefined {
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-        // 1. 优先尝试获取当前文件所属的 VS Code 工作区文件夹
+        // 1. Prioritize trying to get the VS Code workspace folder to which the current file belongs
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
         if (workspaceFolder) {
             return workspaceFolder.uri.fsPath;
         }
-        // 2. 如果文件不在工作区内（单独打开），则取文件所在的目录
+        // 2. If the file is not in the workspace (opened individually), take the directory where the file is located
         return path.dirname(editor.document.uri.fsPath);
     }
-    // 3. 最后退而求其次取第一个打开的文件夹
+    // 3. Finally, settle for the first opened folder
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
 /**
- * 插件激活入口
+ * Extension activation entry
  */
 export function activate(context: vscode.ExtensionContext) {
     console.log('[SnapTeX] Extension is now active.');
 
     const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
-    const root = getProjectRoot();
+    let currentRoot = getProjectRoot();
 
-    // 1. 初始加载所有规则层级 (默认 + 全局 + 工作区)
-    renderer.reloadAllRules(root);
+    // 1. Initial load
+    renderer.reloadAllRules(currentRoot);
 
-    // 2. 注册启动命令
+    // 2. Register startup command
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.start', () => {
-            // 确保传入渲染器单例
+            // Ensure passing the renderer singleton
             TexPreviewPanel.createOrShow(context.extensionPath, renderer);
         })
     );
 
-    // 3. 监听全局配置文件变动 (~/.snaptex.global.js)
+    // 3. Watch global configuration file changes (~/.snaptex.global.js)
     const globalWatcher = vscode.workspace.createFileSystemWatcher(globalConfigPath);
     globalWatcher.onDidChange(() => {
-        console.log('[TeX Preview] 检测到全局配置变动，正在重载...');
+        console.log('[TeX Preview] Global config change detected, reloading...');
         renderer.reloadAllRules(getProjectRoot());
         TexPreviewPanel.currentPanel?.update();
     });
     context.subscriptions.push(globalWatcher);
 
-    // 4. 监听工作区配置文件变动 (项目根目录/snaptex.config.js)
-    if (root) {
+    // 4. Watch workspace configuration file changes (Project Root/snaptex.config.js)
+    if (currentRoot) {
         const workspaceWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(root, 'snaptex.config.js')
+            new vscode.RelativePattern(currentRoot, 'snaptex.config.js')
         );
         workspaceWatcher.onDidChange(() => {
-            console.log('[TeX Preview] 检测到工作区配置变动，正在重载...');
-            renderer.reloadAllRules(root);
+            console.log('[TeX Preview] Workspace config change detected, reloading...');
+            renderer.reloadAllRules(currentRoot);
             TexPreviewPanel.currentPanel?.update();
         });
         context.subscriptions.push(workspaceWatcher);
     }
 
-    // 5. 监听文档修改事件 (增加防抖阈值)
+    // 5. Watch document modification events (Increase debounce threshold)
     let debounceTimer: NodeJS.Timeout | undefined;
-    // 我们将渲染防抖稍微拉长到 150ms，以腾出更多 CPU 给 Webview 的布局计算
     const RENDER_DEBOUNCE = 100;
     vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
             if (debounceTimer) { clearTimeout(debounceTimer); }
             debounceTimer = setTimeout(() => {
-                // 仅当 Webview 可见时才推送更新，节省后台开销
+                // Push updates only when Webview is visible to save background overhead
                 if (TexPreviewPanel.currentPanel) {
                     TexPreviewPanel.currentPanel.update();
                 }
@@ -84,11 +83,17 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }, null, context.subscriptions);
 
-    // 6. 监听切换编辑器事件：实现“点哪看哪”并自动切换对应项目的规则
+    // 6. Watch switch editor events: Implement "See where you click" and automatically switch rules for the corresponding project
     vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor) {
             const newRoot = getProjectRoot();
-            renderer.reloadAllRules(newRoot);
+            // reload only when the root folder has changed
+            if (newRoot !== currentRoot) {
+                console.log(`[SnapTeX] Switching context: ${currentRoot} -> ${newRoot}`);
+                currentRoot = newRoot;
+                renderer.reloadAllRules(newRoot);
+            }
+            // re-render the preview panel since the active file is changed.
             TexPreviewPanel.currentPanel?.update();
         }
     }, null, context.subscriptions);

@@ -16,9 +16,9 @@ export class LatexBlockSplitter {
                   [match[1], match[2], match[3], match[4], match[5], match[6], match[7], match[8]];
 
             if (isBegin && beginName) {
-                // 忽略 TikZ 等内部环境，防止计数干扰
+                // Ignore internal environments like TikZ to prevent counting interference
                 if (!/^(proof|itemize|enumerate|tikzpicture)$/.test(beginName)) {
-                    // 如果是浮动体开始，且在顶层，强制切分前面的内容
+                    // If it is the start of a float and at the top level, force split the preceding content
                     if (/^(equation|align|gather|multline|flalign|alignat|figure|table|algorithm)\*?$/.test(beginName) &&
                         envStack.length === 0 && braceDepth === 0) {
                         if (currentBuffer.trim().length > 0) {
@@ -36,7 +36,7 @@ export class LatexBlockSplitter {
                 }
                 currentBuffer += fullMatch;
 
-                // 【核心修复】浮动体结束时，强制切分块。解决 Figure 吞噬后续内容的问题
+                // [Core Fix] Force split the block when a float ends. Solves the issue where Figure swallows subsequent content
                 if (/^(figure|table|algorithm)\*?$/.test(endName) && envStack.length === 0 && braceDepth === 0) {
                     if (currentBuffer.trim().length > 0) {
                         blocks.push(currentBuffer);

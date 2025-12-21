@@ -1,5 +1,5 @@
 /**
- * 基础工具函数库：不依赖于任何业务状态
+ * Basic utility function library
  */
 
 export function capitalizeFirstLetter(string: string): string {
@@ -17,11 +17,11 @@ export function extractAndHideLabels(content: string) {
     }
 
 /**
- * 增强型 LaTeX 命令查找工具
- * 支持：\command{...}, \command[...]{...}, 以及多行嵌套
+ * Enhanced LaTeX command search tool
+ * Supports: \command{...}, \command[...]{...}, and multi-line nesting
  */
 export function findCommand(text: string, tagName: string) {
-    // 改进正则：支持可选参数 [\s\S]*? 以及命令与左括号间的空格
+    // Improved regex: Supports optional parameters [\s\S]*? and spaces between command and left brace
     const regex = new RegExp(`\\\\${tagName}(?:\\s*\\[[\\s\\S]*?\\])?\\s*\\{`, 'g');
     const match = regex.exec(text);
 
@@ -34,7 +34,7 @@ export function findCommand(text: string, tagName: string) {
         for (; i < text.length; i++) {
             const char = text[i];
             if (char === '{' || char === '}') {
-                // 校验是否为转义括号 \{ 或 \}
+                // Check if it is an escaped brace \{ or \}
                 let bsCount = 0;
                 let j = i - 1;
                 while (j >= 0 && text[j] === '\\') { bsCount++; j--; }
@@ -52,7 +52,7 @@ export function findCommand(text: string, tagName: string) {
             return {
                 content: text.substring(contentStart, i).trim(),
                 start: startIdx,
-                end: i // 闭合花括号的位置
+                end: i // Position of closing brace
             };
         }
     }
@@ -60,9 +60,9 @@ export function findCommand(text: string, tagName: string) {
 }
 
 /**
- * 将数字转换为罗马数字
- * @param num 需要转换的阿拉伯数字
- * @param uppercase 是否返回大写形式
+ * Convert numbers to Roman numerals
+ * @param num Arabic number to convert
+ * @param uppercase Whether to return uppercase
  */
 export function toRoman(num: number, uppercase: boolean = false): string {
     const lookup: [string, number][] = [
@@ -97,4 +97,4 @@ export function applyStyleToTexList(startTag: string, endTag: string, content: s
     return `${startTag}${content}${endTag}`;
 }
 
-// 以后还可以放：时间格式化、颜色转换、复杂的字符串清洗等
+// Future additions: Time formatting, color conversion, complex string cleaning, etc.

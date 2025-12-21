@@ -29,8 +29,10 @@
         "renewcommand",
         "Rmnum",
         "romannumeral",
+        "snaptex",
         "subsubsection",
         "textbf",
-        "textit"
+        "textit",
+        "tikzpicture"
     ]
 }

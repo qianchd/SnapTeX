@@ -2,7 +2,7 @@ import MarkdownIt from 'markdown-it';
 const mdKatex = require('@iktakahiro/markdown-it-katex');
 import * as path from 'path';
 import * as fs from 'fs';
-import * as os from 'os'; // 用于获取系统主目录
+import * as os from 'os'; // Used to get the system home directory
 import { extractMetadata } from './metadata';
 import { LatexBlockSplitter } from './splitter';
 import { PreprocessRule, PatchPayload } from './types';
@@ -21,7 +21,7 @@ export class SmartRenderer {
 
     constructor() {
         this.rebuildMarkdownEngine({});
-        // 初始加载所有规则层级
+        // Initial load of all rule levels
         this.reloadAllRules();
     }
 
@@ -32,7 +32,7 @@ export class SmartRenderer {
     }
 
     /**
-     * 重置渲染器状态（用于全量刷新）
+     * Reset renderer state (for full refresh)
      */
     public resetState() {
         this.lastBlocks = [];
@@ -40,18 +40,18 @@ export class SmartRenderer {
     }
 
     /**
-     * 核心：按顺序重载所有规则层级
-     * 顺序：内置默认 -> 全局自定义 (~/.snaptex.global.js) -> 工作区自定义
+     * Core: Reload all rule levels in order.
+     * Order: Built-in defaults -> Global custom (~/.snaptex.global.js) -> Workspace custom
      */
     public reloadAllRules(workspaceRoot?: string) {
-        // 1. 回归内置默认规则
+        // 1. Revert to built-in default rules
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
 
-        // 2. 加载全局配置
+        // 2. Load global configuration
         const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
         this.loadConfig(globalConfigPath);
 
-        // 3. 加载工作区配置
+        // 3. Load workspace configuration
         if (workspaceRoot) {
             const workspaceConfigPath = path.join(workspaceRoot, 'snaptex.config.js');
             this.loadConfig(workspaceConfigPath);
@@ -61,12 +61,12 @@ export class SmartRenderer {
     }
 
     /**
-     * 内部配置文件加载器
+     * Internal config file loader
      */
     private loadConfig(configPath: string) {
         if (fs.existsSync(configPath)) {
             try {
-                // 清除 Node.js 的 require 缓存，确保修改配置后能热重载
+                // Clear Node.js require cache to ensure hot reload after config modification
                 delete require.cache[require.resolve(configPath)];
                 const userConfig = require(configPath);
                 if (userConfig && Array.isArray(userConfig.rules)) {
@@ -75,13 +75,13 @@ export class SmartRenderer {
                     });
                 }
             } catch (e) {
-                console.error(`[TeX Preview] 加载配置文件失败: ${configPath}`, e);
+                console.error(`[TeX Preview] Failed to load config file: ${configPath}`, e);
             }
         }
     }
 
     /**
-     * 注册/覆盖预处理规则
+     * Register/Override preprocessing rules
      */
     public registerPreprocessRule(rule: PreprocessRule) {
         const index = this._preprocessRules.findIndex(r => r.name === rule.name);
@@ -90,14 +90,14 @@ export class SmartRenderer {
         } else {
             this._preprocessRules.push(rule);
         }
-        // 注册后不立即排序，由外层 reloadAllRules 统一排序以优化性能
+        // Do not sort immediately after registration; sort uniformly in the outer reloadAllRules to optimize performance
     }
 
     private _sortRules() {
         this._preprocessRules.sort((a, b) => a.priority - b.priority);
     }
 
-    // --- 供 Rules 调用的端口 ---
+    // --- Ports for Rules to call ---
     public pushInlineProtected(content: string) {
         this.protectedBlocks.push(content);
         return `%%%PROTECTED_BLOCK_${this.protectedBlocks.length - 1}%%%`;
@@ -108,14 +108,14 @@ export class SmartRenderer {
         return `\n\n%%%PROTECTED_BLOCK_${this.protectedBlocks.length - 1}%%%\n\n`;
     }
 
-    // --- 核心渲染流水线 ---
+    // --- Core Rendering Pipeline ---
     public render(fullText: string): PatchPayload {
         const normalizedText = fullText.replace(/\r\n/g, '\n');
 
-        // 1. 全局元数据扫描
+        // 1. Global metadata scanning
         const { data, cleanedText } = extractMetadata(normalizedText);
 
-        // 2. 宏更新判断
+        // 2. Macro update judgment
         const currentMacrosJson = JSON.stringify(data.macros);
         if (currentMacrosJson !== this.lastMacrosJson) {
             this.rebuildMarkdownEngine(data.macros);
@@ -125,7 +125,7 @@ export class SmartRenderer {
         this.currentTitle = data.title;
         this.currentAuthor = data.author;
 
-        // 3. 截取正文
+        // 3. Extract body text
         let bodyText = cleanedText;
         const docStartRegex = /\\begin\{document\}/i;
         const docMatch = cleanedText.match(docStartRegex);
@@ -134,7 +134,7 @@ export class SmartRenderer {
                                   .replace(/\\end\{document\}[\s\S]*/i, '');
         }
 
-        // 4. 指纹注入与逻辑分块
+        // 4. Fingerprint injection and logical blocking
         const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
         const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}]`;
 
@@ -145,7 +145,7 @@ export class SmartRenderer {
 
         const oldBlocks = this.lastBlocks;
 
-        // 5. 增量对比 (Diff)
+        // 5. Incremental comparison (Diff)
         let start = 0;
         const minLen = Math.min(rawBlocks.length, oldBlocks.length);
         while (start < minLen && rawBlocks[start] === oldBlocks[start].text) {
@@ -159,25 +159,25 @@ export class SmartRenderer {
             end++;
         }
 
-        // 6. 渲染变化的部分
+        // 6. Render the changed parts
         const deleteCount = oldBlocks.length - start - end;
         const rawInsertTexts = rawBlocks.slice(start, rawBlocks.length - end);
 
         const insertedBlocksData = rawInsertTexts.map(text => {
-            this.protectedBlocks = []; // 每次渲染新块前重置保护区
+            this.protectedBlocks = []; // Reset protected area before rendering each new block
             let processed = text;
 
-            // 应用动态排序后的规则链
+            // Apply dynamically sorted rule chain
             this._preprocessRules.forEach(rule => {
                 processed = rule.apply(processed, this);
             });
 
-            // 还原保护内容 (Unmask)
+            // Restore protected content (Unmask)
             processed = processed.replace(/%%%PROTECTED_BLOCK_(\d+)%%%/g, (_, index) => {
                 return this.protectedBlocks[parseInt(index)];
             });
 
-            // 自动检测特殊标记并执行 HTML 后处理
+            // Automatically detect special markers and execute HTML post-processing
             const hasSpecialBlocks = /%%%(ABSTRACT|KEYWORDS)_START%%%/.test(processed);
             const innerHtml = this.md!.render(processed);
             const finalHtml = hasSpecialBlocks ? postProcessHtml(innerHtml) : innerHtml;
@@ -185,14 +185,14 @@ export class SmartRenderer {
             return { text, html: `<div class="latex-block">${finalHtml}</div>` };
         });
 
-        // 7. 更新状态缓存并生成 Patch 载荷
+        // 7. Update state cache and generate Patch payload
         this.lastBlocks = [
             ...oldBlocks.slice(0, start),
             ...insertedBlocksData,
             ...oldBlocks.slice(oldBlocks.length - end)
         ];
 
-        // 判定是全量重绘还是增量 Patch
+        // Determine whether it is a full redraw or an incremental Patch
         if (oldBlocks.length === 0 || insertedBlocksData.length > 50 || deleteCount > 50) {
             return { type: 'full', html: this.lastBlocks.map(b => b.html).join('') };
         }

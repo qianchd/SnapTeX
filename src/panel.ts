@@ -38,12 +38,12 @@ export class TexPreviewPanel {
         this._extensionPath = extensionPath;
         this._renderer = renderer;
 
-        // 【对照修复】初始化时重置状态
+        // [Fix] Reset state on initialization
         this._renderer.resetState();
 
         this._panel.webview.html = this._getWebviewSkeleton();
 
-        // 确保首次加载
+        // Ensure initial load
         this.update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -57,7 +57,7 @@ export class TexPreviewPanel {
         this._panel.webview.postMessage({ command: 'update', payload });
     }
 
-    // 【从 ext-old 移植】精准查找 KaTeX 本地路径
+    // [Ported from ext-old] Accurately find KaTeX local path
     private getKatexPaths() {
         let katexMainPath = "";
         try {
@@ -101,62 +101,30 @@ export class TexPreviewPanel {
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
-                // 只需要记录基准数据用于滚动条估算
-                let _baseAvgHeight = 0;
-                let _baseWindowWidth = window.innerWidth;
-
-                // --- 2. 窗口调整监听 ---
-                // let resizeTimer;
-                // window.addEventListener('resize', () => {
-                //     if (resizeTimer) clearTimeout(resizeTimer);
-                //     resizeTimer = setTimeout(() => {
-                //         // 【只保留这一句】
-                //         updateScrollbarPlaceholder();
-                //     }, 200);
-                // });
-
-                // --- 3. 新的专用函数：只管滚动条占位符 ---
-                function updateScrollbarPlaceholder() {
-                    // 如果基准数据还没生成（还没 Full Render），直接退出
-                    if (_baseAvgHeight === 0 || _baseWindowWidth === 0) return;
-
-                    const currentWidth = window.innerWidth;
-                    if (currentWidth <= 0) return;
-
-                    // 简单的反比估算：宽度变窄 -> 高度变高
-                    // 虽然 CSS clamp 可能会导致非线性变化，但作为滚动条占位符，这个估算足够好了
-                    const ratio = _baseWindowWidth / currentWidth;
-                    const newAvg = _baseAvgHeight * ratio;
-
-                    root.style.setProperty('--avg-height', newAvg.toFixed(2) + 'px');
-                }
-
-
-                // --- 4. 消息处理 ---
+                // --- Message handling ---
                 window.addEventListener('message', event => {
                     const { command, payload } = event.data;
                     if (command === 'update') {
                         if (payload.type === 'full') {
                             console.log("full update");
 
-                            // 1. 开启全局渲染
+                            // 1. Enable global rendering
                             document.body.classList.add('preload-mode');
 
-                            // [Step C] 写入内容
+                            // [Step C] Write content
                             contentRoot.innerHTML = payload.html;
 
-                            // [Step D] 等待字体 + 强制回流
+                            // [Step D] Wait for fonts + Force reflow
                             document.fonts.ready.then(() => {
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
                                         const fullHeight = document.body.scrollHeight;
                                         const count = contentRoot.childElementCount || 1;
 
-                                        // 更新基准值
-                                        _baseAvgHeight = fullHeight / count;
-                                        _baseWindowWidth = window.innerWidth; // 记录当前的宽度
+                                        // Update base values (for initial CSS variable setting)
+                                        const avgHeight = fullHeight / count;
 
-                                        const avgStr = _baseAvgHeight.toFixed(2);
+                                        const avgStr = avgHeight.toFixed(2);
                                         root.style.setProperty('--avg-height', avgStr + 'px');
 
                                         document.body.classList.remove('preload-mode');
@@ -166,7 +134,7 @@ export class TexPreviewPanel {
                             });
                         } else if (payload.type === 'patch') {
                             console.log("local update");
-                            // Patch 逻辑... (保持不变)
+                            // Patch logic
                             const { start, deleteCount, htmls = [] } = payload;
                             const targetIndex = start + deleteCount;
                             const referenceNode = contentRoot.children[targetIndex] || null;
@@ -189,7 +157,7 @@ export class TexPreviewPanel {
                     }
                 });
 
-                // 跳转监听 (保持不变)
+                // Jump listener (Keep unchanged)
                 document.addEventListener('click', e => {
                     const target = e.target.closest('a');
                     if (target && target.getAttribute('href')?.startsWith('#')) {

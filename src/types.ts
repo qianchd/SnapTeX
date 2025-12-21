@@ -1,5 +1,3 @@
-import * as vscode from 'vscode';
-
 export interface PreambleData {
     macros: Record<string, string>;
     title?: string;
@@ -21,6 +19,6 @@ export interface PatchPayload {
 
 export interface PreprocessRule {
     name: string;
-    priority: number; // 增加优先级：数字越小，越先执行
+    priority: number;
     apply: (text: string, renderer: any) => string;
 }

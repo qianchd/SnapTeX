@@ -2,12 +2,12 @@ import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabe
 import { PreprocessRule } from './types';
 
 /**
- * 默认预处理规则集
- * 优先级 (priority) 说明：数字越小越先执行。
- * 建议：公式保护 (30-40) -> 结构转换 (50-80) -> 列表/样式 (90-110)
+ * Default preprocessing rule set
+ * Priority (priority) explanation: The smaller the number, the earlier it is executed.
+ * Suggestion: Formula protection (30-40) -> Structure conversion (50-80) -> List/Style (90-110)
  */
 export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
-    // --- Step 0: 处理转义符 (优先级最高，防止干扰后续正则) ---
+    // --- Step 0: Handle escape characters (Highest priority, prevents interference with subsequent regex) ---
     {
         name: 'escaped_chars',
         priority: 10,
@@ -19,7 +19,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 1: 罗马数字与特殊标记 ---
+    // --- Step 1: Roman numerals and special markers ---
     {
         name: 'romannumeral',
         priority: 20,
@@ -31,7 +31,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 2: 块级数学公式 (进入保护区) ---
+    // --- Step 2: Block-level math formulas (Enter protected area) ---
     {
         name: 'display_math',
         priority: 30,
@@ -60,7 +60,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 3: 行内公式保护 ---
+    // --- Step 3: Inline formula protection ---
     {
         name: 'inline_math',
         priority: 40,
@@ -69,7 +69,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 4 & 5: 定理与证明环境 ---
+    // --- Step 4 & 5: Theorem and proof environments ---
     {
         name: 'theorems_and_proofs',
         priority: 50,
@@ -93,12 +93,12 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 6: 元数据 \maketitle 与摘要 ---
+    // --- Step 6: Metadata \maketitle and abstract ---
     {
         name: 'maketitle_and_abstract',
         priority: 60,
         apply: (text, renderer) => {
-            // 1. 处理 \maketitle (保持之前的逻辑)
+            // 1. Handle \maketitle (Keep previous logic)
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
                 if (renderer.currentTitle) {titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`;}
@@ -106,15 +106,15 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 text = text.replace(/\\maketitle.*/g, `\n\n${titleBlock}\n\n`);
             }
 
-            // 2. 增强型 Abstract 识别
+            // 2. Enhanced Abstract recognition
             text = text.replace(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/gi, (match, content) => {
-                // 明确加上换行，确保不会和上下文连在一起被 MD 引擎误判
+                // Explicitly add newlines to ensure it's not misjudged by MD engine as connected to context
                 return `\n\n%%%ABSTRACT_START%%%\n\n${content.trim()}\n\n%%%ABSTRACT_END%%%\n\n`;
             });
 
-            // 3. 兼容两种 Keywords 写法
-            // 写法 A: \begin{keywords} ... \end{keywords}
-            // 写法 B: \noindent{\bf Keywords}: ... 或 Keywords: ...
+            // 3. Compatible with two Keywords syntaxes
+            // Syntax A: \begin{keywords} ... \end{keywords}
+            // Syntax B: \noindent{\bf Keywords}: ... or Keywords: ...
             const keywordsRegex = /(?:\\begin\{keywords?\}([\s\S]*?)\\end\{keywords?\}|\\noindent\{\\bf Keywords\}:\s*(.*))/gi;
 
             text = text.replace(keywordsRegex, (match, contentA, contentB) => {
@@ -125,7 +125,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             return text;
         }
     },
-    // --- Step 7: 章节标题 ---
+    // --- Step 7: Section titles ---
     {
         name: 'sections',
         priority: 70,
@@ -143,7 +143,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 8: 浮动体占位符 ---
+    // --- Step 8: Float placeholders ---
     {
         name: 'floats',
         priority: 80,
@@ -158,7 +158,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 9: 列表处理 ---
+    // --- Step 9: List processing ---
     {
         name: 'lists',
         priority: 90,
@@ -183,7 +183,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 10: 标签与引用 ---
+    // --- Step 10: Labels and references ---
     {
         name: 'refs_and_labels',
         priority: 100,
@@ -208,7 +208,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 11: 文本样式 ---
+    // --- Step 11: Text styles ---
     {
         name: 'text_styles',
         priority: 110,
@@ -229,7 +229,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 ];
 
 /**
- * 最后的 HTML 结构修补 (后处理)
+ * Final HTML structure repair (Post-processing)
  */
 export function postProcessHtml(html: string): string {
     html = html.replace(/<p>\s*%%%ABSTRACT_START%%%\s*<\/p>/g, '<div class="latex-abstract"><span class="latex-abstract-title">Abstract</span>');

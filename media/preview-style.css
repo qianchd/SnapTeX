@@ -1,7 +1,7 @@
-/* preview_style.css - 性能优化重构版 */
+/* preview_style.css - Performance Optimized Refactored Version */
 
 :root {
-    /* JS 会将此 vw 值转换为 px 物理值，从而消除拉动时的 calc 抖动 */
+    /* JS converts this vw value to a physical px value to eliminate calc jitter during resizing */
     --base-font-size: clamp(12px, 2.2vw, 40px);
     --base-line-height: 1.5;
     --content-max-width: 3000px;
@@ -9,7 +9,7 @@
 
 body {
     font-family: "Latin Modern Roman", "Times New Roman", "Cambria", "Georgia", serif;
-    padding: 1em 1em; /* 使用 em 代替固定 px */
+    padding: 1em 1em; /* Use em instead of fixed px for padding */
     margin: 0 auto;
     max-width: var(--content-max-width);
     font-size: var(--base-font-size);
@@ -17,36 +17,36 @@ body {
     color: var(--vscode-editor-foreground);
     background-color: var(--vscode-editor-background);
 
-    /* 优化两端对齐 */
+    /* Optimized text justification */
     text-align: justify;
     text-justify: auto;
 
-    /* 开启自动连字符（非常重要） */
+    /* Enable automatic hyphenation (Crucial for justification) */
     hyphens: manual;
     -webkit-hyphens: manual;
     -moz-hyphens: manual;
 
-    /* 辅助设置：防止 URL 或超长单词撑破布局 */
+    /* Fallback: Prevent URLs or long words from breaking the layout */
     word-wrap: break-word;
     overflow-wrap: break-word;
 }
 
-/* --- 标题系统：使用 em 实现相对于正文的等比缩放 --- */
+/* --- Heading System: Use em for scaling relative to body text --- */
 h1, h2, h3, h4 {
     font-family: inherit;
     font-weight: bold;
     line-height: 1.2;
 }
 
-/* 论文标题 \title */
+/* Paper Title \title */
 h1.latex-title {
-    font-size: 1.7em; /* 对应之前的 calc(* 1.5) 并略微增强 */
+    font-size: 1.7em; /* Roughly equivalent to previous calc(* 1.5) but slightly emphasized */
     text-align: center;
     margin-bottom: 0.5em;
     margin-top: 0.5em;
 }
 
-/* 作者信息 \author */
+/* Author Info \author */
 div.latex-author {
     font-size: 1.1em;
     text-align: center;
@@ -54,21 +54,21 @@ div.latex-author {
     font-style: italic;
 }
 
-/* 章节标题 \section (##) */
+/* Section Heading \section (##) */
 h2 {
     font-size: 1.4em;
     margin-top: 1em !important;
     margin-bottom: 0.7em !important;
 }
 
-/* 子章节 \subsection (###) */
+/* Subsection Heading \subsection (###) */
 h3 {
     font-size: 1.2em;
     margin-top: 1.0em !important;
     margin-bottom: 0.7em !important;
 }
 
-/* 三级章节 \subsubsection (####) */
+/* Sub-subsection Heading \subsubsection (####) */
 h4 {
     font-size: 1.05em;
     margin-top: 0.5em !important;
@@ -77,25 +77,25 @@ h4 {
 }
 
 /* Improve local update efficiency */
-/* 预加载/全量渲染状态：强制计算所有布局 */
-/* 当 body 或容器拥有这个类名时，禁用优化 */
+/* Preload/Full Render Mode: Force calculation of all layouts */
+/* When body or container has this class, optimization is disabled */
 .preload-mode .latex-block {
     content-visibility: visible !important;
     contain-intrinsic-size: unset !important;
     contain: none !important;
 }
 
-/* 默认状态：开启高性能局部渲染 */
+/* Default State: Enable high-performance local rendering */
 .latex-block {
-    /* 使用 auto 配合具体的像素值，让浏览器能"记住"之前渲染过的高度 */
+    /* Use auto with a specific pixel value to help browser "remember" previously rendered height */
     content-visibility: auto;
     contain-intrinsic-size: auto var(--avg-height, 7em);
     contain: layout paint style;
 }
 
-/* --- 正文排版 --- */
+/* --- Body Text Typography --- */
 .latex-block p {
-    text-indent: 2em; /* 标准 LaTeX 2em 缩放 */
+    text-indent: 2em; /* Standard LaTeX 2em indentation */
     margin-top: 0.3em;
     margin-bottom: 0.3em;
     line-height: 1.4;
@@ -103,7 +103,7 @@ h4 {
     text-rendering: optimizeLegibility;
 }
 
-/* 取消特定场景下的缩进 */
+/* Remove indentation in specific contexts */
 h1 + p, h2 + p, h3 + p, h4 + p,
 .latex-title + div + p,
 .latex-abstract + p,
@@ -114,9 +114,9 @@ p:has(.no-indent-marker) {
 
 .no-indent-marker { display: none; }
 
-/* --- 数学公式 KaTeX 适配 --- */
+/* --- Math Formula KaTeX Adaptation --- */
 .katex {
-    /* 继承父级字体大小，不再使用 calc 强行计算 */
+    /* Inherit parent font size, avoid using calc to force calculation */
     font-size: 1em !important;
 }
 
@@ -127,7 +127,7 @@ p:has(.no-indent-marker) {
     contain: layout;
 }
 
-/* --- 定理环境 (Theorem/Lemma) --- */
+/* --- Theorem Environments (Theorem/Lemma) --- */
 .latex-thm-head {
     display: inline;
     white-space: nowrap;
@@ -139,26 +139,26 @@ p:has(.no-indent-marker) {
     margin-right: 0.5em;
 }
 
-/* --- 浮动体占位符 (Figure/Table) --- */
+/* --- Float Placeholders (Figure/Table) --- */
 .latex-float-placeholder {
     display: block;
     border: 2px dashed #ff7875;
     background-color: rgba(255, 120, 117, 0.05);
     color: #cf1322;
     padding: 1em;
-    margin: 1.5em 0; /* 修正了之前错误的 calc(...)em 语法 */
+    margin: 1.5em 0; /* Fixed previous incorrect calc(...)em syntax */
     border-radius: 6px;
     font-family: "Courier New", monospace;
-    font-size: 0.7em; /* 稍微缩小源码显示 */
+    font-size: 0.7em; /* Slightly reduce source code display size */
     line-height: 1.0;
     white-space: pre-wrap;
     overflow-x: auto;
 }
 
-/* --- 摘要与关键词 (Abstract & Keywords) --- */
+/* --- Abstract & Keywords --- */
 .latex-abstract {
-    margin: 1.2em 3.0em; /* 左右间距使用 em */
-    font-size: 0.92em;    /* 摘要字号略小 */
+    margin: 1.2em 3.0em; /* Use em for left/right margins */
+    font-size: 0.92em;    /* Abstract font size is slightly smaller */
     line-height: 1.4;
 }
 
@@ -182,7 +182,7 @@ p:has(.no-indent-marker) {
     margin-right: 0.5em;
 }
 
-/* --- 列表系统 --- */
+/* --- List System --- */
 ul, ol {
     padding-left: 2.0em;
     margin: 0.5em 0;
@@ -192,23 +192,23 @@ li {
     margin-bottom: 0.4em;
 }
 
-/* 有序列表嵌套样式 (学术风格) */
-/* 第一层: 1, 2, 3 */
+/* Nested Ordered List Styles (Academic Style) */
+/* Level 1: 1, 2, 3 */
 ol { list-style-type: decimal; }
 
-/* 第二层: a, b, c */
+/* Level 2: a, b, c */
 ol ol { list-style-type: lower-alpha; }
 
-/* 第三层: i, ii, iii */
+/* Level 3: i, ii, iii */
 ol ol ol { list-style-type: lower-roman; }
 
-/* 修复自定义标签列表 (\item[Label]) 的对齐 */
+/* Fix alignment for custom label lists (\item[Label]) */
 ul li strong:first-child {
     margin-right: 0.5em;
 }
 
 
-/* 引用链接通用基础样式 */
+/* General Basic Styles for Citation Links */
 .latex-link {
     color: #007acc;
     padding: 0 0.1em;
@@ -224,13 +224,13 @@ ul li strong:first-child {
 
 .latex-eqref::before { content: "("; }
 .latex-eqref::after { content: ")"; }
-/* 悬停效果 */
+/* Hover Effect */
 .latex-link:hover {
     background-color: rgba(0, 122, 204, 0.2);
     text-decoration: underline;
 }
 
-/* 跳转高亮动画 */
+/* Jump Highlight Animation */
 @keyframes flash-highlight {
     0% { background-color: transparent; }
     20% { background-color: rgba(255, 235, 59, 0.4); }
@@ -242,8 +242,8 @@ ul li strong:first-child {
     border-radius: 4px;
 }
 
-/* 针对 VS Code (Webkit) 的样式 */
-/* 强制应用到所有元素 */
+/* Styles for VS Code (Webkit) */
+/* Force application to all elements */
 html, body {
     scrollbar-width: unset !important;
     scrollbar-color: unset !important;
