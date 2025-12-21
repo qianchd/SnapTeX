@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { extractMetadata } from './metadata';
-import { LatexBlockSplitter } from './splitter';
+import { LatexBlockSplitter, BlockResult } from './splitter';
 import { PreprocessRule, PatchPayload } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 
@@ -20,11 +20,12 @@ export class SmartRenderer {
 
     // [New] Stores the starting line number for each block
     private blockLineMap: number[] = [];
-    // [New] Line offset for the main content (e.g. lines before \begin{document})
+    // [New] Line offset for the main content
     private contentStartLineOffset: number = 0;
 
     constructor() {
         this.rebuildMarkdownEngine({});
+        // Initial load of all rule levels
         this.reloadAllRules();
     }
 
@@ -111,15 +112,13 @@ export class SmartRenderer {
         let bodyText = cleanedText;
         this.contentStartLineOffset = 0;
 
-        // [Fix Offset Issue] 使用原始文本计算偏移量，而不是被清洗过的文本
+        // Use normalizedText (Original) to calculate offset
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
 
         if (rawDocMatch && rawDocMatch.index !== undefined) {
-            // 使用 normalizedText 计算前导行数，确保包含被 metadata 提取删去的行
             const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
             this.contentStartLineOffset = preContent.split('\n').length - 1;
 
-            // 依然需要从 cleanedText 中提取正文进行渲染
             const cleanDocMatch = cleanedText.match(/\\begin\{document\}/i);
             if (cleanDocMatch && cleanDocMatch.index !== undefined) {
                  bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
@@ -127,14 +126,16 @@ export class SmartRenderer {
             }
         }
 
-        // 4. Split and Map
-        const rawBlocks = LatexBlockSplitter.split(bodyText)
-            .map(t => t.trim())
-            .filter(t => t.length > 0);
+        // 4. Split and Map (Now uses exact line numbers from Splitter)
+        const rawBlockObjects = LatexBlockSplitter.split(bodyText);
 
-        // Build mapping using the corrected offset
-        this.buildBlockLineMap(rawBlocks);
+        // Filter out empty blocks if any (trim check)
+        const validBlockObjects = rawBlockObjects.filter(b => b.text.trim().length > 0);
 
+        // Build the precise mapping
+        this.buildBlockLineMap(validBlockObjects);
+
+        const rawBlocks = validBlockObjects.map(b => b.text.trim());
         const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
         const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}]`;
         const fingerprintedBlocks = rawBlocks.map(t => t.includes('\\maketitle') ? (t + metaFingerprint) : t);
@@ -176,23 +177,27 @@ export class SmartRenderer {
             const innerHtml = this.md!.render(processed);
             const finalHtml = hasSpecialBlocks ? postProcessHtml(innerHtml) : innerHtml;
 
-            // Inject data-index
             return { text, html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>` };
         });
 
-        // [SyncTeX Fix] Re-index tail blocks if indices shifted
+        // [Optimized for No-Jitter]
+        // Instead of re-sending the whole tail (which causes scroll jitter),
+        // we calculate the shift and update our cache in-memory,
+        // but tell the frontend to just update attributes.
+        let shift = 0;
         if (end > 0 && rawInsertTexts.length !== deleteCount) {
-            const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
-            const reindexedTail = tailBlocks.map((b, i) => {
-                const newIdx = start + rawInsertTexts.length + i;
-                return {
-                    text: b.text,
-                    html: b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`)
-                };
-            });
-            insertedBlocksData = [...insertedBlocksData, ...reindexedTail];
-            deleteCount += end;
-            end = 0;
+             shift = rawInsertTexts.length - deleteCount;
+
+             // Update the cache (lastBlocks) for the tail parts so future diffs are correct
+             // We do NOT add them to insertedBlocksData to avoid heavy DOM thrashing
+             const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
+             tailBlocks.forEach((b, i) => {
+                 // Update the data-index in the cached HTML string
+                 // The new index is: start + rawInsertTexts.length + i
+                 const newIdx = start + rawInsertTexts.length + i;
+                 // Regex replace the old index with the new one
+                 b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
+             });
         }
 
         // 7. Update Cache
@@ -206,18 +211,15 @@ export class SmartRenderer {
             return { type: 'full', html: this.lastBlocks.map(b => b.html).join('') };
         }
 
-        return { type: 'patch', start, deleteCount, htmls: insertedBlocksData.map(b => b.html) };
+        // Pass the shift value to the frontend
+        return { type: 'patch', start, deleteCount, htmls: insertedBlocksData.map(b => b.html), shift };
     }
 
-    private buildBlockLineMap(rawBlocks: string[]) {
-        this.blockLineMap = [];
-        let currentLine = this.contentStartLineOffset;
-
-        for (const blockText of rawBlocks) {
-            this.blockLineMap.push(currentLine);
-            const lineCount = blockText.split('\n').length;
-            currentLine += lineCount + 1;
-        }
+    /**
+     * [Updated] Build mapping using exact relative line numbers from Splitter
+     */
+    private buildBlockLineMap(blocks: BlockResult[]) {
+        this.blockLineMap = blocks.map(b => this.contentStartLineOffset + b.line);
     }
 
     public getBlockIndexByLine(line: number): number {

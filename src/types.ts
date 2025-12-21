@@ -15,6 +15,8 @@ export interface PatchPayload {
     start?: number;
     deleteCount?: number;
     htmls?: string[];
+    // [New] Index shift value for the tail blocks
+    shift?: number;
 }
 
 export interface PreprocessRule {

@@ -144,14 +144,16 @@ export class TexPreviewPanel {
                                 });
                             });
                         } else if (payload.type === 'patch') {
-                            const { start, deleteCount, htmls = [] } = payload;
+                            const { start, deleteCount, htmls = [], shift = 0 } = payload;
                             const targetIndex = start + deleteCount;
                             const referenceNode = contentRoot.children[targetIndex] || null;
 
+                            // 1. Remove old blocks
                             for (let i = 0; i < deleteCount; i++) {
                                 if (contentRoot.children[start]) contentRoot.removeChild(contentRoot.children[start]);
                             }
 
+                            // 2. Insert new blocks
                             if (htmls.length > 0) {
                                 const fragment = document.createDocumentFragment();
                                 const tempDiv = document.createElement('div');
@@ -161,6 +163,20 @@ export class TexPreviewPanel {
                                     if (node) fragment.appendChild(node);
                                 });
                                 contentRoot.insertBefore(fragment, referenceNode);
+                            }
+
+                            // 3. [Optimized] Update indices of following siblings without removing DOM nodes
+                            if (shift !== 0) {
+                                // The insertion finished at index: start + htmls.length
+                                // We need to update nodes starting from this index to the end
+                                let node = contentRoot.children[start + htmls.length];
+                                while (node) {
+                                    const oldIdx = parseInt(node.getAttribute('data-index'));
+                                    if (!isNaN(oldIdx)) {
+                                        node.setAttribute('data-index', oldIdx + shift);
+                                    }
+                                    node = node.nextElementSibling;
+                                }
                             }
                         }
                     }
