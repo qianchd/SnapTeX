@@ -1,5 +1,5 @@
 /**
- * TeX Fast Preview 自定义配置文件
+ * SnapTeX 自定义配置文件
  * * 这里的规则会通过 renderer.registerPreprocessRule 动态加载。
  * 优先级 (priority) 参考：
  * - 10-40: 预处理与公式保护

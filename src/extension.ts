@@ -30,9 +30,9 @@ function getProjectRoot(): string | undefined {
  * 插件激活入口
  */
 export function activate(context: vscode.ExtensionContext) {
-    console.log('[TeX Fast Preview] Extension is now active.');
+    console.log('[SnapTeX] Extension is now active.');
 
-    const globalConfigPath = path.join(os.homedir(), '.tex-preview.global.js');
+    const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
     const root = getProjectRoot();
 
     // 1. 初始加载所有规则层级 (默认 + 全局 + 工作区)
@@ -40,13 +40,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 2. 注册启动命令
     context.subscriptions.push(
-        vscode.commands.registerCommand('texPreview.start', () => {
+        vscode.commands.registerCommand('snaptex.start', () => {
             // 确保传入渲染器单例
             TexPreviewPanel.createOrShow(context.extensionPath, renderer);
         })
     );
 
-    // 3. 监听全局配置文件变动 (~/.tex-preview.global.js)
+    // 3. 监听全局配置文件变动 (~/.snaptex.global.js)
     const globalWatcher = vscode.workspace.createFileSystemWatcher(globalConfigPath);
     globalWatcher.onDidChange(() => {
         console.log('[TeX Preview] 检测到全局配置变动，正在重载...');
@@ -55,10 +55,10 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(globalWatcher);
 
-    // 4. 监听工作区配置文件变动 (项目根目录/tex-preview.config.js)
+    // 4. 监听工作区配置文件变动 (项目根目录/snaptex.config.js)
     if (root) {
         const workspaceWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(root, 'tex-preview.config.js')
+            new vscode.RelativePattern(root, 'snaptex.config.js')
         );
         workspaceWatcher.onDidChange(() => {
             console.log('[TeX Preview] 检测到工作区配置变动，正在重载...');
@@ -95,5 +95,5 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    console.log('[TeX Fast Preview] Extension deactivated.');
+    console.log('[SnapTeX] Extension deactivated.');
 }

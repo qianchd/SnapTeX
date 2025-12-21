@@ -1,7 +1,7 @@
 {
-  "name": "tex-fast-preview",
-  "displayName": "tex-fast-preview",
-  "description": "",
+  "name": "snaptex",
+  "displayName": "SnapTeX",
+  "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.107.0"
@@ -17,14 +17,14 @@
   "contributes": {
     "commands": [
       {
-        "command": "texPreview.start",
-        "title": "TeX Preview: Start",
+        "command": "snaptex.start",
+        "title": "SnapTeX Preview: Start",
         "icon": "$(split-horizontal)"
       }
     ],
     "keybindings": [
       {
-        "command": "texPreview.start",
+        "command": "snaptex.start",
         "key": "ctrl+k v",
         "mac": "cmd+k v",
         "when": "editorLangId == latex || editorLangId == tex"

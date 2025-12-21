@@ -627,7 +627,7 @@ const renderer = new SmartRenderer();
 
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
-        vscode.commands.registerCommand('texPreview.start', () => {
+        vscode.commands.registerCommand('snaptex.start', () => {
             TexPreviewPanel.createOrShow(context.extensionPath);
         })
     );

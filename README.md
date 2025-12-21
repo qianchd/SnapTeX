@@ -1,6 +1,6 @@
-# tex-fast-preview README
+# SnapTeX README
 
-This is the README for your extension "tex-fast-preview". After writing up a brief description, we recommend including the following sections.
+This is the README for your extension "SnapTeX". After writing up a brief description, we recommend including the following sections.
 
 ## Features
 

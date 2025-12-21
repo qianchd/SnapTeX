@@ -41,19 +41,19 @@ export class SmartRenderer {
 
     /**
      * 核心：按顺序重载所有规则层级
-     * 顺序：内置默认 -> 全局自定义 (~/.tex-preview.global.js) -> 工作区自定义
+     * 顺序：内置默认 -> 全局自定义 (~/.snaptex.global.js) -> 工作区自定义
      */
     public reloadAllRules(workspaceRoot?: string) {
         // 1. 回归内置默认规则
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
 
         // 2. 加载全局配置
-        const globalConfigPath = path.join(os.homedir(), '.tex-preview.global.js');
+        const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
         this.loadConfig(globalConfigPath);
 
         // 3. 加载工作区配置
         if (workspaceRoot) {
-            const workspaceConfigPath = path.join(workspaceRoot, 'tex-preview.config.js');
+            const workspaceConfigPath = path.join(workspaceRoot, 'snaptex.config.js');
             this.loadConfig(workspaceConfigPath);
         }
 

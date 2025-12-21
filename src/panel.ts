@@ -101,95 +101,36 @@ export class TexPreviewPanel {
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
-                // 状态标志：是否启用了动态缩放模式
-                let isDynamicMode = false;
-                // 缓存原始的比例系数 (例如 2.2)
-                let dynamicRatio = 0.022;
-                let dynamicUnit = 'vw';
-                let _baseAvgHeight = 0;   // 初始算出来的平均高度
-                let _baseWindowWidth = window.innerWidth; // 当时的窗口宽度
+                // 只需要记录基准数据用于滚动条估算
+                let _baseAvgHeight = 0;
+                let _baseWindowWidth = window.innerWidth;
 
-                // --- 1. 初始化检测 (智能判断) ---
-                (function initFontSizeStrategy() {
-                    // 获取 CSS 中定义的原始值
-                    // 必须去掉空白，因为有时候写成 " 16px "
-                    const rawValue = getComputedStyle(root).getPropertyValue('--base-font-size').trim();
+                // --- 2. 窗口调整监听 ---
+                // let resizeTimer;
+                // window.addEventListener('resize', () => {
+                //     if (resizeTimer) clearTimeout(resizeTimer);
+                //     resizeTimer = setTimeout(() => {
+                //         // 【只保留这一句】
+                //         updateScrollbarPlaceholder();
+                //     }, 200);
+                // });
 
-                    if (!rawValue) return; // 没定义变量，直接退出
-
-                    // 正则匹配：数字 + 单位
-                    const match = rawValue.match(/^([\d\.]+)(vw|vh)$/);
-
-                    if (match) {
-                        // Case A: 用户写了 vw/vh，说明想要动态缩放
-                        // 启用 JS 接管模式
-                        isDynamicMode = true;
-                        dynamicRatio = parseFloat(match[1]) / 100; // 例如 2.2 -> 0.022
-                        dynamicUnit = match[2];
-                        // 立即执行一次同步，把 vw 转换为固定的 px (防止初始渲染抖动)
-                        syncFontSize();
-                    } else {
-                        // Case B: 用户写了 px/em/rem，说明想要固定大小
-                        // 禁用 JS 接管，直接用 CSS 原生行为
-                        isDynamicMode = false;
-                    }
-                })();
-
-                // --- 2. 字号同步 & 高度估算 ---
-                function syncFontSize() {
-                    // A. 处理字号 (仅动态模式)
-                    if (isDynamicMode) {
-                        const viewportSize = dynamicUnit === 'vw' ? window.innerWidth : window.innerHeight;
-                        let targetPx = viewportSize * dynamicRatio;
-                        if (targetPx < 12) targetPx = 12;
-                        if (targetPx > 40) targetPx = 40;
-                        const val = targetPx.toFixed(1) + 'px';
-                        if (root.style.getPropertyValue('--base-font-size') !== val) {
-                            root.style.setProperty('--base-font-size', val);
-                        }
-                    }
-
-                    // B. 【新增逻辑】处理高度估算 (所有模式都需要)
-                    // 如果还没有基准值 (比如还没完成第一次 full render)，跳过
+                // --- 3. 新的专用函数：只管滚动条占位符 ---
+                function updateScrollbarPlaceholder() {
+                    // 如果基准数据还没生成（还没 Full Render），直接退出
                     if (_baseAvgHeight === 0 || _baseWindowWidth === 0) return;
 
                     const currentWidth = window.innerWidth;
-                    // 防止除以0
                     if (currentWidth <= 0) return;
 
-                    let newAvg = _baseAvgHeight;
+                    // 简单的反比估算：宽度变窄 -> 高度变高
+                    // 虽然 CSS clamp 可能会导致非线性变化，但作为滚动条占位符，这个估算足够好了
+                    const ratio = _baseWindowWidth / currentWidth;
+                    const newAvg = _baseAvgHeight * ratio;
 
-                    if (isDynamicMode) {
-                        // --- 动态模式 (vw) ---
-                        // 逻辑：宽度变小 -> 字号变小 -> 高度变小 (正比)
-                        // 公式：新高度 = 基准高度 * (新宽度 / 基准宽度)
-                        const ratio = currentWidth / _baseWindowWidth;
-                        newAvg = _baseAvgHeight * ratio;
-                    } else {
-                        // --- 固定模式 (px) ---
-                        // 逻辑：宽度变小 -> 换行增多 -> 高度变大 (反比)
-                        // 公式：新高度 = 基准高度 * (基准宽度 / 新宽度)
-                        // 注意：这是一个近似值，文字换行不是完美的线性反比，但足够滚动条使用了
-                        const ratio = _baseWindowWidth / currentWidth;
-                        newAvg = _baseAvgHeight * ratio;
-                    }
-
-                    // 更新 CSS 变量，浏览器会立刻重新计算滚动条长度
-                    console.log("sync font-size", newAvg.toFixed(2), currentWidth);
                     root.style.setProperty('--avg-height', newAvg.toFixed(2) + 'px');
                 }
 
-                // --- 3. 监听窗口调整 ---
-                let resizeTimer;
-                window.addEventListener('resize', () => {
-                    if (!isDynamicMode) return; // 静态模式下忽略 resize
-
-                    if (resizeTimer) clearTimeout(resizeTimer);
-                    // 防抖：拖拽时 CSS 变量被锁死在上次的 px 值，停止后才更新
-                    resizeTimer = setTimeout(() => {
-                        syncFontSize();
-                    }, 200);
-                });
 
                 // --- 4. 消息处理 ---
                 window.addEventListener('message', event => {
@@ -201,11 +142,6 @@ export class TexPreviewPanel {
                             // 1. 开启全局渲染
                             document.body.classList.add('preload-mode');
 
-                            // [Step B] 强制同步字号
-                            // 如果是动态模式，这一步会保证字号是最新的 px
-                            // 如果是静态模式，这一步直接返回，啥也不做
-                            syncFontSize();
-
                             // [Step C] 写入内容
                             contentRoot.innerHTML = payload.html;
 
@@ -213,22 +149,18 @@ export class TexPreviewPanel {
                             document.fonts.ready.then(() => {
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
-                                        // 2. 测量
-                                        const totalHeight = contentRoot.scrollHeight;
+                                        const fullHeight = document.body.scrollHeight;
                                         const count = contentRoot.childElementCount || 1;
 
-                                        // 【新增 2】保存基准值
-                                        _baseAvgHeight = totalHeight / count;
-                                        _baseWindowWidth = window.innerWidth;
+                                        // 更新基准值
+                                        _baseAvgHeight = fullHeight / count;
+                                        _baseWindowWidth = window.innerWidth; // 记录当前的宽度
 
-                                        // 3. 计算平均值并写入 CSS 变量
-                                        const avg = _baseAvgHeight.toFixed(2);
-                                        root.style.setProperty('--avg-height', avg + 'px');
+                                        const avgStr = _baseAvgHeight.toFixed(2);
+                                        root.style.setProperty('--avg-height', avgStr + 'px');
 
-                                        // 4. 关闭强制渲染，启用 auto 模式
                                         document.body.classList.remove('preload-mode');
-
-                                        console.log('[Preview] Render done. AvgHeight set to:', avg);
+                                        console.log('[Preview] Full render done. Avg set to:', avgStr);
                                     });
                                 });
                             });

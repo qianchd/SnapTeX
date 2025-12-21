@@ -2,7 +2,7 @@
 
 :root {
     /* JS 会将此 vw 值转换为 px 物理值，从而消除拉动时的 calc 抖动 */
-    --base-font-size: 2.3vw;
+    --base-font-size: clamp(12px, 2.2vw, 40px);
     --base-line-height: 1.5;
     --content-max-width: 3000px;
 }
@@ -89,7 +89,7 @@ h4 {
 .latex-block {
     /* 使用 auto 配合具体的像素值，让浏览器能"记住"之前渲染过的高度 */
     content-visibility: auto;
-    contain-intrinsic-size: var(--avg-height, 7em);
+    contain-intrinsic-size: auto var(--avg-height, 7em);
     contain: layout paint style;
 }
 
