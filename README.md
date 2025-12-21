@@ -1,6 +1,10 @@
-# SnapTeX - High-Performance LaTeX Quick Previewer
+# SnapTeX: High-Performance LaTeX Live Previewer
 
-**SnapTeX** is a lightweight, ultra-fast LaTeX previewer for Visual Studio Code. Unlike traditional previewers, it does not require a full TeX distribution (like TeXLive or MiKTeX) to function. By using a custom high-speed regex parser, **KaTeX**, and **Markdown-It**, it provides near-instant structural and mathematical previews of your document.
+**SnapTeX** is a lightweight, ultra-fast LaTeX previewer for Visual Studio Code. Unlike traditional previewers, it does not require a full TeX distribution (like TeXLive or MiKTeX) to function.
+
+By using a custom high-speed regex parser, **KaTeX**, and **Markdown-It**, it provides near-instant structural and mathematical previews of your document, via several features including text-block splitter, diff checker and local renderer.
+
+It is now a demo based on the early conceptual proof, [mume.parser](https://github.com/qianchd/mume.parser) for [MPE](https://github.com/shd101wyy/vscode-markdown-preview-enhanced).
 
 ## Features
 
@@ -56,8 +60,11 @@ This extension contributes the following settings:
 * **Project Home**: [GitHub Repository](https://github.com/qianchd/snaptex)
 * **Report a Bug**: [Issue Tracker](https://github.com/qianchd/snaptex/issues)
 
-**Enjoy a faster LaTeX writing experience!**
-
 ---
 
 ### Next Step
+
+1. Support figure, table, algorithm, e.t.c.
+2. Periodically check errors via pdflatex, xelatex, ...
+3. labels, refs, cites, ...
+4. User-defined css styles and tex-parsers.
