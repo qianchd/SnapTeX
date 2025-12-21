@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs'; // 必须导入 fs
 import { SmartRenderer } from './renderer';
 
 export class TexPreviewPanel {
@@ -12,7 +11,6 @@ export class TexPreviewPanel {
     private _renderer: SmartRenderer;
 
     public static createOrShow(extensionPath: string, renderer: SmartRenderer) {
-        // 【对照修复】回退到 ext-old 的 ViewColumn.Beside 逻辑
         const column = vscode.window.activeTextEditor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One;
 
         if (TexPreviewPanel.currentPanel) {
@@ -159,7 +157,29 @@ export class TexPreviewPanel {
                         const { command, payload } = event.data;
                         if (command === 'update') {
                             if (payload.type === 'full') {
+                                // 1. 【加锁】开启预加载模式
+                                document.body.classList.add('preload-mode');
+
+                                // 2. 写入 HTML
                                 contentRoot.innerHTML = payload.html;
+
+                                // 3. 【关键修复】等待字体加载完毕后再解锁
+                                document.fonts.ready.then(() => {
+                                    // 等待两帧，确保 DOM 结构和样式已应用
+                                    requestAnimationFrame(() => {
+                                        requestAnimationFrame(() => {
+                                            // 4. 【强制回流】读取一次 scrollHeight
+                                            // 这行代码看似无用，但它会强迫浏览器完成一次布局计算，
+                                            // 确保它在切换回 auto 之前，已经"看到"了真实的元素高度。
+                                            const _forceLayout = document.body.scrollHeight;
+
+                                            // 5. 【解锁】恢复 content-visibility: auto
+                                            document.body.classList.remove('preload-mode');
+
+                                            console.log('[Preview] Initial render done. Height locked at:', _forceLayout);
+                                        });
+                                    });
+                                });
                             } else if (payload.type === 'patch') {
                                 const { start, deleteCount, htmls = [] } = payload;
                                 const targetIndex = start + deleteCount;

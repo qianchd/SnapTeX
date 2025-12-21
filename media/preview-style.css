@@ -76,6 +76,23 @@ h4 {
     font-style: italic;
 }
 
+/* Improve local update efficiency */
+/* 预加载/全量渲染状态：强制计算所有布局 */
+/* 当 body 或容器拥有这个类名时，禁用优化 */
+.preload-mode .latex-block {
+    content-visibility: visible !important;
+    contain-intrinsic-size: unset !important;
+    contain: none !important;
+}
+
+/* 默认状态：开启高性能局部渲染 */
+.latex-block {
+    /* 使用 auto 配合具体的像素值，让浏览器能"记住"之前渲染过的高度 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 3em;
+    contain: layout paint style;
+}
+
 /* --- 正文排版 --- */
 .latex-block p {
     text-indent: 2em; /* 标准 LaTeX 2em 缩放 */
@@ -107,6 +124,7 @@ p:has(.no-indent-marker) {
     margin: 1em 0 !important;
     overflow-x: auto;
     overflow-y: hidden;
+    contain: layout;
 }
 
 /* --- 定理环境 (Theorem/Lemma) --- */

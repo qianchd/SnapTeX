@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
     // 5. 监听文档修改事件 (增加防抖阈值)
     let debounceTimer: NodeJS.Timeout | undefined;
     // 我们将渲染防抖稍微拉长到 150ms，以腾出更多 CPU 给 Webview 的布局计算
-    const RENDER_DEBOUNCE = 150;
+    const RENDER_DEBOUNCE = 100;
     vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
             if (debounceTimer) { clearTimeout(debounceTimer); }
