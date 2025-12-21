@@ -89,7 +89,7 @@ h4 {
 .latex-block {
     /* 使用 auto 配合具体的像素值，让浏览器能"记住"之前渲染过的高度 */
     content-visibility: auto;
-    contain-intrinsic-size: auto 3em;
+    contain-intrinsic-size: var(--avg-height, 7em);
     contain: layout paint style;
 }
 
