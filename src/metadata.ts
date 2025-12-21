@@ -5,6 +5,10 @@ export function extractMetadata(text: string): MetadataResult {
     // 1. Pre-cleaning: Remove all comments (%) to prevent curly braces in comments from interfering with matching
     let cleanedText = text.replace(/(?<!\\)%.*/gm, '');
 
+    // =======================================================
+    // clean $$$$
+    cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
+
     let title: string | undefined;
     let author: string | undefined;
 

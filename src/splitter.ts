@@ -16,32 +16,31 @@ export class LatexBlockSplitter {
 
         for (let i = startIndex; i < end; i++) {
             const char = text[i];
-
-            // Skip escape sequences (e.g. \{ or \\)
-            if (char === '\\') {
-                i++;
-                continue;
-            }
-
-            // Skip comments to avoid false matches
+            if (char === '\\') { i++; continue; }
             if (char === '%') {
                 const newlineIdx = text.indexOf('\n', i);
                 if (newlineIdx === -1) {return false;}
                 i = newlineIdx;
                 continue;
             }
-
             if (char === '{') {
                 depth++;
             } else if (char === '}') {
                 depth--;
-                if (depth === 0) {return true;} // Found the closer
+                if (depth === 0) {return true;}
             }
         }
-        return false; // Limit reached or EOF without closure
+        return false;
     }
 
-    public static split(text: string): BlockResult[] {
+    /**
+     * Split Logic:
+     * 1. Respect structure: Never split in the middle of a sentence/paragraph just because of line count.
+     * 2. Fault Tolerance: If a block exceeds `maxLines` while inside a protected environment ({...}, \begin...),
+     * assume the protection is a typo/unclosed syntax and ALLOW splits at natural boundaries (\n\n, \begin).
+     * 3. Proofs: Treat as plain text (ignoring protection), naturally split-able.
+     */
+    public static split(text: string, maxLines: number = 40): BlockResult[] {
         const blocks: BlockResult[] = [];
         let currentBuffer = "";
         let envStack: string[] = [];
@@ -50,7 +49,6 @@ export class LatexBlockSplitter {
         let currentLine = 0;
         let bufferStartLine = 0;
 
-        // Regex matches: escapes, comments, begin/end environments, braces, double newlines, and math delimiters
         const regex = /(?:\\\$|\\\{|\\\})|(?:(?<!\\)%.*)|(\\begin\{([^}]+)\})|(\\end\{([^}]+)\})|(\{)|(\})|(\n\s*\n)|(?<!\\)(\$\$|\\\[|\\\])/g;
         let lastIndex = 0;
         let match;
@@ -69,84 +67,103 @@ export class LatexBlockSplitter {
             const [isBegin, beginName, isEnd, endName, isOpenBrace, isCloseBrace, isDoubleNewline, isMathSymbol] =
                   [match[1], match[2], match[3], match[4], match[5], match[6], match[7], match[8]];
 
-            // === CRITICAL: Fault Tolerance for Paragraph Breaks ===
+            // Calculate current buffer size to decide on "Emergency Split" logic
+            const currentBufferLineCount = (currentBuffer.match(/\n/g) || []).length;
+
+            // Logic: If buffer is too huge, we assume we are trapped in an unclosed environment.
+            // We treat 'isTrapped' as a signal to behave as if depth is 0.
+            const isTrapped = currentBufferLineCount >= maxLines;
+
+            // === A. Handle Paragraph Breaks (\n\n) ===
             if (isDoubleNewline) {
                 let shouldReset = false;
 
-                // Scenario: Inside a brace group (braceDepth > 0) but not a formal environment.
-                // Conflict: Valid LaTeX allows {\it \n\n}, but typos like {\} \n\n cause document swallow.
+                // Case 1: Standard Typo Check (Unclosed brace near a double newline)
                 if (envStack.length === 0 && braceDepth > 0) {
-                    // Strategy: Look ahead. If we can't find a closing brace soon (2000 chars),
-                    // assume it's a typo and force a reset.
                     const canCloseSoon = LatexBlockSplitter.findClosingBrace(text, regex.lastIndex, braceDepth, 2000);
+                    if (!canCloseSoon) { shouldReset = true; }
+                }
 
-                    if (canCloseSoon) {
-                        // Valid multi-paragraph group: Treat double newline as content.
-                        currentBuffer += fullMatch;
-                        currentLine += matchLines;
-                        lastIndex = regex.lastIndex;
-                        continue; // Skip the split logic below
-                    } else {
-                        // Unlikely to close: Assume error (firewall triggered).
-                        shouldReset = true;
-                    }
+                // Case 2: MaxLines Exceeded Check
+                // If we are over maxLines, we force a reset of the stack/depth effectively ignores the unclosed layer.
+                if (isTrapped && (envStack.length > 0 || braceDepth > 0)) {
+                    shouldReset = true;
                 }
 
                 if (shouldReset) {
-                    braceDepth = 0; // Force reset depth to allow splitting
+                    braceDepth = 0;
+                    envStack = []; // Reset stack to allow recovery from unclosed \begin
                 }
 
-                // Standard Split Logic: Only split if we are at root level (no env, no braces)
+                // Split Condition: Root level OR forced reset
                 if (envStack.length === 0 && braceDepth === 0) {
                     if (currentBuffer.trim().length > 0) {
                         const count = currentBuffer.split('\n').length;
                         blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                         currentBuffer = "";
                     }
-                    // Consumes the newline, sets start line for next block
                     currentLine += matchLines;
                     bufferStartLine = currentLine;
                 } else {
-                    // Inside environment or valid group: Add newline to buffer
+                    // Valid multi-paragraph group: Keep accumulating
                     currentBuffer += fullMatch;
                     currentLine += matchLines;
                 }
             }
-            // === Standard Token Processing ===
+            // === B. Handle \begin{...} ===
             else if (isBegin && beginName) {
-                if (!/^(proof|itemize|enumerate|tikzpicture)$/.test(beginName)) {
-                    // Split before top-level floats/equations for better granularity
-                    if (/^(equation|align|gather|multline|flalign|alignat|figure|table|algorithm)\*?$/.test(beginName) &&
-                        envStack.length === 0 && braceDepth === 0) {
-                        if (currentBuffer.trim().length > 0) {
+                // Determine if this environment is "Ignored" (Proof) or "Protected"
+                // 'proof', 'itemize', 'enumerate', 'tikzpicture' are typically treated as structural,
+                // but proof specifically we want to allow splitting inside.
+                // NOTE: 'itemize' etc included in ignore means we allow splitting INSIDE them if \n\n occurs.
+                const isIgnoredEnv = /^(proof|itemize|enumerate|tikzpicture)$/.test(beginName);
+
+                if (!isIgnoredEnv) {
+                    // Split Strategy for Major Environments (Equation, Table, etc.)
+                    // Normal: Only split if depth is 0.
+                    // Trapped: If buffer is huge, split anyway (assuming previous context was broken).
+                    const isMajorEnv = /^(equation|align|gather|multline|flalign|alignat|figure|table|algorithm|thm|theorem|lemma|prop)\*?$/.test(beginName);
+
+                    if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped)) {
+                         if (currentBuffer.trim().length > 0) {
                             const count = currentBuffer.split('\n').length;
                             blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                             currentBuffer = "";
                             bufferStartLine = currentLine;
+                            // If we were trapped, the flush effectively resets our context for the new block
+                            if (isTrapped) { envStack = []; braceDepth = 0; }
                         }
                     }
                     envStack.push(beginName);
                 }
                 currentBuffer += fullMatch;
                 currentLine += matchLines;
-            } else if (isEnd && endName) {
-                if (!/^(proof|itemize|enumerate|tikzpicture)$/.test(endName)) {
+            }
+            // === C. Handle \end{...} ===
+            else if (isEnd && endName) {
+                const isIgnoredEnv = /^(proof|itemize|enumerate|tikzpicture)$/.test(endName);
+                if (!isIgnoredEnv) {
                     const idx = envStack.lastIndexOf(endName);
                     if (idx !== -1) { envStack = envStack.slice(0, idx); }
                 }
                 currentBuffer += fullMatch;
                 currentLine += matchLines;
 
-                // Split after top-level floats
-                if (/^(figure|table|algorithm)\*?$/.test(endName) && envStack.length === 0 && braceDepth === 0) {
+                // Split after Major Environments
+                // Trapped Logic: If we are trapped, we might want to forcefully split after a major env closes
+                const isMajorEnv = /^(figure|table|algorithm|thm|theorem|lemma|prop)\*?$/.test(endName);
+                if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped)) {
                     if (currentBuffer.trim().length > 0) {
                         const count = currentBuffer.split('\n').length;
                         blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                         currentBuffer = "";
                         bufferStartLine = currentLine;
+                        if (isTrapped) { envStack = []; braceDepth = 0; }
                     }
                 }
-            } else if (isOpenBrace) {
+            }
+            // === D. Handle Braces ===
+            else if (isOpenBrace) {
                 braceDepth++;
                 currentBuffer += fullMatch;
                 currentLine += matchLines;
@@ -154,26 +171,29 @@ export class LatexBlockSplitter {
                 if (braceDepth > 0) {braceDepth--;}
                 currentBuffer += fullMatch;
                 currentLine += matchLines;
-            } else if (isMathSymbol) {
-                 // Math Delimiter Handling ($$, \[, \])
+            }
+            // === E. Handle Math ($$, \[, \]) ===
+            else if (isMathSymbol) {
                  if (fullMatch === '$$') {
                     if (envStack.length > 0 && envStack[envStack.length - 1] === '$$') {
-                        envStack.pop(); // Close display math
+                        // 正常闭合 $$
+                        envStack.pop();
                         currentBuffer += fullMatch;
-                    } else if (envStack.length === 0 && braceDepth === 0) {
-                        // Check validity using Lookahead (reusing logic for math)
+                    } else if ((envStack.length === 0 && braceDepth === 0) || isTrapped) {
+                        // Lookahead check
                         const remainingText = text.substring(regex.lastIndex);
                         const nextCloseIdx = remainingText.indexOf('$$');
                         const emptyLineMatch = remainingText.match(/\n\s*\n/);
                         const nextEmptyLineIdx = (emptyLineMatch && typeof emptyLineMatch.index === 'number') ? emptyLineMatch.index : -1;
 
                         const hasClose = nextCloseIdx !== -1;
-                        // Math block is valid only if closed BEFORE the next paragraph break
-                        const isBrokenByNewline = nextEmptyLineIdx !== -1 && nextEmptyLineIdx < nextCloseIdx;
+                        // 修正逻辑：如果中间有空行，且空行在闭合符号之前（或者根本没闭合），视为断裂
+                        const isBrokenByNewline = nextEmptyLineIdx !== -1 && (nextCloseIdx === -1 || nextEmptyLineIdx < nextCloseIdx);
 
-                        if (hasClose && !isBrokenByNewline) {
-                            // Valid block: Split previous text, start new math block
-                             if (currentBuffer.trim().length > 0) {
+                        // Valid if closed properly OR if we are already in a trapped state (just consume it)
+                        if ((hasClose && !isBrokenByNewline) || isTrapped) {
+                             // 如果不是 trapped 状态，且之前有文本，先切分之前的文本
+                             if (!isTrapped && currentBuffer.trim().length > 0) {
                                 const count = currentBuffer.split('\n').length;
                                 blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                                 currentBuffer = "";
@@ -182,15 +202,26 @@ export class LatexBlockSplitter {
                             envStack.push('$$');
                             currentBuffer += fullMatch;
                         } else {
-                            // Invalid/Unclosed $$: Treat as plain text to prevent swallow
+                            // === [修复核心] 无效/未闭合的 $$ ===
+                            // 我们将其附加到当前 buffer，然后立即强制切分。
+                            // 这样这个错误的 $$ 就会被“隔离”在上一个块的末尾，而不会污染下一个块。
                             currentBuffer += fullMatch;
+
+                            if (currentBuffer.trim().length > 0) {
+                                const count = currentBuffer.split('\n').length;
+                                blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
+                                currentBuffer = "";
+                                // 下一个块从当前位置之后开始
+                                bufferStartLine = currentLine + matchLines;
+                            }
                         }
                     } else {
                         currentBuffer += fullMatch;
                     }
                 } else if (fullMatch === '\\[') {
-                    if (envStack.length === 0 && braceDepth === 0) {
-                        if (currentBuffer.trim().length > 0) {
+                    // Logic similar to $$: Split before block math if possible
+                    if ((envStack.length === 0 && braceDepth === 0) || isTrapped) {
+                        if (!isTrapped && currentBuffer.trim().length > 0) {
                             const count = currentBuffer.split('\n').length;
                             blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                             currentBuffer = "";
@@ -211,7 +242,7 @@ export class LatexBlockSplitter {
             lastIndex = regex.lastIndex;
         }
 
-        // Handle remaining trailing text
+        // Handle remaining
         const remaining = text.substring(lastIndex);
         if (remaining.trim().length > 0) {
              currentBuffer += remaining;
