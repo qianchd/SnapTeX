@@ -13,3 +13,4 @@ vsc-extension-quickstart.md
 **/*.ts
 **/.vscode-test.*
 .conda
+!node_modules/@iktakahiro/markdown-it-katex/**
