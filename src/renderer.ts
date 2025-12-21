@@ -18,14 +18,12 @@ export class SmartRenderer {
     private protectedBlocks: string[] = [];
     private _preprocessRules: PreprocessRule[] = [];
 
-    // [New] Stores the starting line number for each block
-    private blockLineMap: number[] = [];
-    // [New] Line offset for the main content
+    // [New] Stores start line AND line count for each block for ratio calculation
+    private blockMap: { start: number; count: number }[] = [];
     private contentStartLineOffset: number = 0;
 
     constructor() {
         this.rebuildMarkdownEngine({});
-        // Initial load of all rule levels
         this.reloadAllRules();
     }
 
@@ -38,7 +36,7 @@ export class SmartRenderer {
     public resetState() {
         this.lastBlocks = [];
         this.lastMacrosJson = "";
-        this.blockLineMap = [];
+        this.blockMap = [];
     }
 
     public reloadAllRules(workspaceRoot?: string) {
@@ -91,14 +89,10 @@ export class SmartRenderer {
         return `\n\n%%%PROTECTED_BLOCK_${this.protectedBlocks.length - 1}%%%\n\n`;
     }
 
-    // --- Core Rendering Pipeline ---
     public render(fullText: string): PatchPayload {
         const normalizedText = fullText.replace(/\r\n/g, '\n');
-
-        // 1. Global metadata scanning
         const { data, cleanedText } = extractMetadata(normalizedText);
 
-        // 2. Macro update
         const currentMacrosJson = JSON.stringify(data.macros);
         if (currentMacrosJson !== this.lastMacrosJson) {
             this.rebuildMarkdownEngine(data.macros);
@@ -108,13 +102,10 @@ export class SmartRenderer {
         this.currentTitle = data.title;
         this.currentAuthor = data.author;
 
-        // 3. Extract body text & Calculate content offset
         let bodyText = cleanedText;
         this.contentStartLineOffset = 0;
 
-        // Use normalizedText (Original) to calculate offset
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
-
         if (rawDocMatch && rawDocMatch.index !== undefined) {
             const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
             this.contentStartLineOffset = preContent.split('\n').length - 1;
@@ -126,14 +117,12 @@ export class SmartRenderer {
             }
         }
 
-        // 4. Split and Map (Now uses exact line numbers from Splitter)
         const rawBlockObjects = LatexBlockSplitter.split(bodyText);
-
-        // Filter out empty blocks if any (trim check)
+        // Filter out empty blocks
         const validBlockObjects = rawBlockObjects.filter(b => b.text.trim().length > 0);
 
-        // Build the precise mapping
-        this.buildBlockLineMap(validBlockObjects);
+        // Build the precise mapping with line counts
+        this.buildBlockMap(validBlockObjects);
 
         const rawBlocks = validBlockObjects.map(b => b.text.trim());
         const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
@@ -142,7 +131,6 @@ export class SmartRenderer {
 
         const oldBlocks = this.lastBlocks;
 
-        // 5. Diff
         let start = 0;
         const minLen = Math.min(fingerprintedBlocks.length, oldBlocks.length);
         while (start < minLen && fingerprintedBlocks[start] === oldBlocks[start].text) {
@@ -156,7 +144,6 @@ export class SmartRenderer {
             end++;
         }
 
-        // 6. Render
         let deleteCount = oldBlocks.length - start - end;
         const rawInsertTexts = fingerprintedBlocks.slice(start, fingerprintedBlocks.length - end);
 
@@ -180,27 +167,17 @@ export class SmartRenderer {
             return { text, html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>` };
         });
 
-        // [Optimized for No-Jitter]
-        // Instead of re-sending the whole tail (which causes scroll jitter),
-        // we calculate the shift and update our cache in-memory,
-        // but tell the frontend to just update attributes.
+        // Handle Shift for non-changing tail blocks (Attribute Patching Optimization)
         let shift = 0;
         if (end > 0 && rawInsertTexts.length !== deleteCount) {
              shift = rawInsertTexts.length - deleteCount;
-
-             // Update the cache (lastBlocks) for the tail parts so future diffs are correct
-             // We do NOT add them to insertedBlocksData to avoid heavy DOM thrashing
              const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
              tailBlocks.forEach((b, i) => {
-                 // Update the data-index in the cached HTML string
-                 // The new index is: start + rawInsertTexts.length + i
                  const newIdx = start + rawInsertTexts.length + i;
-                 // Regex replace the old index with the new one
                  b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
              });
         }
 
-        // 7. Update Cache
         this.lastBlocks = [
             ...oldBlocks.slice(0, start),
             ...insertedBlocksData,
@@ -211,29 +188,55 @@ export class SmartRenderer {
             return { type: 'full', html: this.lastBlocks.map(b => b.html).join('') };
         }
 
-        // Pass the shift value to the frontend
         return { type: 'patch', start, deleteCount, htmls: insertedBlocksData.map(b => b.html), shift };
     }
 
-    /**
-     * [Updated] Build mapping using exact relative line numbers from Splitter
-     */
-    private buildBlockLineMap(blocks: BlockResult[]) {
-        this.blockLineMap = blocks.map(b => this.contentStartLineOffset + b.line);
+    private buildBlockMap(blocks: BlockResult[]) {
+        this.blockMap = blocks.map(b => ({
+            start: this.contentStartLineOffset + b.line,
+            count: b.lineCount
+        }));
     }
 
-    public getBlockIndexByLine(line: number): number {
-        for (let i = 0; i < this.blockLineMap.length; i++) {
-            if (this.blockLineMap[i] > line) {
-                return Math.max(0, i - 1);
+    // [New] Expose detailed block info for text searching (Anchor)
+    public getBlockInfo(index: number): { start: number; count: number } | undefined {
+        if (index >= 0 && index < this.blockMap.length) {
+            return this.blockMap[index];
+        }
+        return undefined;
+    }
+
+    /**
+     * Return index AND relative ratio (0.0 - 1.0)
+     */
+    public getBlockIndexByLine(line: number): { index: number; ratio: number } {
+        // Find the block containing the line
+        for (let i = 0; i < this.blockMap.length; i++) {
+            const block = this.blockMap[i];
+            const nextBlockStart = (i + 1 < this.blockMap.length) ? this.blockMap[i+1].start : Infinity;
+
+            // If line is within this block
+            if (line >= block.start && line < nextBlockStart) {
+                // Calculate ratio: how far into the block is this line?
+                const offset = line - block.start;
+                const count = Math.max(1, block.count);
+                const ratio = Math.max(0, Math.min(1, offset / count));
+
+                return { index: i, ratio };
             }
         }
-        return this.blockLineMap.length - 1;
+        // Fallback to last block
+        return { index: this.blockMap.length - 1, ratio: 0 };
     }
 
-    public getLineByBlockIndex(index: number): number {
-        if (index >= 0 && index < this.blockLineMap.length) {
-            return this.blockLineMap[index];
+    /**
+     * Calculate exact line from block index + ratio
+     */
+    public getLineByBlockIndex(index: number, ratio: number = 0): number {
+        if (index >= 0 && index < this.blockMap.length) {
+            const block = this.blockMap[index];
+            const offset = Math.floor(block.count * ratio);
+            return block.start + offset;
         }
         return 0;
     }

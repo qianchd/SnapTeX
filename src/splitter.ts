@@ -1,6 +1,7 @@
 export interface BlockResult {
     text: string;
-    line: number; // Relative starting line number
+    line: number;      // Relative starting line number
+    lineCount: number; // Total lines inside this block
 }
 
 export class LatexBlockSplitter {
@@ -14,19 +15,20 @@ export class LatexBlockSplitter {
         let currentLine = 0;
         let bufferStartLine = 0;
 
+        // Regex to identify delimiters, environments, and special characters
         const regex = /(?:\\\$|\\\{|\\\})|(?:(?<!\\)%.*)|(\\begin\{([^}]+)\})|(\\end\{([^}]+)\})|(\{)|(\})|(\n\s*\n)|(?<!\\)(\$\$|\\\[|\\\])/g;
         let lastIndex = 0;
         let match;
 
         while ((match = regex.exec(text)) !== null) {
-            // 1. Process text BEFORE the match
+            // 1. Process text BEFORE the match (plain text between delimiters)
             const preMatch = text.substring(lastIndex, match.index);
             const preLines = (preMatch.match(/\n/g) || []).length;
 
             currentBuffer += preMatch;
             currentLine += preLines;
 
-            // 2. Prepare match data
+            // 2. Process the MATCH itself
             const fullMatch = match[0];
             const matchLines = (fullMatch.match(/\n/g) || []).length;
 
@@ -34,12 +36,15 @@ export class LatexBlockSplitter {
                   [match[1], match[2], match[3], match[4], match[5], match[6], match[7], match[8]];
 
             if (isBegin && beginName) {
+                // Ignore internal environments like TikZ to prevent counting interference
                 if (!/^(proof|itemize|enumerate|tikzpicture)$/.test(beginName)) {
                     // Force split content before a top-level float
+                    // Only split if we are at top level (braceDepth 0) and not already inside another environment
                     if (/^(equation|align|gather|multline|flalign|alignat|figure|table|algorithm)\*?$/.test(beginName) &&
                         envStack.length === 0 && braceDepth === 0) {
                         if (currentBuffer.trim().length > 0) {
-                            blocks.push({ text: currentBuffer, line: bufferStartLine });
+                            const count = currentBuffer.split('\n').length;
+                            blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                             currentBuffer = "";
                             bufferStartLine = currentLine; // Next block starts exactly here
                         }
@@ -59,9 +64,10 @@ export class LatexBlockSplitter {
                 // Force split block when a float ends
                 if (/^(figure|table|algorithm)\*?$/.test(endName) && envStack.length === 0 && braceDepth === 0) {
                     if (currentBuffer.trim().length > 0) {
-                        blocks.push({ text: currentBuffer, line: bufferStartLine });
+                        const count = currentBuffer.split('\n').length;
+                        blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                         currentBuffer = "";
-                        bufferStartLine = currentLine; // Next block starts after this float
+                        bufferStartLine = currentLine;
                     }
                 }
             } else if (isOpenBrace) {
@@ -76,11 +82,12 @@ export class LatexBlockSplitter {
                 if (envStack.length === 0 && braceDepth === 0) {
                     // Split on double newline (Paragraph break)
                     if (currentBuffer.trim().length > 0) {
-                        blocks.push({ text: currentBuffer, line: bufferStartLine });
+                        const count = currentBuffer.split('\n').length;
+                        blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                         currentBuffer = "";
                     }
-                    // The separator (double newline) consumes lines, but is not part of any block.
-                    // The next block starts AFTER this separator.
+                    // The separator (double newline) consumes lines but is not part of the next block
+                    // We DO NOT add fullMatch to currentBuffer here, effectively stripping the gap from the block content
                     currentLine += matchLines;
                     bufferStartLine = currentLine;
                 } else {
@@ -90,8 +97,10 @@ export class LatexBlockSplitter {
             } else if (isMathSymbol) {
                 if (fullMatch === '$$' || fullMatch === '\\[' ) {
                     if (envStack.length === 0 && braceDepth === 0) {
+                        // Start of display math - check if we should split previous text
                         if (currentBuffer.trim().length > 0) {
-                            blocks.push({ text: currentBuffer, line: bufferStartLine });
+                            const count = currentBuffer.split('\n').length;
+                            blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                             currentBuffer = "";
                             bufferStartLine = currentLine;
                         }
@@ -115,7 +124,8 @@ export class LatexBlockSplitter {
         const remaining = text.substring(lastIndex);
         if (remaining.trim().length > 0) {
              currentBuffer += remaining;
-             blocks.push({ text: currentBuffer, line: bufferStartLine });
+             const count = currentBuffer.split('\n').length;
+             blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
         }
 
         return blocks;

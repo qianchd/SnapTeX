@@ -42,20 +42,22 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // 3. Register Forward Sync Command (Editor -> Preview)
+    // 3. Register Forward Sync Command (Editor -> Preview) with Ratio Support
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.syncToPreview', () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor || !TexPreviewPanel.currentPanel) { return; }
 
             const line = editor.selection.active.line;
-            const blockIndex = renderer.getBlockIndexByLine(line);
+            // [Updated] Get index AND ratio for precise positioning
+            const { index, ratio } = renderer.getBlockIndexByLine(line);
 
-            console.log(`[SnapTeX] Sync to preview: Line ${line} -> Block ${blockIndex}`);
+            console.log(`[SnapTeX] Sync to preview: Line ${line} -> Block ${index} (Ratio: ${ratio.toFixed(2)})`);
 
             TexPreviewPanel.currentPanel.postMessage({
                 command: 'scrollToBlock',
-                index: blockIndex
+                index: index,
+                ratio: ratio // Send ratio to frontend
             });
         })
     );
@@ -110,7 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
     }, null, context.subscriptions);
 }
 
-// [Updated] Robust Reverse Sync Logic (Preview -> Editor)
+// [Updated] Robust Reverse Sync Logic (Preview -> Editor) with Ratio & Anchor
 function setupReverseSync(panel: TexPreviewPanel | undefined) {
     if (panel && panel.panel) {
         panel.panel.webview.onDidReceiveMessage(
@@ -118,22 +120,22 @@ function setupReverseSync(panel: TexPreviewPanel | undefined) {
                 switch (message.command) {
                     case 'revealLine':
                         const index = message.index;
-                        const line = renderer.getLineByBlockIndex(index);
+                        const ratio = message.ratio || 0;
+                        const anchor = message.anchor || ""; // [New] Anchor text
 
-                        // 1. Get the URI of the source document associated with the current preview
+                        // 1. Default: Calculate precise line using ratio
+                        let targetLine = renderer.getLineByBlockIndex(index, ratio);
+
+                        // 2. Exact URI matching for multi-file support
                         const targetUri = panel.sourceUri;
-                        if (!targetUri) {
-                            console.warn('[SnapTeX] Reverse sync failed: Unknown source document.');
-                            return;
-                        }
+                        if (!targetUri) { return; }
 
-                        // 2. Attempt to find an already visible editor matching the URI
-                        //    This correctly handles split views and multiple tabs.
+                        // 3. Find matching visible editor
                         let targetEditor = vscode.window.visibleTextEditors.find(
                             e => e.document.uri.toString() === targetUri.toString()
                         );
 
-                        // 3. If not found (e.g., file closed or hidden), try to open it
+                        // 4. Auto-open if not visible
                         if (!targetEditor) {
                             try {
                                 const doc = await vscode.workspace.openTextDocument(targetUri);
@@ -142,20 +144,47 @@ function setupReverseSync(panel: TexPreviewPanel | undefined) {
                                     viewColumn: vscode.ViewColumn.One
                                 });
                             } catch (e) {
-                                console.error('[SnapTeX] Failed to open document for reverse sync:', e);
+                                console.error('[SnapTeX] Failed to open document:', e);
                                 return;
                             }
                         } else {
-                            // If found, bring it to focus
+                            // If found, bring focus
                             await vscode.window.showTextDocument(targetEditor.document, {
                                 viewColumn: targetEditor.viewColumn
                             });
                         }
 
-                        // 4. Perform jump and center alignment
+                        // 5. [New] Refine position using anchor text search
+                        if (targetEditor && anchor && anchor.length > 2) {
+                            const blockInfo = renderer.getBlockInfo(index);
+                            if (blockInfo) {
+                                const startLine = blockInfo.start;
+                                const endLine = blockInfo.start + blockInfo.count;
+
+                                // Safely get text range of the block
+                                const docEnd = targetEditor.document.lineCount;
+                                const safeEndLine = Math.min(endLine, docEnd);
+                                if (startLine < docEnd) {
+                                    const blockRange = new vscode.Range(startLine, 0, safeEndLine, 0);
+                                    const blockText = targetEditor.document.getText(blockRange);
+
+                                    // Simple search for the anchor text within the block scope
+                                    const matchIndex = blockText.indexOf(anchor);
+                                    if (matchIndex !== -1) {
+                                        // Calculate exact line number from character offset
+                                        const preText = blockText.substring(0, matchIndex);
+                                        const lineOffset = preText.split('\n').length - 1;
+                                        targetLine = startLine + lineOffset;
+                                        console.log(`[SnapTeX] Anchor Match: "${anchor}" found at relative line ${lineOffset}`);
+                                    }
+                                }
+                            }
+                        }
+
+                        // 6. Jump to the line
                         if (targetEditor) {
-                            console.log(`[SnapTeX] Jumping to ${targetUri.fsPath}:${line}`);
-                            const range = targetEditor.document.lineAt(line).range;
+                            console.log(`[SnapTeX] Jumping to ${targetUri.fsPath}:${targetLine}`);
+                            const range = targetEditor.document.lineAt(targetLine).range;
                             targetEditor.selection = new vscode.Selection(range.start, range.end);
                             targetEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
                         }

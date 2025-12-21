@@ -10,19 +10,13 @@ export class TexPreviewPanel {
     private _disposables: vscode.Disposable[] = [];
     private _renderer: SmartRenderer;
 
-    // [New] Tracks the source file URI corresponding to the current preview content
+    // Tracks the source file URI corresponding to the current preview content
     private _sourceUri: vscode.Uri | undefined;
 
-    /**
-     * Expose the webview panel instance
-     */
     public get panel() {
         return this._panel;
     }
 
-    /**
-     * [New] Expose source URI for extension.ts to perform accurate reverse sync
-     */
     public get sourceUri() {
         return this._sourceUri;
     }
@@ -71,7 +65,6 @@ export class TexPreviewPanel {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
 
-        // [New] Critical: Record the current source file URI on every update
         this._sourceUri = editor.document.uri;
 
         const text = editor.document.getText();
@@ -120,12 +113,11 @@ export class TexPreviewPanel {
             <div id="content-root"></div>
             <script>
                 const vscode = acquireVsCodeApi();
-
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
                 window.addEventListener('message', event => {
-                    const { command, payload, index } = event.data;
+                    const { command, payload, index, ratio } = event.data;
 
                     if (command === 'update') {
                         if (payload.type === 'full') {
@@ -165,10 +157,8 @@ export class TexPreviewPanel {
                                 contentRoot.insertBefore(fragment, referenceNode);
                             }
 
-                            // 3. [Optimized] Update indices of following siblings without removing DOM nodes
+                            // 3. Shift indices for tail blocks (Attribute Patching)
                             if (shift !== 0) {
-                                // The insertion finished at index: start + htmls.length
-                                // We need to update nodes starting from this index to the end
                                 let node = contentRoot.children[start + htmls.length];
                                 while (node) {
                                     const oldIdx = parseInt(node.getAttribute('data-index'));
@@ -183,7 +173,19 @@ export class TexPreviewPanel {
                     else if (command === 'scrollToBlock') {
                         const target = document.querySelector('.latex-block[data-index="' + index + '"]');
                         if (target) {
-                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            // [Updated] Precise scrolling with ratio
+                            const rect = target.getBoundingClientRect();
+                            const absoluteTop = rect.top + window.scrollY;
+                            // Calculate pixel offset
+                            const offset = (ratio || 0) * rect.height;
+
+                            const targetY = absoluteTop + offset - (window.innerHeight / 2);
+
+                            window.scrollTo({
+                                top: targetY,
+                                behavior: 'smooth'
+                            });
+
                             target.classList.add('jump-highlight');
                             setTimeout(() => target.classList.remove('jump-highlight'), 2000);
                         }
@@ -195,9 +197,42 @@ export class TexPreviewPanel {
                     if (block) {
                         const index = block.getAttribute('data-index');
                         if (index !== null) {
+                            // 1. Calculate relative ratio
+                            const rect = block.getBoundingClientRect();
+                            const relativeY = event.clientY - rect.top;
+                            const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
+
+                            // 2. [New] Extract Anchor Text (Word at click position)
+                            let anchorText = "";
+                            const selection = window.getSelection();
+                            if (selection && selection.toString().trim().length > 0) {
+                                // Prefer explicit user selection
+                                anchorText = selection.toString().trim();
+                            } else if (document.caretRangeFromPoint) {
+                                // Fallback: Auto-detect word at click point
+                                const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+                                if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+                                    const text = range.startContainer.textContent;
+                                    const offset = range.startOffset;
+                                    // Expand to find the word boundaries
+                                    let start = offset;
+                                    let end = offset;
+                                    // Expand left
+                                    while (start > 0 && /\\S/.test(text[start - 1])) start--;
+                                    // Expand right
+                                    while (end < text.length && /\\S/.test(text[end])) end++;
+
+                                    if (end > start) {
+                                        anchorText = text.substring(start, end);
+                                    }
+                                }
+                            }
+
                             vscode.postMessage({
                                 command: 'revealLine',
-                                index: parseInt(index)
+                                index: parseInt(index),
+                                ratio: ratio,
+                                anchor: anchorText // Send the extracted anchor
                             });
                         }
                     }
