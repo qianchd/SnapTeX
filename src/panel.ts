@@ -116,8 +116,43 @@ export class TexPreviewPanel {
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
+                // [New] Helper to highlight precise word
+                function highlightTextInNode(rootElement, text) {
+                    if (!text || text.length < 2) return false;
+                    const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT);
+                    let node;
+                    while (node = walker.nextNode()) {
+                        const val = node.nodeValue;
+                        const index = val.indexOf(text);
+                        if (index >= 0) {
+                            // Split text node to isolate the word
+                            const range = document.createRange();
+                            range.setStart(node, index);
+                            range.setEnd(node, index + text.length);
+
+                            const span = document.createElement('span');
+                            span.className = 'highlight-word';
+                            range.surroundContents(span);
+
+                            // Scroll to the exact word (Better precision than block scrolling)
+                            span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+                            // Cleanup after animation (3s match CSS)
+                            setTimeout(() => {
+                                const parent = span.parentNode;
+                                if (parent) {
+                                    parent.replaceChild(document.createTextNode(span.textContent), span);
+                                    parent.normalize(); // Merge text nodes back
+                                }
+                            }, 3000);
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
                 window.addEventListener('message', event => {
-                    const { command, payload, index, ratio } = event.data;
+                    const { command, payload, index, ratio, anchor } = event.data;
 
                     if (command === 'update') {
                         if (payload.type === 'full') {
@@ -173,21 +208,27 @@ export class TexPreviewPanel {
                     else if (command === 'scrollToBlock') {
                         const target = document.querySelector('.latex-block[data-index="' + index + '"]');
                         if (target) {
-                            // [Updated] Precise scrolling with ratio
-                            const rect = target.getBoundingClientRect();
-                            const absoluteTop = rect.top + window.scrollY;
-                            // Calculate pixel offset
-                            const offset = (ratio || 0) * rect.height;
-
-                            const targetY = absoluteTop + offset - (window.innerHeight / 2);
-
-                            window.scrollTo({
-                                top: targetY,
-                                behavior: 'smooth'
-                            });
-
+                            // 1. Level 1: Block Highlight (Always happens)
                             target.classList.add('jump-highlight');
                             setTimeout(() => target.classList.remove('jump-highlight'), 2000);
+
+                            // 2. Level 2: Try Precise Word Highlight
+                            let preciseFound = false;
+                            if (anchor) {
+                                preciseFound = highlightTextInNode(target, anchor);
+                            }
+
+                            // 3. Fallback: If word not found, scroll using Ratio
+                            if (!preciseFound) {
+                                const rect = target.getBoundingClientRect();
+                                const absoluteTop = rect.top + window.scrollY;
+                                const offset = (ratio || 0) * rect.height;
+                                const targetY = absoluteTop + offset - (window.innerHeight / 2);
+                                window.scrollTo({
+                                    top: targetY,
+                                    behavior: 'smooth'
+                                });
+                            }
                         }
                     }
                 });

@@ -2,7 +2,7 @@
 
 :root {
     /* JS converts this vw value to a physical px value to eliminate calc jitter during resizing */
-    --base-font-size: clamp(12px, 2.4vw, 40px);
+    --base-font-size: clamp(12px, 2.2vw, 40px);
     --base-line-height: 1.5;
     --content-max-width: 3000px;
 }
@@ -230,16 +230,30 @@ ul li strong:first-child {
     text-decoration: underline;
 }
 
-/* Jump Highlight Animation */
+/* --- Jump Highlight Animation System --- */
+
+/* Level 1: Block Highlight - Faint yellow background */
 @keyframes flash-highlight {
     0% { background-color: transparent; }
-    20% { background-color: rgba(255, 235, 59, 0.4); }
+    20% { background-color: rgba(255, 235, 59, 0.4); } /* Faint Yellow */
     100% { background-color: transparent; }
 }
 
 .jump-highlight {
-    animation: flash-highlight 2s ease-out;
-    border-radius: 4px;
+    animation: flash-highlight 1.4s ease-out;
+}
+
+/* Level 2: Precise Word Highlight - Strong orange background */
+@keyframes fade-word {
+    0% { background-color: transparent; }
+    20% { background-color: rgba(255, 235, 59, 0.45) }
+    100% {
+        background-color: transparent;
+    }
+}
+
+.highlight-word {
+    animation: fade-word 1.5s ease-out;
 }
 
 /* Styles for VS Code (Webkit) */

@@ -42,22 +42,28 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // 3. Register Forward Sync Command (Editor -> Preview) with Ratio Support
+    // 3. Register Forward Sync Command (Editor -> Preview) with Anchor Support
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.syncToPreview', () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor || !TexPreviewPanel.currentPanel) { return; }
 
-            const line = editor.selection.active.line;
+            const position = editor.selection.active;
+            const line = position.line;
             // [Updated] Get index AND ratio for precise positioning
             const { index, ratio } = renderer.getBlockIndexByLine(line);
 
-            console.log(`[SnapTeX] Sync to preview: Line ${line} -> Block ${index} (Ratio: ${ratio.toFixed(2)})`);
+            // [New] Get the specific word under cursor as Anchor
+            const wordRange = editor.document.getWordRangeAtPosition(position);
+            const anchor = wordRange ? editor.document.getText(wordRange) : "";
+
+            console.log(`[SnapTeX] Sync to preview: Line ${line} -> Block ${index} (Anchor: "${anchor}")`);
 
             TexPreviewPanel.currentPanel.postMessage({
                 command: 'scrollToBlock',
                 index: index,
-                ratio: ratio // Send ratio to frontend
+                ratio: ratio,
+                anchor: anchor // Send anchor word to frontend
             });
         })
     );

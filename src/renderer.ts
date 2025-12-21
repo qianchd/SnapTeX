@@ -24,6 +24,7 @@ export class SmartRenderer {
 
     constructor() {
         this.rebuildMarkdownEngine({});
+        // Initial load of all rule levels
         this.reloadAllRules();
     }
 
@@ -105,6 +106,7 @@ export class SmartRenderer {
         let bodyText = cleanedText;
         this.contentStartLineOffset = 0;
 
+        // Use normalizedText (Original) to calculate offset (Crucial for correct sync)
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
         if (rawDocMatch && rawDocMatch.index !== undefined) {
             const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
@@ -167,7 +169,7 @@ export class SmartRenderer {
             return { text, html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>` };
         });
 
-        // Handle Shift for non-changing tail blocks (Attribute Patching Optimization)
+        // Handle Shift for non-changing tail blocks (Optimization)
         let shift = 0;
         if (end > 0 && rawInsertTexts.length !== deleteCount) {
              shift = rawInsertTexts.length - deleteCount;
@@ -198,7 +200,7 @@ export class SmartRenderer {
         }));
     }
 
-    // [New] Expose detailed block info for text searching (Anchor)
+    // [New] Expose detailed block info for text searching
     public getBlockInfo(index: number): { start: number; count: number } | undefined {
         if (index >= 0 && index < this.blockMap.length) {
             return this.blockMap[index];
@@ -207,7 +209,7 @@ export class SmartRenderer {
     }
 
     /**
-     * Return index AND relative ratio (0.0 - 1.0)
+     * [Updated] Return index AND relative ratio (0.0 - 1.0)
      */
     public getBlockIndexByLine(line: number): { index: number; ratio: number } {
         // Find the block containing the line
@@ -230,7 +232,7 @@ export class SmartRenderer {
     }
 
     /**
-     * Calculate exact line from block index + ratio
+     * [Updated] Calculate exact line from block index + ratio
      */
     public getLineByBlockIndex(index: number, ratio: number = 0): number {
         if (index >= 0 && index < this.blockMap.length) {
