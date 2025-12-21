@@ -28,6 +28,12 @@
         "key": "ctrl+k v",
         "mac": "cmd+k v",
         "when": "editorLangId == latex || editorLangId == tex"
+      },
+      {
+        "command": "snaptex.syncToPreview",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n",
+        "when": "editorTextFocus && resourceLangId == latex"
       }
     ]
   },

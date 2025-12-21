@@ -2,11 +2,10 @@ import MarkdownIt from 'markdown-it';
 const mdKatex = require('@iktakahiro/markdown-it-katex');
 import * as path from 'path';
 import * as fs from 'fs';
-import * as os from 'os'; // Used to get the system home directory
+import * as os from 'os';
 import { extractMetadata } from './metadata';
 import { LatexBlockSplitter } from './splitter';
 import { PreprocessRule, PatchPayload } from './types';
-import { toRoman } from './utils';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 
 
@@ -19,9 +18,13 @@ export class SmartRenderer {
     private protectedBlocks: string[] = [];
     private _preprocessRules: PreprocessRule[] = [];
 
+    // [New] Stores the starting line number for each block
+    private blockLineMap: number[] = [];
+    // [New] Line offset for the main content (e.g. lines before \begin{document})
+    private contentStartLineOffset: number = 0;
+
     constructor() {
         this.rebuildMarkdownEngine({});
-        // Initial load of all rule levels
         this.reloadAllRules();
     }
 
@@ -31,42 +34,26 @@ export class SmartRenderer {
         this.md.use(mdKatex, { macros, globalGroup: true, throwOnError: false });
     }
 
-    /**
-     * Reset renderer state (for full refresh)
-     */
     public resetState() {
         this.lastBlocks = [];
         this.lastMacrosJson = "";
+        this.blockLineMap = [];
     }
 
-    /**
-     * Core: Reload all rule levels in order.
-     * Order: Built-in defaults -> Global custom (~/.snaptex.global.js) -> Workspace custom
-     */
     public reloadAllRules(workspaceRoot?: string) {
-        // 1. Revert to built-in default rules
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
-
-        // 2. Load global configuration
         const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
         this.loadConfig(globalConfigPath);
-
-        // 3. Load workspace configuration
         if (workspaceRoot) {
             const workspaceConfigPath = path.join(workspaceRoot, 'snaptex.config.js');
             this.loadConfig(workspaceConfigPath);
         }
-
         this._sortRules();
     }
 
-    /**
-     * Internal config file loader
-     */
     private loadConfig(configPath: string) {
         if (fs.existsSync(configPath)) {
             try {
-                // Clear Node.js require cache to ensure hot reload after config modification
                 delete require.cache[require.resolve(configPath)];
                 const userConfig = require(configPath);
                 if (userConfig && Array.isArray(userConfig.rules)) {
@@ -80,9 +67,6 @@ export class SmartRenderer {
         }
     }
 
-    /**
-     * Register/Override preprocessing rules
-     */
     public registerPreprocessRule(rule: PreprocessRule) {
         const index = this._preprocessRules.findIndex(r => r.name === rule.name);
         if (index !== -1) {
@@ -90,14 +74,12 @@ export class SmartRenderer {
         } else {
             this._preprocessRules.push(rule);
         }
-        // Do not sort immediately after registration; sort uniformly in the outer reloadAllRules to optimize performance
     }
 
     private _sortRules() {
         this._preprocessRules.sort((a, b) => a.priority - b.priority);
     }
 
-    // --- Ports for Rules to call ---
     public pushInlineProtected(content: string) {
         this.protectedBlocks.push(content);
         return `%%%PROTECTED_BLOCK_${this.protectedBlocks.length - 1}%%%`;
@@ -115,7 +97,7 @@ export class SmartRenderer {
         // 1. Global metadata scanning
         const { data, cleanedText } = extractMetadata(normalizedText);
 
-        // 2. Macro update judgment
+        // 2. Macro update
         const currentMacrosJson = JSON.stringify(data.macros);
         if (currentMacrosJson !== this.lastMacrosJson) {
             this.rebuildMarkdownEngine(data.macros);
@@ -125,78 +107,132 @@ export class SmartRenderer {
         this.currentTitle = data.title;
         this.currentAuthor = data.author;
 
-        // 3. Extract body text
+        // 3. Extract body text & Calculate content offset
         let bodyText = cleanedText;
-        const docStartRegex = /\\begin\{document\}/i;
-        const docMatch = cleanedText.match(docStartRegex);
-        if (docMatch && docMatch.index !== undefined) {
-            bodyText = cleanedText.substring(docMatch.index + docMatch[0].length)
+        this.contentStartLineOffset = 0;
+
+        // [Fix Offset Issue] 使用原始文本计算偏移量，而不是被清洗过的文本
+        const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
+
+        if (rawDocMatch && rawDocMatch.index !== undefined) {
+            // 使用 normalizedText 计算前导行数，确保包含被 metadata 提取删去的行
+            const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
+            this.contentStartLineOffset = preContent.split('\n').length - 1;
+
+            // 依然需要从 cleanedText 中提取正文进行渲染
+            const cleanDocMatch = cleanedText.match(/\\begin\{document\}/i);
+            if (cleanDocMatch && cleanDocMatch.index !== undefined) {
+                 bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
                                   .replace(/\\end\{document\}[\s\S]*/i, '');
+            }
         }
 
-        // 4. Fingerprint injection and logical blocking
-        const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
-        const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}]`;
-
+        // 4. Split and Map
         const rawBlocks = LatexBlockSplitter.split(bodyText)
             .map(t => t.trim())
-            .filter(t => t.length > 0)
-            .map(t => t.includes('\\maketitle') ? (t + metaFingerprint) : t);
+            .filter(t => t.length > 0);
+
+        // Build mapping using the corrected offset
+        this.buildBlockLineMap(rawBlocks);
+
+        const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
+        const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}]`;
+        const fingerprintedBlocks = rawBlocks.map(t => t.includes('\\maketitle') ? (t + metaFingerprint) : t);
 
         const oldBlocks = this.lastBlocks;
 
-        // 5. Incremental comparison (Diff)
+        // 5. Diff
         let start = 0;
-        const minLen = Math.min(rawBlocks.length, oldBlocks.length);
-        while (start < minLen && rawBlocks[start] === oldBlocks[start].text) {
+        const minLen = Math.min(fingerprintedBlocks.length, oldBlocks.length);
+        while (start < minLen && fingerprintedBlocks[start] === oldBlocks[start].text) {
             start++;
         }
 
         let end = 0;
-        const maxEnd = Math.min(oldBlocks.length - start, rawBlocks.length - start);
+        const maxEnd = Math.min(oldBlocks.length - start, fingerprintedBlocks.length - start);
         while (end < maxEnd) {
-            if (oldBlocks[oldBlocks.length - 1 - end].text !== rawBlocks[rawBlocks.length - 1 - end]) { break; }
+            if (oldBlocks[oldBlocks.length - 1 - end].text !== fingerprintedBlocks[fingerprintedBlocks.length - 1 - end]) { break; }
             end++;
         }
 
-        // 6. Render the changed parts
-        const deleteCount = oldBlocks.length - start - end;
-        const rawInsertTexts = rawBlocks.slice(start, rawBlocks.length - end);
+        // 6. Render
+        let deleteCount = oldBlocks.length - start - end;
+        const rawInsertTexts = fingerprintedBlocks.slice(start, fingerprintedBlocks.length - end);
 
-        const insertedBlocksData = rawInsertTexts.map(text => {
-            this.protectedBlocks = []; // Reset protected area before rendering each new block
+        let insertedBlocksData = rawInsertTexts.map((text, i) => {
+            const absoluteIndex = start + i;
+            this.protectedBlocks = [];
             let processed = text;
 
-            // Apply dynamically sorted rule chain
             this._preprocessRules.forEach(rule => {
                 processed = rule.apply(processed, this);
             });
 
-            // Restore protected content (Unmask)
             processed = processed.replace(/%%%PROTECTED_BLOCK_(\d+)%%%/g, (_, index) => {
                 return this.protectedBlocks[parseInt(index)];
             });
 
-            // Automatically detect special markers and execute HTML post-processing
             const hasSpecialBlocks = /%%%(ABSTRACT|KEYWORDS)_START%%%/.test(processed);
             const innerHtml = this.md!.render(processed);
             const finalHtml = hasSpecialBlocks ? postProcessHtml(innerHtml) : innerHtml;
 
-            return { text, html: `<div class="latex-block">${finalHtml}</div>` };
+            // Inject data-index
+            return { text, html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>` };
         });
 
-        // 7. Update state cache and generate Patch payload
+        // [SyncTeX Fix] Re-index tail blocks if indices shifted
+        if (end > 0 && rawInsertTexts.length !== deleteCount) {
+            const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
+            const reindexedTail = tailBlocks.map((b, i) => {
+                const newIdx = start + rawInsertTexts.length + i;
+                return {
+                    text: b.text,
+                    html: b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`)
+                };
+            });
+            insertedBlocksData = [...insertedBlocksData, ...reindexedTail];
+            deleteCount += end;
+            end = 0;
+        }
+
+        // 7. Update Cache
         this.lastBlocks = [
             ...oldBlocks.slice(0, start),
             ...insertedBlocksData,
             ...oldBlocks.slice(oldBlocks.length - end)
         ];
 
-        // Determine whether it is a full redraw or an incremental Patch
         if (oldBlocks.length === 0 || insertedBlocksData.length > 50 || deleteCount > 50) {
             return { type: 'full', html: this.lastBlocks.map(b => b.html).join('') };
         }
 
         return { type: 'patch', start, deleteCount, htmls: insertedBlocksData.map(b => b.html) };
+    }
+
+    private buildBlockLineMap(rawBlocks: string[]) {
+        this.blockLineMap = [];
+        let currentLine = this.contentStartLineOffset;
+
+        for (const blockText of rawBlocks) {
+            this.blockLineMap.push(currentLine);
+            const lineCount = blockText.split('\n').length;
+            currentLine += lineCount + 1;
+        }
+    }
+
+    public getBlockIndexByLine(line: number): number {
+        for (let i = 0; i < this.blockLineMap.length; i++) {
+            if (this.blockLineMap[i] > line) {
+                return Math.max(0, i - 1);
+            }
+        }
+        return this.blockLineMap.length - 1;
+    }
+
+    public getLineByBlockIndex(index: number): number {
+        if (index >= 0 && index < this.blockLineMap.length) {
+            return this.blockLineMap[index];
+        }
+        return 0;
     }
 }

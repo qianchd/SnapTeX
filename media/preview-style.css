@@ -2,7 +2,7 @@
 
 :root {
     /* JS converts this vw value to a physical px value to eliminate calc jitter during resizing */
-    --base-font-size: clamp(12px, 2.2vw, 40px);
+    --base-font-size: clamp(12px, 2.4vw, 40px);
     --base-line-height: 1.5;
     --content-max-width: 3000px;
 }

@@ -10,12 +10,19 @@ export class TexPreviewPanel {
     private _disposables: vscode.Disposable[] = [];
     private _renderer: SmartRenderer;
 
-    public static createOrShow(extensionPath: string, renderer: SmartRenderer) {
+    /**
+     * Expose the webview panel
+     */
+    public get panel() {
+        return this._panel;
+    }
+
+    public static createOrShow(extensionPath: string, renderer: SmartRenderer): TexPreviewPanel {
         const column = vscode.window.activeTextEditor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One;
 
         if (TexPreviewPanel.currentPanel) {
             TexPreviewPanel.currentPanel._panel.reveal(column);
-            return;
+            return TexPreviewPanel.currentPanel;
         }
 
         const panel = vscode.window.createWebviewPanel(
@@ -31,6 +38,7 @@ export class TexPreviewPanel {
             }
         );
         TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionPath, renderer);
+        return TexPreviewPanel.currentPanel;
     }
 
     private constructor(panel: vscode.WebviewPanel, extensionPath: string, renderer: SmartRenderer) {
@@ -38,15 +46,15 @@ export class TexPreviewPanel {
         this._extensionPath = extensionPath;
         this._renderer = renderer;
 
-        // [Fix] Reset state on initialization
         this._renderer.resetState();
-
         this._panel.webview.html = this._getWebviewSkeleton();
-
-        // Ensure initial load
         this.update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+    }
+
+    public postMessage(message: any) {
+        this._panel.webview.postMessage(message);
     }
 
     public update() {
@@ -57,7 +65,6 @@ export class TexPreviewPanel {
         this._panel.webview.postMessage({ command: 'update', payload });
     }
 
-    // [Ported from ext-old] Accurately find KaTeX local path
     private getKatexPaths() {
         let katexMainPath = "";
         try {
@@ -98,43 +105,31 @@ export class TexPreviewPanel {
             <body>
             <div id="content-root"></div>
             <script>
+                const vscode = acquireVsCodeApi();
+
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
-                // --- Message handling ---
                 window.addEventListener('message', event => {
-                    const { command, payload } = event.data;
+                    const { command, payload, index } = event.data;
+
                     if (command === 'update') {
                         if (payload.type === 'full') {
-                            console.log("full update");
-
-                            // 1. Enable global rendering
                             document.body.classList.add('preload-mode');
-
-                            // [Step C] Write content
                             contentRoot.innerHTML = payload.html;
 
-                            // [Step D] Wait for fonts + Force reflow
                             document.fonts.ready.then(() => {
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
                                         const fullHeight = document.body.scrollHeight;
                                         const count = contentRoot.childElementCount || 1;
-
-                                        // Update base values (for initial CSS variable setting)
                                         const avgHeight = fullHeight / count;
-
-                                        const avgStr = avgHeight.toFixed(2);
-                                        root.style.setProperty('--avg-height', avgStr + 'px');
-
+                                        root.style.setProperty('--avg-height', avgHeight.toFixed(2) + 'px');
                                         document.body.classList.remove('preload-mode');
-                                        console.log('[Preview] Full render done. Avg set to:', avgStr);
                                     });
                                 });
                             });
                         } else if (payload.type === 'patch') {
-                            console.log("local update");
-                            // Patch logic
                             const { start, deleteCount, htmls = [] } = payload;
                             const targetIndex = start + deleteCount;
                             const referenceNode = contentRoot.children[targetIndex] || null;
@@ -155,9 +150,36 @@ export class TexPreviewPanel {
                             }
                         }
                     }
+                    else if (command === 'scrollToBlock') {
+                        const target = document.querySelector('.latex-block[data-index="' + index + '"]');
+                        if (target) {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            target.classList.add('jump-highlight');
+                            setTimeout(() => target.classList.remove('jump-highlight'), 2000);
+                        }
+                    }
                 });
 
-                // Jump listener (Keep unchanged)
+                // [Reverse Sync] with Debug Logging
+                document.addEventListener('dblclick', event => {
+                    console.log('[Preview] Double click detected.');
+                    const block = event.target.closest('.latex-block');
+                    if (block) {
+                        const index = block.getAttribute('data-index');
+                        console.log('[Preview] Found block index:', index);
+                        if (index !== null) {
+                            vscode.postMessage({
+                                command: 'revealLine',
+                                index: parseInt(index)
+                            });
+                        } else {
+                            console.warn('[Preview] Block has no data-index!');
+                        }
+                    } else {
+                        console.log('[Preview] Clicked outside of latex-block.');
+                    }
+                });
+
                 document.addEventListener('click', e => {
                     const target = e.target.closest('a');
                     if (target && target.getAttribute('href')?.startsWith('#')) {

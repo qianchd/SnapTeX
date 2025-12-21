@@ -33,16 +33,40 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('[SnapTeX] Extension is now active.');
 
     const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
+
+    // [Optimized] Define a variable to record the currently loaded Rule Root
     let currentRoot = getProjectRoot();
 
-    // 1. Initial load
+    // 1. Initial load of all rule levels (Default + Global + Workspace)
     renderer.reloadAllRules(currentRoot);
 
     // 2. Register startup command
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.start', () => {
             // Ensure passing the renderer singleton
-            TexPreviewPanel.createOrShow(context.extensionPath, renderer);
+            const panel = TexPreviewPanel.createOrShow(context.extensionPath, renderer);
+            setupReverseSync(panel);
+        })
+    );
+
+    // [New] Register Forward Sync Command (Editor -> Preview)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('snaptex.syncToPreview', () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !TexPreviewPanel.currentPanel) { return; }
+
+            // 1. Get current line
+            const line = editor.selection.active.line;
+            // 2. Calculate corresponding block index
+            const blockIndex = renderer.getBlockIndexByLine(line);
+
+            console.log(`[SnapTeX] Sync to preview: Line ${line} -> Block ${blockIndex}`);
+
+            // 3. Send message to Webview
+            TexPreviewPanel.currentPanel.postMessage({
+                command: 'scrollToBlock',
+                index: blockIndex
+            });
         })
     );
 
@@ -87,16 +111,43 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor) {
             const newRoot = getProjectRoot();
-            // reload only when the root folder has changed
+
+            // [Optimized] Reload rules only when the project root changes
             if (newRoot !== currentRoot) {
                 console.log(`[SnapTeX] Switching context: ${currentRoot} -> ${newRoot}`);
                 currentRoot = newRoot;
                 renderer.reloadAllRules(newRoot);
             }
-            // re-render the preview panel since the active file is changed.
+
             TexPreviewPanel.currentPanel?.update();
         }
     }, null, context.subscriptions);
+}
+
+// [New] Helper function to setup Reverse Sync listener (Preview -> Editor)
+function setupReverseSync(panel: TexPreviewPanel | undefined) {
+    if (panel && panel.panel) {
+        panel.panel.webview.onDidReceiveMessage(
+            message => {
+                switch (message.command) {
+                    case 'revealLine':
+                        const index = message.index;
+                        // Calculate editor line from block index
+                        const line = renderer.getLineByBlockIndex(index);
+                        const editor = vscode.window.activeTextEditor;
+                        if (editor) {
+                            const range = editor.document.lineAt(line).range;
+                            // Set selection and scroll to center
+                            editor.selection = new vscode.Selection(range.start, range.end);
+                            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                        }
+                        return;
+                }
+            },
+            null,
+            []
+        );
+    }
 }
 
 export function deactivate() {
