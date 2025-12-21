@@ -23,6 +23,37 @@ function getProjectRoot(): string | undefined {
 }
 
 /**
+ * Helper: Extract a multi-word context string around the cursor
+ * This removes LaTeX commands to increase match probability in the rendered HTML.
+ */
+function getAnchorContext(editor: vscode.TextEditor): string {
+    const position = editor.selection.active;
+    const lineText = editor.document.lineAt(position.line).text;
+
+    // 1. Define a window around the cursor (e.g., +/- 30 characters)
+    const startChar = Math.max(0, position.character - 30);
+    const endChar = Math.min(lineText.length, position.character + 30);
+    const rawSnippet = lineText.substring(startChar, endChar);
+
+    // 2. Clean up LaTeX syntax to get "pure text" (heuristic)
+    // Remove command keywords (e.g. \textbf{...} -> { ... })
+    let clean = rawSnippet.replace(/\\[a-zA-Z]+\*?/g, ' ');
+    // Remove braces, $, %, etc.
+    clean = clean.replace(/[{}$%]/g, ' ');
+    // Collapse whitespace
+    clean = clean.replace(/\s+/g, ' ').trim();
+
+    // 3. Ensure we have a decent length (min 5 chars)
+    if (clean.length < 5) {
+        // Fallback: simple word under cursor if context is too noisy (like pure math)
+        const wordRange = editor.document.getWordRangeAtPosition(position);
+        return wordRange ? editor.document.getText(wordRange) : "";
+    }
+
+    return clean;
+}
+
+/**
  * Extension activation entry
  */
 export function activate(context: vscode.ExtensionContext) {
@@ -42,7 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // 3. Register Forward Sync Command (Editor -> Preview) with Anchor Support
+    // 3. Register Forward Sync Command (Editor -> Preview)
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.syncToPreview', () => {
             const editor = vscode.window.activeTextEditor;
@@ -50,12 +81,12 @@ export function activate(context: vscode.ExtensionContext) {
 
             const position = editor.selection.active;
             const line = position.line;
+
             // [Updated] Get index AND ratio for precise positioning
             const { index, ratio } = renderer.getBlockIndexByLine(line);
 
-            // [New] Get the specific word under cursor as Anchor
-            const wordRange = editor.document.getWordRangeAtPosition(position);
-            const anchor = wordRange ? editor.document.getText(wordRange) : "";
+            // [New] Get multi-word context anchor
+            const anchor = getAnchorContext(editor);
 
             console.log(`[SnapTeX] Sync to preview: Line ${line} -> Block ${index} (Anchor: "${anchor}")`);
 
@@ -63,7 +94,7 @@ export function activate(context: vscode.ExtensionContext) {
                 command: 'scrollToBlock',
                 index: index,
                 ratio: ratio,
-                anchor: anchor // Send anchor word to frontend
+                anchor: anchor // Send the robust context string
             });
         })
     );
@@ -118,7 +149,7 @@ export function activate(context: vscode.ExtensionContext) {
     }, null, context.subscriptions);
 }
 
-// [Updated] Robust Reverse Sync Logic (Preview -> Editor) with Ratio & Anchor
+// [Updated] Robust Reverse Sync Logic (Preview -> Editor)
 function setupReverseSync(panel: TexPreviewPanel | undefined) {
     if (panel && panel.panel) {
         panel.panel.webview.onDidReceiveMessage(
@@ -127,7 +158,7 @@ function setupReverseSync(panel: TexPreviewPanel | undefined) {
                     case 'revealLine':
                         const index = message.index;
                         const ratio = message.ratio || 0;
-                        const anchor = message.anchor || ""; // [New] Anchor text
+                        const anchor = message.anchor || "";
 
                         // 1. Default: Calculate precise line using ratio
                         let targetLine = renderer.getLineByBlockIndex(index, ratio);
@@ -161,27 +192,25 @@ function setupReverseSync(panel: TexPreviewPanel | undefined) {
                         }
 
                         // 5. [New] Refine position using anchor text search
-                        if (targetEditor && anchor && anchor.length > 2) {
+                        // We search for the anchor in the raw document text around the estimated line
+                        if (targetEditor && anchor && anchor.length > 3) {
                             const blockInfo = renderer.getBlockInfo(index);
                             if (blockInfo) {
+                                // Search window: The specific block range
                                 const startLine = blockInfo.start;
                                 const endLine = blockInfo.start + blockInfo.count;
+                                const safeEndLine = Math.min(endLine, targetEditor.document.lineCount);
 
-                                // Safely get text range of the block
-                                const docEnd = targetEditor.document.lineCount;
-                                const safeEndLine = Math.min(endLine, docEnd);
-                                if (startLine < docEnd) {
+                                if (startLine < targetEditor.document.lineCount) {
                                     const blockRange = new vscode.Range(startLine, 0, safeEndLine, 0);
                                     const blockText = targetEditor.document.getText(blockRange);
 
-                                    // Simple search for the anchor text within the block scope
+                                    // Search for the clicked text in the source block
                                     const matchIndex = blockText.indexOf(anchor);
                                     if (matchIndex !== -1) {
-                                        // Calculate exact line number from character offset
                                         const preText = blockText.substring(0, matchIndex);
                                         const lineOffset = preText.split('\n').length - 1;
                                         targetLine = startLine + lineOffset;
-                                        console.log(`[SnapTeX] Anchor Match: "${anchor}" found at relative line ${lineOffset}`);
                                     }
                                 }
                             }

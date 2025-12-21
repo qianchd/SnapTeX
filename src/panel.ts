@@ -10,7 +10,6 @@ export class TexPreviewPanel {
     private _disposables: vscode.Disposable[] = [];
     private _renderer: SmartRenderer;
 
-    // Tracks the source file URI corresponding to the current preview content
     private _sourceUri: vscode.Uri | undefined;
 
     public get panel() {
@@ -116,16 +115,76 @@ export class TexPreviewPanel {
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
-                // [New] Helper to highlight precise word
+                // --- Scroll State Management ---
+                function saveScrollState() {
+                    const blocks = document.querySelectorAll('.latex-block');
+                    const scrollTop = window.scrollY;
+
+                    // Find the first block that is currently visible in the viewport
+                    for (const block of blocks) {
+                        const rect = block.getBoundingClientRect();
+                        // rect.bottom > 0 means the block is at least partially visible or below top
+                        // rect.top <= window.innerHeight
+                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
+                            const index = block.getAttribute('data-index');
+                            // Calculate how far we are into this block (ratio)
+                            // Offset is the distance from the block's top to the viewport top
+                            const offset = -rect.top;
+                            const ratio = offset / rect.height;
+
+                            return { index, ratio, offset };
+                        }
+                    }
+                    return null;
+                }
+
+                function restoreScrollState(state) {
+                    if (!state || !state.index) return;
+
+                    const block = document.querySelector('.latex-block[data-index="' + state.index + '"]');
+                    if (block) {
+                        // Calculate new scroll position: Element Top + (Height * Previous Ratio)
+                        // This accounts for the block's height potentially changing after re-render
+                        const newTop = block.getBoundingClientRect().top + window.scrollY;
+                        // However, using the exact pixel offset often feels more natural if content didn't shift much
+                        // But using ratio is safer for resizing. Let's try to restore the visual anchor.
+
+                        let targetY;
+                        // If we had a specific offset, try to respect the relative position
+                        if (state.ratio >= 0) {
+                             targetY = newTop + (block.offsetHeight * state.ratio);
+                        } else {
+                             targetY = newTop;
+                        }
+
+                        // Scroll instantly
+                        window.scrollTo({ top: targetY, behavior: 'auto' });
+                    }
+                }
+
+                // [Updated] Robust Highlighting Logic
                 function highlightTextInNode(rootElement, text) {
-                    if (!text || text.length < 2) return false;
-                    const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT);
+                    if (!text || text.length < 3) return false;
+
+                    const walker = document.createTreeWalker(
+                        rootElement,
+                        NodeFilter.SHOW_TEXT,
+                        {
+                            acceptNode: (node) => {
+                                if (node.parentElement && node.parentElement.closest('.katex')) {
+                                    return NodeFilter.FILTER_REJECT;
+                                }
+                                return NodeFilter.FILTER_ACCEPT;
+                            }
+                        }
+                    );
+
                     let node;
                     while (node = walker.nextNode()) {
                         const val = node.nodeValue;
                         const index = val.indexOf(text);
+
                         if (index >= 0) {
-                            // Split text node to isolate the word
                             const range = document.createRange();
                             range.setStart(node, index);
                             range.setEnd(node, index + text.length);
@@ -134,15 +193,13 @@ export class TexPreviewPanel {
                             span.className = 'highlight-word';
                             range.surroundContents(span);
 
-                            // Scroll to the exact word (Better precision than block scrolling)
                             span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
 
-                            // Cleanup after animation (3s match CSS)
                             setTimeout(() => {
                                 const parent = span.parentNode;
                                 if (parent) {
                                     parent.replaceChild(document.createTextNode(span.textContent), span);
-                                    parent.normalize(); // Merge text nodes back
+                                    parent.normalize();
                                 }
                             }, 3000);
                             return true;
@@ -156,6 +213,9 @@ export class TexPreviewPanel {
 
                     if (command === 'update') {
                         if (payload.type === 'full') {
+                            // 1. Capture scroll state before nuking DOM
+                            const scrollState = saveScrollState();
+
                             document.body.classList.add('preload-mode');
                             contentRoot.innerHTML = payload.html;
 
@@ -166,6 +226,10 @@ export class TexPreviewPanel {
                                         const count = contentRoot.childElementCount || 1;
                                         const avgHeight = fullHeight / count;
                                         root.style.setProperty('--avg-height', avgHeight.toFixed(2) + 'px');
+
+                                        // 2. Restore scroll state
+                                        restoreScrollState(scrollState);
+
                                         document.body.classList.remove('preload-mode');
                                     });
                                 });
@@ -192,7 +256,7 @@ export class TexPreviewPanel {
                                 contentRoot.insertBefore(fragment, referenceNode);
                             }
 
-                            // 3. Shift indices for tail blocks (Attribute Patching)
+                            // 3. Shift indices
                             if (shift !== 0) {
                                 let node = contentRoot.children[start + htmls.length];
                                 while (node) {
@@ -208,17 +272,14 @@ export class TexPreviewPanel {
                     else if (command === 'scrollToBlock') {
                         const target = document.querySelector('.latex-block[data-index="' + index + '"]');
                         if (target) {
-                            // 1. Level 1: Block Highlight (Always happens)
                             target.classList.add('jump-highlight');
                             setTimeout(() => target.classList.remove('jump-highlight'), 2000);
 
-                            // 2. Level 2: Try Precise Word Highlight
                             let preciseFound = false;
                             if (anchor) {
                                 preciseFound = highlightTextInNode(target, anchor);
                             }
 
-                            // 3. Fallback: If word not found, scroll using Ratio
                             if (!preciseFound) {
                                 const rect = target.getBoundingClientRect();
                                 const absoluteTop = rect.top + window.scrollY;
@@ -238,31 +299,23 @@ export class TexPreviewPanel {
                     if (block) {
                         const index = block.getAttribute('data-index');
                         if (index !== null) {
-                            // 1. Calculate relative ratio
                             const rect = block.getBoundingClientRect();
                             const relativeY = event.clientY - rect.top;
                             const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
 
-                            // 2. [New] Extract Anchor Text (Word at click position)
                             let anchorText = "";
                             const selection = window.getSelection();
                             if (selection && selection.toString().trim().length > 0) {
-                                // Prefer explicit user selection
                                 anchorText = selection.toString().trim();
                             } else if (document.caretRangeFromPoint) {
-                                // Fallback: Auto-detect word at click point
                                 const range = document.caretRangeFromPoint(event.clientX, event.clientY);
                                 if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
                                     const text = range.startContainer.textContent;
                                     const offset = range.startOffset;
-                                    // Expand to find the word boundaries
                                     let start = offset;
                                     let end = offset;
-                                    // Expand left
                                     while (start > 0 && /\\S/.test(text[start - 1])) start--;
-                                    // Expand right
                                     while (end < text.length && /\\S/.test(text[end])) end++;
-
                                     if (end > start) {
                                         anchorText = text.substring(start, end);
                                     }
@@ -273,25 +326,8 @@ export class TexPreviewPanel {
                                 command: 'revealLine',
                                 index: parseInt(index),
                                 ratio: ratio,
-                                anchor: anchorText // Send the extracted anchor
+                                anchor: anchorText
                             });
-                        }
-                    }
-                });
-
-                document.addEventListener('click', e => {
-                    const target = e.target.closest('a');
-                    if (target && target.getAttribute('href')?.startsWith('#')) {
-                        const id = target.getAttribute('href').substring(1);
-                        const element = document.getElementById(id);
-                        if (element) {
-                            e.preventDefault();
-                            const parentBlock = element.closest('.latex-block');
-                            (parentBlock || element).scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            if (parentBlock) {
-                                parentBlock.classList.add('jump-highlight');
-                                setTimeout(() => parentBlock.classList.remove('jump-highlight'), 2000);
-                            }
                         }
                     }
                 });

@@ -39,7 +39,6 @@ export class LatexBlockSplitter {
                 // Ignore internal environments like TikZ to prevent counting interference
                 if (!/^(proof|itemize|enumerate|tikzpicture)$/.test(beginName)) {
                     // Force split content before a top-level float
-                    // Only split if we are at top level (braceDepth 0) and not already inside another environment
                     if (/^(equation|align|gather|multline|flalign|alignat|figure|table|algorithm)\*?$/.test(beginName) &&
                         envStack.length === 0 && braceDepth === 0) {
                         if (currentBuffer.trim().length > 0) {
@@ -95,23 +94,67 @@ export class LatexBlockSplitter {
                     currentLine += matchLines;
                 }
             } else if (isMathSymbol) {
-                if (fullMatch === '$$' || fullMatch === '\\[' ) {
+                // Handle Math Delimiters ($$, \[, \])
+                if (fullMatch === '$$') {
+                    if (envStack.length > 0 && envStack[envStack.length - 1] === '$$') {
+                        // Case A: Closing $$ - Standard pop
+                        envStack.pop();
+                        currentBuffer += fullMatch;
+                    } else if (envStack.length === 0 && braceDepth === 0) {
+                        // Case B: Opening $$ - Needs Validation (Fault Tolerance)
+
+                        // Lookahead: Search for closing $$ or double newline
+                        const remainingText = text.substring(regex.lastIndex);
+                        const nextCloseIdx = remainingText.indexOf('$$');
+                        const emptyLineMatch = remainingText.match(/\n\s*\n/);
+                        const nextEmptyLineIdx = (emptyLineMatch && typeof emptyLineMatch.index === 'number') ? emptyLineMatch.index : -1;
+
+                        // Check validity:
+                        // 1. Must find a closing '$$'
+                        // 2. The closing '$$' must appear BEFORE any double newline (paragraph break)
+                        const hasClose = nextCloseIdx !== -1;
+                        const isBrokenByNewline = nextEmptyLineIdx !== -1 && nextEmptyLineIdx < nextCloseIdx;
+
+                        if (hasClose && !isBrokenByNewline) {
+                            // Valid Math Block: Split previous text and push to stack
+                            if (currentBuffer.trim().length > 0) {
+                                const count = currentBuffer.split('\n').length;
+                                blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
+                                currentBuffer = "";
+                                bufferStartLine = currentLine;
+                            }
+                            envStack.push('$$');
+                            currentBuffer += fullMatch;
+                        } else {
+                            // Invalid Math Block: Treat '$$' as plain text
+                            // Do NOT push to envStack. Do NOT split block.
+                            // This prevents swallowing the rest of the document.
+                            currentBuffer += fullMatch;
+                        }
+                    } else {
+                        // Nested inside other env or braces, just treat as text
+                        currentBuffer += fullMatch;
+                    }
+                }
+                else if (fullMatch === '\\[') {
                     if (envStack.length === 0 && braceDepth === 0) {
-                        // Start of display math - check if we should split previous text
                         if (currentBuffer.trim().length > 0) {
                             const count = currentBuffer.split('\n').length;
                             blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
                             currentBuffer = "";
                             bufferStartLine = currentLine;
                         }
-                        envStack.push(fullMatch === '$$' ? '$$' : '\\]');
-                    } else if (envStack.length > 0 && envStack[envStack.length - 1] === '$$' && fullMatch === '$$') {
+                        envStack.push('\\]');
+                    }
+                    currentBuffer += fullMatch;
+                }
+                else if (fullMatch === '\\]') {
+                    if (envStack.length > 0 && envStack[envStack.length - 1] === '\\]') {
                         envStack.pop();
                     }
-                } else if (fullMatch === '\\]') {
-                    if (envStack.length > 0 && envStack[envStack.length - 1] === '\\]') { envStack.pop(); }
+                    currentBuffer += fullMatch;
                 }
-                currentBuffer += fullMatch;
+
                 currentLine += matchLines;
             } else {
                 currentBuffer += fullMatch;
