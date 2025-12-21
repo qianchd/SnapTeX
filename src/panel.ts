@@ -10,11 +10,21 @@ export class TexPreviewPanel {
     private _disposables: vscode.Disposable[] = [];
     private _renderer: SmartRenderer;
 
+    // [New] Tracks the source file URI corresponding to the current preview content
+    private _sourceUri: vscode.Uri | undefined;
+
     /**
-     * Expose the webview panel
+     * Expose the webview panel instance
      */
     public get panel() {
         return this._panel;
+    }
+
+    /**
+     * [New] Expose source URI for extension.ts to perform accurate reverse sync
+     */
+    public get sourceUri() {
+        return this._sourceUri;
     }
 
     public static createOrShow(extensionPath: string, renderer: SmartRenderer): TexPreviewPanel {
@@ -60,6 +70,10 @@ export class TexPreviewPanel {
     public update() {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
+
+        // [New] Critical: Record the current source file URI on every update
+        this._sourceUri = editor.document.uri;
+
         const text = editor.document.getText();
         const payload = this._renderer.render(text);
         this._panel.webview.postMessage({ command: 'update', payload });
@@ -160,23 +174,16 @@ export class TexPreviewPanel {
                     }
                 });
 
-                // [Reverse Sync] with Debug Logging
                 document.addEventListener('dblclick', event => {
-                    console.log('[Preview] Double click detected.');
                     const block = event.target.closest('.latex-block');
                     if (block) {
                         const index = block.getAttribute('data-index');
-                        console.log('[Preview] Found block index:', index);
                         if (index !== null) {
                             vscode.postMessage({
                                 command: 'revealLine',
                                 index: parseInt(index)
                             });
-                        } else {
-                            console.warn('[Preview] Block has no data-index!');
                         }
-                    } else {
-                        console.log('[Preview] Clicked outside of latex-block.');
                     }
                 });
 
