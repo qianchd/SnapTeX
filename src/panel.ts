@@ -96,102 +96,126 @@ export class TexPreviewPanel {
                 <link rel="stylesheet" href="${styleUri}">
             </head>
             <body>
-                <div id="content-root"></div>
-                <script>
-                    const vscode = acquireVsCodeApi();
-                    const contentRoot = document.getElementById('content-root');
+            <div id="content-root"></div>
+            <script>
+                const contentRoot = document.getElementById('content-root');
+                const root = document.documentElement;
 
-                    // --- 方案 C: 纯防抖字号更新系统 (无 Transform) ---
-                    (function() {
-                        try {
-                            const root = document.documentElement;
-                            // 获取 CSS 中定义的原始 vw/vh 字符串
-                            const computedStyle = getComputedStyle(root);
-                            const rawValue = computedStyle.getPropertyValue('--base-font-size').trim();
+                // 状态标志：是否启用了动态缩放模式
+                let isDynamicMode = false;
+                // 缓存原始的比例系数 (例如 2.2)
+                let dynamicRatio = 0.022;
+                let dynamicUnit = 'vw';
 
-                            if (!rawValue) return;
+                // --- 1. 初始化检测 (智能判断) ---
+                (function initFontSizeStrategy() {
+                    // 获取 CSS 中定义的原始值
+                    // 必须去掉空白，因为有时候写成 " 16px "
+                    const rawValue = getComputedStyle(root).getPropertyValue('--base-font-size').trim();
 
-                            const match = rawValue.match(/^([\\d.]+)(vw|vh)$/);
-                            if (match) {
-                                const value = parseFloat(match[1]);
-                                const unit = match[2];
-                                const ratio = value / 100;
-                                let resizeTimer;
+                    if (!rawValue) return; // 没定义变量，直接退出
 
-                                /**
-                                 * 执行物理像素更新
-                                 * 只有在停止拉动后触发，产生一次全量重排
-                                 */
-                                function updateFixedSize() {
-                                    const viewportSize = unit === 'vw' ? window.innerWidth : window.innerHeight;
-                                    let newPx = viewportSize * ratio;
+                    // 正则匹配：数字 + 单位
+                    const match = rawValue.match(/^([\d\.]+)(vw|vh)$/);
 
-                                    // 最小/最大字号限制，防止极端情况
-                                    if (newPx < 12) newPx = 12;
-                                    if (newPx > 40) newPx = 40;
+                    if (match) {
+                        // Case A: 用户写了 vw/vh，说明想要动态缩放
+                        // 启用 JS 接管模式
+                        isDynamicMode = true;
+                        dynamicRatio = parseFloat(match[1]) / 100; // 例如 2.2 -> 0.022
+                        dynamicUnit = match[2];
+                        // 立即执行一次同步，把 vw 转换为固定的 px (防止初始渲染抖动)
+                        syncFontSize();
+                    } else {
+                        // Case B: 用户写了 px/em/rem，说明想要固定大小
+                        // 禁用 JS 接管，直接用 CSS 原生行为
+                        isDynamicMode = false;
+                    }
+                })();
 
-                                    // 直接更新 CSS 变量
-                                    root.style.setProperty('--base-font-size', newPx + 'px');
-                                    console.log('[Preview] Font resized to:', newPx.toFixed(1) + 'px');
-                                }
+                // --- 2. 核心字号计算逻辑 (仅在动态模式下工作) ---
+                function syncFontSize() {
+                    if (!isDynamicMode) return false;
 
-                                // 初始执行一次
-                                updateFixedSize();
+                    const viewportSize = dynamicUnit === 'vw' ? window.innerWidth : window.innerHeight;
+                    let targetPx = viewportSize * dynamicRatio;
 
-                                // 监听窗口调整
-                                window.addEventListener('resize', () => {
-                                    // 拉动过程中不进行任何计算，直接清除计时器
-                                    if (resizeTimer) clearTimeout(resizeTimer);
+                    // 限制范围 (根据需要调整)
+                    if (targetPx < 12) targetPx = 12;
+                    if (targetPx > 40) targetPx = 40;
 
-                                    // 停止拉动 150ms 后执行一次
-                                    resizeTimer = setTimeout(updateFixedSize, 150);
-                                });
-                            }
-                        } catch (e) {
-                            console.error('Resize error:', e);
-                        }
-                    })();
+                    const val = targetPx.toFixed(1) + 'px';
 
-                    // --- 消息监听：处理内容更新 ---
-                    window.addEventListener('message', event => {
-                        const { command, payload } = event.data;
-                        if (command === 'update') {
-                            if (payload.type === 'full') {
-                                // 1. 【加锁】开启预加载模式
-                                document.body.classList.add('preload-mode');
+                    // 只有数值变了才写入，减少重排
+                    if (root.style.getPropertyValue('--base-font-size') !== val) {
+                        root.style.setProperty('--base-font-size', val);
+                        return true;
+                    }
+                    return false;
+                }
 
-                                // 2. 写入 HTML
-                                contentRoot.innerHTML = payload.html;
+                // --- 3. 监听窗口调整 ---
+                let resizeTimer;
+                window.addEventListener('resize', () => {
+                    if (!isDynamicMode) return; // 静态模式下忽略 resize
 
-                                // 3. 【关键修复】等待字体加载完毕后再解锁
-                                document.fonts.ready.then(() => {
-                                    // 等待两帧，确保 DOM 结构和样式已应用
+                    if (resizeTimer) clearTimeout(resizeTimer);
+                    // 防抖：拖拽时 CSS 变量被锁死在上次的 px 值，停止后才更新
+                    resizeTimer = setTimeout(() => {
+                        syncFontSize();
+                    }, 200);
+                });
+
+                // --- 4. 消息处理 ---
+                window.addEventListener('message', event => {
+                    const { command, payload } = event.data;
+                    if (command === 'update') {
+                        if (payload.type === 'full') {
+                            console.log("full update");
+
+                            // [Step A] 加锁
+                            document.body.classList.add('preload-mode');
+
+                            // [Step B] 强制同步字号
+                            // 如果是动态模式，这一步会保证字号是最新的 px
+                            // 如果是静态模式，这一步直接返回，啥也不做
+                            syncFontSize();
+
+                            // [Step C] 写入内容
+                            contentRoot.innerHTML = payload.html;
+
+                            const _height0 = document.body.scrollHeight;
+
+                            // [Step D] 等待字体 + 强制回流
+                            document.fonts.ready.then(() => {
+                                requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
-                                        requestAnimationFrame(() => {
-                                            // 4. 【强制回流】读取一次 scrollHeight
-                                            // 这行代码看似无用，但它会强迫浏览器完成一次布局计算，
-                                            // 确保它在切换回 auto 之前，已经"看到"了真实的元素高度。
-                                            const _forceLayout = document.body.scrollHeight;
+                                        // 强制浏览器计算真实高度 (Layout Thrashing)
+                                        // 这一步对于 content-visibility: auto 的记忆至关重要
+                                        const _height = document.body.scrollHeight;
 
-                                            // 5. 【解锁】恢复 content-visibility: auto
-                                            document.body.classList.remove('preload-mode');
+                                        // [Step F] 解锁
+                                        document.body.classList.remove('preload-mode');
 
-                                            console.log('[Preview] Initial render done. Height locked at:', _forceLayout);
-                                        });
+                                        console.log('[Preview] Full render done. Height:', _height, ':0:', _height0);
                                     });
                                 });
-                            } else if (payload.type === 'patch') {
-                                const { start, deleteCount, htmls = [] } = payload;
-                                const targetIndex = start + deleteCount;
-                                const referenceNode = contentRoot.children[targetIndex] || null;
+                            });
+                        } else if (payload.type === 'patch') {
+                            console.log("local update");
+                            // Patch 逻辑... (保持不变)
+                            const { start, deleteCount, htmls = [] } = payload;
+                            const targetIndex = start + deleteCount;
+                            const referenceNode = contentRoot.children[targetIndex] || null;
 
-                                for (let i = 0; i < deleteCount; i++) {
-                                    if (contentRoot.children[start]) contentRoot.removeChild(contentRoot.children[start]);
-                                }
+                            for (let i = 0; i < deleteCount; i++) {
+                                if (contentRoot.children[start]) contentRoot.removeChild(contentRoot.children[start]);
+                            }
 
+                            if (htmls.length > 0) {
                                 const fragment = document.createDocumentFragment();
+                                const tempDiv = document.createElement('div');
                                 htmls.forEach(html => {
-                                    const tempDiv = document.createElement('div');
                                     tempDiv.innerHTML = html;
                                     const node = tempDiv.firstElementChild;
                                     if (node) fragment.appendChild(node);
@@ -199,27 +223,27 @@ export class TexPreviewPanel {
                                 contentRoot.insertBefore(fragment, referenceNode);
                             }
                         }
-                    });
+                    }
+                });
 
-                    // --- 跳转监听 ---
-                    document.addEventListener('click', e => {
-                        const target = e.target.closest('a');
-                        if (target && target.getAttribute('href')?.startsWith('#')) {
-                            const id = target.getAttribute('href').substring(1);
-                            const element = document.getElementById(id);
-                            if (element) {
-                                e.preventDefault();
-                                const scrollTarget = element.closest('.latex-block') || element;
-                                scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                const parentBlock = element.closest('.latex-block');
-                                if (parentBlock) {
-                                    parentBlock.classList.add('jump-highlight');
-                                    setTimeout(() => parentBlock.classList.remove('jump-highlight'), 2000);
-                                }
+                // 跳转监听 (保持不变)
+                document.addEventListener('click', e => {
+                    const target = e.target.closest('a');
+                    if (target && target.getAttribute('href')?.startsWith('#')) {
+                        const id = target.getAttribute('href').substring(1);
+                        const element = document.getElementById(id);
+                        if (element) {
+                            e.preventDefault();
+                            const parentBlock = element.closest('.latex-block');
+                            (parentBlock || element).scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            if (parentBlock) {
+                                parentBlock.classList.add('jump-highlight');
+                                setTimeout(() => parentBlock.classList.remove('jump-highlight'), 2000);
                             }
                         }
-                    });
-                </script>
+                    }
+                });
+            </script>
             </body>
             </html>`;
     }
