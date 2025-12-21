@@ -3,11 +3,26 @@
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
   "version": "0.0.1",
+  "publisher": "qianchd",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/snaptex.git"
+  },
   "engines": {
     "vscode": "^1.107.0"
   },
   "categories": [
+    "Visualization",
+    "Programming Languages",
     "Other"
+  ],
+  "keywords": [
+    "latex",
+    "preview",
+    "katex",
+    "equation",
+    "math"
   ],
   "activationEvents": [
     "onLanguage:latex",
@@ -19,7 +34,13 @@
       {
         "command": "snaptex.start",
         "title": "SnapTeX Preview: Start",
-        "icon": "$(split-horizontal)"
+        "icon": "$(split-horizontal)",
+        "category": "SnapTeX"
+      },
+      {
+        "command": "snaptex.syncToPreview",
+        "title": "SnapTeX: Sync to Preview",
+        "category": "SnapTeX"
       }
     ],
     "keybindings": [
@@ -33,9 +54,24 @@
         "command": "snaptex.syncToPreview",
         "key": "ctrl+alt+n",
         "mac": "cmd+alt+n",
-        "when": "editorTextFocus && resourceLangId == latex"
+        "when": "editorTextFocus && (editorLangId == latex || editorLangId == tex)"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "SnapTeX",
+      "properties": {
+        "snaptex.renderDebounce": {
+          "type": "number",
+          "default": 100,
+          "description": "Time in milliseconds to wait after the last keystroke before updating the preview."
+        },
+        "snaptex.enableIncrementalUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enables high-performance patching of the preview instead of full re-renders for large documents."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

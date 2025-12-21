@@ -1,71 +1,63 @@
-# SnapTeX README
+# SnapTeX - High-Performance LaTeX Quick Previewer
 
-This is the README for your extension "SnapTeX". After writing up a brief description, we recommend including the following sections.
+**SnapTeX** is a lightweight, ultra-fast LaTeX previewer for Visual Studio Code. Unlike traditional previewers, it does not require a full TeX distribution (like TeXLive or MiKTeX) to function. By using a custom high-speed regex parser, **KaTeX**, and **Markdown-It**, it provides near-instant structural and mathematical previews of your document.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+* **Instant Math Rendering**: Real-time rendering of inline math `$ ... $` and complex display math environments (e.g., `equation`, `align`, `gather`) using KaTeX.
+* **Intelligent Math Protection**: Uses a proprietary protection layer to ensure LaTeX math syntax is not corrupted by the Markdown parser.
+* **Structural Previews**: Renders hierarchical headers (`\section` to `\subsubsection`), abstracts, and keywords with academic styling.
 
-For example if there is an image subfolder under your extension project workspace:
+* **Smart Bi-Directional Sync**:
+* **Forward Sync**: Jump from the editor cursor to the exact location in the preview.
+* **Reverse Sync**: Double-click any element in the preview to jump to the corresponding line in the LaTeX source.
 
-\!\[feature X\]\(images/feature-x.png\)
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+* **Macro Support**: Real-time expansion of `\newcommand`, `def` and `\DeclareMathOperator` definitions.
+
+* **Advanced Environments Support (TODO)**:
+* **Algorithms**: Renders pseudocode with keyword bolding (If, For, Return) and preserved indentation.
+* **Tables**: Converts standard `tabular` environments into clean HTML tables with support for internal math rendering.
+* **Figures**: Automatically resolves local image paths (e.g., `\includegraphics{figures/plot.png}`) and generates responsive webview previews.
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+SnapTeX is designed to be "zero-config." It works out of the box with no external dependencies.
+
+* Simply open a `.tex` file and run the preview command.
+* For math rendering, it uses an internal bundled version of KaTeX.
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
 This extension contributes the following settings:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+* `snaptex.renderDebounce`: Time in milliseconds to wait after the last keystroke before updating the preview (Default: `100`).
+* `snaptex.enableIncrementalUpdate`: Enables high-performance patching of the preview instead of full re-renders for large documents.
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+* **PDF Figures**: VS Code Webviews do not natively support `.pdf` files in `<img>` tags. It is recommended to use `.png` or `.jpg` for local figure previews.
+* **Complex Packages**: Since this is a regex-based parser and not a full TeX engine, highly complex macro-heavy packages (like `tikz` or `pgfplots`) will be displayed as placeholders.
+* **Citations**: Currently displays `[cite]` placeholders; dynamic BibTeX bibliography rendering is planned for future updates.
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+* Initial release of SnapTeX.
+* Implemented core Regex Parser with math protection.
+* Added support for Sectioning, Theorems, and Proofs.
+* Implemented Bi-directional Sync with anchor-text refinement.
 
 ---
 
-## Following extension guidelines
+## More Information
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+* **Project Home**: [GitHub Repository](https://github.com/qianchd/snaptex)
+* **Report a Bug**: [Issue Tracker](https://github.com/qianchd/snaptex/issues)
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+**Enjoy a faster LaTeX writing experience!**
 
-## Working with Markdown
+---
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+### Next Step
