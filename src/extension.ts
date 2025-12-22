@@ -65,6 +65,18 @@ export function activate(context: vscode.ExtensionContext) {
     // 1. Initial load
     renderer.reloadAllRules(currentRoot);
 
+    if (vscode.window.registerWebviewPanelSerializer) {
+        vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
+            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any) {
+                console.log('[SnapTeX] Reviving Webview Panel...');
+                // 恢复面板，并重新绑定 renderer
+                TexPreviewPanel.revive(webviewPanel, context.extensionPath, renderer);
+                // 恢复反向同步监听
+                setupReverseSync(TexPreviewPanel.currentPanel);
+            }
+        });
+    }
+
     // 2. Register startup command
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.start', () => {

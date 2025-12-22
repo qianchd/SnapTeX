@@ -48,11 +48,41 @@ export class TexPreviewPanel {
             column,
             {
                 enableScripts: true,
-                localResourceRoots: localResourceRoots // 使用动态生成的列表
+                localResourceRoots: localResourceRoots,
+                retainContextWhenHidden: true
             }
         );
         TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionPath, renderer);
         return TexPreviewPanel.currentPanel;
+    }
+
+    public static revive(panel: vscode.WebviewPanel, extensionPath: string, renderer: SmartRenderer) {
+        // 如果已经有面板，先销毁旧的（单例模式）
+        if (TexPreviewPanel.currentPanel) {
+            TexPreviewPanel.currentPanel.dispose();
+        }
+
+        // 配置恢复后的面板属性（因为 VS Code 恢复的面板可能丢失了部分配置）
+        // 重新注入 localResourceRoots 是必须的，否则图片/CSS 会挂
+        const localResourceRoots = [
+            vscode.Uri.file(extensionPath),
+            vscode.Uri.file(path.join(extensionPath, 'node_modules')),
+            vscode.Uri.file(path.join(extensionPath, 'media'))
+        ];
+        if (vscode.workspace.workspaceFolders) {
+            vscode.workspace.workspaceFolders.forEach(folder => {
+                localResourceRoots.push(folder.uri);
+            });
+        }
+
+        // 关键：重新设置 options，确保 retainContextWhenHidden 生效
+        panel.webview.options = {
+            enableScripts: true,
+            localResourceRoots: localResourceRoots
+        };
+
+        // 创建新实例接管这个 panel
+        TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionPath, renderer);
     }
 
     private constructor(panel: vscode.WebviewPanel, extensionPath: string, renderer: SmartRenderer) {
@@ -62,6 +92,20 @@ export class TexPreviewPanel {
 
         this._renderer.resetState();
         this._panel.webview.html = this._getWebviewSkeleton();
+
+        // Send Reload message
+        this._panel.webview.onDidReceiveMessage(
+            message => {
+                if (message.command === 'webviewLoaded') {
+                    console.log('[SnapTeX] Webview reloaded (DOM reset detected. Forcing full re-render.');
+                    this._renderer.resetState();
+                    this.update();
+                }
+            },
+            null,
+            this._disposables
+        );
+
         this.update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -73,12 +117,28 @@ export class TexPreviewPanel {
 
     public update() {
         const editor = vscode.window.activeTextEditor;
-        if (!editor) { return; }
 
-        this._sourceUri = editor.document.uri;
-        const docDir = path.dirname(this._sourceUri.fsPath); // 获取当前文档目录
+        // [Fix] 核心修复：不要完全依赖 activeTextEditor
+        // 当 Webview 被分屏、拖拽重启时，焦点在 Webview 上，此时 activeTextEditor 为 undefined。
+        // 我们需要回退到上一次记录的 _sourceUri 来寻找文档。
+        let doc = editor ? editor.document : undefined;
 
-        const text = editor.document.getText();
+        if (!doc && this._sourceUri) {
+            // 尝试在已打开的文档中查找
+            doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === this._sourceUri!.toString());
+        }
+
+        // 如果连历史文档都找不到（比如文件被关闭了），那就真的没法渲染了
+        if (!doc) {
+            console.warn('[SnapTeX] Cannot find source document for update.');
+            return;
+        }
+
+        // 更新当前渲染源
+        this._sourceUri = doc.uri;
+        const docDir = path.dirname(this._sourceUri.fsPath);
+
+        const text = doc.getText(); // 使用找到的 doc 获取文本，而不是 editor.document
         let payload = this._renderer.render(text);
 
         // 修改：同时处理 img src 和 canvas data-pdf-src 的路径转换
@@ -90,7 +150,7 @@ export class TexPreviewPanel {
                     const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
                     return `src="${uri}"`;
                 })
-                // 转换 PDF 路径 (关键修复)
+                // 转换 PDF 路径
                 .replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
                     const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
                     const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
@@ -381,6 +441,7 @@ export class TexPreviewPanel {
                         }
                     }
                 });
+                vscode.postMessage({ command: 'webviewLoaded' }); // Send message to extension
             </script>
             <script type="module">
                 import * as pdfjsLib from '${pdfJsUri}';
