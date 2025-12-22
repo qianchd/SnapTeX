@@ -31,8 +31,8 @@ function getAnchorContext(editor: vscode.TextEditor): string {
     const lineText = editor.document.lineAt(position.line).text;
 
     // 1. Define a window around the cursor (e.g., +/- 30 characters)
-    const startChar = Math.max(0, position.character - 30);
-    const endChar = Math.min(lineText.length, position.character + 30);
+    const startChar = Math.max(0, position.character - 10);
+    const endChar = Math.min(lineText.length, position.character + 10);
     const rawSnippet = lineText.substring(startChar, endChar);
 
     // 2. Clean up LaTeX syntax to get "pure text" (heuristic)

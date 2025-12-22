@@ -17,6 +17,33 @@ export function extractAndHideLabels(content: string) {
     }
 
 /**
+ * [New Helper] Find the index of the matching closing brace for the brace at startIndex.
+ * Handles nested braces and escaped braces (\{, \}) correctly.
+ */
+export function findBalancedClosingBrace(text: string, startIndex: number): number {
+    let depth = 0;
+    for (let i = startIndex; i < text.length; i++) {
+        const char = text[i];
+
+        // Skip escaped characters
+        if (char === '\\') {
+            i++;
+            continue;
+        }
+
+        if (char === '{') {
+            depth++;
+        } else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+/**
  * Enhanced LaTeX command search tool
  * Supports: \command{...}, \command[...]{...}, and multi-line nesting
  */
@@ -28,31 +55,17 @@ export function findCommand(text: string, tagName: string) {
     if (match) {
         const startIdx = match.index;
         const contentStart = startIdx + match[0].length;
-        let depth = 1;
-        let i = contentStart;
 
-        for (; i < text.length; i++) {
-            const char = text[i];
-            if (char === '{' || char === '}') {
-                // Check if it is an escaped brace \{ or \}
-                let bsCount = 0;
-                let j = i - 1;
-                while (j >= 0 && text[j] === '\\') { bsCount++; j--; }
-                const isEscaped = bsCount % 2 !== 0;
+        // Use the new helper to find the closing brace
+        // match[0] ends with '{', so the opening brace is at match.index + match[0].length - 1
+        const openBraceIdx = startIdx + match[0].length - 1;
+        const endIdx = findBalancedClosingBrace(text, openBraceIdx);
 
-                if (!isEscaped) {
-                    if (char === '{') {depth++;}
-                    else {depth--;}
-                }
-            }
-            if (depth === 0) {break;}
-        }
-
-        if (depth === 0) {
+        if (endIdx !== -1) {
             return {
-                content: text.substring(contentStart, i).trim(),
+                content: text.substring(contentStart, endIdx).trim(),
                 start: startIdx,
-                end: i // Position of closing brace
+                end: endIdx
             };
         }
     }

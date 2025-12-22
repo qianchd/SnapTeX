@@ -34,6 +34,16 @@ export class SmartRenderer {
         this.md.use(mdKatex, { macros, globalGroup: true, throwOnError: false });
     }
 
+    /**
+     * [New Method] Render inline text using the current Markdown engine.
+     * This is essential for rendering math inside custom HTML blocks (like Algorithm).
+     */
+    public renderInline(text: string): string {
+        if (!this.md) {return text;}
+        // renderInline parses math ($...$), bold (**...**), etc. without wrapping in <p>
+        return this.md.renderInline(text);
+    }
+
     public resetState() {
         this.lastBlocks = [];
         this.lastMacrosJson = "";

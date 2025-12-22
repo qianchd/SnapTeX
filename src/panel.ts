@@ -400,7 +400,7 @@ export class TexPreviewPanel {
 
                         const context = canvas.getContext('2d');
                         // 设定缩放比例，你可以根据需要调整
-                        const viewport = page.getViewport({ scale: 1.5 });
+                        const viewport = page.getViewport({ scale: 3 });
 
                         canvas.height = viewport.height;
                         canvas.width = viewport.width;

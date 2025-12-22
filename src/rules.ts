@@ -1,4 +1,4 @@
-import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels, cleanLatexCommands } from './utils';
+import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels, cleanLatexCommands, findBalancedClosingBrace } from './utils';
 import { PreprocessRule } from './types';
 
 /**
@@ -16,6 +16,18 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const entities: Record<string, string> = { '$': '&#36;', '#': '&#35;', '&': '&amp;', '%': '&#37;' };
                 return renderer.pushInlineProtected(entities[char] || char);
             });
+        }
+    },
+
+    // --- [New] Step 0.5: Handle LaTeX special spaces (~) ---
+    // Fix: Prevent ~~~~~~ from being parsed as Markdown strikethrough (~~).
+    // Convert ~ to non-breaking space (&nbsp;) and protect it.
+    {
+        name: 'latex_special_spaces',
+        priority: 15,
+        apply: (text, renderer) => {
+            // Global replace tilde with protected non-breaking space
+            return text.replace(/~/g, () => renderer.pushInlineProtected('&nbsp;'));
         }
     },
 
@@ -146,7 +158,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 8: Figure (Enhanced with PDF support) ---
     {
         name: 'figure',
-        priority: 80,
+        priority: 33,
         apply: (text: string, renderer: any) => {
             return text.replace(/\\begin\{figure\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\}/gi, (match, content) => {
                 const captionMatch = content.match(/\\caption\{([^}]+)\}/);
@@ -181,65 +193,263 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 9: Algorithm (Structured rendering) ---
+    // --- Step 3: Algorithm (Priority 35) ---
     {
         name: 'algorithm',
-        priority: 81,
+        priority: 35,
         apply: (text: string, renderer: any) => {
             return text.replace(/\\begin\{algorithm\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\}/gi, (match, content) => {
                 const captionMatch = content.match(/\\caption\{([^}]+)\}/);
-                const caption = captionMatch ?
-                    `<div class="alg-caption"><strong>Algorithm:</strong> ${cleanLatexCommands(captionMatch[1], renderer)}</div>` : '';
+                let captionText = captionMatch ? captionMatch[1] : '';
+                const captionHtml = captionText ?
+                    `<div class="alg-caption">Algorithm: ${renderer.renderInline(captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => `$${c.trim()}$`))}</div>` : '';
 
-                const body = content
-                    .replace(/\\caption\{[^}]+\}/g, '')
-                    .replace(/\\label\{[^}]+\}/g, '')
-                    .split('\n')
-                    .map((line: string) => {
-                        let p = line.trim();
-                        if (!p || p.startsWith('%')) return '';
-                        // Simple simulation of algorithmic keywords
-                        p = p.replace(/^\\State\s*/, '• ')
-                             .replace(/^\\Ensure\s*/, '<strong>Ensure:</strong> ')
-                             .replace(/^\\Require\s*/, '<strong>Require:</strong> ')
-                             .replace(/\\If\{([^}]+)\}/, '<strong>If</strong> $1 <strong>then</strong>')
-                             .replace(/\\EndIf/, '<strong>End If</strong>')
-                             .replace(/\\For\{([^}]+)\}/, '<strong>For</strong> $1 <strong>do</strong>')
-                             .replace(/\\EndFor/, '<strong>End For</strong>')
-                             .replace(/\\Return/, '<strong>Return</strong>');
-                        return `<div class="alg-line" style="padding-left: 20px;">${cleanLatexCommands(p, renderer)}</div>`;
-                    }).join('');
+                const algRegex = /\\begin\{algorithmic\}(?:\[(.*?)\])?([\s\S]*?)\\end\{algorithmic\}/g;
+                let bodyHtml = '';
+                let matchAlg;
 
-                return `\n\n<div class="latex-block algorithm" style="border-top:2px solid; border-bottom:2px solid; padding:10px 0; margin:1em 0;">${caption}<div class="alg-body">${body}</div></div>\n\n`;
+                while ((matchAlg = algRegex.exec(content)) !== null) {
+                    const params = matchAlg[1] || '';
+                    const rawBody = matchAlg[2];
+                    const showNumbers = params.includes('1');
+                    const listTag = showNumbers ? 'ol' : 'ul';
+
+                    const lines = rawBody.split('\n');
+                    let listItems = '';
+
+                    lines.forEach(line => {
+                        let trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('%')) {return;}
+                        if (trimmed.startsWith('\\renewcommand') || trimmed.startsWith('\\setlength')) {return;}
+
+                        let prefixHtml = "";
+                        let contentToRender = trimmed;
+                        let isSpecialLine = false;
+
+                        if (trimmed.match(/^\\(Require|Ensure|Input|Output)/)) {
+                             const isInput = trimmed.match(/^\\(Require|Input)/);
+                             const label = isInput ? 'Input:' : 'Output:';
+                             prefixHtml = `<strong>${label}</strong> `;
+                             contentToRender = trimmed.replace(/^\\(Require|Ensure|Input|Output)\s*/, '');
+                             isSpecialLine = true;
+                        }
+                        else if (trimmed.match(/^\\State/)) {
+                             contentToRender = trimmed.replace(/^\\State\s*/, '');
+                             if (contentToRender.startsWith('{') && contentToRender.endsWith('}')) {
+                                 contentToRender = contentToRender.substring(1, contentToRender.length - 1);
+                             }
+                        }
+
+                        // --- 1. Robust Color Handling using utils.ts ---
+                        // Replaces {\color{name} ...} correctly, even with nested braces like 10^{-2}
+                        let colorProcessed = "";
+                        let lastIndex = 0;
+                        const colorRegex = /\{\\color\{([a-zA-Z0-9]+)\}/g;
+                        let colorMatch;
+
+                        while ((colorMatch = colorRegex.exec(contentToRender)) !== null) {
+                            // match[0] is "{\color{red}"
+                            const colorName = colorMatch[1];
+                            const startIndex = colorMatch.index;
+
+                            // Find the closing brace for the opening '{' at startIndex
+                            const closingIndex = findBalancedClosingBrace(contentToRender, startIndex);
+
+                            if (closingIndex !== -1) {
+                                // Add text before the color block
+                                colorProcessed += contentToRender.substring(lastIndex, startIndex);
+
+                                // Extract inner content: from end of "{\color{name}" to the closing brace
+                                const headerLength = colorMatch[0].length; // length of "{\color{red}" NOT including content
+                                // Wait, match[0] is "{\color{red}".
+                                // The content starts AFTER match[0].
+                                // But match[0] has TWO open braces: '{' and the one in '\color{'.
+                                // Actually regex "{\\color{name}" matches literally.
+                                // Let's verify brace depth of the header:
+                                // "{" (+1) "\color" "{" (+2) "name" "}" (+1).
+                                // So at the end of the regex match, we are at depth 1.
+                                // The findBalancedClosingBrace started at 0, counts the first {, goes to end.
+                                // So it returns the index of the final closing brace.
+
+                                // Content is between header end and closingIndex
+                                const innerContent = contentToRender.substring(startIndex + headerLength, closingIndex);
+                                colorProcessed += `<span style="color:${colorName}">${innerContent}</span>`;
+
+                                lastIndex = closingIndex + 1;
+                                colorRegex.lastIndex = lastIndex;
+                            } else {
+                                // Fallback for unbalanced
+                                colorProcessed += colorMatch[0];
+                                lastIndex = startIndex + colorMatch[0].length;
+                            }
+                        }
+                        colorProcessed += contentToRender.substring(lastIndex);
+                        contentToRender = colorProcessed;
+
+                        // Also support \color{red}{text} style (standard command style) if needed
+                        contentToRender = contentToRender.replace(/\\color\{([a-zA-Z]+)\}\{([^}]*)\}/g, '<span style="color:$1">$2</span>');
+
+                        // --- 2. Other Formatting ---
+                        contentToRender = contentToRender.replace(/\\textbf\{((?:[^{}]|{[^{}]*})*)\}/g, '**$1**');
+                        contentToRender = contentToRender.replace(/\\textit\{((?:[^{}]|{[^{}]*})*)\}/g, '*$1*');
+                        contentToRender = contentToRender.replace(/\\eqref\{([^}]+)\}/g, '(<span class="latex-ref">$1</span>)');
+                        contentToRender = contentToRender.replace(/\\ref\{([^}]+)\}/g, '<span class="latex-ref">$1</span>');
+                        contentToRender = contentToRender.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => `$${c.trim()}$`);
+
+                        // --- 3. Render Inline ---
+                        const renderedContent = renderer.renderInline(contentToRender);
+
+                        const itemClass = isSpecialLine ? "alg-item alg-item-no-marker" : "alg-item";
+                        listItems += `<li class="${itemClass}">${prefixHtml}${renderedContent}</li>`;
+                    });
+
+                    bodyHtml += `<${listTag} class="alg-list">${listItems}</${listTag}>`;
+                }
+
+                return `\n\n<div class="latex-block algorithm">
+                            ${captionHtml}
+                            ${bodyHtml}
+                            <div class="alg-bottom-rule"></div>
+                        </div>\n\n`;
             });
         }
     },
 
     // --- Step 10: Table (Basic tabular parsing) ---
+    // Enhanced to handle \makecell, threeparttable, tablenotes, and tabular*
     {
         name: 'table',
-        priority: 82,
+        priority: 36,
         apply: (text: string, renderer: any) => {
             return text.replace(/\\begin\{table\}(?:\[.*?\])?([\s\S]*?)\\end\{table\}/gi, (match, content) => {
+                // 1. Extract and Render Caption
                 const captionMatch = content.match(/\\caption\{([^}]+)\}/);
-                const caption = captionMatch ?
-                    `<div class="table-caption"><strong>Table:</strong> ${cleanLatexCommands(captionMatch[1], renderer)}</div>` : '';
+                const captionText = captionMatch ? captionMatch[1] : '';
+                const captionHtml = captionText ?
+                    `<div class="table-caption"><strong>Table:</strong> ${renderer.renderInline(captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => `$${c.trim()}$`))}</div>` : '';
 
-                const tabularMatch = content.match(/\\begin\{tabular\}(?:\{[^}]+\})?([\s\S]*?)\\end\{tabular\}/);
+                // 2. Pre-clean environment wrappers (threeparttable etc.)
+                let innerContent = content.replace(/\\begin\{threeparttable\}/g, '').replace(/\\end\{threeparttable\}/g, '');
+
+                // 3. Extract tablenotes
+                let notesHtml = '';
+                const notesMatch = innerContent.match(/\\begin\{tablenotes\}(?:\[.*?\])?([\s\S]*?)\\end\{tablenotes\}/);
+                if (notesMatch) {
+                    const notesBody = notesMatch[1];
+                    innerContent = innerContent.replace(notesMatch[0], '');
+                    const noteItems = notesBody.split('\\item')
+                        .filter((i: string) => i.trim().length > 0)
+                        .map((item: string) => {
+                            const lblMatch = item.match(/^\[(.*?)\]/);
+                            let labelHtml = '';
+                            let itemText = item;
+                            if (lblMatch) {
+                                labelHtml = `<strong>${renderer.renderInline(lblMatch[1])}</strong> `;
+                                itemText = item.substring(lblMatch[0].length);
+                                itemText = itemText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => `$${c.trim()}$`);
+                            }
+                            return `<li class="note-item">${labelHtml}${renderer.renderInline(itemText.trim())}</li>`;
+                        }).join('');
+                    notesHtml = `<div class="latex-tablenotes"><ul>${noteItems}</ul></div>`;
+                }
+
+                // 4. Handle \makecell (Pre-process)
+                const makecellRegex = /\\makecell(?:\[.*?\])?\{/g;
+                let mcMatch;
+                let processedContent = "";
+                let lastIndex = 0;
+                while ((mcMatch = makecellRegex.exec(innerContent)) !== null) {
+                    const startIndex = mcMatch.index;
+                    processedContent += innerContent.substring(lastIndex, startIndex);
+                    const openBraceIndex = startIndex + mcMatch[0].length - 1;
+                    const closingIndex = findBalancedClosingBrace(innerContent, openBraceIndex);
+                    if (closingIndex !== -1) {
+                        let cellInner = innerContent.substring(openBraceIndex + 1, closingIndex);
+                        cellInner = cellInner.replace(/\\\\/g, '<br/>');
+                        processedContent += `<div class="makecell">${cellInner}</div>`;
+                        lastIndex = closingIndex + 1;
+                    } else {
+                        processedContent += mcMatch[0];
+                        lastIndex = startIndex + mcMatch[0].length;
+                    }
+                }
+                processedContent += innerContent.substring(lastIndex);
+                innerContent = processedContent;
+
+                // 5. Extract Tabular Content
+                const tabularMatch = innerContent.match(/\\begin\{tabular\*?\}(?:\{[^}]+\})*(?:\{[^}]+\})?([\s\S]*?)\\end\{tabular\*?\}/);
+
                 let tableHtml = '';
                 if (tabularMatch) {
-                    const rows = tabularMatch[1].split('\\\\')
+                    let rawContent = tabularMatch[1];
+
+                    // --- [Updated] Cleaning Logic for Layout/Booktabs ---
+                    // Remove \toprule, \midrule, \bottomrule, \hline
+                    rawContent = rawContent.replace(/\\(toprule|midrule|bottomrule|hline|centering|raggedright|raggedleft)/g, '');
+                    // Remove \cmidrule{2-3} or \cmidrule(lr){2-3}
+                    rawContent = rawContent.replace(/\\cmidrule(?:\[.*?\])?(?:\(.*?\))?\{[^}]+\}/g, '');
+                    // Remove \cline{2-3}
+                    rawContent = rawContent.replace(/\\cline\{[^}]+\}/g, '');
+                    // Remove \vspace{2pt} or \vspace*{2pt}
+                    rawContent = rawContent.replace(/\\vspace\*?\{[^}]+\}/g, '');
+                    // Remove \setlength...
+                    rawContent = rawContent.replace(/\\setlength\\[a-zA-Z]+\{[^}]+\}/g, '');
+                    // Remove comment chars at end of lines inside tabular content to prevent parsing issues
+                    rawContent = rawContent.replace(/%.*$/gm, '');
+
+                    const rows = rawContent.split(/\\\\(?:\[.*?\])?/)
                         .filter((r: string) => r.trim().length > 0)
                         .map((rowText: string) => {
-                            if (rowText.trim() === '\\hline') return '<tr style="border-bottom: 1px solid black;"><td colspan="100%"></td></tr>';
-                            const cells = rowText.split('&').map((c: string) =>
-                                `<td style="padding: 5px 10px; border: 1px solid #ddd;">${cleanLatexCommands(c.trim(), renderer)}</td>`
-                            );
+                            const cells = rowText.split('&').map((c: string) => {
+                                let cellContent = c.trim();
+                                let cellAttrs = 'style="padding: 5px 10px; border: 1px solid #ddd;"';
+
+                                // Handle \multicolumn
+                                const multiColMatch = cellContent.match(/^\\multicolumn\{(\d+)\}\{[^}]+\}\{(.*)\}$/);
+                                if (multiColMatch) {
+                                    const colspan = multiColMatch[1];
+                                    let inner = multiColMatch[2];
+                                    if (inner.endsWith('}')) { inner = inner.slice(0, -1); }
+
+                                    const startContentIdx = cellContent.indexOf('}{', cellContent.indexOf('}{') + 1) + 2;
+                                    if (startContentIdx > 2) {
+                                        const endIdx = findBalancedClosingBrace(cellContent, startContentIdx - 1);
+                                        if (endIdx !== -1) { inner = cellContent.substring(startContentIdx, endIdx); }
+                                    }
+                                    cellAttrs += ` colspan="${colspan}" align="center"`;
+                                    cellContent = inner;
+                                }
+
+                                // Handle \multirow
+                                const multiRowMatch = cellContent.match(/^\\multirow\{(\d+)\}\{[^}]+\}\{(.*)\}$/);
+                                if (multiRowMatch) {
+                                    const startContentIdx = cellContent.indexOf('}{', cellContent.indexOf('}{') + 1) + 2;
+                                    if (startContentIdx > 2) {
+                                        const endIdx = findBalancedClosingBrace(cellContent, startContentIdx - 1);
+                                        if (endIdx !== -1) { cellContent = cellContent.substring(startContentIdx, endIdx); }
+                                    }
+                                    cellAttrs += ` style="vertical-align: middle;"`;
+                                }
+
+                                cellContent = cellContent
+                                    .replace(/\\tnote\{([^}]+)\}/g, '<sup>$1</sup>')
+                                    .replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => `$${c.trim()}$`);
+
+                                // Render Inline
+                                return `<td ${cellAttrs}>${renderer.renderInline(cellContent)}</td>`;
+                            });
+
                             return `<tr>${cells.join('')}</tr>`;
                         }).join('');
-                    tableHtml = `<table style="border-collapse: collapse; margin: 0 auto; width:auto;">${rows}</table>`;
+
+                    tableHtml = `<table style="border-collapse: collapse; margin: 0 auto; width: 100%;">${rows}</table>`;
                 }
-                return `\n\n<div class="latex-block table">${caption}<div class="table-body">${tableHtml}</div></div>\n\n`;
+
+                return `\n\n<div class="latex-block table">
+                            ${captionHtml}
+                            <div class="table-body">${tableHtml}</div>
+                            ${notesHtml}
+                        </div>\n\n`;
             });
         }
     },
@@ -287,7 +497,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 13: Labels and references ---
     {
         name: 'refs_and_labels',
-        priority: 100,
+        priority: 31,
         apply: (text, renderer) => {
             text = text.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
                 const safeLabel = labelName.replace(/"/g, '&quot;');
@@ -309,19 +519,52 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 14: Text styles ---
+    // --- Step 13: Text Styles ---
     {
         name: 'text_styles',
         priority: 110,
         apply: (text, renderer) => {
-            text = text.replace(/\\(textbf|textit)\{((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
-                const tag = cmd === 'textbf' ? 'strong' : 'em';
-                return applyStyleToTexList(`<${tag}>`, `</${tag}>`, content);
+            // 1. 支持 textbf, textit, texttt, textsf, textrm
+            text = text.replace(/\\(textbf|textit|texttt|textsf|textrm)\{((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
+                let startTag = '', endTag = '';
+
+                switch (cmd) {
+                    case 'textbf':
+                        startTag = '<strong>'; endTag = '</strong>'; break;
+                    case 'textit':
+                        startTag = '<em>'; endTag = '</em>'; break;
+                    case 'texttt':
+                        startTag = '<code>'; endTag = '</code>'; break;
+                    case 'textsf':
+                        startTag = '<span style="font-family: sans-serif;">'; endTag = '</span>'; break;
+                    case 'textrm':
+                        startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
+                }
+
+                return applyStyleToTexList(startTag, endTag, content);
             });
-            text = text.replace(/\{\\(bf|it)\s+((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
-                const tag = cmd === 'bf' ? 'strong' : 'em';
-                return applyStyleToTexList(`<${tag}>`, `</${tag}>`, content);
+
+            // 2. 支持老式写法 {\bf ...}, {\it ...}, {\sf ...}, {\rm ...}, {\tt ...}
+            text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
+                let startTag = '', endTag = '';
+
+                switch (cmd) {
+                    case 'bf':
+                        startTag = '<strong>'; endTag = '</strong>'; break;
+                    case 'it':
+                        startTag = '<em>'; endTag = '</em>'; break;
+                    case 'tt':
+                        startTag = '<code>'; endTag = '</code>'; break;
+                    case 'sf':
+                        startTag = '<span style="font-family: sans-serif;">'; endTag = '</span>'; break;
+                    case 'rm':
+                        startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
+                }
+
+                return applyStyleToTexList(startTag, endTag, content);
             });
+
+            // 3. 支持颜色
             return text.replace(/\{\\color\{([a-zA-Z0-9]+)\}\s*((?:[^{}]|{[^{}]*})*)\}/g, (match, color, content) => {
                 return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content);
             });

@@ -155,18 +155,103 @@ p:has(.no-indent-marker) {
     overflow-x: auto;
 }
 
+/* Algorithm Block Styles */
 .latex-block.algorithm {
+    margin: 1.5em 0;
     border-top: 2px solid black;
     border-bottom: 2px solid black;
-    padding: 10px 0;
-    margin: 20px 0;
-    font-family: serif;
+    padding: 10px;
 }
-.alg-line { padding-left: 20px; line-height: 1.5; }
+
+/* Caption */
+.latex-block.algorithm .alg-caption {
+    text-align: center;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+/* Lists (ul/ol) */
+.latex-block.algorithm .alg-list {
+    padding-left: 2em;
+    margin: 10px 0;
+}
+
+/* Handle list styles based on tag type */
+.latex-block.algorithm ol.alg-list {
+    list-style: decimal;
+}
+
+.latex-block.algorithm ul.alg-list {
+    list-style: none;
+}
+
+/* List Items (General) */
+.latex-block.algorithm .alg-item {
+    margin-bottom: 3px;
+    padding-left: 5px; /* Standard indentation/padding */
+}
+
+/* Items without markers (Input/Output/Require/Ensure) */
+/* These items should override the parent list's numbering */
+.latex-block.algorithm .alg-item.alg-item-no-marker {
+    list-style: none;
+    padding-left: 0; /* Align with the bullet/number position usually */
+    /* If you want them indented same as text, keep padding-left: 5px or remove this line */
+}
+
 .latex-block.figure { text-align: center; margin: 20px 0; }
 .latex-block.figure img { max-width: 100%; height: auto; }
-.latex-block.table table { border-collapse: collapse; margin: 0 auto; }
-.latex-block.table td { padding: 5px 10px; border: 1px solid #ccc; }
+
+/* --- Table Scroll Handling --- */
+
+/* 1. 限制表格容器的宽度，并允许横向滚动 */
+.latex-block.table .table-body {
+    width: 100%;
+    overflow-x: auto; /* 关键：内容超出时显示横向滚动条 */
+    display: block;
+    margin-bottom: 10px;
+
+    /* 优化滚动体验 */
+    -webkit-overflow-scrolling: touch;
+
+    /* 可选：美化滚动条 (适配 VS Code 风格) */
+    scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+    scrollbar-width: thin;
+}
+
+/* 2. 确保表格本身可以自由伸缩，不要被强行压缩 */
+.latex-block.table table {
+    width: auto;         /* 让表格根据内容自动决定宽度 */
+    min-width: 100%;     /* 至少占满容器 */
+    max-width: none;     /* 允许超出容器宽度 */
+    border-collapse: collapse;
+    margin: 0 auto;
+}
+
+/* 3. 单元格样式微调 */
+.latex-block.table td,
+.latex-block.table th {
+    /* 防止单元格内容换行导致行高过大（可选，根据喜好开启） */
+    /* white-space: nowrap; */
+
+    /* 保持一定的内边距 */
+    padding: 6px 12px;
+    border: 1px solid var(--vscode-editor-lineHighlightBorder, #ddd);
+}
+
+/* 4. Webkit 滚动条样式 (Chrome/VS Code 内部内核) */
+.latex-block.table .table-body::-webkit-scrollbar {
+    height: 8px; /* 横向滚动条高度 */
+}
+
+.latex-block.table .table-body::-webkit-scrollbar-thumb {
+    background-color: var(--vscode-scrollbarSlider-background);
+    border-radius: 4px;
+}
+
+.latex-block.table .table-body::-webkit-scrollbar-track {
+    background-color: var(--vscode-editor-background);
+}
 
 /* --- Abstract & Keywords --- */
 .latex-abstract {
