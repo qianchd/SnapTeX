@@ -318,6 +318,37 @@ export class TexPreviewPanel {
                     return false;
                 }
 
+                function smartFullUpdate(newHtml) {
+                    const parser = new DOMParser();
+                    const newDoc = parser.parseFromString(newHtml, 'text/html');
+                    const newElements = Array.from(newDoc.body.children);
+                    const oldElements = Array.from(contentRoot.children);
+
+                    const maxLen = Math.max(newElements.length, oldElements.length);
+
+                    for (let i = 0; i < maxLen; i++) {
+                        const newEl = newElements[i];
+                        const oldEl = oldElements[i];
+
+                        if (!newEl) {
+                            // 旧的多，删除
+                            if (oldEl) oldEl.remove();
+                            continue;
+                        }
+                        if (!oldEl) {
+                            // 新的多，追加
+                            contentRoot.appendChild(newEl);
+                            continue;
+                        }
+
+                        // 核心：比较 outerHTML (内容+属性)
+                        // 如果完全一致，则直接跳过，保留旧 DOM（这样 Canvas 状态和图片加载状态就不会丢）
+                        if (oldEl.outerHTML !== newEl.outerHTML) {
+                            oldEl.replaceWith(newEl);
+                        }
+                    }
+                }
+
                 window.addEventListener('message', event => {
                     const { command, payload, index, ratio, anchor } = event.data;
 
@@ -327,7 +358,7 @@ export class TexPreviewPanel {
                             const scrollState = saveScrollState();
 
                             document.body.classList.add('preload-mode');
-                            contentRoot.innerHTML = payload.html;
+                            smartFullUpdate(payload.html);
 
                             document.fonts.ready.then(() => {
                                 requestAnimationFrame(() => {
@@ -445,53 +476,65 @@ export class TexPreviewPanel {
             </script>
             <script type="module">
                 import * as pdfjsLib from '${pdfJsUri}';
-
-                // 设置 worker 路径（必须）
                 pdfjsLib.GlobalWorkerOptions.workerSrc = '${pdfWorkerUri}';
 
-                // 定义全局渲染函数
                 window.renderPdfToCanvas = async (pdfUri, canvasId) => {
                     try {
                         const canvas = document.getElementById(canvasId);
                         if (!canvas) return;
 
+                        // [Fix 2] 防止重复渲染：检查是否正在渲染或已经渲染
+                        if (canvas.getAttribute('data-rendering') === 'true') return;
+
+                        canvas.setAttribute('data-rendering', 'true'); // 标记正在渲染
+
                         const loadingTask = pdfjsLib.getDocument(pdfUri);
                         const pdf = await loadingTask.promise;
-                        const page = await pdf.getPage(1); // 默认渲染第一页
+                        const page = await pdf.getPage(1);
+
+                        // 简单的宽高计算，避免重置 canvas 导致闪烁
+                        const scale = 3;
+                        const viewport = page.getViewport({ scale: scale });
+
+                        // 只有当尺寸变化时才清空 canvas
+                        if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
+                            canvas.height = viewport.height;
+                            canvas.width = viewport.width;
+                        }
 
                         const context = canvas.getContext('2d');
-                        // 设定缩放比例，你可以根据需要调整
-                        const viewport = page.getViewport({ scale: 3 });
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
 
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
+                        canvas.removeAttribute('data-rendering');
+                        // [Fix 3] 标记已渲染的 URI，防止 update 循环重复调用
+                        canvas.setAttribute('data-rendered-uri', pdfUri);
 
-                        const renderContext = {
-                            canvasContext: context,
-                            viewport: viewport
-                        };
-                        await page.render(renderContext).promise;
                     } catch (error) {
                         console.error('PDF render error:', error);
+                        const c = document.getElementById(canvasId);
+                        if(c) c.removeAttribute('data-rendering');
                     }
                 };
 
-                // 监听 update 消息，在内容渲染后触发 PDF 绘制
                 window.addEventListener('message', event => {
                     if (event.data.command === 'update') {
-                        // 给 DOM 渲染留一点时间
                         setTimeout(() => {
                             const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
                             pdfCanvases.forEach(canvas => {
                                 const uri = canvas.getAttribute('data-pdf-src');
                                 const id = canvas.id;
-                                if (uri && id) {
+                                const renderedUri = canvas.getAttribute('data-rendered-uri');
+
+                                // [Fix 4] 仅当 URI 发生变化，或者从未渲染过时，才触发渲染
+                                // 如果 URI 没变，说明是其他文本更新触发的 update，直接忽略，防止闪烁
+                                if (uri && id && renderedUri !== uri) {
                                     window.renderPdfToCanvas(uri, id);
                                 }
                             });
-                        }, 100);
+                        }, 50); // 稍微缩短延时
                     }
                 });
+                vscode.postMessage({ command: 'webviewLoaded' }); // Send message to extension
             </script>
             </body>
             </html>`;
