@@ -7,6 +7,41 @@ import { TexPreviewPanel } from './panel';
 // Global unique rendering engine instance
 const renderer = new SmartRenderer();
 
+// [New] Define decoration type for the flash animation
+// Uses VS Code theme color to ensure visibility in both dark and light modes
+const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), // Highlight color used for find matches
+    isWholeLine: true, // Highlight the entire line
+    // border: '1px solid yellow', // Optional: Add border for more visibility
+});
+
+// With the help of css computation
+
+const flashDecorationType80 = vscode.window.createTextEditorDecorationType({
+    backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 80%, transparent)',
+    isWholeLine: true,
+});
+
+const flashDecorationType60 = vscode.window.createTextEditorDecorationType({
+    backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 60%, transparent)',
+    isWholeLine: true,
+});
+
+const flashDecorationType40 = vscode.window.createTextEditorDecorationType({
+    backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 40%, transparent)',
+    isWholeLine: true,
+});
+
+const flashDecorationType20 = vscode.window.createTextEditorDecorationType({
+    backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 20%, transparent)',
+    isWholeLine: true,
+});
+
+const flashDecorationType10 = vscode.window.createTextEditorDecorationType({
+    backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 10%, transparent)',
+    isWholeLine: true,
+});
+
 /**
  * Smartly get the current project root directory
  */
@@ -228,12 +263,41 @@ function setupReverseSync(panel: TexPreviewPanel | undefined) {
                             }
                         }
 
-                        // 6. Jump to the line
+                        // 6. Jump with Flash Animation (Modified Logic)
                         if (targetEditor) {
                             console.log(`[SnapTeX] Jumping to ${targetUri.fsPath}:${targetLine}`);
-                            const range = targetEditor.document.lineAt(targetLine).range;
-                            targetEditor.selection = new vscode.Selection(range.start, range.end);
+
+                            const lineObj = targetEditor.document.lineAt(targetLine);
+                            const range = lineObj.range;
+
+                            // 1. Reveal the line in the center
                             targetEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+
+                            // 2. Move cursor to the start of the line (instead of selecting the whole line)
+                            // Replaced old logic: targetEditor.selection = new vscode.Selection(range.start, range.end);
+                            targetEditor.selection = new vscode.Selection(range.start, range.start);
+
+                            const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+                            const flashSequence = [
+                                { decoration: flashDecorationTypeHigh, duration: 300 },
+                                { decoration: flashDecorationType80, duration: 40 },
+                                { decoration: flashDecorationType60, duration: 40 },
+                                { decoration: flashDecorationType40, duration: 150 },
+                                { decoration: flashDecorationType10, duration: 240 },
+                            ];
+                            (async () => {
+                                for (let i = 0; i < flashSequence.length; i++) {
+                                    const step = flashSequence[i];
+                                    const prevStep = i > 0 ? flashSequence[i - 1] : null;
+                                    targetEditor!.setDecorations(step.decoration, [range]);
+                                    if (prevStep) {
+                                        targetEditor!.setDecorations(prevStep.decoration, []);
+                                    }
+                                    await sleep(step.duration);
+                                }
+                                const lastStep = flashSequence[flashSequence.length - 1];
+                                targetEditor!.setDecorations(lastStep.decoration, []);
+                            })();
                         }
                         return;
                 }

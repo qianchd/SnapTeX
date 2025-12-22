@@ -142,4 +142,29 @@ export function cleanLatexCommands(text: string, renderer: any): string {
     return processed;
 }
 
+export function mixColors(color1: string, color2: string, weight: number): string {
+    const p = weight / 100;
+    const parse = (c: string) => c.replace('#', '').match(/.{2}/g)!.map(x => parseInt(x, 16));
+
+    const [r1, g1, b1] = parse(color1);
+    const [r2, g2, b2] = parse(color2);
+
+    const r = Math.round(r1 + (r2 - r1) * p);
+    const g = Math.round(g1 + (g2 - g1) * p);
+    const b = Math.round(b1 + (b2 - b1) * p);
+
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
+export function getTransparentColor(color: string, opacity: number): string {
+    let c = color.replace('#', '');
+    if (c.length === 3) {
+        c = c.split('').map(char => char + char).join('');
+    }
+
+    const alpha = Math.round(opacity * 255);
+    const alphaHex = (alpha + 0x10000).toString(16).substr(-2);
+    return `#${c}${alphaHex}`;
+}
+
 // Future additions: Time formatting, color conversion, complex string cleaning, etc.
