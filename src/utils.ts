@@ -97,4 +97,36 @@ export function applyStyleToTexList(startTag: string, endTag: string, content: s
     return `${startTag}${content}${endTag}`;
 }
 
+/**
+ * Helper: Simple cleanup of LaTeX commands for preview purposes.
+ * Keeps text content but removes common formatting commands.
+ * This is essential for rendering clean text inside Algorithms, Figures, and Tables.
+ */
+export function cleanLatexCommands(text: string, renderer: any): string {
+    // 1. First, handle inline math inside the text to prevent it from being stripped
+    let processed = text.replace(/\$((?:\\.|[^\\$])*)\$/g, (match) => {
+        return renderer.pushInlineProtected(match);
+    });
+
+    // 2. Clean common formatting but keep content
+    processed = processed
+        .replace(/\\textbf\{([^}]+)\}/g, '<b>$1</b>')
+        .replace(/\\textit\{([^}]+)\}/g, '<i>$1</i>')
+        .replace(/\\texttt\{([^}]+)\}/g, '<code>$1</code>')
+        .replace(/\\cite\{[^}]+\}/g, '[cite]')
+        .replace(/\\ref\{[^}]+\}/g, '[ref]')
+        .replace(/\\small\s*/g, '');
+
+    // 3. Strip remaining generic commands but keep their {content}
+    processed = processed.replace(/\\(?:[a-zA-Z]+)(?:\[.*?\])?(?:\{([^}]*)\})?/g, (match, content) => {
+        // If it looks like a protection placeholder, don't strip it
+        if (match.includes('%%%PROTECTED_BLOCK_')) {
+            return match;
+        }
+        return content || '';
+    });
+
+    return processed;
+}
+
 // Future additions: Time formatting, color conversion, complex string cleaning, etc.

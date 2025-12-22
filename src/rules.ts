@@ -1,4 +1,4 @@
-import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels } from './utils';
+import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels, cleanLatexCommands } from './utils';
 import { PreprocessRule } from './types';
 
 /**
@@ -143,22 +143,123 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 8: Float placeholders ---
+    // --- Step 8: Figure (Enhanced with PDF support) ---
     {
-        name: 'floats',
+        name: 'figure',
         priority: 80,
-        apply: (text, renderer) => {
-            return text.replace(/\\begin\{(figure|table|algorithm)(\*?)\}([\s\S]*?)\\end\{\1\2\}/gi, (match, envName, star, content) => {
-                const safeContent = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-                return `\n\n<div class="latex-float-placeholder" data-env="${envName}">` +
-                       `<strong class="float-name">[${envName.toUpperCase()}${star}]</strong>` +
-                       `<pre class="float-content">${safeContent.trim()}</pre>` +
-                       `</div>\n`;
+        apply: (text: string, renderer: any) => {
+            return text.replace(/\\begin\{figure\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\}/gi, (match, content) => {
+                const captionMatch = content.match(/\\caption\{([^}]+)\}/);
+                // Use cleanLatexCommands with renderer to protect inline math in captions
+                const caption = captionMatch ?
+                    `<div class="figure-caption"><strong>Figure:</strong> ${cleanLatexCommands(captionMatch[1], renderer)}</div>` : '';
+
+                // Extract image path
+                const imgMatch = content.match(/\\includegraphics(?:\[.*?\])?\{([^}]+)\}/);
+                const imgPath = imgMatch ? imgMatch[1] : '';
+
+                if (imgPath) {
+                    // Check file extension for PDF
+                    if (imgPath.toLowerCase().endsWith('.pdf')) {
+                        // Generate a unique ID for the canvas
+                        const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
+                        // IMPORTANT: Use <canvas> for PDF, containing 'data-pdf-src' attribute for panel.ts to detect
+                        return `\n\n<div class="latex-block figure">
+                                    <canvas id="${canvasId}" data-pdf-src="LOCAL_IMG:${imgPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>
+                                    ${caption}
+                                </div>\n\n`;
+                    } else {
+                        // Standard handling for png/jpg using <img>
+                        return `\n\n<div class="latex-block figure">
+                                    <img src="LOCAL_IMG:${imgPath}" style="max-width:100%; display:block; margin:0 auto;">
+                                    ${caption}
+                                </div>\n\n`;
+                    }
+                }
+                return `\n\n<div class="latex-block figure">[Image Not Found]${caption}</div>\n\n`;
             });
         }
     },
 
-    // --- Step 9: List processing ---
+    // --- Step 9: Algorithm (Structured rendering) ---
+    {
+        name: 'algorithm',
+        priority: 81,
+        apply: (text: string, renderer: any) => {
+            return text.replace(/\\begin\{algorithm\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\}/gi, (match, content) => {
+                const captionMatch = content.match(/\\caption\{([^}]+)\}/);
+                const caption = captionMatch ?
+                    `<div class="alg-caption"><strong>Algorithm:</strong> ${cleanLatexCommands(captionMatch[1], renderer)}</div>` : '';
+
+                const body = content
+                    .replace(/\\caption\{[^}]+\}/g, '')
+                    .replace(/\\label\{[^}]+\}/g, '')
+                    .split('\n')
+                    .map((line: string) => {
+                        let p = line.trim();
+                        if (!p || p.startsWith('%')) return '';
+                        // Simple simulation of algorithmic keywords
+                        p = p.replace(/^\\State\s*/, '• ')
+                             .replace(/^\\Ensure\s*/, '<strong>Ensure:</strong> ')
+                             .replace(/^\\Require\s*/, '<strong>Require:</strong> ')
+                             .replace(/\\If\{([^}]+)\}/, '<strong>If</strong> $1 <strong>then</strong>')
+                             .replace(/\\EndIf/, '<strong>End If</strong>')
+                             .replace(/\\For\{([^}]+)\}/, '<strong>For</strong> $1 <strong>do</strong>')
+                             .replace(/\\EndFor/, '<strong>End For</strong>')
+                             .replace(/\\Return/, '<strong>Return</strong>');
+                        return `<div class="alg-line" style="padding-left: 20px;">${cleanLatexCommands(p, renderer)}</div>`;
+                    }).join('');
+
+                return `\n\n<div class="latex-block algorithm" style="border-top:2px solid; border-bottom:2px solid; padding:10px 0; margin:1em 0;">${caption}<div class="alg-body">${body}</div></div>\n\n`;
+            });
+        }
+    },
+
+    // --- Step 10: Table (Basic tabular parsing) ---
+    {
+        name: 'table',
+        priority: 82,
+        apply: (text: string, renderer: any) => {
+            return text.replace(/\\begin\{table\}(?:\[.*?\])?([\s\S]*?)\\end\{table\}/gi, (match, content) => {
+                const captionMatch = content.match(/\\caption\{([^}]+)\}/);
+                const caption = captionMatch ?
+                    `<div class="table-caption"><strong>Table:</strong> ${cleanLatexCommands(captionMatch[1], renderer)}</div>` : '';
+
+                const tabularMatch = content.match(/\\begin\{tabular\}(?:\{[^}]+\})?([\s\S]*?)\\end\{tabular\}/);
+                let tableHtml = '';
+                if (tabularMatch) {
+                    const rows = tabularMatch[1].split('\\\\')
+                        .filter((r: string) => r.trim().length > 0)
+                        .map((rowText: string) => {
+                            if (rowText.trim() === '\\hline') return '<tr style="border-bottom: 1px solid black;"><td colspan="100%"></td></tr>';
+                            const cells = rowText.split('&').map((c: string) =>
+                                `<td style="padding: 5px 10px; border: 1px solid #ddd;">${cleanLatexCommands(c.trim(), renderer)}</td>`
+                            );
+                            return `<tr>${cells.join('')}</tr>`;
+                        }).join('');
+                    tableHtml = `<table style="border-collapse: collapse; margin: 0 auto; width:auto;">${rows}</table>`;
+                }
+                return `\n\n<div class="latex-block table">${caption}<div class="table-body">${tableHtml}</div></div>\n\n`;
+            });
+        }
+    },
+
+    // --- Step 11: Float placeholders ---
+    // {
+    //     name: 'floats',
+    //     priority: 80,
+    //     apply: (text, renderer) => {
+    //         return text.replace(/\\begin\{(figure|table|algorithm)(\*?)\}([\s\S]*?)\\end\{\1\2\}/gi, (match, envName, star, content) => {
+    //             const safeContent = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    //             return `\n\n<div class="latex-float-placeholder" data-env="${envName}">` +
+    //                    `<strong class="float-name">[${envName.toUpperCase()}${star}]</strong>` +
+    //                    `<pre class="float-content">${safeContent.trim()}</pre>` +
+    //                    `</div>\n`;
+    //         });
+    //     }
+    // },
+
+    // --- Step 12: List processing ---
     {
         name: 'lists',
         priority: 90,
@@ -183,7 +284,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 10: Labels and references ---
+    // --- Step 13: Labels and references ---
     {
         name: 'refs_and_labels',
         priority: 100,
@@ -208,7 +309,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 11: Text styles ---
+    // --- Step 14: Text styles ---
     {
         name: 'text_styles',
         priority: 110,

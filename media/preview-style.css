@@ -155,6 +155,19 @@ p:has(.no-indent-marker) {
     overflow-x: auto;
 }
 
+.latex-block.algorithm {
+    border-top: 2px solid black;
+    border-bottom: 2px solid black;
+    padding: 10px 0;
+    margin: 20px 0;
+    font-family: serif;
+}
+.alg-line { padding-left: 20px; line-height: 1.5; }
+.latex-block.figure { text-align: center; margin: 20px 0; }
+.latex-block.figure img { max-width: 100%; height: auto; }
+.latex-block.table table { border-collapse: collapse; margin: 0 auto; }
+.latex-block.table td { padding: 5px 10px; border: 1px solid #ccc; }
+
 /* --- Abstract & Keywords --- */
 .latex-abstract {
     margin: 1.2em 3.0em; /* Use em for left/right margins */

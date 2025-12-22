@@ -28,16 +28,27 @@ export class TexPreviewPanel {
             return TexPreviewPanel.currentPanel;
         }
 
+        // 收集允许访问的路径
+        const localResourceRoots = [
+            vscode.Uri.file(extensionPath),
+            vscode.Uri.file(path.join(extensionPath, 'node_modules')),
+            vscode.Uri.file(path.join(extensionPath, 'media')) // 确保 media 目录被包含
+        ];
+
+        // 关键修复：允许访问当前打开的所有工作区文件夹（确保用户图片和PDF能加载）
+        if (vscode.workspace.workspaceFolders) {
+            vscode.workspace.workspaceFolders.forEach(folder => {
+                localResourceRoots.push(folder.uri);
+            });
+        }
+
         const panel = vscode.window.createWebviewPanel(
             TexPreviewPanel.viewType,
             'TeX Preview',
             column,
             {
                 enableScripts: true,
-                localResourceRoots: [
-                    vscode.Uri.file(extensionPath),
-                    vscode.Uri.file(path.join(extensionPath, 'node_modules'))
-                ]
+                localResourceRoots: localResourceRoots // 使用动态生成的列表
             }
         );
         TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionPath, renderer);
@@ -65,9 +76,34 @@ export class TexPreviewPanel {
         if (!editor) { return; }
 
         this._sourceUri = editor.document.uri;
+        const docDir = path.dirname(this._sourceUri.fsPath); // 获取当前文档目录
 
         const text = editor.document.getText();
-        const payload = this._renderer.render(text);
+        let payload = this._renderer.render(text);
+
+        // 修改：同时处理 img src 和 canvas data-pdf-src 的路径转换
+        const fixPaths = (html: string) => {
+            return html
+                // 转换普通图片
+                .replace(/src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
+                    const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
+                    const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
+                    return `src="${uri}"`;
+                })
+                // 转换 PDF 路径 (关键修复)
+                .replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
+                    const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
+                    const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
+                    return `data-pdf-src="${uri}"`;
+                });
+        };
+
+        if (payload.type === 'full' && payload.html) {
+            payload.html = fixPaths(payload.html);
+        } else if (payload.type === 'patch' && payload.htmls) {
+            payload.htmls = payload.htmls.map(h => fixPaths(h));
+        }
+
         this._panel.webview.postMessage({ command: 'update', payload });
     }
 
@@ -98,12 +134,26 @@ export class TexPreviewPanel {
         const styleUri = this._panel.webview.asWebviewUri(stylePath);
         const baseUri = paths.distDirUri + '/';
 
+        const pdfJsPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.mjs'));
+        const pdfJsUri = this._panel.webview.asWebviewUri(pdfJsPath);
+
+        const pdfWorkerPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.worker.mjs'));
+        const pdfWorkerUri = this._panel.webview.asWebviewUri(pdfWorkerPath);
+
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <base href="${baseUri}">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this._panel.webview.cspSource} 'unsafe-inline'; font-src ${this._panel.webview.cspSource} data:; script-src ${this._panel.webview.cspSource} 'unsafe-inline' https://unpkg.com;">
+                <meta http-equiv="Content-Security-Policy" content="
+                    default-src 'none';
+                    script-src ${this._panel.webview.cspSource} 'unsafe-inline' blob: https://unpkg.com;
+                    worker-src ${this._panel.webview.cspSource} blob:;
+                    style-src ${this._panel.webview.cspSource} 'unsafe-inline';
+                    font-src ${this._panel.webview.cspSource} data:;
+                    img-src ${this._panel.webview.cspSource} https: data:;
+                    connect-src ${this._panel.webview.cspSource} blob: https:;
+                ">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <link rel="stylesheet" href="${katexCssUri}">
                 <link rel="stylesheet" href="${styleUri}">
@@ -329,6 +379,56 @@ export class TexPreviewPanel {
                                 anchor: anchorText
                             });
                         }
+                    }
+                });
+            </script>
+            <script type="module">
+                import * as pdfjsLib from '${pdfJsUri}';
+
+                // 设置 worker 路径（必须）
+                pdfjsLib.GlobalWorkerOptions.workerSrc = '${pdfWorkerUri}';
+
+                // 定义全局渲染函数
+                window.renderPdfToCanvas = async (pdfUri, canvasId) => {
+                    try {
+                        const canvas = document.getElementById(canvasId);
+                        if (!canvas) return;
+
+                        const loadingTask = pdfjsLib.getDocument(pdfUri);
+                        const pdf = await loadingTask.promise;
+                        const page = await pdf.getPage(1); // 默认渲染第一页
+
+                        const context = canvas.getContext('2d');
+                        // 设定缩放比例，你可以根据需要调整
+                        const viewport = page.getViewport({ scale: 1.5 });
+
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+
+                        const renderContext = {
+                            canvasContext: context,
+                            viewport: viewport
+                        };
+                        await page.render(renderContext).promise;
+                    } catch (error) {
+                        console.error('PDF render error:', error);
+                    }
+                };
+
+                // 监听 update 消息，在内容渲染后触发 PDF 绘制
+                window.addEventListener('message', event => {
+                    if (event.data.command === 'update') {
+                        // 给 DOM 渲染留一点时间
+                        setTimeout(() => {
+                            const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
+                            pdfCanvases.forEach(canvas => {
+                                const uri = canvas.getAttribute('data-pdf-src');
+                                const id = canvas.id;
+                                if (uri && id) {
+                                    window.renderPdfToCanvas(uri, id);
+                                }
+                            });
+                        }, 100);
                     }
                 });
             </script>
