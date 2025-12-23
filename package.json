@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -84,6 +84,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.7",
     "@types/markdown-it": "^14.1.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
@@ -97,7 +98,8 @@
     "typescript-eslint": "^8.48.1"
   },
   "dependencies": {
-    "@iktakahiro/markdown-it-katex": "^4.0.1",
-    "markdown-it": "^14.1.0"
+    "katex": "^0.16.27",
+    "markdown-it": "^14.1.0",
+    "pdfjs-dist": "^5.4.449"
   }
 }

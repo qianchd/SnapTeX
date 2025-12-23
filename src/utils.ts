@@ -6,6 +6,52 @@ export function capitalizeFirstLetter(string: string): string {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
 
+/**
+ * Helper: Apply LaTeX text styles (bold, italic, underline, color, etc.)
+ * This encapsulates the logic originally in the 'text_styles' rule so it can be reused
+ * by block rules (like table/algorithm) that need to render content manually.
+ */
+export function resolveLatexStyles(text: string): string {
+    // 1. Standard styles: \textbf{...}, \textit{...}, etc.
+    text = text.replace(/\\(textbf|textit|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
+        let startTag = '', endTag = '';
+        switch (cmd) {
+            case 'textbf': startTag = '<strong>'; endTag = '</strong>'; break;
+            case 'textit': startTag = '<em>'; endTag = '</em>'; break;
+            case 'texttt': startTag = '<code>'; endTag = '</code>'; break;
+            case 'textsf': startTag = '<span style="font-family: sans-serif;">'; endTag = '</span>'; break;
+            case 'textrm': startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
+            case 'underline': startTag = '<u>'; endTag = '</u>'; break; // [NEW] Added support for \underline
+        }
+        return applyStyleToTexList(startTag, endTag, content);
+    });
+
+    // 2. Old LaTeX styles: {\bf ...}, {\it ...}, etc.
+    text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
+        let startTag = '', endTag = '';
+        switch (cmd) {
+            case 'bf': startTag = '<strong>'; endTag = '</strong>'; break;
+            case 'it': startTag = '<em>'; endTag = '</em>'; break;
+            case 'tt': startTag = '<code>'; endTag = '</code>'; break;
+            case 'sf': startTag = '<span style="font-family: sans-serif;">'; endTag = '</span>'; break;
+            case 'rm': startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
+        }
+        return applyStyleToTexList(startTag, endTag, content);
+    });
+
+    // 3. Color: {\color{red} ...} or \color{red}{...}
+    // Handle {\color{name} content}
+    text = text.replace(/\{\\color\{([a-zA-Z0-9]+)\}\s*((?:[^{}]|{[^{}]*})*)\}/g, (match, color, content) => {
+        return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content);
+    });
+    // Handle \color{name}{content}
+    text = text.replace(/\\color\{([a-zA-Z]+)\}\{([^}]*)\}/g, (match, color, content) => {
+        return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content);
+    });
+
+    return text;
+}
+
 export function extractAndHideLabels(content: string) {
         const labels: string[] = [];
         const cleanContent = content.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
@@ -133,7 +179,7 @@ export function cleanLatexCommands(text: string, renderer: any): string {
     // 3. Strip remaining generic commands but keep their {content}
     processed = processed.replace(/\\(?:[a-zA-Z]+)(?:\[.*?\])?(?:\{([^}]*)\})?/g, (match, content) => {
         // If it looks like a protection placeholder, don't strip it
-        if (match.includes('%%%PROTECTED_BLOCK_')) {
+        if (match.includes('OOPROTECTED_BLOCK_')) {
             return match;
         }
         return content || '';

@@ -23,19 +23,20 @@ export class TexPreviewPanel {
     public static createOrShow(extensionPath: string, renderer: SmartRenderer): TexPreviewPanel {
         const column = vscode.window.activeTextEditor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One;
 
+        // If we already have a panel, show it.
         if (TexPreviewPanel.currentPanel) {
             TexPreviewPanel.currentPanel._panel.reveal(column);
             return TexPreviewPanel.currentPanel;
         }
 
-        // 收集允许访问的路径
+        // Define the roots allowed to be loaded in the Webview
+        // IMPORTANT: We must include the 'media' directory where our assets (KaTeX, PDF.js) live.
         const localResourceRoots = [
             vscode.Uri.file(extensionPath),
-            vscode.Uri.file(path.join(extensionPath, 'node_modules')),
-            vscode.Uri.file(path.join(extensionPath, 'media')) // 确保 media 目录被包含
+            vscode.Uri.file(path.join(extensionPath, 'media'))
         ];
 
-        // 关键修复：允许访问当前打开的所有工作区文件夹（确保用户图片和PDF能加载）
+        // Also allow access to the current workspace folders (for images/PDFs in the user's project)
         if (vscode.workspace.workspaceFolders) {
             vscode.workspace.workspaceFolders.forEach(folder => {
                 localResourceRoots.push(folder.uri);
@@ -52,21 +53,18 @@ export class TexPreviewPanel {
                 retainContextWhenHidden: true
             }
         );
+
         TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionPath, renderer);
         return TexPreviewPanel.currentPanel;
     }
 
     public static revive(panel: vscode.WebviewPanel, extensionPath: string, renderer: SmartRenderer) {
-        // 如果已经有面板，先销毁旧的（单例模式）
         if (TexPreviewPanel.currentPanel) {
             TexPreviewPanel.currentPanel.dispose();
         }
 
-        // 配置恢复后的面板属性（因为 VS Code 恢复的面板可能丢失了部分配置）
-        // 重新注入 localResourceRoots 是必须的，否则图片/CSS 会挂
         const localResourceRoots = [
             vscode.Uri.file(extensionPath),
-            vscode.Uri.file(path.join(extensionPath, 'node_modules')),
             vscode.Uri.file(path.join(extensionPath, 'media'))
         ];
         if (vscode.workspace.workspaceFolders) {
@@ -75,13 +73,11 @@ export class TexPreviewPanel {
             });
         }
 
-        // 关键：重新设置 options，确保 retainContextWhenHidden 生效
         panel.webview.options = {
             enableScripts: true,
             localResourceRoots: localResourceRoots
         };
 
-        // 创建新实例接管这个 panel
         TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionPath, renderer);
     }
 
@@ -90,25 +86,46 @@ export class TexPreviewPanel {
         this._extensionPath = extensionPath;
         this._renderer = renderer;
 
+        // Reset renderer state on new panel creation
         this._renderer.resetState();
+
+        // Load the HTML content (skeleton)
         this._panel.webview.html = this._getWebviewSkeleton();
 
-        // Send Reload message
+        // Handle messages from the Webview
         this._panel.webview.onDidReceiveMessage(
             message => {
                 if (message.command === 'webviewLoaded') {
-                    console.log('[SnapTeX] Webview reloaded (DOM reset detected. Forcing full re-render.');
+                    console.log('[SnapTeX] Webview reloaded (DOM reset detected). Forcing full re-render.');
                     this._renderer.resetState();
                     this.update();
+                } else if (message.command === 'revealLine') {
+                    // Forward reveal line command to extension logic (handled usually in extension.ts via commands,
+                    // but here we might just emit an event if needed. For now, assuming basic sync works).
+                    // Actually, typically the extension listens to the panel, but here we just log or handle if implemented.
+                    // If you have logic to sync BACK to the editor:
+                    this.handleRevealLine(message);
                 }
             },
             null,
             this._disposables
         );
 
+        // Initial update
         this.update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+    }
+
+    /**
+     * Handle syncing from Preview -> Editor
+     */
+    private handleRevealLine(message: any) {
+        const { index, ratio, anchor } = message;
+        if (this._sourceUri) {
+             // Logic to find the editor and reveal line could go here or via command dispatch
+             vscode.commands.executeCommand('snaptex.internal.revealLine', this._sourceUri, index, ratio, anchor);
+        }
     }
 
     public postMessage(message: any) {
@@ -117,94 +134,81 @@ export class TexPreviewPanel {
 
     public update() {
         const editor = vscode.window.activeTextEditor;
-
-        // [Fix] 核心修复：不要完全依赖 activeTextEditor
-        // 当 Webview 被分屏、拖拽重启时，焦点在 Webview 上，此时 activeTextEditor 为 undefined。
-        // 我们需要回退到上一次记录的 _sourceUri 来寻找文档。
         let doc = editor ? editor.document : undefined;
 
+        // If no active editor, try to find the document matching our source URI
         if (!doc && this._sourceUri) {
-            // 尝试在已打开的文档中查找
             doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === this._sourceUri!.toString());
         }
 
-        // 如果连历史文档都找不到（比如文件被关闭了），那就真的没法渲染了
         if (!doc) {
-            console.warn('[SnapTeX] Cannot find source document for update.');
+            // console.warn('[SnapTeX] Cannot find source document for update.');
             return;
         }
 
-        // 更新当前渲染源
         this._sourceUri = doc.uri;
         const docDir = path.dirname(this._sourceUri.fsPath);
+        const text = doc.getText();
 
-        const text = doc.getText(); // 使用找到的 doc 获取文本，而不是 editor.document
+        // Render the LaTeX content
         let payload = this._renderer.render(text);
 
-        // 修改：同时处理 img src 和 canvas data-pdf-src 的路径转换
+        // Helper to fix local image paths in the HTML
         const fixPaths = (html: string) => {
-            return html
-                // 转换普通图片
-                .replace(/src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
-                    const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
-                    const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
-                    return `src="${uri}"`;
-                })
-                // 转换 PDF 路径
-                .replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
-                    const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
-                    const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
-                    return `data-pdf-src="${uri}"`;
-                });
+            // Fix standard images: src="LOCAL_IMG:..."
+            let fixed = html.replace(/src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
+                const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
+                const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
+                return `src="${uri}"`;
+            });
+
+            // Fix PDF canvas sources: data-pdf-src="LOCAL_IMG:..."
+            fixed = fixed.replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
+                const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
+                const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
+                return `data-pdf-src="${uri}"`;
+            });
+            return fixed;
         };
 
+        // Apply path fix to the payload
         if (payload.type === 'full' && payload.html) {
             payload.html = fixPaths(payload.html);
         } else if (payload.type === 'patch' && payload.htmls) {
             payload.htmls = payload.htmls.map(h => fixPaths(h));
         }
 
+        // Send the update payload to the Webview
         this._panel.webview.postMessage({ command: 'update', payload });
     }
 
-    private getKatexPaths() {
-        let katexMainPath = "";
-        try {
-            katexMainPath = require.resolve('katex');
-        } catch (e) {
-            try {
-                const pkgPath = require.resolve('@iktakahiro/markdown-it-katex/package.json');
-                const pkgDir = path.dirname(pkgPath);
-                katexMainPath = path.join(pkgDir, 'node_modules', 'katex', 'dist', 'katex.min.css');
-            } catch (e2) {
-                katexMainPath = path.join(this._extensionPath, 'node_modules', '@iktakahiro', 'markdown-it-katex', 'node_modules', 'katex', 'dist', 'katex.min.css');
-            }
-        }
-        let distDir = katexMainPath.includes('dist') ? path.dirname(katexMainPath) : path.join(path.dirname(katexMainPath), 'dist');
-        return {
-            cssFile: vscode.Uri.file(path.join(distDir, 'katex.min.css')),
-            distDirUri: this._panel.webview.asWebviewUri(vscode.Uri.file(distDir))
-        };
-    }
-
     private _getWebviewSkeleton() {
-        const paths = this.getKatexPaths();
-        const katexCssUri = this._panel.webview.asWebviewUri(paths.cssFile);
+        // [FIX] Correctly resolve paths to the 'media/vendor' directory.
+        // We DO NOT resolve 'node_modules' here because it won't exist in the packaged extension.
+
+        // 1. KaTeX CSS
+        const katexPath = vscode.Uri.file(
+            path.join(this._extensionPath, 'media', 'vendor', 'katex', 'katex.min.css')
+        );
+        const katexCssUri = this._panel.webview.asWebviewUri(katexPath);
+
+        // 2. Custom Preview CSS
         const stylePath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'preview-style.css'));
         const styleUri = this._panel.webview.asWebviewUri(stylePath);
-        const baseUri = paths.distDirUri + '/';
 
+        // 3. PDF.js Main Script
         const pdfJsPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.mjs'));
         const pdfJsUri = this._panel.webview.asWebviewUri(pdfJsPath);
 
+        // 4. PDF.js Worker Script
         const pdfWorkerPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.worker.mjs'));
         const pdfWorkerUri = this._panel.webview.asWebviewUri(pdfWorkerPath);
 
+        // [FIX] Removed <base> tag to allow KaTeX fonts to load relatively to the CSS file.
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
-                <base href="${baseUri}">
                 <meta http-equiv="Content-Security-Policy" content="
                     default-src 'none';
                     script-src ${this._panel.webview.cspSource} 'unsafe-inline' blob: https://unpkg.com;
@@ -217,9 +221,11 @@ export class TexPreviewPanel {
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <link rel="stylesheet" href="${katexCssUri}">
                 <link rel="stylesheet" href="${styleUri}">
+                <title>SnapTeX Preview</title>
             </head>
             <body>
             <div id="content-root"></div>
+
             <script>
                 const vscode = acquireVsCodeApi();
                 const contentRoot = document.getElementById('content-root');
@@ -228,20 +234,14 @@ export class TexPreviewPanel {
                 // --- Scroll State Management ---
                 function saveScrollState() {
                     const blocks = document.querySelectorAll('.latex-block');
-                    const scrollTop = window.scrollY;
 
-                    // Find the first block that is currently visible in the viewport
                     for (const block of blocks) {
                         const rect = block.getBoundingClientRect();
-                        // rect.bottom > 0 means the block is at least partially visible or below top
-                        // rect.top <= window.innerHeight
+                        // Find the first visible block
                         if (rect.bottom > 0 && rect.top < window.innerHeight) {
                             const index = block.getAttribute('data-index');
-                            // Calculate how far we are into this block (ratio)
-                            // Offset is the distance from the block's top to the viewport top
                             const offset = -rect.top;
                             const ratio = offset / rect.height;
-
                             return { index, ratio, offset };
                         }
                     }
@@ -253,26 +253,21 @@ export class TexPreviewPanel {
 
                     const block = document.querySelector('.latex-block[data-index="' + state.index + '"]');
                     if (block) {
-                        // Calculate new scroll position: Element Top + (Height * Previous Ratio)
-                        // This accounts for the block's height potentially changing after re-render
                         const newTop = block.getBoundingClientRect().top + window.scrollY;
-                        // However, using the exact pixel offset often feels more natural if content didn't shift much
-                        // But using ratio is safer for resizing. Let's try to restore the visual anchor.
-
                         let targetY;
-                        // If we had a specific offset, try to respect the relative position
+
+                        // Calculate target Y based on previous ratio
                         if (state.ratio >= 0) {
                              targetY = newTop + (block.offsetHeight * state.ratio);
                         } else {
                              targetY = newTop;
                         }
 
-                        // Scroll instantly
                         window.scrollTo({ top: targetY, behavior: 'auto' });
                     }
                 }
 
-                // [Updated] Robust Highlighting Logic
+                // --- Text Highlighting Logic ---
                 function highlightTextInNode(rootElement, text) {
                     if (!text || text.length < 3) return false;
 
@@ -281,6 +276,7 @@ export class TexPreviewPanel {
                         NodeFilter.SHOW_TEXT,
                         {
                             acceptNode: (node) => {
+                                // Skip math content to prevent breaking KaTeX rendering
                                 if (node.parentElement && node.parentElement.closest('.katex')) {
                                     return NodeFilter.FILTER_REJECT;
                                 }
@@ -305,6 +301,7 @@ export class TexPreviewPanel {
 
                             span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
 
+                            // Remove highlight after animation
                             setTimeout(() => {
                                 const parent = span.parentNode;
                                 if (parent) {
@@ -318,6 +315,7 @@ export class TexPreviewPanel {
                     return false;
                 }
 
+                // --- Smart DOM Update (Diffing) ---
                 function smartFullUpdate(newHtml) {
                     const parser = new DOMParser();
                     const newDoc = parser.parseFromString(newHtml, 'text/html');
@@ -331,44 +329,46 @@ export class TexPreviewPanel {
                         const oldEl = oldElements[i];
 
                         if (!newEl) {
-                            // 旧的多，删除
+                            // Element deleted
                             if (oldEl) oldEl.remove();
                             continue;
                         }
                         if (!oldEl) {
-                            // 新的多，追加
+                            // Element added
                             contentRoot.appendChild(newEl);
                             continue;
                         }
 
-                        // 核心：比较 outerHTML (内容+属性)
-                        // 如果完全一致，则直接跳过，保留旧 DOM（这样 Canvas 状态和图片加载状态就不会丢）
+                        // Compare outerHTML (content + attributes)
                         if (oldEl.outerHTML !== newEl.outerHTML) {
                             oldEl.replaceWith(newEl);
                         }
                     }
                 }
 
+                // --- Message Listener ---
                 window.addEventListener('message', event => {
                     const { command, payload, index, ratio, anchor } = event.data;
 
                     if (command === 'update') {
                         if (payload.type === 'full') {
-                            // 1. Capture scroll state before nuking DOM
+                            // 1. Save scroll state
                             const scrollState = saveScrollState();
 
                             document.body.classList.add('preload-mode');
                             smartFullUpdate(payload.html);
 
+                            // 2. Wait for fonts to load before calculating scroll position
                             document.fonts.ready.then(() => {
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
+                                        // Update dynamic CSS variable if needed
                                         const fullHeight = document.body.scrollHeight;
                                         const count = contentRoot.childElementCount || 1;
                                         const avgHeight = fullHeight / count;
                                         root.style.setProperty('--avg-height', avgHeight.toFixed(2) + 'px');
 
-                                        // 2. Restore scroll state
+                                        // 3. Restore scroll state
                                         restoreScrollState(scrollState);
 
                                         document.body.classList.remove('preload-mode');
@@ -376,16 +376,17 @@ export class TexPreviewPanel {
                                 });
                             });
                         } else if (payload.type === 'patch') {
+                            // Handle partial updates
                             const { start, deleteCount, htmls = [], shift = 0 } = payload;
                             const targetIndex = start + deleteCount;
                             const referenceNode = contentRoot.children[targetIndex] || null;
 
-                            // 1. Remove old blocks
+                            // Remove old blocks
                             for (let i = 0; i < deleteCount; i++) {
                                 if (contentRoot.children[start]) contentRoot.removeChild(contentRoot.children[start]);
                             }
 
-                            // 2. Insert new blocks
+                            // Insert new blocks
                             if (htmls.length > 0) {
                                 const fragment = document.createDocumentFragment();
                                 const tempDiv = document.createElement('div');
@@ -397,7 +398,7 @@ export class TexPreviewPanel {
                                 contentRoot.insertBefore(fragment, referenceNode);
                             }
 
-                            // 3. Shift indices
+                            // Shift indices of subsequent blocks
                             if (shift !== 0) {
                                 let node = contentRoot.children[start + htmls.length];
                                 while (node) {
@@ -411,6 +412,7 @@ export class TexPreviewPanel {
                         }
                     }
                     else if (command === 'scrollToBlock') {
+                        // Handle Sync: Editor -> Preview
                         const target = document.querySelector('.latex-block[data-index="' + index + '"]');
                         if (target) {
                             target.classList.add('jump-highlight');
@@ -435,6 +437,7 @@ export class TexPreviewPanel {
                     }
                 });
 
+                // --- Sync: Preview -> Editor (Double Click) ---
                 document.addEventListener('dblclick', event => {
                     const block = event.target.closest('.latex-block');
                     if (block) {
@@ -455,6 +458,7 @@ export class TexPreviewPanel {
                                     const offset = range.startOffset;
                                     let start = offset;
                                     let end = offset;
+                                    // Expand selection to word boundaries
                                     while (start > 0 && /\\S/.test(text[start - 1])) start--;
                                     while (end < text.length && /\\S/.test(text[end])) end++;
                                     if (end > start) {
@@ -472,8 +476,11 @@ export class TexPreviewPanel {
                         }
                     }
                 });
-                vscode.postMessage({ command: 'webviewLoaded' }); // Send message to extension
+
+                // Signal that the webview is ready
+                vscode.postMessage({ command: 'webviewLoaded' });
             </script>
+
             <script type="module">
                 import * as pdfjsLib from '${pdfJsUri}';
                 pdfjsLib.GlobalWorkerOptions.workerSrc = '${pdfWorkerUri}';
@@ -483,20 +490,19 @@ export class TexPreviewPanel {
                         const canvas = document.getElementById(canvasId);
                         if (!canvas) return;
 
-                        // [Fix 2] 防止重复渲染：检查是否正在渲染或已经渲染
+                        // Prevent duplicate rendering
                         if (canvas.getAttribute('data-rendering') === 'true') return;
-
-                        canvas.setAttribute('data-rendering', 'true'); // 标记正在渲染
+                        canvas.setAttribute('data-rendering', 'true');
 
                         const loadingTask = pdfjsLib.getDocument(pdfUri);
                         const pdf = await loadingTask.promise;
                         const page = await pdf.getPage(1);
 
-                        // 简单的宽高计算，避免重置 canvas 导致闪烁
+                        // High quality scale
                         const scale = 3;
                         const viewport = page.getViewport({ scale: scale });
 
-                        // 只有当尺寸变化时才清空 canvas
+                        // Resize canvas only if dimensions changed (prevents flickering)
                         if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
                             canvas.height = viewport.height;
                             canvas.width = viewport.width;
@@ -506,7 +512,7 @@ export class TexPreviewPanel {
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
 
                         canvas.removeAttribute('data-rendering');
-                        // [Fix 3] 标记已渲染的 URI，防止 update 循环重复调用
+                        // Mark as rendered to prevent unnecessary re-renders in update loop
                         canvas.setAttribute('data-rendered-uri', pdfUri);
 
                     } catch (error) {
@@ -518,6 +524,7 @@ export class TexPreviewPanel {
 
                 window.addEventListener('message', event => {
                     if (event.data.command === 'update') {
+                        // Check for PDF canvases that need rendering
                         setTimeout(() => {
                             const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
                             pdfCanvases.forEach(canvas => {
@@ -525,16 +532,17 @@ export class TexPreviewPanel {
                                 const id = canvas.id;
                                 const renderedUri = canvas.getAttribute('data-rendered-uri');
 
-                                // [Fix 4] 仅当 URI 发生变化，或者从未渲染过时，才触发渲染
-                                // 如果 URI 没变，说明是其他文本更新触发的 update，直接忽略，防止闪烁
+                                // Only render if URI changed or never rendered
                                 if (uri && id && renderedUri !== uri) {
                                     window.renderPdfToCanvas(uri, id);
                                 }
                             });
-                        }, 50); // 稍微缩短延时
+                        }, 50);
                     }
                 });
-                vscode.postMessage({ command: 'webviewLoaded' }); // Send message to extension
+
+                // Signal readiness again for module script
+                vscode.postMessage({ command: 'webviewLoaded' });
             </script>
             </body>
             </html>`;
