@@ -2,15 +2,15 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.0.1",
-  "publisher": "qianchd",
+  "version": "0.1.0",
+  "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/snaptex.git"
+    "url": "https://github.com/qianchd/snaptex.git"
   },
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Visualization",
@@ -64,11 +64,6 @@
           "type": "number",
           "default": 100,
           "description": "Time in milliseconds to wait after the last keystroke before updating the preview."
-        },
-        "snaptex.enableIncrementalUpdate": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enables high-performance patching of the preview instead of full re-renders for large documents."
         }
       }
     }

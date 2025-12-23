@@ -1,9 +1,15 @@
 # Change Log
 
-All notable changes to the "SnapTex" extension will be documented in this file.
+All notable changes to the "SnapTeX" extension will be documented in this file.
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+## [0.1.0] - 2025-12-23
+### Added
+- **Handling figures, tables, algorithm**
+- **Smooth Cursor Synchronization**: Implemented a "Flash" animation (camera-flash style) when jumping between code and preview, providing better visual cues.
 
-## [Unreleased]
+### Changed
+- Improved the logic for reverse synchronization to ensure more accurate positioning.
 
-- Initial release
+## [0.0.1] - 2025-12-20
+- Initial release.
+- Basic LaTeX file parsing and preview functionality.
