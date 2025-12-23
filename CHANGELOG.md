@@ -2,6 +2,11 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.2.1] - 2025-12-23
+### Fixed
+- `\ref`, `\mbox` in math envs.
+- The usage of quotes ``'' in TeX.
+
 ## [0.2.0] - 2025-12-23
 ### Added
 - **Handling numbering and cross-ref** of equations，figures, tables, algorithms, theorems...

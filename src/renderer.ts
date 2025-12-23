@@ -21,6 +21,8 @@ export class SmartRenderer {
     private protectedRenderedBlocks: string[] = [];
     // Stores raw protected text
     private protectedRawBlocks: string[] = [];
+    // Stores ref keys to avoid passing complex strings to KaTeX
+    private protectedRefs: string[] = [];
 
     private _preprocessRules: PreprocessRule[] = [];
     private currentMacros: Record<string, string> = {};
@@ -103,6 +105,14 @@ export class SmartRenderer {
         return `OOSNAPTEXRAW${index}OO`;
     }
 
+    // Simple Ref Cache
+    public pushProtectedRef(key: string) {
+        const index = this.protectedRefs.length;
+        this.protectedRefs.push(key);
+        // Returns a safe, short string for KaTeX: "SNREF5END"
+        return `SNREF${index}END`;
+    }
+
     // Token format: OOSNAPTEXMATH...OO
     public renderAndProtectMath(tex: string, displayMode: boolean): string {
         try {
@@ -124,7 +134,15 @@ export class SmartRenderer {
     private restoreRenderedMath(html: string): string {
         return html.replace(/OOSNAPTEXMATH(\d+)OO/g, (match, index) => {
             const i = parseInt(index, 10);
-            return this.protectedRenderedBlocks[i] || match;
+            let rendered = this.protectedRenderedBlocks[i] || match;
+
+            // Restore REFs from simple Index
+            // Pattern: SNREF(number)END
+            return rendered.replace(/SNREF(\d+)END/g, (m, refIdx) => {
+                const key = this.protectedRefs[parseInt(refIdx)];
+                if (!key) {return m;}
+                return `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>`;
+            });
         });
     }
 

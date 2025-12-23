@@ -75,8 +75,8 @@ export class LatexCounterScanner {
             }
 
             // 4. Theorems & Conditions (FIXED)
-            // Added: condition, assumption, remark, example
-            const thmRegex = /\\begin\{(theorem|lemma|proposition|definition|corollary|condition|assumption|remark|example)\}/g;
+            // Added: condition, assumption, remark, example...
+            const thmRegex = /\\begin\{(theorem|lemma|proposition|definition|corollary|condition|condbis|assumption|remark|example)\}/g;
             while ((match = thmRegex.exec(text)) !== null) {
                 this.counters.thm++;
                 const numStr = String(this.counters.thm);

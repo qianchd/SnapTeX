@@ -21,6 +21,17 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
+    {
+        name: 'mbox',
+        priority: 11,
+        apply: (text, renderer: SmartRenderer) => {
+            return text.replace(/\\mbox/g, (match, char) => {
+                return '\\text';
+            });
+        }
+    },
+
+
     // --- Step 1: Roman numerals and special markers ---
     {
         name: 'romannumeral',
@@ -54,6 +65,12 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
                 let finalMath = cleanContent.trim();
 
+                // [FIX] Use simple index token
+                finalMath = finalMath.replace(/\\ref\*?\{([^}]+)\}/g, (m, key) => {
+                    const token = renderer.pushProtectedRef(key);
+                    return `\\text{${token}}`;
+                });
+
                 if (envName) {
                     const name = envName.toLowerCase();
                     if (['align', 'flalign', 'alignat', 'multline'].includes(name)) {
@@ -68,9 +85,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const isFollowedByText = /^\s*\S/.test(afterMatch) && !/^\s*\n\n/.test(afterMatch);
 
                 if (eqNumHTML) {
-                    // [FIX] Absolute positioning for perfect vertical alignment
-                    // Container: relative, width 100%
-                    // Number: absolute right, vertically centered using top 50% + translateY
                     return `<div class="equation-container" style="position: relative; width: 100%;">
                                 ${protectedTag}
                                 <span class="eq-no" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); pointer-events: none;">
@@ -90,14 +104,24 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'inline_math',
         priority: 31,
         apply: (text, renderer: SmartRenderer) => {
-            // 1. Handle \( ... \) style
+            const processInline = (content: string) => {
+                // [FIX] Use simple index token
+                let safeContent = content.replace(/\\ref\*?\{([^}]+)\}/g, (m, key) => {
+                    const token = renderer.pushProtectedRef(key);
+                    return `\\text{${token}}`;
+                });
+                return renderer.renderAndProtectMath(safeContent, false);
+            };
+
+            // 1. \( ... \)
             text = text.replace(/\\\(([\s\S]*?)\\\)/gm, (match, content) => {
-                return renderer.renderAndProtectMath(content, false);
+                return processInline(content);
             });
-            // 2. Handle $ ... $ style
+
+            // 2. $ ... $
             return text.replace(/(\\?)\$((?:\\.|[^\\$])*)\$/gm, (match, backslash, content) => {
                 if (backslash === '\\') {return match;}
-                return renderer.renderAndProtectMath(content, false);
+                return processInline(content);
             });
         }
     },
@@ -111,6 +135,39 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 // Keep using pushInlineProtected for raw text to avoid Markdown parsing
                 return renderer.pushInlineProtected(entities[char] || char);
             });
+        }
+    },
+
+    {
+    name: 'latex_quotes',
+    priority: 32,
+        apply: (text, renderer: SmartRenderer) => {
+            // 1. 处理双引号 ``content''
+            // 注意：这里我们只通过正则找到对儿，但替换时只替换符号，保持 content 在外面
+            let processed = text.replace(/``([\s\S]*?)''/g, (match, content) => {
+                const open = renderer.pushInlineProtected('&ldquo;');
+                const close = renderer.pushInlineProtected('&rdquo;');
+                // 重要：返回时 content 依然是裸露的，这样它里面的 $a=1$ 占位符才能被后续还原
+                return `${open}${content}${close}`;
+            });
+
+            // 2. 处理单引号 `content'
+            processed = processed.replace(/`([\s\S]*?)'/g, (match, content) => {
+                const open = renderer.pushInlineProtected('&lsquo;');
+                const close = renderer.pushInlineProtected('&rsquo;');
+                return `${open}${content}${close}`;
+            });
+
+            // 1. 处理双引号 `` ... ''
+            processed = processed.replace(/``/g, () => renderer.pushInlineProtected('&ldquo;'));
+            // processed = processed.replace(/''/g, () => renderer.pushInlineProtected('&rdquo;'));
+
+            // 2. 处理单引号 ` ... '
+            // 注意：为了安全，可以只匹配前面有空格或开头的 `，以及后面有空格或标点的 '
+            processed = processed.replace(/`/g, () => renderer.pushInlineProtected('&lsquo;'));
+            // processed = processed.replace(/'/g, () => renderer.pushInlineProtected('&rsquo;'));
+
+            return processed;
         }
     },
 
@@ -200,7 +257,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                         contentToRender = resolveLatexStyles(contentToRender);
 
                         // Handle \eqref
-                        contentToRender = contentToRender.replace(/\\eqref\{([^}]+)\}/g, (match, labels) => {
+                        contentToRender = contentToRender.replace(/\\eqref\*?\{([^}]+)\}/g, (match, labels) => {
                             const labelArray = labels.split(',').map((l: string) => l.trim());
                             return labelArray.map((label: string) =>
                                 `(<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>)`
@@ -208,7 +265,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                         });
 
                         // Handle \ref
-                        contentToRender = contentToRender.replace(/\\ref\{([^}]+)\}/g, (match, labels) => {
+                        contentToRender = contentToRender.replace(/\\ref\*?\{([^}]+)\}/g, (match, labels) => {
                             const labelArray = labels.split(',').map((l: string) => l.trim());
                             return labelArray.map((label: string) =>
                                 `<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>`
@@ -394,8 +451,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'theorems_and_proofs',
         priority: 50,
         apply: (text, renderer: SmartRenderer) => {
-            const thmEnvs = ['theorem', 'lemma', 'proposition', 'condition', 'assumption', 'remark', 'definition', 'corollary', 'example'].join('|');
-            const thmRegex = new RegExp(`\\\\begin\\{(${thmEnvs})\\}(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
+            const thmEnvs = ['theorem', 'lemma', 'proposition', 'condition', 'condbis', 'assumption', 'remark', 'definition', 'corollary', 'example'].join('|');
+            const thmRegex = new RegExp(`\\\\begin\\{(${thmEnvs})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
             text = text.replace(thmRegex, (match, envName, optArg, content) => {
                 const displayName = capitalizeFirstLetter(envName);
                 // [NEW] Placeholder
@@ -503,7 +560,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
             // 2. References (Numbering)
             // [FIX] \ref just outputs link (number). \eqref outputs link wrapped in ()
-            text = text.replace(/\\(ref|eqref)\{([^}]+)\}/g, (match, type, labels) => {
+            text = text.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (match, type, labels) => {
                 const labelArray = labels.split(',').map((l: string) => l.trim());
                 const htmlLinks = labelArray.map((label: string) => {
                     return `<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>`;
