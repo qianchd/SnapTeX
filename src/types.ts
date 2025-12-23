@@ -15,8 +15,13 @@ export interface PatchPayload {
     start?: number;
     deleteCount?: number;
     htmls?: string[];
-    // [New] Index shift value for the tail blocks
     shift?: number;
+
+    // [New] Numbering Data Update
+    numbering?: {
+        blocks: { [index: number]: any }; // Sparse map of blockIndex -> counts
+        labels: Record<string, string>;   // Global label map
+    };
 }
 
 export interface PreprocessRule {

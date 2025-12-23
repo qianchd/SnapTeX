@@ -49,6 +49,8 @@ export function resolveLatexStyles(text: string): string {
         return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content);
     });
 
+    text = text.replace(/\{\\color\{([a-zA-Z0-9]+)\}\s*((?:[^{}]|{[^{}]*})*)\}/g, (m, c, t) => applyStyleToTexList(`<span style="color:${c}">`, '</span>', t));
+    text = text.replace(/\\color\{([a-zA-Z]+)\}\{([^}]*)\}/g, (m, c, t) => applyStyleToTexList(`<span style="color:${c}">`, '</span>', t));
     return text;
 }
 

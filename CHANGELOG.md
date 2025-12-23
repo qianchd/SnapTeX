@@ -2,6 +2,10 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.2.0] - 2025-12-23
+### Added
+- **Handling numbering and cross-ref** of equations，figures, tables, algorithms, theorems...
+
 ## [0.1.2] - 2025-12-23
 ### Changed
 - **Improve the logic of math rendering:** from CacheProtect-Restore-Render to Render-CacheProtect-Restore Architecture

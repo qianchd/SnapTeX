@@ -8,6 +8,7 @@ import { extractMetadata } from './metadata';
 import { LatexBlockSplitter, BlockResult } from './splitter';
 import { PreprocessRule, PatchPayload } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
+import { LatexCounterScanner, ScanResult } from './scanner';
 
 export class SmartRenderer {
     private lastBlocks: { text: string, html: string }[] = [];
@@ -16,9 +17,9 @@ export class SmartRenderer {
     public currentAuthor: string | undefined;
     private md: MarkdownIt | null = null;
 
-    // [CHANGE] Stores pre-rendered HTML (Math), not just raw text
+    // Stores pre-rendered HTML (Math)
     private protectedRenderedBlocks: string[] = [];
-    // Stores raw protected text (like escaped chars)
+    // Stores raw protected text
     private protectedRawBlocks: string[] = [];
 
     private _preprocessRules: PreprocessRule[] = [];
@@ -26,6 +27,11 @@ export class SmartRenderer {
 
     private blockMap: { start: number; count: number }[] = [];
     private contentStartLineOffset: number = 0;
+
+    // Scanner instance
+    private scanner = new LatexCounterScanner();
+
+    public globalLabelMap: Record<string, string> = {};
 
     constructor() {
         this.rebuildMarkdownEngine({});
@@ -36,7 +42,6 @@ export class SmartRenderer {
         this.currentMacros = macros;
         this.md = new MarkdownIt({ html: true, linkify: true });
         this.md.disable('code');
-        // [CHANGE] Do NOT use md.use(mdKatex) anymore. We handle math manually.
     }
 
     public renderInline(text: string): string {
@@ -48,9 +53,9 @@ export class SmartRenderer {
         this.lastBlocks = [];
         this.lastMacrosJson = "";
         this.blockMap = [];
+        // scanner reset is handled inside scanner.scan()
     }
 
-    // [FIX] Ensure this accepts workspaceRoot parameter
     public reloadAllRules(workspaceRoot?: string) {
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
         const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
@@ -91,14 +96,14 @@ export class SmartRenderer {
         this._preprocessRules.sort((a, b) => a.priority - b.priority);
     }
 
-    // [CHANGE] Protect Raw Text (e.g. escaped chars)
+    // Token format: OOSNAPTEXRAW...OO
     public pushInlineProtected(content: string) {
         const index = this.protectedRawBlocks.length;
         this.protectedRawBlocks.push(content);
-        return `OOPROTECTED_RAW_${index}OO`;
+        return `OOSNAPTEXRAW${index}OO`;
     }
 
-    // [NEW] Core Logic: Render Math to HTML immediately and Cache it
+    // Token format: OOSNAPTEXMATH...OO
     public renderAndProtectMath(tex: string, displayMode: boolean): string {
         try {
             const html = katex.renderToString(tex, {
@@ -110,30 +115,27 @@ export class SmartRenderer {
             });
             const index = this.protectedRenderedBlocks.length;
             this.protectedRenderedBlocks.push(html);
-            // Use a token that acts like a custom HTML tag so markdown-it ignores it
-            return `OOSNAPTEX_MATH_${index}OO`;
+            return `OOSNAPTEXMATH${index}OO`;
         } catch (e) {
             return `<span style="color:red">Math Error: ${(e as Error).message}</span>`;
         }
     }
 
-    // [NEW] Restore math after markdown processing
     private restoreRenderedMath(html: string): string {
-        return html.replace(/OOSNAPTEX_MATH_(\d+)OO/g, (match, index) => {
+        return html.replace(/OOSNAPTEXMATH(\d+)OO/g, (match, index) => {
             const i = parseInt(index, 10);
             return this.protectedRenderedBlocks[i] || match;
         });
     }
 
     private restoreRawBlocks(html: string): string {
-        return html.replace(/OOPROTECTED_RAW_(\d+)OO/g, (match, index) => {
+        return html.replace(/OOSNAPTEXRAW(\d+)OO/g, (match, index) => {
             const i = parseInt(index, 10);
             return this.protectedRawBlocks[i] || match;
         });
     }
 
     public render(fullText: string): PatchPayload {
-        // Clear caches for this render cycle
         this.protectedRenderedBlocks = [];
         this.protectedRawBlocks = [];
 
@@ -171,57 +173,65 @@ export class SmartRenderer {
         const rawBlocks = validBlockObjects.map(b => b.text.trim());
         const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
         const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}]`;
-        const fingerprintedBlocks = rawBlocks.map(t => t.includes('\\maketitle') ? (t + metaFingerprint) : t);
+
+        // [FIXED] 1. Scan ALL blocks to get numbering data
+        const scanResult = this.scanner.scan(rawBlocks);
+        this.globalLabelMap = scanResult.labelMap;
+
+        // 2. Prepare block states for Diffing
+        // Since we use placeholders, we ONLY need to compare text content.
+        const newBlockStates = rawBlocks.map((rawText, i) => {
+            const text = rawText.includes('\\maketitle') ? (rawText + metaFingerprint) : rawText;
+            return { text, html: '' };
+        });
 
         const oldBlocks = this.lastBlocks;
         let start = 0;
-        const minLen = Math.min(fingerprintedBlocks.length, oldBlocks.length);
-        while (start < minLen && fingerprintedBlocks[start] === oldBlocks[start].text) {
+        const minLen = Math.min(newBlockStates.length, oldBlocks.length);
+
+        // Diffing: Compare text only
+        while (start < minLen && newBlockStates[start].text === oldBlocks[start].text) {
             start++;
         }
 
         let end = 0;
-        const maxEnd = Math.min(oldBlocks.length - start, fingerprintedBlocks.length - start);
+        const maxEnd = Math.min(oldBlocks.length - start, newBlockStates.length - start);
         while (end < maxEnd) {
-            if (oldBlocks[oldBlocks.length - 1 - end].text !== fingerprintedBlocks[fingerprintedBlocks.length - 1 - end]) { break; }
+            if (oldBlocks[oldBlocks.length - 1 - end].text !== newBlockStates[newBlockStates.length - 1 - end].text) { break; }
             end++;
         }
 
         let deleteCount = oldBlocks.length - start - end;
-        const rawInsertTexts = fingerprintedBlocks.slice(start, fingerprintedBlocks.length - end);
+        const blocksToRender = newBlockStates.slice(start, newBlockStates.length - end);
 
-        let insertedBlocksData = rawInsertTexts.map((text, i) => {
+        let insertedBlocksData = blocksToRender.map((blockData, i) => {
             const absoluteIndex = start + i;
-            // Note: We share the protection arrays across blocks for simplicity in this cycle
-            let processed = text;
+            let processed = blockData.text;
 
             this._preprocessRules.forEach(rule => {
                 processed = rule.apply(processed, this);
             });
 
-            // Markdown Render
             let finalHtml = this.md!.render(processed);
-
-            // [CHANGE] Restore Pre-Rendered Math AND Raw Blocks
-            // Order matters: usually math first, then raw chars
             finalHtml = this.restoreRenderedMath(finalHtml);
             finalHtml = this.restoreRawBlocks(finalHtml);
 
-            // Post process for Abstracts etc.
-            const hasSpecialBlocks = /OO(ABSTRACT|KEYWORDS)_STARTOO/.test(finalHtml);
-            if (hasSpecialBlocks) {
+            if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
                 finalHtml = postProcessHtml(finalHtml);
             }
 
-            return { text, html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>` };
+            return {
+                text: blockData.text,
+                html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>`
+            };
         });
 
         let shift = 0;
-        if (end > 0 && rawInsertTexts.length !== deleteCount) {
-             shift = rawInsertTexts.length - deleteCount;
+        if (end > 0 && blocksToRender.length !== deleteCount) {
+             shift = blocksToRender.length - deleteCount;
              const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
              tailBlocks.forEach((b, i) => {
-                 const newIdx = start + rawInsertTexts.length + i;
+                 const newIdx = start + blocksToRender.length + i;
                  b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
              });
         }
@@ -232,11 +242,33 @@ export class SmartRenderer {
             ...oldBlocks.slice(oldBlocks.length - end)
         ];
 
+        // Prepare Numbering Data for Client
+        const numberingMap: { [index: number]: any } = {};
+        scanResult.blockNumbering.forEach((bn, idx) => {
+            const hasCounts = Object.values(bn.counts).some(arr => arr.length > 0);
+            if (hasCounts) {
+                numberingMap[idx] = bn.counts;
+            }
+        });
+
+        const payload: PatchPayload = {
+            type: 'patch',
+            start,
+            deleteCount,
+            htmls: insertedBlocksData.map(b => b.html),
+            shift,
+            numbering: {
+                blocks: numberingMap,
+                labels: scanResult.labelMap
+            }
+        };
+
         if (oldBlocks.length === 0 || insertedBlocksData.length > 50 || deleteCount > 50) {
-            return { type: 'full', html: this.lastBlocks.map(b => b.html).join('') };
+            payload.type = 'full';
+            payload.html = this.lastBlocks.map(b => b.html).join('');
         }
 
-        return { type: 'patch', start, deleteCount, htmls: insertedBlocksData.map(b => b.html), shift };
+        return payload;
     }
 
     private buildBlockMap(blocks: BlockResult[]) {

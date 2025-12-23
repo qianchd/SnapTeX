@@ -182,29 +182,19 @@ export class TexPreviewPanel {
         this._panel.webview.postMessage({ command: 'update', payload });
     }
 
-    private _getWebviewSkeleton() {
-        // [FIX] Correctly resolve paths to the 'media/vendor' directory.
-        // We DO NOT resolve 'node_modules' here because it won't exist in the packaged extension.
-
-        // 1. KaTeX CSS
-        const katexPath = vscode.Uri.file(
-            path.join(this._extensionPath, 'media', 'vendor', 'katex', 'katex.min.css')
-        );
+private _getWebviewSkeleton() {
+        const katexPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'katex', 'katex.min.css'));
         const katexCssUri = this._panel.webview.asWebviewUri(katexPath);
 
-        // 2. Custom Preview CSS
         const stylePath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'preview-style.css'));
         const styleUri = this._panel.webview.asWebviewUri(stylePath);
 
-        // 3. PDF.js Main Script
         const pdfJsPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.mjs'));
         const pdfJsUri = this._panel.webview.asWebviewUri(pdfJsPath);
 
-        // 4. PDF.js Worker Script
         const pdfWorkerPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.worker.mjs'));
         const pdfWorkerUri = this._panel.webview.asWebviewUri(pdfWorkerPath);
 
-        // [FIX] Removed <base> tag to allow KaTeX fonts to load relatively to the CSS file.
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
@@ -231,13 +221,10 @@ export class TexPreviewPanel {
                 const contentRoot = document.getElementById('content-root');
                 const root = document.documentElement;
 
-                // --- Scroll State Management ---
                 function saveScrollState() {
                     const blocks = document.querySelectorAll('.latex-block');
-
                     for (const block of blocks) {
                         const rect = block.getBoundingClientRect();
-                        // Find the first visible block
                         if (rect.bottom > 0 && rect.top < window.innerHeight) {
                             const index = block.getAttribute('data-index');
                             const offset = -rect.top;
@@ -250,58 +237,34 @@ export class TexPreviewPanel {
 
                 function restoreScrollState(state) {
                     if (!state || !state.index) return;
-
                     const block = document.querySelector('.latex-block[data-index="' + state.index + '"]');
                     if (block) {
                         const newTop = block.getBoundingClientRect().top + window.scrollY;
-                        let targetY;
-
-                        // Calculate target Y based on previous ratio
-                        if (state.ratio >= 0) {
-                             targetY = newTop + (block.offsetHeight * state.ratio);
-                        } else {
-                             targetY = newTop;
-                        }
-
+                        let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
                         window.scrollTo({ top: targetY, behavior: 'auto' });
                     }
                 }
 
-                // --- Text Highlighting Logic ---
                 function highlightTextInNode(rootElement, text) {
                     if (!text || text.length < 3) return false;
-
-                    const walker = document.createTreeWalker(
-                        rootElement,
-                        NodeFilter.SHOW_TEXT,
-                        {
-                            acceptNode: (node) => {
-                                // Skip math content to prevent breaking KaTeX rendering
-                                if (node.parentElement && node.parentElement.closest('.katex')) {
-                                    return NodeFilter.FILTER_REJECT;
-                                }
-                                return NodeFilter.FILTER_ACCEPT;
-                            }
+                    const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT, {
+                        acceptNode: (node) => {
+                            if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
+                            return NodeFilter.FILTER_ACCEPT;
                         }
-                    );
-
+                    });
                     let node;
                     while (node = walker.nextNode()) {
                         const val = node.nodeValue;
                         const index = val.indexOf(text);
-
                         if (index >= 0) {
                             const range = document.createRange();
                             range.setStart(node, index);
                             range.setEnd(node, index + text.length);
-
                             const span = document.createElement('span');
                             span.className = 'highlight-word';
                             range.surroundContents(span);
-
                             span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-
-                            // Remove highlight after animation
                             setTimeout(() => {
                                 const parent = span.parentNode;
                                 if (parent) {
@@ -315,78 +278,86 @@ export class TexPreviewPanel {
                     return false;
                 }
 
-                // --- Smart DOM Update (Diffing) ---
                 function smartFullUpdate(newHtml) {
                     const parser = new DOMParser();
                     const newDoc = parser.parseFromString(newHtml, 'text/html');
                     const newElements = Array.from(newDoc.body.children);
                     const oldElements = Array.from(contentRoot.children);
-
                     const maxLen = Math.max(newElements.length, oldElements.length);
-
                     for (let i = 0; i < maxLen; i++) {
                         const newEl = newElements[i];
                         const oldEl = oldElements[i];
-
-                        if (!newEl) {
-                            // Element deleted
-                            if (oldEl) oldEl.remove();
-                            continue;
-                        }
-                        if (!oldEl) {
-                            // Element added
-                            contentRoot.appendChild(newEl);
-                            continue;
-                        }
-
-                        // Compare outerHTML (content + attributes)
-                        if (oldEl.outerHTML !== newEl.outerHTML) {
-                            oldEl.replaceWith(newEl);
-                        }
+                        if (!newEl) { if (oldEl) oldEl.remove(); continue; }
+                        if (!oldEl) { contentRoot.appendChild(newEl); continue; }
+                        if (oldEl.outerHTML !== newEl.outerHTML) { oldEl.replaceWith(newEl); }
                     }
                 }
 
-                // --- Message Listener ---
+                // [Fix] Apply Numbering Logic
+                function applyNumbering(data) {
+                    if (!data) return;
+                    const { blocks, labels } = data;
+
+                    // 1. Update Block Counters
+                    for (const [idxStr, counts] of Object.entries(blocks)) {
+                        const idx = parseInt(idxStr);
+                        const blockEl = document.querySelector('.latex-block[data-index="' + idx + '"]');
+                        if (!blockEl) continue;
+
+                        const fill = (type, values) => {
+                            if (!values || !values.length) return;
+                            const spans = blockEl.querySelectorAll('.sn-cnt[data-type="' + type + '"]');
+                            spans.forEach((span, i) => {
+                                if (values[i]) span.textContent = values[i];
+                            });
+                        };
+
+                        fill('eq', counts.eq);
+                        fill('fig', counts.fig);
+                        fill('tbl', counts.tbl);
+                        fill('alg', counts.alg);
+                        fill('sec', counts.sec);
+                        fill('thm', counts.thm);
+                    }
+
+                    // 2. Update Global References (Links)
+                    if (labels) {
+                        const refs = document.querySelectorAll('.sn-ref');
+                        refs.forEach(ref => {
+                            const key = ref.getAttribute('data-key');
+                            if (key && labels[key]) {
+                                ref.textContent = labels[key];
+                            } else {
+                                ref.textContent = "??";
+                            }
+                        });
+                    }
+                }
+
                 window.addEventListener('message', event => {
                     const { command, payload, index, ratio, anchor } = event.data;
 
                     if (command === 'update') {
+                        // 1. DOM Update
                         if (payload.type === 'full') {
-                            // 1. Save scroll state
                             const scrollState = saveScrollState();
-
                             document.body.classList.add('preload-mode');
                             smartFullUpdate(payload.html);
-
-                            // 2. Wait for fonts to load before calculating scroll position
                             document.fonts.ready.then(() => {
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
-                                        // Update dynamic CSS variable if needed
-                                        const fullHeight = document.body.scrollHeight;
-                                        const count = contentRoot.childElementCount || 1;
-                                        const avgHeight = fullHeight / count;
-                                        root.style.setProperty('--avg-height', avgHeight.toFixed(2) + 'px');
-
-                                        // 3. Restore scroll state
                                         restoreScrollState(scrollState);
-
                                         document.body.classList.remove('preload-mode');
                                     });
                                 });
                             });
                         } else if (payload.type === 'patch') {
-                            // Handle partial updates
                             const { start, deleteCount, htmls = [], shift = 0 } = payload;
                             const targetIndex = start + deleteCount;
                             const referenceNode = contentRoot.children[targetIndex] || null;
-
-                            // Remove old blocks
                             for (let i = 0; i < deleteCount; i++) {
                                 if (contentRoot.children[start]) contentRoot.removeChild(contentRoot.children[start]);
                             }
-
-                            // Insert new blocks
                             if (htmls.length > 0) {
                                 const fragment = document.createDocumentFragment();
                                 const tempDiv = document.createElement('div');
@@ -397,8 +368,6 @@ export class TexPreviewPanel {
                                 });
                                 contentRoot.insertBefore(fragment, referenceNode);
                             }
-
-                            // Shift indices of subsequent blocks
                             if (shift !== 0) {
                                 let node = contentRoot.children[start + htmls.length];
                                 while (node) {
@@ -410,34 +379,46 @@ export class TexPreviewPanel {
                                 }
                             }
                         }
+
+                        // 2. [Critical] Apply Numbering AFTER DOM Update
+                        if (payload.numbering) {
+                            // Use requestAnimationFrame to ensure DOM is ready
+                            requestAnimationFrame(() => {
+                                applyNumbering(payload.numbering);
+                            });
+                        }
+
+                        // 3. Trigger PDF update
+                        setTimeout(() => {
+                            const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
+                            pdfCanvases.forEach(canvas => {
+                                const uri = canvas.getAttribute('data-pdf-src');
+                                const id = canvas.id;
+                                const renderedUri = canvas.getAttribute('data-rendered-uri');
+                                if (uri && id && renderedUri !== uri) {
+                                    window.renderPdfToCanvas(uri, id);
+                                }
+                            });
+                        }, 50);
                     }
                     else if (command === 'scrollToBlock') {
-                        // Handle Sync: Editor -> Preview
                         const target = document.querySelector('.latex-block[data-index="' + index + '"]');
                         if (target) {
                             target.classList.add('jump-highlight');
                             setTimeout(() => target.classList.remove('jump-highlight'), 2000);
-
                             let preciseFound = false;
-                            if (anchor) {
-                                preciseFound = highlightTextInNode(target, anchor);
-                            }
-
+                            if (anchor) preciseFound = highlightTextInNode(target, anchor);
                             if (!preciseFound) {
                                 const rect = target.getBoundingClientRect();
                                 const absoluteTop = rect.top + window.scrollY;
                                 const offset = (ratio || 0) * rect.height;
                                 const targetY = absoluteTop + offset - (window.innerHeight / 2);
-                                window.scrollTo({
-                                    top: targetY,
-                                    behavior: 'smooth'
-                                });
+                                window.scrollTo({ top: targetY, behavior: 'smooth' });
                             }
                         }
                     }
                 });
 
-                // --- Sync: Preview -> Editor (Double Click) ---
                 document.addEventListener('dblclick', event => {
                     const block = event.target.closest('.latex-block');
                     if (block) {
@@ -446,7 +427,6 @@ export class TexPreviewPanel {
                             const rect = block.getBoundingClientRect();
                             const relativeY = event.clientY - rect.top;
                             const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
-
                             let anchorText = "";
                             const selection = window.getSelection();
                             if (selection && selection.toString().trim().length > 0) {
@@ -458,7 +438,6 @@ export class TexPreviewPanel {
                                     const offset = range.startOffset;
                                     let start = offset;
                                     let end = offset;
-                                    // Expand selection to word boundaries
                                     while (start > 0 && /\\S/.test(text[start - 1])) start--;
                                     while (end < text.length && /\\S/.test(text[end])) end++;
                                     if (end > start) {
@@ -466,7 +445,6 @@ export class TexPreviewPanel {
                                     }
                                 }
                             }
-
                             vscode.postMessage({
                                 command: 'revealLine',
                                 index: parseInt(index),
@@ -476,11 +454,8 @@ export class TexPreviewPanel {
                         }
                     }
                 });
-
-                // Signal that the webview is ready
                 vscode.postMessage({ command: 'webviewLoaded' });
             </script>
-
             <script type="module">
                 import * as pdfjsLib from '${pdfJsUri}';
                 pdfjsLib.GlobalWorkerOptions.workerSrc = '${pdfWorkerUri}';
@@ -489,59 +464,30 @@ export class TexPreviewPanel {
                     try {
                         const canvas = document.getElementById(canvasId);
                         if (!canvas) return;
-
-                        // Prevent duplicate rendering
                         if (canvas.getAttribute('data-rendering') === 'true') return;
                         canvas.setAttribute('data-rendering', 'true');
-
                         const loadingTask = pdfjsLib.getDocument(pdfUri);
                         const pdf = await loadingTask.promise;
                         const page = await pdf.getPage(1);
-
-                        // High quality scale
                         const scale = 3;
                         const viewport = page.getViewport({ scale: scale });
-
-                        // Resize canvas only if dimensions changed (prevents flickering)
                         if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
                             canvas.height = viewport.height;
                             canvas.width = viewport.width;
                         }
-
                         const context = canvas.getContext('2d');
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
-
                         canvas.removeAttribute('data-rendering');
-                        // Mark as rendered to prevent unnecessary re-renders in update loop
                         canvas.setAttribute('data-rendered-uri', pdfUri);
-
                     } catch (error) {
                         console.error('PDF render error:', error);
                         const c = document.getElementById(canvasId);
                         if(c) c.removeAttribute('data-rendering');
                     }
                 };
-
                 window.addEventListener('message', event => {
-                    if (event.data.command === 'update') {
-                        // Check for PDF canvases that need rendering
-                        setTimeout(() => {
-                            const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
-                            pdfCanvases.forEach(canvas => {
-                                const uri = canvas.getAttribute('data-pdf-src');
-                                const id = canvas.id;
-                                const renderedUri = canvas.getAttribute('data-rendered-uri');
-
-                                // Only render if URI changed or never rendered
-                                if (uri && id && renderedUri !== uri) {
-                                    window.renderPdfToCanvas(uri, id);
-                                }
-                            });
-                        }, 50);
-                    }
+                    // Logic merged into main listener above
                 });
-
-                // Signal readiness again for module script
                 vscode.postMessage({ command: 'webviewLoaded' });
             </script>
             </body>
