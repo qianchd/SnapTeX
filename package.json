@@ -10,7 +10,7 @@
     "url": "https://github.com/qianchd/snaptex.git"
   },
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.107.0"
   },
   "categories": [
     "Visualization",
