@@ -33,6 +33,8 @@ It is a demo based on the early conceptual proof, [mume.parser](https://github.c
 
 * **Label Reference**: Supports equation/section/figure/table/algorithm/theorem... labeling and cross-reference commands `ref,label,eqref`.
 
+* **Citations**: Support dynamic BibTeX bibliography rendering, with a simple style and rendering rule for snap preview.
+
 ## Requirements
 
 SnapTeX is designed to be "zero-config." It works out of the box with no external dependencies.
@@ -46,10 +48,7 @@ SnapTeX is designed to be "zero-config." It works out of the box with no externa
 
 ## Known Issues and update plan
 
-* `\ref\{\}` in math envs does not render correctly.
-* Quotation marks like ``Note'' do not rendered correctly.
 * **Complex Packages**: Since this is a regex-based parser and not a full TeX engine, highly complex macro-heavy packages (like `tikz` or `pgfplots`) will be displayed as placeholders.
-* **Citations**: Currently displays `cite` placeholders; dynamic BibTeX bibliography rendering is planned for future updates.
 
 
 

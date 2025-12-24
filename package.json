@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -60,13 +60,7 @@
     ],
     "configuration": {
       "title": "SnapTeX",
-      "properties": {
-        "snaptex.renderDebounce": {
-          "type": "number",
-          "default": 100,
-          "description": "Time in milliseconds to wait after the last keystroke before updating the preview."
-        }
-      }
+      "properties": {}
     }
   },
   "scripts": {

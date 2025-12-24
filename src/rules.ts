@@ -1,6 +1,7 @@
 import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels, cleanLatexCommands, findBalancedClosingBrace, resolveLatexStyles } from './utils';
 import { PreprocessRule } from './types';
 import { SmartRenderer } from './renderer';
+import { BibTexParser } from './bib';
 
 /**
  * Default preprocessing rule set
@@ -23,7 +24,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
     {
         name: 'mbox',
-        priority: 11,
+        priority: 20,
         apply: (text, renderer: SmartRenderer) => {
             return text.replace(/\\mbox/g, (match, char) => {
                 return '\\text';
@@ -35,7 +36,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 1: Roman numerals and special markers ---
     {
         name: 'romannumeral',
-        priority: 20,
+        priority: 30,
         apply: (text, renderer: SmartRenderer) => {
             text = text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (match, cmd, numStr) => {
                 return toRoman(parseInt(numStr), cmd === 'Rmnum');
@@ -47,7 +48,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         // --- Step 2: Block-level math formulas (Render and Cache) ---
     {
         name: 'display_math',
-        priority: 30,
+        priority: 40,
         apply: (text, renderer: SmartRenderer) => {
             const mathBlockRegex = /(\$\$([\s\S]*?)\$\$)|(\\\[([\s\S]*?)\\\])|(\\begin\{(equation|align|gather|multline|flalign|alignat)(\*?)\}([\s\S]*?)\\end\{\6\7\})/gi;
 
@@ -98,11 +99,11 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 6: Inline formula protection (Render and Cache) ---
+        // --- Step 6: Inline formula protection (Render and Cache) ---
     // Note: Priority 40 runs AFTER figure/table/algorithm, so it can catch math in their outputs.
     {
         name: 'inline_math',
-        priority: 31,
+        priority: 50,
         apply: (text, renderer: SmartRenderer) => {
             const processInline = (content: string) => {
                 // [FIX] Use simple index token
@@ -126,9 +127,143 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
+
+    // --- Step 13: Refs ---
+    {
+        name: 'refs_and_labels',
+        priority: 60,
+        apply: (text, renderer: SmartRenderer) => {
+            // 1. Labels
+            text = text.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
+                const safeLabel = labelName.replace(/"/g, '&quot;');
+                return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="position:relative; top:-50px; visibility:hidden;"></span>`;
+            });
+
+            // 2. References (Numbering)
+            // [FIX] \ref just outputs link (number). \eqref outputs link wrapped in ()
+            text = text.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (match, type, labels) => {
+                const labelArray = labels.split(',').map((l: string) => l.trim());
+                const htmlLinks = labelArray.map((label: string) => {
+                    return `<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>`;
+                });
+                const joinedLinks = htmlLinks.join(', ');
+                if (type === 'eqref') { return `(${joinedLinks})`; }
+                return joinedLinks;
+            });
+            return text;
+        }
+    },
+
+       // Step 10: Author-Year Citations ---
+    {
+        name: 'citations',
+        priority: 70,
+        apply: (text, renderer: SmartRenderer) => {
+            // 1. Labels
+            text = text.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
+                const safeLabel = labelName.replace(/"/g, '&quot;');
+                return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="position:relative; top:-50px; visibility:hidden;"></span>`;
+            });
+
+            // 2. Author-Year Citation Logic
+            // Matches \cite, \citep, \citet, \citeyear
+            text = text.replace(/\\(cite|citep|citet|citeyear)\*?\{([^}]+)\}/g, (match, cmd, keys) => {
+                const keyArray = keys.split(',').map((k: string) => k.trim());
+
+                // Process each key
+                const parts = keyArray.map((key: string) => {
+                    // MUST call resolveCitation to ensure the key is added to the bibliography list
+                    renderer.resolveCitation(key);
+                    const entry = renderer.bibEntries.get(key);
+
+                    if (!entry) {
+                        return { error: true, key, author: "unknown", year: "unknown" };
+                    }
+
+                    const author = BibTexParser.getShortAuthor(entry);
+                    const year = entry.fields.year || "unknown";
+                    return { error: false, key, author, year };
+                });
+
+                // Helper to construct link
+                const mkLink = (text: string, key: string) =>
+                    `<a href="#ref-${key}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
+
+                if (cmd === 'citet') {
+                    // Format: Author (Year)
+                    // Multi-key: Author1 (Year1), Author2 (Year2)
+                    return parts.map((p: { error: boolean; key: string; author: string; year: string }) => {
+                        if (p.error) {return `[${p.key}?]`;}
+                        return `${p.author} (${mkLink(p.year, p.key)})`;
+                    }).join(', ');
+
+                } else if (cmd === 'citeyear') {
+                    // Format: Year
+                    return parts.map((p: { error: boolean; key: string; author: string; year: string }) => {
+                        if (p.error) {return `[${p.key}?]`;}
+                        return mkLink(p.year, p.key);
+                    }).join(', ');
+
+                } else {
+                    // \cite or \citep -> (Author, Year)
+                    // Multi-key: (Author1, Year1; Author2, Year2)
+                    const inner = parts.map((p: { error: boolean; key: string; author: string; year: string }) => {
+                        if (p.error) {return `[${p.key}?]`;}
+                        return mkLink(`${p.author}, ${p.year}`, p.key);
+                    }).join('; ');
+                    return `(${inner})`;
+                }
+            });
+
+            return text;
+        }
+    },
+
+    // Step 11: Bibliography (Alphabetical, No Number) ---
+    {
+        name: 'bibliography',
+        priority: 71,
+        apply: (text, renderer: SmartRenderer) => {
+            return text.replace(/\\bibliography\{([^}]+)\}/g, (match, file) => {
+                if (renderer.citedKeys.length === 0) {
+                    return `<div class="latex-bibliography error">No citations found.</div>`;
+                }
+
+                // 1. Get unique keys and Sort alphabetically by Author
+                const uniqueKeys = Array.from(new Set(renderer.citedKeys));
+                const sortedKeys = uniqueKeys.sort((a, b) => {
+                    const entryA = renderer.bibEntries.get(a);
+                    const entryB = renderer.bibEntries.get(b);
+                    const authA = entryA ? (entryA.fields.author || '') : '';
+                    const authB = entryB ? (entryB.fields.author || '') : '';
+                    return authA.localeCompare(authB);
+                });
+
+                let html = `<h2 class="latex-bibliography-header">References</h2><div class="latex-bibliography-list">`;
+
+                // 2. Render without numbers [n]
+                sortedKeys.forEach((key) => {
+                    const entry = renderer.bibEntries.get(key);
+                    const content = entry
+                        ? BibTexParser.formatEntry(entry, renderer)
+                        : `<span style="color:red">Bib entry '${key}' not found.</span>`;
+
+                    // Using a hanging indent style
+                    html += `
+                        <div class="bib-item" id="ref-${key}" style="margin-bottom: 0.8em; padding-left: 2em; text-indent: -2em;">
+                            ${content}
+                        </div>`;
+                });
+
+                html += `</div>`;
+                return html;
+            });
+        }
+    },
+
     {
         name: 'escaped_chars2',
-        priority: 32,
+        priority: 90,
         apply: (text, renderer: SmartRenderer) => {
             return text.replace(/\\([%#&])/g, (match, char) => {
                 const entities: Record<string, string> = {'#': '&#35;', '&': '&amp;', '%': '&#37;' };
@@ -140,7 +275,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
     {
     name: 'latex_quotes',
-    priority: 32,
+    priority: 100,
         apply: (text, renderer: SmartRenderer) => {
             // 1. 处理双引号 ``content''
             // 注意：这里我们只通过正则找到对儿，但替换时只替换符号，保持 content 在外面
@@ -176,7 +311,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // Convert ~ to non-breaking space (&nbsp;) and protect it.
     {
         name: 'latex_special_spaces',
-        priority: 33,
+        priority: 110,
         apply: (text, renderer: SmartRenderer) => {
             // Global replace tilde with protected non-breaking space
             return text.replace(/~/g, () => renderer.pushInlineProtected('&nbsp;'));
@@ -187,7 +322,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // Note: Priority 33 ensures it runs after display_math(30) but before inline_math(40).
     {
         name: 'figure',
-        priority: 34,
+        priority: 120,
         apply: (text: string, renderer: SmartRenderer) => {
             return text.replace(/\\begin\{figure\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\}/gi, (match, content) => {
                 const captionMatch = content.match(/\\caption\{([^}]+)\}/);
@@ -214,7 +349,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 4: Algorithm (Priority 35) ---
     {
         name: 'algorithm',
-        priority: 35,
+        priority: 130,
         apply: (text: string, renderer: SmartRenderer) => {
             return text.replace(/\\begin\{algorithm\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\}/gi, (match, content) => {
                 const captionMatch = content.match(/\\caption\{([^}]+)\}/);
@@ -286,7 +421,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
     // --- Step 5: Table (Priority 36) ---
     {
-        name: 'table', priority: 36,
+        name: 'table',
+        priority: 140,
         apply: (text: string, renderer: SmartRenderer) => {
             return text.replace(/\\begin\{table\}(?:\[.*?\])?([\s\S]*?)\\end\{table\}/gi, (match, content) => {
                 const captionMatch = content.match(/\\caption\{([^}]+)\}/);
@@ -449,7 +585,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 7: Theorem and proof environments ---
     {
         name: 'theorems_and_proofs',
-        priority: 50,
+        priority: 150,
         apply: (text, renderer: SmartRenderer) => {
             const thmEnvs = ['theorem', 'lemma', 'proposition', 'condition', 'condbis', 'assumption', 'remark', 'definition', 'corollary', 'example'].join('|');
             const thmRegex = new RegExp(`\\\\begin\\{(${thmEnvs})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
@@ -472,7 +608,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 8: Metadata \maketitle and abstract ---
     {
         name: 'maketitle_and_abstract',
-        priority: 60,
+        priority: 160,
         apply: (text, renderer: SmartRenderer) => {
             // 1. Handle \maketitle
             if (text.includes('\\maketitle')) {
@@ -501,7 +637,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 9: Section titles ---
     {
         name: 'sections',
-        priority: 70,
+        priority: 170,
         apply: (text, renderer: SmartRenderer) => {
             const sectionRegex = /\\(section|subsection|subsubsection)(\*?)\{((?:[^{}]|{[^{}]*})*)\}\s*(\\label\{[^}]+\})?\s*/g;
             return text.replace(sectionRegex, (match, level, star, content, label) => {
@@ -525,7 +661,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     // --- Step 12: List processing ---
     {
         name: 'lists',
-        priority: 90,
+        priority: 180,
         apply: (text, renderer: SmartRenderer) => {
             const listStack: string[] = [];
             return text.replace(/(\\begin\{(?:itemize|enumerate)\})|(\\end\{(?:itemize|enumerate)\})|(\\item(?:\[(.*?)\])?)/g, (match, pBegin, pEnd, pItem, pLabel) => {
@@ -547,44 +683,10 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 13: Refs & Citations (Separate handling) ---
-    {
-        name: 'refs_and_labels',
-        priority: 31,
-        apply: (text, renderer: SmartRenderer) => {
-            // 1. Labels
-            text = text.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
-                const safeLabel = labelName.replace(/"/g, '&quot;');
-                return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="position:relative; top:-50px; visibility:hidden;"></span>`;
-            });
-
-            // 2. References (Numbering)
-            // [FIX] \ref just outputs link (number). \eqref outputs link wrapped in ()
-            text = text.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (match, type, labels) => {
-                const labelArray = labels.split(',').map((l: string) => l.trim());
-                const htmlLinks = labelArray.map((label: string) => {
-                    return `<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>`;
-                });
-                const joinedLinks = htmlLinks.join(', ');
-                if (type === 'eqref') { return `(${joinedLinks})`; }
-                return joinedLinks;
-            });
-
-            // 3. Citations (Static text)
-            text = text.replace(/\\(cite|citep|citet)\{([^}]+)\}/g, (match, type, keys) => {
-                const keyArray = keys.split(',').map((k: string) => k.trim());
-                // Simple static rendering: [key1, key2]
-                return `<span class="latex-cite">[${keyArray.join(', ')}]</span>`;
-            });
-
-            return text;
-        }
-    },
-
     // --- Step 13: Text Styles ---
     {
         name: 'text_styles',
-        priority: 110,
+        priority: 190,
         apply: (text, renderer: SmartRenderer) => {
             return resolveLatexStyles(text);
         }
