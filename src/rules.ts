@@ -154,25 +154,32 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-       // Step 10: Author-Year Citations ---
+// --- Step 10: Author-Year Citations ---
     {
         name: 'citations',
         priority: 70,
         apply: (text, renderer: SmartRenderer) => {
-            // 1. Labels
-            text = text.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
-                const safeLabel = labelName.replace(/"/g, '&quot;');
-                return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="position:relative; top:-50px; visibility:hidden;"></span>`;
-            });
+            // [FIX] Updated Regex to CAPTURE optional arguments.
+            // Group 2: Optional Arg 1, Group 3: Optional Arg 2, Group 4: Keys
+            // Matches: \cite[post]{key}, \cite[pre][post]{key}
+            const citeRegex = /\\(cite|citep|citet|citeyear)(?:\*?)(?:\s*\[([^\]]*)\])?(?:\s*\[([^\]]*)\])?\s*\{([^}]+)\}/g;
 
-            // 2. Author-Year Citation Logic
-            // Matches \cite, \citep, \citet, \citeyear
-            text = text.replace(/\\(cite|citep|citet|citeyear)\*?\{([^}]+)\}/g, (match, cmd, keys) => {
+            text = text.replace(citeRegex, (match, cmd, opt1, opt2, keys) => {
                 const keyArray = keys.split(',').map((k: string) => k.trim());
 
-                // Process each key
+                // Logic for Optional Arguments
+                let pre = '';
+                let post = '';
+                if (opt2 !== undefined) {
+                    // Two args: [pre][post]
+                    pre = opt1 ? opt1 + ' ' : '';
+                    post = opt2;
+                } else if (opt1 !== undefined) {
+                    // One arg: [post]
+                    post = opt1;
+                }
+
                 const parts = keyArray.map((key: string) => {
-                    // MUST call resolveCitation to ensure the key is added to the bibliography list
                     renderer.resolveCitation(key);
                     const entry = renderer.bibEntries.get(key);
 
@@ -185,33 +192,49 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     return { error: false, key, author, year };
                 });
 
-                // Helper to construct link
                 const mkLink = (text: string, key: string) =>
                     `<a href="#ref-${key}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
 
                 if (cmd === 'citet') {
-                    // Format: Author (Year)
-                    // Multi-key: Author1 (Year1), Author2 (Year2)
-                    return parts.map((p: { error: boolean; key: string; author: string; year: string }) => {
+                    // Format: pre Author (Year, post)
+                    const formatted = parts.map((p: any, i: number) => {
+                        const isLast = i === parts.length - 1;
                         if (p.error) {return `[${p.key}?]`;}
-                        return `${p.author} (${mkLink(p.year, p.key)})`;
+
+                        let yearText = p.year;
+                        // For \citet, post-note usually goes inside the parenthesis of the last item
+                        if (isLast && post) { yearText += `, ${post}`; }
+
+                        return `${p.author} (${mkLink(yearText, p.key)})`;
                     }).join(', ');
+
+                    return pre + formatted;
 
                 } else if (cmd === 'citeyear') {
-                    // Format: Year
-                    return parts.map((p: { error: boolean; key: string; author: string; year: string }) => {
+                    // Format: pre Year, post
+                    const formatted = parts.map((p: any, i: number) => {
+                        const isLast = i === parts.length - 1;
                         if (p.error) {return `[${p.key}?]`;}
-                        return mkLink(p.year, p.key);
+
+                        let yearText = p.year;
+                        if (isLast && post) { yearText += `, ${post}`; }
+
+                        return mkLink(yearText, p.key);
                     }).join(', ');
+                    return pre + formatted;
 
                 } else {
-                    // \cite or \citep -> (Author, Year)
-                    // Multi-key: (Author1, Year1; Author2, Year2)
-                    const inner = parts.map((p: { error: boolean; key: string; author: string; year: string }) => {
+                    // \cite or \citep -> (pre Author, Year, post)
+                    const inner = parts.map((p: any) => {
                         if (p.error) {return `[${p.key}?]`;}
                         return mkLink(`${p.author}, ${p.year}`, p.key);
                     }).join('; ');
-                    return `(${inner})`;
+
+                    let content = inner;
+                    if (pre) { content = pre + content; }
+                    if (post) { content = content + ', ' + post; }
+
+                    return `(${content})`;
                 }
             });
 

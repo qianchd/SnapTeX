@@ -2,6 +2,10 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.3.2] - 2025-12-25
+### Changed
+- **Citations**: Support cite with content like `\citep[content]{key}`
+
 ## [0.3.1] - 2025-12-25
 ### Changed
 - **Fix bug in label scanning:** Label in Nested Envs fails to be found.

@@ -13,6 +13,29 @@ By using a custom high-speed regex parser, **KaTeX**, and **Markdown-It**, it pr
 
 It is a demo based on the early conceptual proof, [mume.parser](https://github.com/qianchd/mume.parser) for [MPE](https://github.com/shd101wyy/vscode-markdown-preview-enhanced).
 
+---
+
+## **SnapTeX Preview Quick Start Guide**
+
+### Installation
+
+It can be installed from the VSC extension market. Find [SnapTeX](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex).
+
+### **How to Open the Preview**
+
+* **Via Command Palette:** Open your `*.tex` file, press `Ctrl+Shift+p`, search for **"SnapTeX Preview: Start"**, and press `Enter`.
+* **Via Shortcut:** Simply press the keyboard shortcut `Ctrl+k v` to launch the preview immediately.
+
+### **Performance & Rendering**
+
+* **Initial Load:** The first time you open the preview, it may take several seconds to complete the full rendering.
+* **Real-Time Updates:** Once initialized, updates are processed locally, providing **instant, real-time rendering** as you type.
+
+### **Syncing & Navigation**
+
+* **Editor to Preview:** Press `Ctrl+Alt+n` in the editor to sync your cursor position and jump to the corresponding location in the preview panel.
+* **Preview to Editor:** Double-click anywhere in the preview panel to automatically sync and jump to that specific line in the editor.
+
 ## Features
 
 * **Instant Math Rendering**: Real-time rendering of inline math `$ ... $` and complex display math environments (e.g., `equation`, `align`, `gather`) using KaTeX.
