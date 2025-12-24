@@ -2,6 +2,10 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.3.1] - 2025-12-25
+### Changed
+- **Fix bug in label scanning:** Label in Nested Envs fails to be found.
+
 ## [0.3.0] - 2025-12-24
 ### Added
 - **Citations**: Support dynamic BibTeX bibliography rendering with author-year cites and cross-refs, in plain styles and rendering rules for snap preview.
