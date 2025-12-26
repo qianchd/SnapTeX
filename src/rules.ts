@@ -1,4 +1,4 @@
-import { toRoman, capitalizeFirstLetter, applyStyleToTexList, extractAndHideLabels, cleanLatexCommands, findBalancedClosingBrace, resolveLatexStyles } from './utils';
+import { toRoman, capitalizeFirstLetter, extractAndHideLabels, findBalancedClosingBrace, resolveLatexStyles, findCommand } from './utils';
 import { PreprocessRule } from './types';
 import { SmartRenderer } from './renderer';
 import { BibTexParser } from './bib';
@@ -348,23 +348,35 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         priority: 120,
         apply: (text: string, renderer: SmartRenderer) => {
             return text.replace(/\\begin\{figure\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\}/gi, (match, content) => {
-                const captionMatch = content.match(/\\caption\{([^}]+)\}/);
-                // [NEW] Placeholder for Figure Number
-                const caption = captionMatch ?
-                    `<div class="figure-caption"><strong>Figure <span class="sn-cnt" data-type="fig"></span>:</strong> ${cleanLatexCommands(captionMatch[1], renderer)}</div>` : '';
+                const captionRes = findCommand(content, 'caption');
+                let captionHtml = '';
+                let body = content;
 
-                const imgMatch = content.match(/\\includegraphics(?:\[.*?\])?\{([^}]+)\}/);
-                const imgPath = imgMatch ? imgMatch[1] : '';
-                let inner = `[Image Not Found]`;
-                if (imgPath) {
-                    if (imgPath.toLowerCase().endsWith('.pdf')) {
-                        const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
-                        inner = `<canvas id="${canvasId}" data-pdf-src="LOCAL_IMG:${imgPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`;
-                    } else {
-                        inner = `<img src="LOCAL_IMG:${imgPath}" style="max-width:100%; display:block; margin:0 auto;">`;
+                if (captionRes) {
+                    let captionText = captionRes.content;
+                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m, c) => renderer.renderAndProtectMath(c.trim(), false));
+                    captionText = resolveLatexStyles(captionText);
+                    captionHtml = `<div class="figure-caption"><strong>Figure <span class="sn-cnt" data-type="fig"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
+
+                    // Remove caption from body to avoid duplication
+                    body = body.substring(0, captionRes.start) + body.substring(captionRes.end + 1);
+                }
+
+                body = body.trim().replace(/\\centering/g, '');
+                const imgMatch = body.match(/\\includegraphics(?:\[.*?\])?\{([^}]+)\}/);
+                let inner = body;
+                if (imgMatch) {
+                    const imgPath = imgMatch[1];
+                    const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
+                    inner = imgPath.toLowerCase().endsWith('.pdf')
+                        ? `<canvas id="${canvasId}" data-pdf-src="LOCAL_IMG:${imgPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`
+                        : `<img src="LOCAL_IMG:${imgPath}" style="max-width:100%; display:block; margin:0 auto;">`;
+                } else {
+                    if (body.replace(/\s/g, '').length === 0) {
+                        inner = `<div style="border:1px dashed #ccc; padding:10px; color:#666;">[Image Not Found or Empty Figure]</div>`;
                     }
                 }
-                return `\n\n<div class="latex-block figure">${inner}${caption}</div>\n\n`;
+                return `\n\n<div class="latex-block figure">${inner}${captionHtml}</div>\n\n`;
             });
         }
     },
@@ -375,15 +387,15 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         priority: 130,
         apply: (text: string, renderer: SmartRenderer) => {
             return text.replace(/\\begin\{algorithm\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\}/gi, (match, content) => {
-                const captionMatch = content.match(/\\caption\{([^}]+)\}/);
-                let captionText = captionMatch ? captionMatch[1] : '';
-                if (captionText) {captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => renderer.renderAndProtectMath(c.trim(), false));}
-
-                // [NEW] Placeholder
-                const captionHtml = captionText ?
-                    `<div class="alg-caption"><strong>Algorithm <span class="sn-cnt" data-type="alg"></span>:</strong> ${renderer.renderInline(captionText)}</div>` : '';
-
-                // ... (Algorithmic Logic 保持不变，省略以节省篇幅) ...
+                const captionRes = findCommand(content, 'caption');
+                let captionHtml = '';
+                if (captionRes) {
+                    let captionText = captionRes.content;
+                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m, c) => renderer.renderAndProtectMath(c.trim(), false));
+                    captionText = resolveLatexStyles(captionText);
+                    captionHtml = `<div class="alg-caption"><strong>Algorithm <span class="sn-cnt" data-type="alg"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
+                    content = content.substring(0, captionRes.start) + content.substring(captionRes.end + 1);
+                }
                 const algRegex = /\\begin\{algorithmic\}(?:\[(.*?)\])?([\s\S]*?)\\end\{algorithmic\}/g;
                 let bodyHtml = '';
                 let matchAlg;
@@ -414,7 +426,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
                         contentToRender = resolveLatexStyles(contentToRender);
 
-                        // Handle \eqref
                         contentToRender = contentToRender.replace(/\\eqref\*?\{([^}]+)\}/g, (match, labels) => {
                             const labelArray = labels.split(',').map((l: string) => l.trim());
                             return labelArray.map((label: string) =>
@@ -422,7 +433,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                             ).join(', ');
                         });
 
-                        // Handle \ref
                         contentToRender = contentToRender.replace(/\\ref\*?\{([^}]+)\}/g, (match, labels) => {
                             const labelArray = labels.split(',').map((l: string) => l.trim());
                             return labelArray.map((label: string) =>
@@ -448,16 +458,15 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         priority: 140,
         apply: (text: string, renderer: SmartRenderer) => {
             return text.replace(/\\begin\{table\}(?:\[.*?\])?([\s\S]*?)\\end\{table\}/gi, (match, content) => {
-                const captionMatch = content.match(/\\caption\{([^}]+)\}/);
-                let captionText = captionMatch ? captionMatch[1] : '';
-                if (captionText) {
-                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => renderer.renderAndProtectMath(c.trim(), false));
+                const captionRes = findCommand(content, 'caption');
+                let captionHtml = '';
+                if (captionRes) {
+                    let captionText = captionRes.content;
+                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m, c) => renderer.renderAndProtectMath(c.trim(), false));
                     captionText = resolveLatexStyles(captionText);
+                    captionHtml = `<div class="table-caption"><strong>Table <span class="sn-cnt" data-type="tbl"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
+                    content = content.substring(0, captionRes.start) + content.substring(captionRes.end + 1);
                 }
-                // [NEW] Placeholder
-                const captionHtml = captionText ?
-                    `<div class="table-caption"><strong>Table <span class="sn-cnt" data-type="tbl"></span>:</strong> ${renderer.renderInline(captionText)}</div>` : '';
-
                 // ... (Table logic kept strictly same as before) ...
                 let innerContent = content.replace(/\\begin\{threeparttable\}/g, '').replace(/\\end\{threeparttable\}/g, '');
                 let notesHtml = '';
@@ -638,6 +647,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 let titleBlock = '';
                 if (renderer.currentTitle) {titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`;}
                 if (renderer.currentAuthor) {titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`;}
+                if (renderer.currentDate) {titleBlock += `<div class="latex-date">${renderer.currentDate.replace(/\\\\/g, '<br/>')}</div>`;}
                 text = text.replace(/\\maketitle.*/g, `\n\n${titleBlock}\n\n`);
             }
 
@@ -657,17 +667,22 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 9: Section titles ---
+    // --- Step 9: Section titles (Updated for paragraph/subparagraph) ---
     {
         name: 'sections',
         priority: 170,
         apply: (text, renderer: SmartRenderer) => {
-            const sectionRegex = /\\(section|subsection|subsubsection)(\*?)\{((?:[^{}]|{[^{}]*})*)\}\s*(\\label\{[^}]+\})?\s*/g;
+            const sectionRegex = /\\(section|subsection|subsubsection|paragraph|subparagraph)(\*?)\{((?:[^{}]|{[^{}]*})*)\}\s*(\\label\{[^}]+\})?\s*/g;
             return text.replace(sectionRegex, (match, level, star, content, label) => {
-                // [NEW] Placeholder
-                const prefix = level === 'section' ? '##' : (level === 'subsection' ? '###' : '####');
+                let prefix = '##';
+                if (level === 'subsection') {prefix = '###';}
+                else if (level === 'subsubsection') {prefix = '####';}
+                else if (level === 'paragraph') {prefix = '#####';}       // H5
+                else if (level === 'subparagraph') {prefix = '######';}   // H6
+
                 let numHtml = "";
-                if (star !== '*') {
+                // Only number main sections (up to subsubsection) to match scanner logic
+                if (star !== '*' && !['paragraph', 'subparagraph'].includes(level)) {
                     numHtml = `<span class="sn-cnt" data-type="sec"></span> `;
                 }
 

@@ -11,6 +11,7 @@ export function extractMetadata(text: string): MetadataResult {
 
     let title: string | undefined;
     let author: string | undefined;
+    let date: string | undefined;
 
     // 2. Extract Title and remove it from the body
     const titleRes = findCommand(cleanedText, 'title');
@@ -27,6 +28,14 @@ export function extractMetadata(text: string): MetadataResult {
         // Physical deletion: Ensure the entire \author{...} block disappears from the body
         cleanedText = cleanedText.substring(0, authorRes.start) + cleanedText.substring(authorRes.end + 1);
     }
+
+    // 4. Extract date and remove it from the body
+    const dateRes = findCommand(cleanedText, 'date');
+    if (dateRes) {
+        date = dateRes.content; // Keep the original extracted content here, leave rendering to rules.ts
+        cleanedText = cleanedText.substring(0, dateRes.start) + cleanedText.substring(dateRes.end + 1);
+    }
+
 
     const macros: Record<string, string> = {};
     const macroRegex = /\\(newcommand|renewcommand|def|gdef|DeclareMathOperator)(\*?)\s*\{?(\\[a-zA-Z0-9]+)\}?(?:\[(\d+)\])?/g;
@@ -58,5 +67,5 @@ export function extractMetadata(text: string): MetadataResult {
         }
     }
 
-    return { data: { macros, title, author }, cleanedText };
+    return { data: { macros, title, author, date }, cleanedText };
 }

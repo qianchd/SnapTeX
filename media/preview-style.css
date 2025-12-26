@@ -50,6 +50,14 @@ h1.latex-title {
 div.latex-author {
     font-size: 1.1em;
     text-align: center;
+    margin-bottom: 0;
+    font-style: italic;
+}
+
+/* Date Info \author */
+div.latex-date {
+    font-size: 1.1em;
+    text-align: center;
     margin-bottom: 2em;
     font-style: italic;
 }

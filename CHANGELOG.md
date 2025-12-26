@@ -2,6 +2,12 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.3.3] - 2025-12-26
+### Changed
+- **maketitle**: Support date in maketitle
+- **table, figure**: If the figure/table fails to render (e.g., currently tikz is not supported), then present the raw content.
+- **captions**: fixed rendering error when caption content is nested with `{}`, e.g., `\\textbf{}` in captions.
+
 ## [0.3.2] - 2025-12-25
 ### Changed
 - **Citations**: Support cite with content like `\citep[content]{key}`

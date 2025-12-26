@@ -188,7 +188,7 @@ export function toRoman(num: number, uppercase: boolean = false): string {
 /**
  * Applies HTML tags to content, handling list items specially if present.
  */
-export function applyStyleToTexList(startTag: string, endTag: string, content: string): string {
+function applyStyleToTexList(startTag: string, endTag: string, content: string): string {
     const lines = content.split(/\r?\n/);
     if (lines.some(line => /^\s*([-*+]|\d+\.)\s/.test(line))) {
         return lines.map(line => {

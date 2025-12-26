@@ -15,6 +15,7 @@ export class SmartRenderer {
     private lastMacrosJson: string = "";
     public currentTitle: string | undefined;
     public currentAuthor: string | undefined;
+    public currentDate: string | undefined;
     private md: MarkdownIt | null = null;
 
     // Stores pre-rendered HTML (Math)
@@ -49,7 +50,12 @@ export class SmartRenderer {
     }
 
     public rebuildMarkdownEngine(macros: Record<string, string>) {
-        this.currentMacros = macros;
+        this.currentMacros = {
+            "\\mathparagraph": "\\P",
+            "\\mathsection": "\\S",
+            "\paragraph": "\\textbf",
+            ...macros
+        };
         this.md = new MarkdownIt({ html: true, linkify: true });
         this.md.disable('code');
     }
@@ -240,6 +246,7 @@ export class SmartRenderer {
         }
         this.currentTitle = data.title;
         this.currentAuthor = data.author;
+        this.currentDate = data.date;
 
         let bodyText = cleanedText;
         this.contentStartLineOffset = 0;
@@ -260,7 +267,7 @@ export class SmartRenderer {
 
         const rawBlocks = validBlockObjects.map(b => b.text.trim());
         const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
-        const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}]`;
+        const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}|${data.date}]`;
 
         const scanResult = this.scanner.scan(rawBlocks);
         this.globalLabelMap = scanResult.labelMap;
