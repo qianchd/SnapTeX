@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -60,7 +60,23 @@
     ],
     "configuration": {
       "title": "SnapTeX",
-      "properties": {}
+      "properties": {
+        "snaptex.livePreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable live preview updates as you type. If disabled, preview updates only on save."
+        },
+        "snaptex.delay": {
+          "type": "number",
+          "default": 100,
+          "description": "Debounce delay (in milliseconds) for live preview updates."
+        },
+        "snaptex.renderOnSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, automatically renders the new file when switching editor tabs. If false, keeps the previous preview until `snaptex.start` is called again."
+        }
+      }
     }
   },
   "scripts": {

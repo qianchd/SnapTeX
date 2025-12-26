@@ -39,3 +39,8 @@ export interface PreprocessRule {
     priority: number;
     apply: (text: string, renderer: any) => string;
 }
+
+export interface SourceLocation {
+    file: string;
+    line: number;
+}

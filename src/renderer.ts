@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { extractMetadata } from './metadata';
 import { LatexBlockSplitter, BlockResult } from './splitter';
-import { PreprocessRule, PatchPayload } from './types';
+import { PreprocessRule, PatchPayload, SourceLocation } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner, ScanResult } from './scanner';
 import { BibTexParser, BibEntry } from './bib';
@@ -44,6 +44,9 @@ export class SmartRenderer {
 
     public globalLabelMap: Record<string, string> = {};
 
+    // Source Map: Maps flattened line index -> original file & line
+    private sourceMap: SourceLocation[] = [];
+
     constructor() {
         this.rebuildMarkdownEngine({});
         this.reloadAllRules();
@@ -53,7 +56,6 @@ export class SmartRenderer {
         this.currentMacros = {
             "\\mathparagraph": "\\P",
             "\\mathsection": "\\S",
-            "\paragraph": "\\textbf",
             ...macros
         };
         this.md = new MarkdownIt({ html: true, linkify: true });
@@ -72,6 +74,7 @@ export class SmartRenderer {
         this.bibEntries.clear();
         this.citedKeys = [];
         this.lastCitedKeys = [];
+        this.sourceMap = [];
     }
 
     public reloadAllRules(workspaceRoot?: string) {
@@ -114,7 +117,7 @@ export class SmartRenderer {
         const match = text.match(/\\bibliography\{([^}]+)\}/);
         if (match && this.currentDocDir) {
             let bibFile = match[1].trim();
-            if (!bibFile.endsWith('.bib')) {bibFile += '.bib';}
+            if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
 
             const bibPath = path.join(this.currentDocDir, bibFile);
             if (fs.existsSync(bibPath)) {
@@ -140,7 +143,7 @@ export class SmartRenderer {
     }
 
     /**
-     * [FIXED] Robust Regex for scanning citations
+     * Robust Regex for scanning citations
      */
     private scanCitations(blocks: string[]) {
         blocks.forEach(text => {
@@ -155,7 +158,7 @@ export class SmartRenderer {
     }
 
     /**
-     * [FIXED] Helper: Extract citation keys from a text fragment.
+     * Helper: Extract citation keys from a text fragment.
      */
     private extractKeysFromText(text: string): Set<string> {
         const keys = new Set<string>();
@@ -220,12 +223,101 @@ export class SmartRenderer {
         });
     }
 
+    private resolvePath(currentDir: string, relPath: string): string {
+        let target = path.isAbsolute(relPath) ? relPath : path.join(currentDir, relPath);
+        if (!path.extname(target)) { target += '.tex'; }
+        return target;
+    }
+
     /**
-     * Main Render Function
+     * Recursively loads file content and builds a line-by-line source map.
+     * @param contentOverride If provided, use this string instead of reading from disk (for root file).
      */
+    private loadAndFlatten(filePath: string, depth: number = 0, contentOverride?: string): { textLines: string[], map: SourceLocation[] } {
+        const fallback = { textLines: [], map: [] };
+        if (depth > 20) { return fallback; } // Recursion limit
+
+        let content = "";
+
+        // [FIX] Use live editor content if provided
+        if (contentOverride !== undefined) {
+            content = contentOverride;
+        } else {
+            if (!fs.existsSync(filePath)) {
+                return { textLines: [`% [SnapTeX] File not found: ${filePath}`], map: [{ file: filePath, line: 0 }] };
+            }
+            try {
+                content = fs.readFileSync(filePath, 'utf-8');
+            } catch (e) {
+                return { textLines: [`% [SnapTeX] Error reading: ${filePath}`], map: [{ file: filePath, line: 0 }] };
+            }
+        }
+
+        const rawLines = content.split(/\r?\n/);
+        const flattenedLines: string[] = [];
+        const sourceMap: SourceLocation[] = [];
+
+        const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
+
+        for (let i = 0; i < rawLines.length; i++) {
+            const line = rawLines[i];
+            const trimmed = line.trim();
+
+            if (trimmed.startsWith('%')) {
+                flattenedLines.push(line);
+                sourceMap.push({ file: filePath, line: i });
+                continue;
+            }
+
+            const match = line.match(inputRegex);
+            if (match) {
+                const relPath = match[2];
+                const targetPath = this.resolvePath(path.dirname(filePath), relPath);
+
+                // Recursively load subfile (no override for children)
+                const result = this.loadAndFlatten(targetPath, depth + 1);
+
+                flattenedLines.push(...result.textLines);
+                sourceMap.push(...result.map);
+            } else {
+                flattenedLines.push(line);
+                sourceMap.push({ file: filePath, line: i });
+            }
+        }
+
+        return { textLines: flattenedLines, map: sourceMap };
+    }
+
+    public getOriginalPosition(flatLine: number): SourceLocation | undefined {
+        if (flatLine >= 0 && flatLine < this.sourceMap.length) {
+            return this.sourceMap[flatLine];
+        }
+        return undefined;
+    }
+
+    public getFlattenedLine(fsPath: string, originalLine: number): number {
+        const normPath = path.normalize(fsPath);
+        let bestLine = -1;
+        let minDiff = Infinity;
+
+        for (let i = 0; i < this.sourceMap.length; i++) {
+            const loc = this.sourceMap[i];
+            if (path.normalize(loc.file) === normPath) {
+                const diff = Math.abs(loc.line - originalLine);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    bestLine = i;
+                }
+                if (diff === 0) {return i;}
+            }
+        }
+        return bestLine;
+    }
+
     public render(fullText: string, docPath?: string): PatchPayload {
         this.protectedRenderedBlocks = [];
         this.protectedRawBlocks = [];
+        this.sourceMap = [];
 
         let currentCitedKeys: string[] = [];
 
@@ -233,7 +325,21 @@ export class SmartRenderer {
             this.currentDocDir = path.dirname(docPath);
         }
 
-        const normalizedText = fullText.replace(/\r\n/g, '\n');
+        let flattenedText = fullText;
+
+        // Pass fullText (dirty content) as override for the root doc
+        if (docPath) {
+            const result = this.loadAndFlatten(docPath, 0, fullText);
+            flattenedText = result.textLines.join('\n');
+            this.sourceMap = result.map;
+        } else {
+            // Fallback for unsaved files
+            const lines = fullText.split(/\r?\n/);
+            flattenedText = lines.join('\n');
+            this.sourceMap = lines.map((_, i) => ({ file: docPath || 'Untitled', line: i }));
+        }
+
+        const normalizedText = flattenedText.replace(/\r\n/g, '\n');
         const { data, cleanedText } = extractMetadata(normalizedText);
 
         this.loadBibliography(cleanedText);
@@ -256,8 +362,8 @@ export class SmartRenderer {
             this.contentStartLineOffset = preContent.split('\n').length - 1;
             const cleanDocMatch = cleanedText.match(/\\begin\{document\}/i);
             if (cleanDocMatch && cleanDocMatch.index !== undefined) {
-                 bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
-                                  .replace(/\\end\{document\}[\s\S]*/i, '');
+                bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
+                    .replace(/\\end\{document\}[\s\S]*/i, '');
             }
         }
 
@@ -362,12 +468,12 @@ export class SmartRenderer {
         // Handle Shifts
         let shift = 0;
         if (end > 0 && insertedBlocksData.length !== deleteCount) {
-             shift = insertedBlocksData.length - deleteCount;
-             const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
-             tailBlocks.forEach((b, i) => {
-                 const newIdx = start + insertedBlocksData.length + i;
-                 b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
-             });
+            shift = insertedBlocksData.length - deleteCount;
+            const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
+            tailBlocks.forEach((b, i) => {
+                const newIdx = start + insertedBlocksData.length + i;
+                b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
+            });
         }
 
         // --- Update Memory ---
@@ -381,9 +487,6 @@ export class SmartRenderer {
         const dirtyBlocksMap: { [index: number]: string } = {};
 
         if (keysChanged) {
-            // [CRITICAL FIX] Use loose check "includes" ONLY if strictly looking for command,
-            // OR use a regex to prevent matching \bibliographystyle.
-            // Using a regex ensures we don't accidentally pick up \bibliographystyle{...}
             const bibBlockIndex = this.lastBlocks.findIndex(b => /\\bibliography\{/.test(b.text));
 
             if (bibBlockIndex !== -1) {

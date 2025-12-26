@@ -354,7 +354,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
                 if (captionRes) {
                     let captionText = captionRes.content;
-                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m, c) => renderer.renderAndProtectMath(c.trim(), false));
+                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
                     captionText = resolveLatexStyles(captionText);
                     captionHtml = `<div class="figure-caption"><strong>Figure <span class="sn-cnt" data-type="fig"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
 
@@ -391,7 +391,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 let captionHtml = '';
                 if (captionRes) {
                     let captionText = captionRes.content;
-                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m, c) => renderer.renderAndProtectMath(c.trim(), false));
+                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
                     captionText = resolveLatexStyles(captionText);
                     captionHtml = `<div class="alg-caption"><strong>Algorithm <span class="sn-cnt" data-type="alg"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
                     content = content.substring(0, captionRes.start) + content.substring(captionRes.end + 1);
@@ -452,46 +452,43 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 5: Table (Priority 36) ---
+    // --- Step 5: Table ---
     {
         name: 'table',
         priority: 140,
         apply: (text: string, renderer: SmartRenderer) => {
-            return text.replace(/\\begin\{table\}(?:\[.*?\])?([\s\S]*?)\\end\{table\}/gi, (match, content) => {
+            return text.replace(/\\begin\{table(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{table\1\}/gi, (match, star, content) => {
                 const captionRes = findCommand(content, 'caption');
                 let captionHtml = '';
+
                 if (captionRes) {
                     let captionText = captionRes.content;
-                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m, c) => renderer.renderAndProtectMath(c.trim(), false));
+                    captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
                     captionText = resolveLatexStyles(captionText);
                     captionHtml = `<div class="table-caption"><strong>Table <span class="sn-cnt" data-type="tbl"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
                     content = content.substring(0, captionRes.start) + content.substring(captionRes.end + 1);
                 }
-                // ... (Table logic kept strictly same as before) ...
                 let innerContent = content.replace(/\\begin\{threeparttable\}/g, '').replace(/\\end\{threeparttable\}/g, '');
                 let notesHtml = '';
                 const notesMatch = innerContent.match(/\\begin\{tablenotes\}(?:\[.*?\])?([\s\S]*?)\\end\{tablenotes\}/);
                 if (notesMatch) {
-                    let notesBody = notesMatch[1];
+                    let notesBody = notesMatch[1].replace(/\\(footnotesize|small|scriptsize|tiny)/g, '');
                     innerContent = innerContent.replace(notesMatch[0], '');
-                    notesBody = notesBody.replace(/\\(footnotesize|small|scriptsize|tiny)/g, '');
                     const noteItems = notesBody.split('\\item').slice(1).map((item: string) => {
-                            let itemText = item;
-                            let labelHtml = '';
-                            const lblMatch = item.match(/^\s*\[(.*?)\]/);
-                            if (lblMatch) {
-                                let labelContent = lblMatch[1];
-                                labelContent = labelContent.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => renderer.renderAndProtectMath(c.trim(), false));
-                                labelContent = resolveLatexStyles(labelContent);
-                                labelHtml = `<strong>${renderer.renderInline(labelContent)}</strong> `;
-                                itemText = item.substring(lblMatch[0].length);
-                            }
-                            itemText = itemText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => renderer.renderAndProtectMath(c.trim(), false));
-                            itemText = resolveLatexStyles(itemText);
-                            return `<li class="note-item" style="list-style:none">${labelHtml}${renderer.renderInline(itemText.trim())}</li>`;
-                        }).join('');
+                        let itemText = item;
+                        let labelHtml = '';
+                        const lblMatch = item.match(/^\s*\[(.*?)\]/);
+                        if (lblMatch) {
+                            labelHtml = `<strong>${renderer.renderInline(lblMatch[1])}</strong> `;
+                            itemText = item.substring(lblMatch[0].length);
+                        }
+                        itemText = itemText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
+                        return `<li class="note-item" style="list-style:none">${labelHtml}${renderer.renderInline(itemText.trim())}</li>`;
+                    }).join('');
                     notesHtml = `<div class="latex-tablenotes"><ul>${noteItems}</ul></div>`;
                 }
+
+                // Handle \makecell
                 const makecellRegex = /\\makecell(?:\[.*?\])?\{/g;
                 let mcMatch;
                 let processedContent = "";
@@ -504,7 +501,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     if (closingIndex !== -1) {
                         let cellInner = innerContent.substring(openBraceIndex + 1, closingIndex);
                         cellInner = cellInner.replace(/\\\\/g, '<br/>');
-                        cellInner = cellInner.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => renderer.renderAndProtectMath(c.trim(), false));
+                        cellInner = cellInner.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
                         cellInner = resolveLatexStyles(cellInner);
                         processedContent += `<div class="makecell">${cellInner}</div>`;
                         lastIndex = closingIndex + 1;
@@ -521,6 +518,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 if (beginMatch) {
                     const isStar = beginMatch[1] === '*';
                     let contentStartIndex = beginMatch.index + beginMatch[0].length;
+
                     const requiredArgs = isStar ? 2 : 1;
                     let argsFound = 0;
                     while (argsFound < requiredArgs) {
@@ -540,7 +538,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     const endMatch = endRegex.exec(innerContent);
                     if (endMatch) {
                         let rawContent = innerContent.substring(contentStartIndex, endMatch.index);
-                        rawContent = rawContent.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: String, c: String) => renderer.renderAndProtectMath(c.trim(), false));
+
+                        rawContent = rawContent.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
                         rawContent = rawContent.replace(/\\(toprule|midrule|bottomrule|hline|centering|raggedright|raggedleft)/g, '');
                         rawContent = rawContent.replace(/\\cmidrule(?:\[.*?\])?(?:\(.*?\))?\{[^}]+\}/g, '');
                         rawContent = rawContent.replace(/\\cline\{[^}]+\}/g, '');
