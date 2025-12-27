@@ -3,9 +3,6 @@ const katex = require('katex');
 import * as path from 'path';
 import * as os from 'os';
 
-// [CHANGE] Remove 'fs' import
-// import * as fs from 'fs';
-
 import { LatexDocument } from './document';
 import { DiffEngine } from './diff';
 import { PreprocessRule, PatchPayload, SourceLocation } from './types';
@@ -13,11 +10,12 @@ import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner, ScanResult } from './scanner';
 import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
-import { IFileProvider } from './file-provider'; // [CHANGE] Import Interface
+import { IFileProvider } from './file-provider';
 
 /**
  * Renderer Service.
  * Coordinates the Document Model, Diff Engine, and Markdown Rendering.
+ * Acts as the single source of truth for document synchronization logic.
  */
 export class SmartRenderer {
     // State: Cache for the last rendered state (for diffing)
@@ -48,7 +46,6 @@ export class SmartRenderer {
     // Current Context
     public currentDocument: LatexDocument | undefined;
 
-    // [CHANGE] Inject fileProvider
     constructor(private fileProvider: IFileProvider) {
         this.rebuildMarkdownEngine({});
         this.reloadAllRules();
@@ -89,12 +86,8 @@ export class SmartRenderer {
     }
 
     private loadConfig(configPath: string) {
-        // [CHANGE] Use fileProvider.exists instead of fs.existsSync
         if (this.fileProvider.exists(configPath)) {
             try {
-                // Note: 'require' is still a Node.js runtime concept.
-                // Since this extension runs in Node context, it's acceptable here for dynamic module loading.
-                // However, the file system check is now abstract.
                 delete require.cache[require.resolve(configPath)];
                 const userConfig = require(configPath);
                 if (userConfig && Array.isArray(userConfig.rules)) {
@@ -189,9 +182,6 @@ export class SmartRenderer {
         }
 
         // 2. Prepare text blocks for Diffing
-        // const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
-        // const metaFingerprint = ` [meta:${this.currentTitle || ''}|${safeAuthor}|${this.currentDate}]`;
-
         const safeTitle = (this.currentTitle || '').replace(/[\r\n]/g, ' ');
         const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
         const safeDate = (this.currentDate || '').replace(/[\r\n]/g, ' ');
@@ -364,7 +354,7 @@ export class SmartRenderer {
             let rendered = this.protectedRenderedBlocks[i] || match;
             return rendered.replace(/SNREF(\d+)END/g, (m, refIdx) => {
                 const key = this.protectedRefs[parseInt(refIdx)];
-                if (!key) {return m;}
+                if (!key) { return m; }
                 return `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>`;
             });
         });
@@ -377,14 +367,44 @@ export class SmartRenderer {
         });
     }
 
-    // --- Sync Scroll Helpers & Delegates ---
+    // --- Synchronization Logic (Unified in Step 4) ---
 
-    public getBlockInfo(index: number): { start: number; count: number } | undefined {
-        if (index >= 0 && index < this.blockMap.length) {
-            return this.blockMap[index];
-        }
-        return undefined;
+    /**
+     * [STEP 4] Unified Preview Synchronization
+     * Calculates the target block in the preview for a given source line.
+     * * @param filePath Absolute path of the source file.
+     * @param line Zero-based line number in the source file.
+     * @returns Object containing block index and ratio, or null if mapping fails.
+     */
+    public getPreviewSyncData(filePath: string, line: number): { index: number; ratio: number } | null {
+        if (!this.currentDocument) { return null; }
+
+        // 1. Map source line to flat flattened line (handling imports)
+        const flatLine = this.currentDocument.getFlattenedLine(filePath, line);
+        if (flatLine === -1) { return null; }
+
+        // 2. Map flattened line to block index
+        return this.getBlockIndexByLine(flatLine);
     }
+
+    /**
+     * [STEP 4] Unified Source Synchronization
+     * Calculates the source location for a given preview block and ratio.
+     * * @param blockIndex Index of the block in the preview.
+     * @param ratio Vertical ratio within the block (0.0 to 1.0).
+     * @returns SourceLocation object or null if mapping fails.
+     */
+    public getSourceSyncData(blockIndex: number, ratio: number): SourceLocation | null {
+        if (!this.currentDocument) { return null; }
+
+        // 1. Map block index to flattened line
+        const flatLine = this.getLineByBlockIndex(blockIndex, ratio);
+
+        // 2. Map flattened line back to original source location
+        return this.currentDocument.getOriginalPosition(flatLine) || null;
+    }
+
+    // Internal helpers (kept public if strictly needed for tests, but main logic should use above methods)
 
     public getBlockIndexByLine(line: number): { index: number; ratio: number } {
         if (this.blockMap.length > 0 && line < this.blockMap[0].start) {
@@ -412,7 +432,7 @@ export class SmartRenderer {
         return 0;
     }
 
-    // [FIX] Proxy methods: Forward to Document to satisfy extension.ts calls
+    // Forwarding delegates to Document (Legacy support, though internal methods are preferred)
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {
         return this.currentDocument?.getOriginalPosition(flatLine);
     }

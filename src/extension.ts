@@ -5,7 +5,7 @@ import { SmartRenderer } from './renderer';
 import { TexPreviewPanel } from './panel';
 import { NodeFileProvider } from './file-provider';
 
-// ... (Flash Animation Types omitted for brevity, same as before) ...
+// --- Flash Animation Decoration Types ---
 const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({ backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), isWholeLine: true });
 const flashDecorationType80 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 80%, transparent)', isWholeLine: true });
 const flashDecorationType60 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 60%, transparent)', isWholeLine: true });
@@ -19,7 +19,6 @@ let isEditorScrolling = false;
 let scrollEndTimer: NodeJS.Timeout | undefined;
 let currentRenderedUri: vscode.Uri | undefined = undefined;
 let activeCursorScreenRatio: number = 0.5;
-let panelLoadSubscription: vscode.Disposable | undefined;
 
 // --- Helpers ---
 const debounce = (func: Function, wait: number) => {
@@ -84,10 +83,11 @@ export function activate(context: vscode.ExtensionContext) {
         if (!TexPreviewPanel.currentPanel) {return;}
         if (currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) {return;}
 
-        const flatLine = renderer.getFlattenedLine(editor.document.uri.fsPath, targetLine);
-        if (flatLine === -1) {return;}
+        // [Step 4] Use unified sync method from Renderer
+        const syncData = renderer.getPreviewSyncData(editor.document.uri.fsPath, targetLine);
+        if (!syncData) {return;}
 
-        const { index, ratio } = renderer.getBlockIndexByLine(flatLine);
+        const { index, ratio } = syncData;
         const anchor = getAnchorContext(editor.document, targetLine, targetChar);
 
         TexPreviewPanel.currentPanel.postMessage({
@@ -106,48 +106,47 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     // --- Commands ---
+
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {
-        if (TexPreviewPanel.currentPanel) {updatePreview(true);}
+        if (TexPreviewPanel.currentPanel) { updatePreview(true); }
         else {
             TexPreviewPanel.createOrShow(context.extensionPath, renderer);
-            if (vscode.window.activeTextEditor) {currentRenderedUri = vscode.window.activeTextEditor.document.uri;}
+            if (vscode.window.activeTextEditor) { currentRenderedUri = vscode.window.activeTextEditor.document.uri; }
         }
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.syncToPreview', () => {
         const editor = vscode.window.activeTextEditor;
-        if (editor) {triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character);}
+        if (editor) { triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character); }
     }));
 
-    // [FIXED] Command: Reveal Line (From Preview -> Editor)
-    // Now correctly expects Block Index and Ratio, matching the new Panel.ts logic.
+    // Command: Reveal Line (Preview -> Editor)
+    // Refactored to use Renderer's unified mapping logic
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (uri: vscode.Uri, index: number, ratio: number, anchor: string, viewRatio: number = 0.5) => {
             isSyncingFromPreview = true;
-            if (syncLockTimer) {clearTimeout(syncLockTimer);}
+            if (syncLockTimer) { clearTimeout(syncLockTimer); }
             syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
 
-            // 1. Convert Block Index -> Flat Line
-            const flatLine = renderer.getLineByBlockIndex(index, ratio);
-            // 2. Convert Flat Line -> Original Source Location
-            const originalLoc = renderer.getOriginalPosition(flatLine);
+            // [Step 4] Use unified source mapping
+            const sourceLoc = renderer.getSourceSyncData(index, ratio);
+            if (!sourceLoc) {return;}
 
-            if (!originalLoc) {return;}
+            const targetUri = vscode.Uri.file(sourceLoc.file);
+            let targetLine = sourceLoc.line;
 
-            const targetUri = vscode.Uri.file(originalLoc.file);
-            let targetLine = originalLoc.line;
-
+            // Find or Open Editor
             let targetEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === targetUri.toString());
             if (!targetEditor) {
                 try {
                     const doc = await vscode.workspace.openTextDocument(targetUri);
                     targetEditor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One });
-                } catch (e) { return; }
+                } catch (e) {return;}
             } else {
                 await vscode.window.showTextDocument(targetEditor.document, { viewColumn: targetEditor.viewColumn });
             }
 
-            // Anchor correction
+            // Anchor refinement logic (Heuristic search near the target line)
             if (anchor && anchor.length > 3) {
                 const range = new vscode.Range(Math.max(0, targetLine - 5), 0, Math.min(targetEditor.document.lineCount, targetLine + 10), 0);
                 const text = targetEditor.document.getText(range);
@@ -157,8 +156,8 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
+            // Calculate reveal range
             const range = targetEditor.document.lineAt(Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1))).range;
-
             const visible = targetEditor.visibleRanges[0];
             if (visible) {
                 const height = visible.end.line - visible.start.line;
@@ -182,14 +181,14 @@ export function activate(context: vscode.ExtensionContext) {
         if (syncLockTimer) {clearTimeout(syncLockTimer);}
         syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
 
-        const flatLine = renderer.getLineByBlockIndex(index, ratio);
-        const originalLoc = renderer.getOriginalPosition(flatLine);
-        if (!originalLoc) {return;}
+        // [Step 4] Use unified source mapping
+        const sourceLoc = renderer.getSourceSyncData(index, ratio);
+        if (!sourceLoc) {return;}
 
-        const targetUri = vscode.Uri.file(originalLoc.file);
+        const targetUri = vscode.Uri.file(sourceLoc.file);
         const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === targetUri.toString());
         if (editor) {
-            const line = Math.max(0, Math.min(originalLoc.line, editor.document.lineCount - 1));
+            const line = Math.max(0, Math.min(sourceLoc.line, editor.document.lineCount - 1));
             editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.InCenter);
         }
     }));
