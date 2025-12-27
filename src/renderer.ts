@@ -3,55 +3,65 @@ const katex = require('katex');
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { extractMetadata } from './metadata';
-import { LatexBlockSplitter, BlockResult } from './splitter';
+
+import { LatexDocument } from './document';
+import { DiffEngine } from './diff';
 import { PreprocessRule, PatchPayload, SourceLocation } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner, ScanResult } from './scanner';
-import { BibTexParser, BibEntry } from './bib';
+import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 
+/**
+ * Renderer Service.
+ * Coordinates the Document Model, Diff Engine, and Markdown Rendering.
+ */
 export class SmartRenderer {
+    // State: Cache for the last rendered state (for diffing)
     private lastBlocks: { text: string, html: string }[] = [];
     private lastMacrosJson: string = "";
-    public currentTitle: string | undefined;
-    public currentAuthor: string | undefined;
-    public currentDate: string | undefined;
+    private lastCitedKeys: string[] = [];
+
+    // Markdown Engine
     private md: MarkdownIt | null = null;
 
-    // Stores pre-rendered HTML (Math)
+    // Protection Buffers
     private protectedRenderedBlocks: string[] = [];
-    // Stores raw protected text
     private protectedRawBlocks: string[] = [];
-    // Stores ref keys to avoid passing complex strings to KaTeX
     private protectedRefs: string[] = [];
 
+    // Configuration
     private _preprocessRules: PreprocessRule[] = [];
     private currentMacros: Record<string, string> = {};
 
+    // Mapping for Sync Scroll (Block Index -> Line Number)
     private blockMap: { start: number; count: number }[] = [];
-    private contentStartLineOffset: number = 0;
 
-    public bibEntries: Map<string, BibEntry> = new Map();
-    public citedKeys: string[] = []; // Tracks order of citation
-
-    // Cache for the last cited keys to detect changes
-    private lastCitedKeys: string[] = [];
-
-    private currentDocDir: string = '';
-
-    // Scanner instance
+    // Scanners
     private scanner = new LatexCounterScanner();
-
     public globalLabelMap: Record<string, string> = {};
+    public citedKeys: string[] = [];
 
-    // Source Map: Maps flattened line index -> original file & line
-    private sourceMap: SourceLocation[] = [];
+    // Current Context
+    public currentDocument: LatexDocument | undefined;
 
     constructor() {
         this.rebuildMarkdownEngine({});
         this.reloadAllRules();
     }
+
+    /**
+     * Accessor used by rules.ts to look up BibEntries
+     */
+    public get bibEntries(): Map<string, BibEntry> {
+        return this.currentDocument ? this.currentDocument.bibEntries : new Map();
+    }
+
+    public get currentTitle(): string | undefined { return this.currentDocument?.metadata.title; }
+    public get currentAuthor(): string | undefined { return this.currentDocument?.metadata.author; }
+    public get currentDate(): string | undefined { return this.currentDocument?.metadata.date; }
+
+    // --- Initialization & Config ---
 
     public rebuildMarkdownEngine(macros: Record<string, string>) {
         this.currentMacros = {
@@ -61,21 +71,6 @@ export class SmartRenderer {
         };
         this.md = new MarkdownIt({ html: true, linkify: true });
         this.md.disable('code');
-    }
-
-    public renderInline(text: string): string {
-        if (!this.md) { return text; }
-        return this.md.renderInline(text);
-    }
-
-    public resetState() {
-        this.lastBlocks = [];
-        this.lastMacrosJson = "";
-        this.blockMap = [];
-        this.bibEntries.clear();
-        this.citedKeys = [];
-        this.lastCitedKeys = [];
-        this.sourceMap = [];
     }
 
     public reloadAllRules(workspaceRoot?: string) {
@@ -95,9 +90,7 @@ export class SmartRenderer {
                 delete require.cache[require.resolve(configPath)];
                 const userConfig = require(configPath);
                 if (userConfig && Array.isArray(userConfig.rules)) {
-                    userConfig.rules.forEach((rule: PreprocessRule) => {
-                        this.registerPreprocessRule(rule);
-                    });
+                    userConfig.rules.forEach((r: PreprocessRule) => this.registerPreprocessRule(r));
                 }
             } catch (e) {
                 console.error(`[TeX Preview] Failed to load config file: ${configPath}`, e);
@@ -114,24 +107,24 @@ export class SmartRenderer {
         }
     }
 
-    private loadBibliography(text: string) {
-        const match = text.match(R_BIBLIOGRAPHY);
-        if (match && this.currentDocDir) {
-            let bibFile = match[1].trim();
-            if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
+    private _sortRules() {
+        this._preprocessRules.sort((a, b) => a.priority - b.priority);
+    }
 
-            const bibPath = path.join(this.currentDocDir, bibFile);
-            if (fs.existsSync(bibPath)) {
-                try {
-                    const content = fs.readFileSync(bibPath, 'utf-8');
-                    this.bibEntries = BibTexParser.parse(content);
-                } catch (e) {
-                    console.error('Failed to load bib file:', e);
-                }
-            }
-        } else {
-            this.bibEntries.clear();
-        }
+    public resetState() {
+        this.lastBlocks = [];
+        this.lastMacrosJson = "";
+        this.lastCitedKeys = [];
+        this.blockMap = [];
+        this.citedKeys = [];
+        this.currentDocument = undefined;
+    }
+
+    // --- Helper Methods for Rules ---
+
+    public renderInline(text: string): string {
+        if (!this.md) { return text; }
+        return this.md.renderInline(text);
     }
 
     public resolveCitation(key: string): number {
@@ -141,41 +134,6 @@ export class SmartRenderer {
             index = this.citedKeys.length - 1;
         }
         return index + 1;
-    }
-
-    /**
-     * Robust Regex for scanning citations
-     */
-    private scanCitations(blocks: string[]) {
-        blocks.forEach(text => {
-            // Regex defined inside loop to avoid statefulness issues with /g
-            // But we use the pattern source and re-create for safety or reset lastIndex
-            R_CITATION.lastIndex = 0;
-            let match;
-            while ((match = R_CITATION.exec(text)) !== null) {
-                // R_CITATION captures: 1=cmd, 2=opt1, 3=opt2, 4=keys
-                const keys = match[4].split(',').map(k => k.trim());
-                keys.forEach(key => this.resolveCitation(key));
-            }
-        });
-    }
-
-    /**
-     * Helper: Extract citation keys from a text fragment.
-     */
-    private extractKeysFromText(text: string): Set<string> {
-        const keys = new Set<string>();
-        R_CITATION.lastIndex = 0;
-        let match;
-        while ((match = R_CITATION.exec(text)) !== null) {
-            const keyParts = match[4].split(',');
-            keyParts.forEach(k => keys.add(k.trim()));
-        }
-        return keys;
-    }
-
-    private _sortRules() {
-        this._preprocessRules.sort((a, b) => a.priority - b.priority);
     }
 
     public pushInlineProtected(content: string) {
@@ -207,6 +165,186 @@ export class SmartRenderer {
         }
     }
 
+    // --- Core Rendering Logic ---
+
+    public render(doc: LatexDocument): PatchPayload {
+        this.currentDocument = doc;
+        this.protectedRenderedBlocks = [];
+        this.protectedRawBlocks = [];
+
+        // 1. Check for macro updates
+        const currentMacrosJson = JSON.stringify(doc.metadata.macros);
+        if (currentMacrosJson !== this.lastMacrosJson) {
+            this.rebuildMarkdownEngine(doc.metadata.macros);
+            this.lastBlocks = [];
+            this.lastMacrosJson = currentMacrosJson;
+        }
+
+        // 2. Prepare text blocks for Diffing
+        const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
+        const metaFingerprint = ` [meta:${this.currentTitle || ''}|${safeAuthor}|${this.currentDate}]`;
+
+        const newBlockTexts = doc.blocks.map(b => {
+            const rawText = b.text.trim();
+            return rawText.includes('\\maketitle') ? (rawText + metaFingerprint) : rawText;
+        });
+
+        // 3. Build Block Map
+        this.blockMap = doc.blocks.map(b => ({
+            start: doc.contentStartLineOffset + b.line,
+            count: b.lineCount
+        }));
+
+        // 4. Run Scanner
+        const scanResult = this.scanner.scan(newBlockTexts);
+        this.globalLabelMap = scanResult.labelMap;
+
+        // 5. Diff Computation
+        const oldBlockTexts = this.lastBlocks.map(b => b.text);
+        const diff = DiffEngine.compute(oldBlockTexts, newBlockTexts);
+
+        // 6. Citation Analysis
+        const insertedFullText = diff.insertedTexts.join('\n');
+        const deletedFullText = diff.deletedTexts.join('\n');
+        const bibRegex = R_BIBLIOGRAPHY;
+        const bibChanged = bibRegex.test(insertedFullText) || bibRegex.test(deletedFullText);
+
+        let shouldFullScan = false;
+
+        if (bibChanged || this.lastBlocks.length === 0) {
+            shouldFullScan = true;
+        } else {
+            const deletedKeys = this.extractKeysFromText(deletedFullText);
+            const insertedKeys = this.extractKeysFromText(insertedFullText);
+
+            if (deletedKeys.size !== insertedKeys.size) {
+                shouldFullScan = true;
+            } else {
+                for (const key of deletedKeys) {
+                    if (!insertedKeys.has(key)) {
+                        shouldFullScan = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (shouldFullScan) {
+            this.citedKeys = [];
+            this.scanCitations(newBlockTexts);
+        } else {
+            this.citedKeys = [...this.lastCitedKeys];
+        }
+
+        const keysChanged = JSON.stringify(this.citedKeys) !== JSON.stringify(this.lastCitedKeys);
+        this.lastCitedKeys = [...this.citedKeys];
+
+        // 7. Render Inserted Blocks
+        const insertedBlocksData = diff.insertedTexts.map((text, i) => {
+            const absoluteIndex = diff.start + i;
+            let processed = text;
+            this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
+            let finalHtml = this.md!.render(processed);
+            finalHtml = this.restoreRenderedMath(finalHtml);
+            finalHtml = this.restoreRawBlocks(finalHtml);
+            if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
+                finalHtml = postProcessHtml(finalHtml);
+            }
+            return {
+                text: text,
+                html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>`
+            };
+        });
+
+        // 8. Handle Shifts
+        let shift = 0;
+        if (diff.end > 0 && insertedBlocksData.length !== diff.deleteCount) {
+            shift = insertedBlocksData.length - diff.deleteCount;
+            const tailBlocks = this.lastBlocks.slice(this.lastBlocks.length - diff.end);
+            tailBlocks.forEach((b, i) => {
+                const newIdx = diff.start + insertedBlocksData.length + i;
+                b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
+            });
+        }
+
+        // 9. Update Cache
+        this.lastBlocks = [
+            ...this.lastBlocks.slice(0, diff.start),
+            ...insertedBlocksData,
+            ...this.lastBlocks.slice(this.lastBlocks.length - diff.end)
+        ];
+
+        // 10. Dirty Blocks (Partial updates for Bibliography)
+        const dirtyBlocksMap: { [index: number]: string } = {};
+        if (keysChanged) {
+            const bibBlockIndex = this.lastBlocks.findIndex(b => /\\bibliography\{/.test(b.text));
+            const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + insertedBlocksData.length);
+            if (bibBlockIndex !== -1 && !isInsideMainPatch) {
+                const bibBlock = this.lastBlocks[bibBlockIndex];
+                let processed = bibBlock.text;
+                this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
+                let newHtml = this.md!.render(processed);
+                newHtml = this.restoreRenderedMath(newHtml);
+                newHtml = this.restoreRawBlocks(newHtml);
+                newHtml = `<div class="latex-block" data-index="${bibBlockIndex}">${newHtml}</div>`;
+                this.lastBlocks[bibBlockIndex].html = newHtml;
+                dirtyBlocksMap[bibBlockIndex] = newHtml;
+            }
+        }
+
+        // 11. Payload
+        const numberingMap: { [index: number]: any } = {};
+        scanResult.blockNumbering.forEach((bn, idx) => {
+            if (Object.values(bn.counts).some(arr => arr.length > 0)) {
+                numberingMap[idx] = bn.counts;
+            }
+        });
+
+        const payload: PatchPayload = {
+            type: 'patch',
+            start: diff.start,
+            deleteCount: diff.deleteCount,
+            htmls: insertedBlocksData.map(b => b.html),
+            shift: shift,
+            numbering: {
+                blocks: numberingMap,
+                labels: scanResult.labelMap
+            },
+            dirtyBlocks: dirtyBlocksMap
+        };
+
+        if (this.lastBlocks.length === 0 || insertedBlocksData.length > 50 || diff.deleteCount > 50) {
+            payload.type = 'full';
+            payload.html = this.lastBlocks.map(b => b.html).join('');
+        }
+
+        return payload;
+    }
+
+    // --- Helpers ---
+
+    private scanCitations(blocks: string[]) {
+        blocks.forEach(text => {
+            R_CITATION.lastIndex = 0;
+            let match;
+            while ((match = R_CITATION.exec(text)) !== null) {
+                const keys = match[4].split(',').map(k => k.trim());
+                keys.forEach(key => this.resolveCitation(key));
+            }
+        });
+    }
+
+    private extractKeysFromText(text: string): Set<string> {
+        const keys = new Set<string>();
+        R_CITATION.lastIndex = 0;
+        let match;
+        while ((match = R_CITATION.exec(text)) !== null) {
+            const keyParts = match[4].split(',');
+            keyParts.forEach(k => keys.add(k.trim()));
+        }
+        return keys;
+    }
+
     private restoreRenderedMath(html: string): string {
         return html.replace(/OOSNAPTEXMATH(\d+)OO/g, (match, index) => {
             const i = parseInt(index, 10);
@@ -226,330 +364,7 @@ export class SmartRenderer {
         });
     }
 
-    private resolvePath(currentDir: string, relPath: string): string {
-        let target = path.isAbsolute(relPath) ? relPath : path.join(currentDir, relPath);
-        if (!path.extname(target)) { target += '.tex'; }
-        return target;
-    }
-
-    /**
-     * Recursively loads file content and builds a line-by-line source map.
-     * @param contentOverride If provided, use this string instead of reading from disk (for root file).
-     */
-    private loadAndFlatten(filePath: string, depth: number = 0, contentOverride?: string): { textLines: string[], map: SourceLocation[] } {
-        const fallback = { textLines: [], map: [] };
-        if (depth > 20) { return fallback; } // Recursion limit
-
-        let content = "";
-
-        // [FIX] Use live editor content if provided
-        if (contentOverride !== undefined) {
-            content = contentOverride;
-        } else {
-            if (!fs.existsSync(filePath)) {
-                return { textLines: [`% [SnapTeX] File not found: ${filePath}`], map: [{ file: filePath, line: 0 }] };
-            }
-            try {
-                content = fs.readFileSync(filePath, 'utf-8');
-            } catch (e) {
-                return { textLines: [`% [SnapTeX] Error reading: ${filePath}`], map: [{ file: filePath, line: 0 }] };
-            }
-        }
-
-        const rawLines = content.split(/\r?\n/);
-        const flattenedLines: string[] = [];
-        const sourceMap: SourceLocation[] = [];
-
-        const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
-
-        for (let i = 0; i < rawLines.length; i++) {
-            const line = rawLines[i];
-            const trimmed = line.trim();
-
-            if (trimmed.startsWith('%')) {
-                flattenedLines.push(line);
-                sourceMap.push({ file: filePath, line: i });
-                continue;
-            }
-
-            const match = line.match(inputRegex);
-            if (match) {
-                const relPath = match[2];
-                const targetPath = this.resolvePath(path.dirname(filePath), relPath);
-
-                // Recursively load subfile (no override for children)
-                const result = this.loadAndFlatten(targetPath, depth + 1);
-
-                flattenedLines.push(...result.textLines);
-                sourceMap.push(...result.map);
-            } else {
-                flattenedLines.push(line);
-                sourceMap.push({ file: filePath, line: i });
-            }
-        }
-
-        return { textLines: flattenedLines, map: sourceMap };
-    }
-
-    public getOriginalPosition(flatLine: number): SourceLocation | undefined {
-        if (flatLine >= 0 && flatLine < this.sourceMap.length) {
-            return this.sourceMap[flatLine];
-        }
-        return undefined;
-    }
-
-    public getFlattenedLine(fsPath: string, originalLine: number): number {
-        const normPath = path.normalize(fsPath);
-        let bestLine = -1;
-        let minDiff = Infinity;
-
-        for (let i = 0; i < this.sourceMap.length; i++) {
-            const loc = this.sourceMap[i];
-            if (path.normalize(loc.file) === normPath) {
-                const diff = Math.abs(loc.line - originalLine);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    bestLine = i;
-                }
-                if (diff === 0) {return i;}
-            }
-        }
-        return bestLine;
-    }
-
-    public render(fullText: string, docPath?: string): PatchPayload {
-        this.protectedRenderedBlocks = [];
-        this.protectedRawBlocks = [];
-        this.sourceMap = [];
-
-        let currentCitedKeys: string[] = [];
-
-        if (docPath) {
-            this.currentDocDir = path.dirname(docPath);
-        }
-
-        let flattenedText = fullText;
-
-        // Pass fullText (dirty content) as override for the root doc
-        if (docPath) {
-            const result = this.loadAndFlatten(docPath, 0, fullText);
-            flattenedText = result.textLines.join('\n');
-            this.sourceMap = result.map;
-        } else {
-            // Fallback for unsaved files
-            const lines = fullText.split(/\r?\n/);
-            flattenedText = lines.join('\n');
-            this.sourceMap = lines.map((_, i) => ({ file: docPath || 'Untitled', line: i }));
-        }
-
-        const normalizedText = flattenedText.replace(/\r\n/g, '\n');
-        const { data, cleanedText } = extractMetadata(normalizedText);
-
-        this.loadBibliography(cleanedText);
-
-        const currentMacrosJson = JSON.stringify(data.macros);
-        if (currentMacrosJson !== this.lastMacrosJson) {
-            this.rebuildMarkdownEngine(data.macros);
-            this.lastBlocks = [];
-            this.lastMacrosJson = currentMacrosJson;
-        }
-        this.currentTitle = data.title;
-        this.currentAuthor = data.author;
-        this.currentDate = data.date;
-
-        let bodyText = cleanedText;
-        this.contentStartLineOffset = 0;
-        const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
-        if (rawDocMatch && rawDocMatch.index !== undefined) {
-            const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
-            this.contentStartLineOffset = preContent.split('\n').length - 1;
-            const cleanDocMatch = cleanedText.match(/\\begin\{document\}/i);
-            if (cleanDocMatch && cleanDocMatch.index !== undefined) {
-                bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
-                    .replace(/\\end\{document\}[\s\S]*/i, '');
-            }
-        }
-
-        const rawBlockObjects = LatexBlockSplitter.split(bodyText);
-        const validBlockObjects = rawBlockObjects.filter(b => b.text.trim().length > 0);
-        this.buildBlockMap(validBlockObjects);
-
-        const rawBlocks = validBlockObjects.map(b => b.text.trim());
-        const safeAuthor = (data.author || '').replace(/[\r\n]/g, ' ');
-        const metaFingerprint = ` [meta:${data.title || ''}|${safeAuthor}|${data.date}]`;
-
-        const scanResult = this.scanner.scan(rawBlocks);
-        this.globalLabelMap = scanResult.labelMap;
-
-        // --- Diff Logic ---
-        const newBlockStates = rawBlocks.map((rawText) => {
-            const text = rawText.includes('\\maketitle') ? (rawText + metaFingerprint) : rawText;
-            return { text, html: '' };
-        });
-
-        const oldBlocks = this.lastBlocks;
-        let start = 0;
-        const minLen = Math.min(newBlockStates.length, oldBlocks.length);
-        while (start < minLen && newBlockStates[start].text === oldBlocks[start].text) {
-            start++;
-        }
-
-        let end = 0;
-        const maxEnd = Math.min(oldBlocks.length - start, newBlockStates.length - start);
-        while (end < maxEnd) {
-            if (oldBlocks[oldBlocks.length - 1 - end].text !== newBlockStates[newBlockStates.length - 1 - end].text) { break; }
-            end++;
-        }
-
-        const insertedBlocks = newBlockStates.slice(start, newBlockStates.length - end);
-        const deletedBlocks = oldBlocks.slice(start, oldBlocks.length - end);
-
-        const insertedText = insertedBlocks.map(b => b.text).join('\n');
-        const deletedText = deletedBlocks.map(b => b.text).join('\n');
-
-        // --- Optimized Citation Logic ---
-        // Uses R_BIBLIOGRAPHY logic
-        const bibRegex = R_BIBLIOGRAPHY;
-        const bibChanged = bibRegex.test(insertedText) || bibRegex.test(deletedText);
-
-        let shouldFullScan = false;
-
-        if (bibChanged || this.lastBlocks.length === 0) {
-            shouldFullScan = true;
-        } else {
-            const deletedKeys = this.extractKeysFromText(deletedText);
-            const insertedKeys = this.extractKeysFromText(insertedText);
-
-            if (deletedKeys.size !== insertedKeys.size) {
-                shouldFullScan = true;
-            } else {
-                for (const key of deletedKeys) {
-                    if (!insertedKeys.has(key)) {
-                        shouldFullScan = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (shouldFullScan) {
-            this.citedKeys = [];
-            this.scanCitations(rawBlocks);
-            currentCitedKeys = [...this.citedKeys];
-        } else {
-            this.citedKeys = [...this.lastCitedKeys];
-            currentCitedKeys = [...this.lastCitedKeys];
-        }
-
-        const keysChanged = JSON.stringify(currentCitedKeys) !== JSON.stringify(this.lastCitedKeys);
-        this.lastCitedKeys = [...currentCitedKeys];
-
-        // --- Rendering ---
-        let deleteCount = oldBlocks.length - start - end;
-
-        let insertedBlocksData = insertedBlocks.map((blockData, i) => {
-            const absoluteIndex = start + i;
-            let processed = blockData.text;
-
-            this._preprocessRules.forEach(rule => {
-                processed = rule.apply(processed, this);
-            });
-
-            let finalHtml = this.md!.render(processed);
-            finalHtml = this.restoreRenderedMath(finalHtml);
-            finalHtml = this.restoreRawBlocks(finalHtml);
-
-            if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
-                finalHtml = postProcessHtml(finalHtml);
-            }
-
-            return {
-                text: blockData.text,
-                html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>`
-            };
-        });
-
-        // Handle Shifts
-        let shift = 0;
-        if (end > 0 && insertedBlocksData.length !== deleteCount) {
-            shift = insertedBlocksData.length - deleteCount;
-            const tailBlocks = oldBlocks.slice(oldBlocks.length - end);
-            tailBlocks.forEach((b, i) => {
-                const newIdx = start + insertedBlocksData.length + i;
-                b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
-            });
-        }
-
-        // --- Update Memory ---
-        this.lastBlocks = [
-            ...oldBlocks.slice(0, start),
-            ...insertedBlocksData,
-            ...oldBlocks.slice(oldBlocks.length - end)
-        ];
-
-        // --- Dirty Blocks (Bibliography) ---
-        const dirtyBlocksMap: { [index: number]: string } = {};
-
-        if (keysChanged) {
-            const bibBlockIndex = this.lastBlocks.findIndex(b => /\\bibliography\{/.test(b.text));
-
-            if (bibBlockIndex !== -1) {
-                const isInsideMainPatch = bibBlockIndex >= start && bibBlockIndex < (start + insertedBlocksData.length);
-
-                if (!isInsideMainPatch) {
-                    const bibBlock = this.lastBlocks[bibBlockIndex];
-                    let processed = bibBlock.text;
-                    this._preprocessRules.forEach(rule => {
-                        processed = rule.apply(processed, this);
-                    });
-
-                    let newHtml = this.md!.render(processed);
-                    newHtml = this.restoreRenderedMath(newHtml);
-                    newHtml = this.restoreRawBlocks(newHtml);
-
-                    newHtml = `<div class="latex-block" data-index="${bibBlockIndex}">${newHtml}</div>`;
-                    this.lastBlocks[bibBlockIndex].html = newHtml;
-                    dirtyBlocksMap[bibBlockIndex] = newHtml;
-                }
-            }
-        }
-
-        // --- Payload ---
-        const numberingMap: { [index: number]: any } = {};
-        scanResult.blockNumbering.forEach((bn, idx) => {
-            const hasCounts = Object.values(bn.counts).some(arr => arr.length > 0);
-            if (hasCounts) {
-                numberingMap[idx] = bn.counts;
-            }
-        });
-
-        const payload: PatchPayload = {
-            type: 'patch',
-            start,
-            deleteCount,
-            htmls: insertedBlocksData.map(b => b.html),
-            shift,
-            numbering: {
-                blocks: numberingMap,
-                labels: scanResult.labelMap
-            },
-            dirtyBlocks: dirtyBlocksMap
-        };
-
-        if (oldBlocks.length === 0 || insertedBlocksData.length > 50 || deleteCount > 50) {
-            payload.type = 'full';
-            payload.html = this.lastBlocks.map(b => b.html).join('');
-        }
-
-        return payload;
-    }
-
-    private buildBlockMap(blocks: BlockResult[]) {
-        this.blockMap = blocks.map(b => ({
-            start: this.contentStartLineOffset + b.line,
-            count: b.lineCount
-        }));
-    }
+    // --- Sync Scroll Helpers & Delegates (Fixed for Extension Compatibility) ---
 
     public getBlockInfo(index: number): { start: number; count: number } | undefined {
         if (index >= 0 && index < this.blockMap.length) {
@@ -579,5 +394,14 @@ export class SmartRenderer {
             return block.start + offset;
         }
         return 0;
+    }
+
+    // [FIX] Proxy methods: Forward to Document to satisfy extension.ts calls
+    public getOriginalPosition(flatLine: number): SourceLocation | undefined {
+        return this.currentDocument?.getOriginalPosition(flatLine);
+    }
+
+    public getFlattenedLine(fsPath: string, originalLine: number): number {
+        return this.currentDocument ? this.currentDocument.getFlattenedLine(fsPath, originalLine) : -1;
     }
 }

@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SmartRenderer } from './renderer';
+import { LatexDocument } from './document';
+import { NodeFileProvider } from './file-provider';
 
 export class TexPreviewPanel {
     public static currentPanel: TexPreviewPanel | undefined;
@@ -10,10 +12,12 @@ export class TexPreviewPanel {
     private readonly _extensionPath: string;
     private _disposables: vscode.Disposable[] = [];
     private _renderer: SmartRenderer;
+    private _fileProvider: NodeFileProvider;
 
     private _sourceUri: vscode.Uri | undefined;
+    private _currentDocument: LatexDocument | undefined;
 
-    // [NEW] Event to notify when webview DOM is ready
+    // Event to notify when webview DOM is ready
     private readonly _onWebviewLoadedEmitter = new vscode.EventEmitter<void>();
     public readonly onWebviewLoaded = this._onWebviewLoadedEmitter.event;
 
@@ -93,6 +97,10 @@ export class TexPreviewPanel {
         this._extensionPath = extensionPath;
         this._renderer = renderer;
 
+        // Initialize File Provider and Document
+        this._fileProvider = new NodeFileProvider();
+        this._currentDocument = new LatexDocument(this._fileProvider);
+
         // Reset renderer state on new panel creation
         this._renderer.resetState();
 
@@ -106,7 +114,6 @@ export class TexPreviewPanel {
                     console.log('[SnapTeX] Webview reloaded (DOM reset detected). Forcing full re-render.');
                     this._renderer.resetState();
                     this.update();
-                    // [NEW] Fire event
                     this._onWebviewLoadedEmitter.fire();
                 } else if (message.command === 'revealLine') {
                     this.handleRevealLine(message);
@@ -128,13 +135,16 @@ export class TexPreviewPanel {
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
     }
 
-    /**
-     * Handle syncing from Preview -> Editor
-     */
     private handleRevealLine(message: any) {
-        const { index, ratio, anchor } = message;
         if (this._sourceUri) {
-             vscode.commands.executeCommand('snaptex.internal.revealLine', this._sourceUri, index, ratio, anchor);
+             // 1. Get flattened line from block index
+             const flatLine = this._renderer.getLineByBlockIndex(message.index, message.ratio);
+             // 2. Map flattened line to original source location using the proxy
+             const sourceLoc = this._renderer.getOriginalPosition(flatLine);
+
+             if (sourceLoc) {
+                 vscode.commands.executeCommand('snaptex.internal.revealLine', vscode.Uri.file(sourceLoc.file), sourceLoc.line, 0, message.anchor);
+             }
         }
     }
 
@@ -162,35 +172,39 @@ export class TexPreviewPanel {
         const docDir = path.dirname(this._sourceUri.fsPath);
         const text = doc.getText();
 
-        let payload = this._renderer.render(text, this._sourceUri.fsPath);
+        // Update Document Model
+        if (this._currentDocument) {
+            this._currentDocument.reparse(this._sourceUri.fsPath, text);
 
-        // Helper to fix local image paths in the HTML
-        const fixPaths = (html: string) => {
-            let fixed = html.replace(/src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
-                const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
-                const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
-                return `src="${uri}"`;
-            });
+            // [FIXED] Pass the document to the renderer (1 argument)
+            let payload = this._renderer.render(this._currentDocument);
 
-            fixed = fixed.replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
-                const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
-                const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
-                return `data-pdf-src="${uri}"`;
-            });
-            return fixed;
-        };
+            const fixPaths = (html: string) => {
+                let fixed = html.replace(/src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
+                    const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
+                    const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
+                    return `src="${uri}"`;
+                });
 
-        if (payload.type === 'full' && payload.html) {
-            payload.html = fixPaths(payload.html);
-        } else if (payload.type === 'patch' && payload.htmls) {
-            payload.htmls = payload.htmls.map(h => fixPaths(h));
+                fixed = fixed.replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
+                    const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
+                    const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
+                    return `data-pdf-src="${uri}"`;
+                });
+                return fixed;
+            };
+
+            if (payload.type === 'full' && payload.html) {
+                payload.html = fixPaths(payload.html);
+            } else if (payload.type === 'patch' && payload.htmls) {
+                payload.htmls = payload.htmls.map(h => fixPaths(h));
+            }
+
+            this._panel.webview.postMessage({ command: 'update', payload });
         }
-
-        this._panel.webview.postMessage({ command: 'update', payload });
     }
 
     private _getWebviewSkeleton() {
-        // ... (Unchanged)
         const katexPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'katex', 'katex.min.css'));
         const katexCssUri = this._panel.webview.asWebviewUri(katexPath);
 
@@ -203,7 +217,7 @@ export class TexPreviewPanel {
         const pdfWorkerPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.worker.mjs'));
         const pdfWorkerUri = this._panel.webview.asWebviewUri(pdfWorkerPath);
 
-        const htmlPath = path.join(this._extensionPath, 'media', 'webview.html');
+        const htmlPath = path.join(this._extensionPath, 'src', 'webview.html');
         let htmlContent = '';
         try {
             htmlContent = fs.readFileSync(htmlPath, 'utf-8');
@@ -224,7 +238,7 @@ export class TexPreviewPanel {
 
     public dispose() {
         TexPreviewPanel.currentPanel = undefined;
-        this._onWebviewLoadedEmitter.dispose(); // Dispose emitter
+        this._onWebviewLoadedEmitter.dispose();
         this._panel.dispose();
         while (this._disposables.length) { this._disposables.pop()?.dispose(); }
     }
