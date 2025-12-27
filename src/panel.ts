@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import { SmartRenderer } from './renderer';
 import { LatexDocument } from './document';
 import { NodeFileProvider } from './file-provider';
@@ -143,7 +142,7 @@ export class TexPreviewPanel {
         if (!doc && this._sourceUri) {
             doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === this._sourceUri!.toString());
         }
-        if (!doc) {return;}
+        if (!doc) { return; }
 
         const filename = path.basename(doc.fileName);
         this._panel.title = `𖧼 ${filename}`;
@@ -190,10 +189,11 @@ export class TexPreviewPanel {
         const pdfJsUri = toUri('media/vendor/pdfjs/pdf.mjs');
         const pdfWorkerUri = toUri('media/vendor/pdfjs/pdf.worker.mjs');
 
-        const htmlPath = path.join(this._extensionPath, 'src', 'webview.html');
+        const htmlPath = path.join(this._extensionPath, 'media', 'webview.html');
         let htmlContent = '';
         try {
-            htmlContent = fs.readFileSync(htmlPath, 'utf-8');
+            // [Refactor] Use fileProvider to read the file instead of fs
+            htmlContent = this._fileProvider.read(htmlPath);
         } catch (e) {
             console.error('[SnapTeX] Failed to read webview.html:', e);
             return `<html><body>Error loading Webview HTML</body></html>`;

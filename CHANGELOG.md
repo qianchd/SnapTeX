@@ -2,6 +2,9 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.4.0] - 2025-12-27
+- **Code reconstruction**: Based on the Model-View-Controller guidance. Better way to avoid auto-sync jittering.
+
 ## [0.3.5] - 2025-12-27
 ### Added
 - **AutoScroll**: Auto scrolling like markdown previewers with accurate localization.
