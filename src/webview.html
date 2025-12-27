@@ -21,344 +21,434 @@
 
 <script>
     const vscode = acquireVsCodeApi();
-    const contentRoot = document.getElementById('content-root');
-    const root = document.documentElement;
 
-    // --- Global State ---
-    let isAutoScrolling = true; // Lock to prevent sending scroll events back to editor
-    let scrollTimeout;
+    /**
+     * PreviewController: Manages the Webview State and Scrolling Logic
+     * Implements a State Machine to handle transitions between Idle, Rendering, and Auto-Scrolling.
+     */
+    class PreviewController {
+        constructor() {
+            // DOM Elements
+            this.contentRoot = document.getElementById('content-root');
 
-    // Rendering State Queue
-    let isRendering = false;      // Is a full update currently in progress?
-    let pendingScroll = null;     // Stores a scroll command received during rendering
-    let isFirstLoad = true;       // Track first load to skip scroll restoration if needed
+            // State Machine: 'IDLE' | 'RENDERING' | 'SCROLLING_AUTO'
+            this.state = 'SCROLLING_AUTO'; // Start locked (initial load)
 
-    function saveScrollState() {
-        const blocks = document.querySelectorAll('.latex-block');
-        for (const block of blocks) {
-            const rect = block.getBoundingClientRect();
-            if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                const index = block.getAttribute('data-index');
-                const offset = -rect.top;
-                const ratio = offset / rect.height;
-                return { index, ratio, offset };
-            }
+            // State Data
+            this.scrollTimeout = null;
+            this.pendingScroll = null;
+            this.isFirstLoad = true;
+
+            // Anti-Jitter Data
+            this.lastTargetIndex = -1;
+            this.lastTargetRatio = 0;
+            this.lastScrollTime = 0;
+
+            // Bind Methods
+            this.bindEvents();
+
+            // Initial Signal
+            vscode.postMessage({ command: 'webviewLoaded' });
         }
-        return null;
-    }
 
-    function restoreScrollState(state) {
-        if (!state || !state.index) return;
-        const block = document.querySelector('.latex-block[data-index="' + state.index + '"]');
-        if (block) {
-            const newTop = block.getBoundingClientRect().top + window.scrollY;
-            let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
-
-            isAutoScrolling = true;
-            window.scrollTo({ top: targetY, behavior: 'auto' });
+        bindEvents() {
+            window.addEventListener('message', event => this.onMessage(event));
+            window.addEventListener('scroll', () => this.onScroll());
+            document.addEventListener('dblclick', event => this.onDoubleClick(event));
         }
-    }
 
-    // Extracted Scroll Logic with Re-adjustment
-    function executeScroll(data) {
-        const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
+        // --- State Management ---
 
-        lastTargetIndex = index;
-        lastTargetRatio = ratio || 0;
+        setState(newState) {
+            this.state = newState;
+            // console.log(`[State] -> ${newState}`); // Debug if needed
+        }
 
-        const target = document.querySelector('.latex-block[data-index="' + index + '"]');
-        if (target) {
-            const calcY = () => {
-                if (!target.isConnected) return window.scrollY;
-                const rect = target.getBoundingClientRect();
-                const absoluteTop = rect.top + window.scrollY;
-
-                let y = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
-
-                if (anchor) {
-                    const textTop = findTextOffsetInBlock(target, anchor);
-                    if (textTop !== null) {
-                        y = textTop + window.scrollY - (window.innerHeight * viewRatio);
-                    }
+        lockScrolling(duration) {
+            this.setState('SCROLLING_AUTO');
+            if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
+            this.scrollTimeout = setTimeout(() => {
+                if (this.state === 'SCROLLING_AUTO') {
+                    this.setState('IDLE');
                 }
-                return y;
-            };
+            }, duration);
+        }
 
-            const targetY = calcY();
-            const currentY = window.scrollY;
+        // --- Event Handlers ---
 
-            if (Math.abs(currentY - targetY) < 50) {
-                return;
-            }
-
-            isAutoScrolling = true;
-            if (scrollTimeout) clearTimeout(scrollTimeout);
-            const lockTime = auto ? 600 : 1000;
-            scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, lockTime);
-
-            window.scrollTo({ top: targetY, behavior: 'smooth' });
-
-            if (!auto) {
-                target.classList.add('jump-highlight');
-                setTimeout(() => target.classList.remove('jump-highlight'), 1000);
-                if (anchor) highlightTextInNode(target, anchor);
-            }
-
-            if (isFirstLoad) {
-                setTimeout(() => {
-                    if (!target.isConnected) return;
-                    const newTargetY = calcY();
-                    if (Math.abs(window.scrollY - newTargetY) >75) {
-                        if (scrollTimeout) clearTimeout(scrollTimeout);
-                        isAutoScrolling = true;
-                        scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 500);
-                        window.scrollTo({ top: newTargetY, behavior: 'auto' });
-                    }
-                }, 150);
+        onMessage(event) {
+            const { command, payload } = event.data;
+            switch (command) {
+                case 'update':
+                    this.handleUpdate(payload);
+                    break;
+                case 'scrollToBlock':
+                    this.handleScrollCommand(event.data);
+                    break;
             }
         }
-    }
 
-    function highlightTextInNode(rootElement, text) {
-        if (!text || text.length < 3) return false;
-        const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT, {
-            acceptNode: (node) => {
-                if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
-                return NodeFilter.FILTER_ACCEPT;
-            }
-        });
-        let node;
-        while (node = walker.nextNode()) {
-            const val = node.nodeValue;
-            const index = val.indexOf(text);
-            if (index >= 0) {
-                const range = document.createRange();
-                range.setStart(node, index);
-                range.setEnd(node, index + text.length);
-                const span = document.createElement('span');
-                span.className = 'highlight-word';
-                range.surroundContents(span);
-                setTimeout(() => {
-                    const parent = span.parentNode;
-                    if (parent) {
-                        parent.replaceChild(document.createTextNode(span.textContent), span);
-                        parent.normalize();
-                    }
-                }, 2000);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function findTextOffsetInBlock(rootElement, text) {
-        if (!text || text.length < 3) return null;
-        const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT, {
-            acceptNode: (node) => {
-                if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
-                return NodeFilter.FILTER_ACCEPT;
-            }
-        });
-        let node;
-        while (node = walker.nextNode()) {
-            const val = node.nodeValue;
-            const index = val.indexOf(text);
-            if (index >= 0) {
-                const range = document.createRange();
-                range.setStart(node, index);
-                range.setEnd(node, index + text.length);
-                const rect = range.getBoundingClientRect();
-                return rect.top;
-            }
-        }
-        return null;
-    }
-
-    function smartFullUpdate(newHtml) {
-        const parser = new DOMParser();
-        const newDoc = parser.parseFromString(newHtml, 'text/html');
-        const newElements = Array.from(newDoc.body.children);
-        const oldElements = Array.from(contentRoot.children);
-        const maxLen = Math.max(newElements.length, oldElements.length);
-        for (let i = 0; i < maxLen; i++) {
-            const newEl = newElements[i];
-            const oldEl = oldElements[i];
-            if (!newEl) { if (oldEl) oldEl.remove(); continue; }
-            if (!oldEl) { contentRoot.appendChild(newEl); continue; }
-            if (oldEl.outerHTML !== newEl.outerHTML) { oldEl.replaceWith(newEl); }
-        }
-    }
-
-    function applyNumbering(data) {
-        if (!data) return;
-        const { blocks, labels } = data;
-        for (const [idxStr, counts] of Object.entries(blocks)) {
-            const idx = parseInt(idxStr);
-            const blockEl = document.querySelector('.latex-block[data-index="' + idx + '"]');
-            if (!blockEl) continue;
-            const fill = (type, values) => {
-                if (!values || !values.length) return;
-                const spans = blockEl.querySelectorAll('.sn-cnt[data-type="' + type + '"]');
-                spans.forEach((span, i) => { if (values[i]) span.textContent = values[i]; });
-            };
-            fill('eq', counts.eq); fill('fig', counts.fig); fill('tbl', counts.tbl);
-            fill('alg', counts.alg); fill('sec', counts.sec); fill('thm', counts.thm);
-        }
-        if (labels) {
-            const refs = document.querySelectorAll('.sn-ref');
-            refs.forEach(ref => {
-                const key = ref.getAttribute('data-key');
-                if (key && labels[key]) { ref.textContent = labels[key]; } else { ref.textContent = "??"; }
-            });
-        }
-    }
-
-    window.addEventListener('message', event => {
-        const { command, payload, index, ratio, anchor, auto, viewRatio = 0.5 } = event.data;
-        if (command === 'update') {
+        handleUpdate(payload) {
             if (payload.type === 'full') {
-                isRendering = true;
-                const scrollState = saveScrollState();
+                this.setState('RENDERING');
+                const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
-                smartFullUpdate(payload.html);
+
+                this.smartFullUpdate(payload.html);
+
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => {
-                            isRendering = false;
-                            document.body.classList.remove('preload-mode');
-                            // Track if we handled a pending scroll
-                            let scrollHandled = false;
-                            if (pendingScroll) {
-                                console.log("[SnapTeX] Executing queued scroll command");
-                                executeScroll(pendingScroll);
-                                pendingScroll = null;
-                                scrollHandled = true; // Mark as handled
-                            } else if (!isFirstLoad) {
-                                restoreScrollState(scrollState);
-                            }
-                            isFirstLoad = false;
-                            // Only reset the lock here if executeScroll DID NOT run.
-                            // If executeScroll ran, it set its own long timer (1000ms), which we must not overwrite with this 200ms one.
-                            if (!scrollHandled) {
-                                if (scrollTimeout) clearTimeout(scrollTimeout);
-                                scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 200);
-                            }
+                            this.onRenderComplete(scrollState);
                         });
                     });
                 });
             } else if (payload.type === 'patch') {
-                const { start, deleteCount, htmls = [], shift = 0 } = payload;
-                const targetIndex = start + deleteCount;
-                const referenceNode = contentRoot.children[targetIndex] || null;
-                for (let i = 0; i < deleteCount; i++) {
-                    if (contentRoot.children[start]) contentRoot.removeChild(contentRoot.children[start]);
-                }
-                if (htmls.length > 0) {
-                    const fragment = document.createDocumentFragment();
-                    const tempDiv = document.createElement('div');
-                    htmls.forEach(html => {
-                        tempDiv.innerHTML = html;
-                        const node = tempDiv.firstElementChild;
-                        if (node) fragment.appendChild(node);
-                    });
-                    contentRoot.insertBefore(fragment, referenceNode);
-                }
-                if (shift !== 0) {
-                    let node = contentRoot.children[start + htmls.length];
-                    while (node) {
-                        const oldIdx = parseInt(node.getAttribute('data-index'));
-                        if (!isNaN(oldIdx)) { node.setAttribute('data-index', oldIdx + shift); }
-                        node = node.nextElementSibling;
-                    }
-                }
-                if (payload.dirtyBlocks) {
-                    Object.keys(payload.dirtyBlocks).forEach(indexStr => {
-                        const idx = parseInt(indexStr);
-                        const targetBlock = document.querySelector('.latex-block[data-index="' + idx + '"]');
-                        if (targetBlock) { targetBlock.outerHTML = payload.dirtyBlocks[idx]; }
-                    });
-                }
+                this.applyPatch(payload);
             }
-            if (payload.numbering) { requestAnimationFrame(() => { applyNumbering(payload.numbering); }); }
-            setTimeout(() => {
-                const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
-                pdfCanvases.forEach(canvas => {
-                    const uri = canvas.getAttribute('data-pdf-src');
-                    const id = canvas.id;
-                    const renderedUri = canvas.getAttribute('data-rendered-uri');
-                    if (uri && id && renderedUri !== uri) { window.renderPdfToCanvas(uri, id); }
-                });
-            }, 50);
-        }
-        else if (command === 'scrollToBlock') {
-            if (isRendering || isFirstLoad) {
-                console.log("[SnapTeX] Queuing scroll command");
-                pendingScroll = event.data;
-            } else {
-                executeScroll(event.data);
-            }
-        }
-    });
 
-    document.addEventListener('dblclick', event => {
-        const block = event.target.closest('.latex-block');
-        if (block) {
-            const index = block.getAttribute('data-index');
-            if (index !== null) {
+            if (payload.numbering) {
+                requestAnimationFrame(() => this.applyNumbering(payload.numbering));
+            }
+
+            setTimeout(() => this.renderPendingPdfs(), 50);
+        }
+
+        onRenderComplete(savedScrollState) {
+            this.setState('IDLE');
+            document.body.classList.remove('preload-mode');
+
+            let scrollHandled = false;
+            if (this.pendingScroll) {
+                console.log("[SnapTeX] Executing queued scroll command");
+                this.executeScroll(this.pendingScroll);
+                this.pendingScroll = null;
+                scrollHandled = true;
+            } else if (!this.isFirstLoad) {
+                this.restoreScrollState(savedScrollState);
+                scrollHandled = true; // restore sets lock internally
+            }
+
+            this.isFirstLoad = false;
+
+            // If no scroll action was taken, ensure we unlock quickly (similar to original logic)
+            if (!scrollHandled && this.state === 'SCROLLING_AUTO') {
+                 this.lockScrolling(200);
+            } else if (!scrollHandled) {
+                // Ensure we are IDLE if nothing happened
+                this.setState('IDLE');
+            }
+        }
+
+        handleScrollCommand(data) {
+            if (this.state === 'RENDERING' || this.isFirstLoad) {
+                console.log("[SnapTeX] Queuing scroll command");
+                this.pendingScroll = data;
+            } else {
+                this.executeScroll(data);
+            }
+        }
+
+        onScroll() {
+            // Block if locked
+            if (this.state !== 'IDLE') return;
+
+            // Throttle
+            const now = Date.now();
+            if (now - this.lastScrollTime < 100) return;
+            this.lastScrollTime = now;
+
+            // Find Center Block
+            const blocks = document.querySelectorAll('.latex-block');
+            const viewCenter = window.innerHeight / 2;
+
+            for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
-                const relativeY = event.clientY - rect.top;
-                const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
-                let anchorText = "";
-                const selection = window.getSelection();
-                if (selection && selection.toString().trim().length > 0) {
-                    anchorText = selection.toString().trim();
-                } else if (document.caretRangeFromPoint) {
-                    const range = document.caretRangeFromPoint(event.clientX, event.clientY);
-                    if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
-                        const text = range.startContainer.textContent;
-                        const offset = range.startOffset;
-                        let start = offset;
-                        let end = offset;
-                        while (start > 0 && /\S/.test(text[start - 1])) start--;
-                        while (end < text.length && /\S/.test(text[end])) end++;
-                        if (end > start) { anchorText = text.substring(start, end); }
+                if (rect.top <= viewCenter && rect.bottom >= viewCenter) {
+                    const index = parseInt(block.getAttribute('data-index'));
+                    let ratio = 0;
+                    if (rect.height > 0) {
+                        const offset = viewCenter - rect.top;
+                        ratio = offset / rect.height;
+                        ratio = Math.max(0, Math.min(1, ratio));
                     }
+
+                    // Anti-Loop Check (Optional: You can enable the lastTarget check here if desired,
+                    // but sticking to your 'stable' version which just sends it)
+                    vscode.postMessage({ command: 'syncScroll', index: index, ratio: ratio });
+                    break;
                 }
-                vscode.postMessage({
-                    command: 'revealLine',
-                    index: parseInt(index),
-                    ratio: ratio,
-                    anchor: anchorText,
-                    viewRatio: event.clientY / window.innerHeight
+            }
+        }
+
+        onDoubleClick(event) {
+            const block = event.target.closest('.latex-block');
+            if (block) {
+                const index = block.getAttribute('data-index');
+                if (index !== null) {
+                    const rect = block.getBoundingClientRect();
+                    const relativeY = event.clientY - rect.top;
+                    const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
+                    let anchorText = "";
+
+                    // Anchor Logic
+                    const selection = window.getSelection();
+                    if (selection && selection.toString().trim().length > 0) {
+                        anchorText = selection.toString().trim();
+                    } else if (document.caretRangeFromPoint) {
+                        const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+                        if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+                            const text = range.startContainer.textContent;
+                            const offset = range.startOffset;
+                            let start = offset, end = offset;
+                            while (start > 0 && /\S/.test(text[start - 1])) start--;
+                            while (end < text.length && /\S/.test(text[end])) end++;
+                            if (end > start) { anchorText = text.substring(start, end); }
+                        }
+                    }
+
+                    vscode.postMessage({
+                        command: 'revealLine',
+                        index: parseInt(index),
+                        ratio: ratio,
+                        anchor: anchorText,
+                        viewRatio: event.clientY / window.innerHeight
+                    });
+                }
+            }
+        }
+
+        // --- Logic Methods ---
+
+        saveScrollState() {
+            const blocks = document.querySelectorAll('.latex-block');
+            for (const block of blocks) {
+                const rect = block.getBoundingClientRect();
+                if (rect.bottom > 0 && rect.top < window.innerHeight) {
+                    const index = block.getAttribute('data-index');
+                    const offset = -rect.top;
+                    const ratio = offset / rect.height;
+                    return { index, ratio, offset };
+                }
+            }
+            return null;
+        }
+
+        restoreScrollState(state) {
+            if (!state || !state.index) return;
+            const block = document.querySelector('.latex-block[data-index="' + state.index + '"]');
+            if (block) {
+                const newTop = block.getBoundingClientRect().top + window.scrollY;
+                let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
+
+                // Lock and Scroll
+                this.lockScrolling(500); // Standard lock for restore
+                window.scrollTo({ top: targetY, behavior: 'auto' });
+            }
+        }
+
+        executeScroll(data) {
+            const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
+
+            this.lastTargetIndex = index;
+            this.lastTargetRatio = ratio || 0;
+
+            const target = document.querySelector('.latex-block[data-index="' + index + '"]');
+            if (target) {
+                const calcY = () => {
+                    if (!target.isConnected) return window.scrollY;
+                    const rect = target.getBoundingClientRect();
+                    const absoluteTop = rect.top + window.scrollY;
+                    let y = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
+                    if (anchor) {
+                        const textTop = this.findTextOffsetInBlock(target, anchor);
+                        if (textTop !== null) {
+                            y = textTop + window.scrollY - (window.innerHeight * viewRatio);
+                        }
+                    }
+                    return y;
+                };
+
+                const targetY = calcY();
+                const currentY = window.scrollY;
+
+                // [Anti-Jitter Threshold] (Maintained from your stable version)
+                if (Math.abs(currentY - targetY) < 50 && auto) {
+                    return;
+                }
+
+                const lockTime = auto ? 600 : 1000;
+                this.lockScrolling(lockTime);
+
+                window.scrollTo({ top: targetY, behavior: 'smooth' });
+
+                if (!auto) {
+                    target.classList.add('jump-highlight');
+                    setTimeout(() => target.classList.remove('jump-highlight'), 1000);
+                    if (anchor) this.highlightTextInNode(target, anchor);
+                }
+
+                // [First Load Correction] (Maintained from your stable version)
+                if (this.isFirstLoad) {
+                    setTimeout(() => {
+                        if (!target.isConnected) return;
+                        const newTargetY = calcY();
+                        // 75px Check
+                        if (Math.abs(window.scrollY - newTargetY) > 75 || !auto) {
+                            this.lockScrolling(500);
+                            window.scrollTo({ top: newTargetY, behavior: 'smooth' });
+                        }
+                    }, 150);
+                }
+            }
+        }
+
+        // --- DOM Helpers ---
+
+        smartFullUpdate(newHtml) {
+            const parser = new DOMParser();
+            const newDoc = parser.parseFromString(newHtml, 'text/html');
+            const newElements = Array.from(newDoc.body.children);
+            const oldElements = Array.from(this.contentRoot.children);
+            const maxLen = Math.max(newElements.length, oldElements.length);
+            for (let i = 0; i < maxLen; i++) {
+                const newEl = newElements[i];
+                const oldEl = oldElements[i];
+                if (!newEl) { if (oldEl) oldEl.remove(); continue; }
+                if (!oldEl) { this.contentRoot.appendChild(newEl); continue; }
+                if (oldEl.outerHTML !== newEl.outerHTML) { oldEl.replaceWith(newEl); }
+            }
+        }
+
+        applyPatch(payload) {
+            const { start, deleteCount, htmls = [], shift = 0 } = payload;
+            const targetIndex = start + deleteCount;
+            const referenceNode = this.contentRoot.children[targetIndex] || null;
+
+            for (let i = 0; i < deleteCount; i++) {
+                if (this.contentRoot.children[start]) this.contentRoot.removeChild(this.contentRoot.children[start]);
+            }
+            if (htmls.length > 0) {
+                const fragment = document.createDocumentFragment();
+                const tempDiv = document.createElement('div');
+                htmls.forEach(html => {
+                    tempDiv.innerHTML = html;
+                    const node = tempDiv.firstElementChild;
+                    if (node) fragment.appendChild(node);
+                });
+                this.contentRoot.insertBefore(fragment, referenceNode);
+            }
+            if (shift !== 0) {
+                let node = this.contentRoot.children[start + htmls.length];
+                while (node) {
+                    const oldIdx = parseInt(node.getAttribute('data-index'));
+                    if (!isNaN(oldIdx)) { node.setAttribute('data-index', oldIdx + shift); }
+                    node = node.nextElementSibling;
+                }
+            }
+            if (payload.dirtyBlocks) {
+                Object.keys(payload.dirtyBlocks).forEach(indexStr => {
+                    const idx = parseInt(indexStr);
+                    const targetBlock = document.querySelector('.latex-block[data-index="' + idx + '"]');
+                    if (targetBlock) { targetBlock.outerHTML = payload.dirtyBlocks[idx]; }
                 });
             }
         }
-    });
-    let lastScrollTime = 0;
-    window.addEventListener('scroll', () => {
-        if (isAutoScrolling) return;
-        const now = Date.now();
-        if (now - lastScrollTime < 100) return;
-        lastScrollTime = now;
-        const blocks = document.querySelectorAll('.latex-block');
-        const viewCenter = window.innerHeight / 2;
-        for (const block of blocks) {
-            const rect = block.getBoundingClientRect();
-            if (rect.top <= viewCenter && rect.bottom >= viewCenter) {
-                const index = parseInt(block.getAttribute('data-index'));
-                let ratio = 0;
-                if (rect.height > 0) {
-                    const offset = viewCenter - rect.top;
-                    ratio = offset / rect.height;
-                    ratio = Math.max(0, Math.min(1, ratio));
-                }
-                vscode.postMessage({ command: 'syncScroll', index: index, ratio: ratio });
-                break;
+
+        applyNumbering(data) {
+            if (!data) return;
+            const { blocks, labels } = data;
+            for (const [idxStr, counts] of Object.entries(blocks)) {
+                const idx = parseInt(idxStr);
+                const blockEl = document.querySelector('.latex-block[data-index="' + idx + '"]');
+                if (!blockEl) continue;
+                const fill = (type, values) => {
+                    if (!values || !values.length) return;
+                    const spans = blockEl.querySelectorAll('.sn-cnt[data-type="' + type + '"]');
+                    spans.forEach((span, i) => { if (values[i]) span.textContent = values[i]; });
+                };
+                fill('eq', counts.eq); fill('fig', counts.fig); fill('tbl', counts.tbl);
+                fill('alg', counts.alg); fill('sec', counts.sec); fill('thm', counts.thm);
+            }
+            if (labels) {
+                const refs = document.querySelectorAll('.sn-ref');
+                refs.forEach(ref => {
+                    const key = ref.getAttribute('data-key');
+                    if (key && labels[key]) { ref.textContent = labels[key]; } else { ref.textContent = "??"; }
+                });
             }
         }
-    });
-    vscode.postMessage({ command: 'webviewLoaded' });
+
+        renderPendingPdfs() {
+            const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
+            pdfCanvases.forEach(canvas => {
+                const uri = canvas.getAttribute('data-pdf-src');
+                const id = canvas.id;
+                const renderedUri = canvas.getAttribute('data-rendered-uri');
+                if (uri && id && renderedUri !== uri) { window.renderPdfToCanvas(uri, id); }
+            });
+        }
+
+        highlightTextInNode(rootElement, text) {
+            if (!text || text.length < 3) return false;
+            const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT, {
+                acceptNode: (node) => {
+                    if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            let node;
+            while (node = walker.nextNode()) {
+                const val = node.nodeValue;
+                const index = val.indexOf(text);
+                if (index >= 0) {
+                    const range = document.createRange();
+                    range.setStart(node, index);
+                    range.setEnd(node, index + text.length);
+                    const span = document.createElement('span');
+                    span.className = 'highlight-word';
+                    range.surroundContents(span);
+                    setTimeout(() => {
+                        const parent = span.parentNode;
+                        if (parent) {
+                            parent.replaceChild(document.createTextNode(span.textContent), span);
+                            parent.normalize();
+                        }
+                    }, 2000);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        findTextOffsetInBlock(rootElement, text) {
+            if (!text || text.length < 3) return null;
+            const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT, {
+                acceptNode: (node) => {
+                    if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            let node;
+            while (node = walker.nextNode()) {
+                const val = node.nodeValue;
+                const index = val.indexOf(text);
+                if (index >= 0) {
+                    const range = document.createRange();
+                    range.setStart(node, index);
+                    range.setEnd(node, index + text.length);
+                    const rect = range.getBoundingClientRect();
+                    return rect.top;
+                }
+            }
+            return null;
+        }
+    }
+
+    // Initialize Controller
+    const controller = new PreviewController();
 </script>
+
 <script type="module">
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
@@ -387,8 +477,6 @@
             if(c) c.removeAttribute('data-rendering');
         }
     };
-    window.addEventListener('message', event => {
-    });
 </script>
 </body>
 </html>
