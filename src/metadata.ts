@@ -2,8 +2,10 @@ import { MetadataResult } from './types';
 import { findCommand } from './utils';
 
 export function extractMetadata(text: string): MetadataResult {
-    // 1. Pre-cleaning: Remove all comments (%) to prevent curly braces in comments from interfering with matching
-    let cleanedText = text.replace(/(?<!\\)%.*/gm, '');
+    // 1. Pre-cleaning: Remove comment content but KEEP the % marker.
+    // Why? If we remove the whole line, we might create double newlines (\n\n) which split blocks incorrectly.
+    // We also keep the % to preserve line counts for sync, but remove content to ensure braces don't break matching.
+    let cleanedText = text.replace(/(?<!\\)%.*/gm, '%');
 
     // =======================================================
     // clean $$$$
@@ -66,6 +68,5 @@ export function extractMetadata(text: string): MetadataResult {
             }
         }
     }
-
     return { data: { macros, title, author, date }, cleanedText };
 }

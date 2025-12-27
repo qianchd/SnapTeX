@@ -10,6 +10,16 @@ import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY } from './pattern
  * Suggestion: Formula protection (30-40) -> Structure conversion (50-80) -> List/Style (90-110)
  */
 export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
+    // Removes the % marker left by metadata.ts and consumes the following newline.
+    // This mimics LaTeX behavior: "Word%\nNext" -> "WordNext" (joined).
+    // "Line\n%\nLine" -> "Line\nLine" -> Rendered as "Line Line" (space).
+    {
+        name: 'clean_comments',
+        priority: 5,
+        apply: (text, renderer: SmartRenderer) => {
+            return text.replace(/(?<!\\)%.*(\r?\n)?/g, '');
+        }
+    },
     // --- Step 0: Handle escape characters (Highest priority, prevents interference with subsequent regex) ---
     {
         name: 'escaped_char_dollar',
@@ -46,7 +56,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-        // --- Step 2: Block-level math formulas (Render and Cache) ---
+    // --- Step 2: Block-level math formulas (Render and Cache) ---
     {
         name: 'display_math',
         priority: 40,
@@ -59,7 +69,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             );
 
             return text.replace(mathBlockRegex, (match, m1, c1, m3, c4, m5, envName, star, c8, offset, fullString) => {
-                if (offset > 0 && fullString[offset - 1] === '\\') {return match;}
+                if (offset > 0 && fullString[offset - 1] === '\\') { return match; }
 
                 let content = c1 || c4 || c8 || match;
 
@@ -105,7 +115,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-        // --- Step 6: Inline formula protection (Render and Cache) ---
+    // --- Step 6: Inline formula protection (Render and Cache) ---
     // Note: Priority 40 runs AFTER figure/table/algorithm, so it can catch math in their outputs.
     {
         name: 'inline_math',
@@ -127,7 +137,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
             // 2. $ ... $
             return text.replace(/(\\?)\$((?:\\.|[^\\$])*)\$/gm, (match, backslash, content) => {
-                if (backslash === '\\') {return match;}
+                if (backslash === '\\') { return match; }
                 return processInline(content);
             });
         }
@@ -161,7 +171,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-// --- Step 10: Author-Year Citations ---
+    // --- Step 10: Author-Year Citations ---
     {
         name: 'citations',
         priority: 70,
@@ -209,7 +219,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     // Format: pre Author (Year, post)
                     const formatted = parts.map((p: any, i: number) => {
                         const isLast = i === parts.length - 1;
-                        if (p.error) {return `[${p.key}?]`;}
+                        if (p.error) { return `[${p.key}?]`; }
 
                         let yearText = p.year;
                         // For \citet, post-note usually goes inside the parenthesis of the last item
@@ -224,7 +234,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     // Format: pre Year, post
                     const formatted = parts.map((p: any, i: number) => {
                         const isLast = i === parts.length - 1;
-                        if (p.error) {return `[${p.key}?]`;}
+                        if (p.error) { return `[${p.key}?]`; }
 
                         let yearText = p.year;
                         if (isLast && post) { yearText += `, ${post}`; }
@@ -236,7 +246,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 } else {
                     // \cite or \citep -> (pre Author, Year, post)
                     const inner = parts.map((p: any) => {
-                        if (p.error) {return `[${p.key}?]`;}
+                        if (p.error) { return `[${p.key}?]`; }
                         return mkLink(`${p.author}, ${p.year}`, p.key);
                     }).join('; ');
 
@@ -300,7 +310,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         priority: 90,
         apply: (text, renderer: SmartRenderer) => {
             return text.replace(/\\([%#&])/g, (match, char) => {
-                const entities: Record<string, string> = {'#': '&#35;', '&': '&amp;', '%': '&#37;' };
+                const entities: Record<string, string> = { '#': '&#35;', '&': '&amp;', '%': '&#37;' };
                 // Keep using pushInlineProtected for raw text to avoid Markdown parsing
                 return renderer.pushInlineProtected(entities[char] || char);
             });
@@ -308,8 +318,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     },
 
     {
-    name: 'latex_quotes',
-    priority: 100,
+        name: 'latex_quotes',
+        priority: 100,
         apply: (text, renderer: SmartRenderer) => {
             // 1. 处理双引号 ``content''
             // 注意：这里我们只通过正则找到对儿，但替换时只替换符号，保持 content 在外面
@@ -419,20 +429,20 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     let listItems = '';
                     lines.forEach(line => {
                         let trimmed = line.trim();
-                        if(!trimmed || trimmed.startsWith('%') || trimmed.startsWith('\\renewcommand') || trimmed.startsWith('\\setlength')) {return;}
+                        if (!trimmed || trimmed.startsWith('%') || trimmed.startsWith('\\renewcommand') || trimmed.startsWith('\\setlength')) { return; }
 
                         let prefixHtml = "";
                         let contentToRender = trimmed;
                         let isSpecialLine = false;
                         if (trimmed.match(/^\\(Require|Ensure|Input|Output)/)) {
-                             const isInput = trimmed.match(/^\\(Require|Input)/);
-                             const label = isInput ? 'Input:' : 'Output:';
-                             prefixHtml = `<strong>${label}</strong> `;
-                             contentToRender = trimmed.replace(/^\\(Require|Ensure|Input|Output)\s*/, '');
-                             isSpecialLine = true;
+                            const isInput = trimmed.match(/^\\(Require|Input)/);
+                            const label = isInput ? 'Input:' : 'Output:';
+                            prefixHtml = `<strong>${label}</strong> `;
+                            contentToRender = trimmed.replace(/^\\(Require|Ensure|Input|Output)\s*/, '');
+                            isSpecialLine = true;
                         } else if (trimmed.match(/^\\State/)) {
-                             contentToRender = trimmed.replace(/^\\State\s*/, '');
-                             if (contentToRender.startsWith('{') && contentToRender.endsWith('}')) {contentToRender = contentToRender.substring(1, contentToRender.length - 1);}
+                            contentToRender = trimmed.replace(/^\\State\s*/, '');
+                            if (contentToRender.startsWith('{') && contentToRender.endsWith('}')) { contentToRender = contentToRender.substring(1, contentToRender.length - 1); }
                         }
 
                         contentToRender = resolveLatexStyles(contentToRender);
@@ -533,8 +543,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     const requiredArgs = isStar ? 2 : 1;
                     let argsFound = 0;
                     while (argsFound < requiredArgs) {
-                        while(contentStartIndex < innerContent.length && /\s/.test(innerContent[contentStartIndex])) {contentStartIndex++;}
-                        if (contentStartIndex >= innerContent.length) {break;}
+                        while (contentStartIndex < innerContent.length && /\s/.test(innerContent[contentStartIndex])) { contentStartIndex++; }
+                        if (contentStartIndex >= innerContent.length) { break; }
                         if (innerContent[contentStartIndex] === '[') {
                             const closeBracket = innerContent.indexOf(']', contentStartIndex);
                             if (closeBracket !== -1) { contentStartIndex = closeBracket + 1; continue; }
@@ -558,64 +568,64 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                         rawContent = rawContent.replace(/\\setlength\\[a-zA-Z]+\{[^}]+\}/g, '');
                         rawContent = rawContent.replace(/%.*$/gm, '');
                         const rows = rawContent.split(/\\\\(?:\[.*?\])?/).filter((r: string) => r.trim().length > 0).map((rowText: string) => {
-                                const cells = rowText.split('&').map((c: string) => {
-                                    let cellContent = c.trim();
-                                    let cellAttrs = 'style="padding: 5px 10px; border: 1px solid #ddd;"';
-                                    if (cellContent.startsWith('\\multicolumn')) {
-                                        let currIdx = cellContent.indexOf('{');
-                                        if (currIdx !== -1) {
-                                            let endIdx = findBalancedClosingBrace(cellContent, currIdx);
-                                            if (endIdx !== -1) {
-                                                const colspan = cellContent.substring(currIdx + 1, endIdx);
-                                                currIdx = cellContent.indexOf('{', endIdx);
-                                                if (currIdx !== -1) {
-                                                    endIdx = findBalancedClosingBrace(cellContent, currIdx);
-                                                    if (endIdx !== -1) {
-                                                        const alignSpec = cellContent.substring(currIdx + 1, endIdx);
-                                                        let textAlign = "center";
-                                                        if (alignSpec.includes('l')) {textAlign = "left";}
-                                                        if (alignSpec.includes('r')) {textAlign = "right";}
-                                                        currIdx = cellContent.indexOf('{', endIdx);
-                                                        if (currIdx !== -1) {
-                                                            endIdx = findBalancedClosingBrace(cellContent, currIdx);
-                                                            if (endIdx !== -1) {
-                                                                cellContent = cellContent.substring(currIdx + 1, endIdx);
-                                                                cellAttrs += ` colspan="${colspan}" align="${textAlign}"`;
-                                                            }
+                            const cells = rowText.split('&').map((c: string) => {
+                                let cellContent = c.trim();
+                                let cellAttrs = 'style="padding: 5px 10px; border: 1px solid #ddd;"';
+                                if (cellContent.startsWith('\\multicolumn')) {
+                                    let currIdx = cellContent.indexOf('{');
+                                    if (currIdx !== -1) {
+                                        let endIdx = findBalancedClosingBrace(cellContent, currIdx);
+                                        if (endIdx !== -1) {
+                                            const colspan = cellContent.substring(currIdx + 1, endIdx);
+                                            currIdx = cellContent.indexOf('{', endIdx);
+                                            if (currIdx !== -1) {
+                                                endIdx = findBalancedClosingBrace(cellContent, currIdx);
+                                                if (endIdx !== -1) {
+                                                    const alignSpec = cellContent.substring(currIdx + 1, endIdx);
+                                                    let textAlign = "center";
+                                                    if (alignSpec.includes('l')) { textAlign = "left"; }
+                                                    if (alignSpec.includes('r')) { textAlign = "right"; }
+                                                    currIdx = cellContent.indexOf('{', endIdx);
+                                                    if (currIdx !== -1) {
+                                                        endIdx = findBalancedClosingBrace(cellContent, currIdx);
+                                                        if (endIdx !== -1) {
+                                                            cellContent = cellContent.substring(currIdx + 1, endIdx);
+                                                            cellAttrs += ` colspan="${colspan}" align="${textAlign}"`;
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    if (cellContent.startsWith('\\multirow')) {
-                                        let currIdx = cellContent.indexOf('{');
-                                        if (currIdx !== -1) {
-                                            let endIdx = findBalancedClosingBrace(cellContent, currIdx);
-                                            if (endIdx !== -1) {
-                                                currIdx = cellContent.indexOf('{', endIdx);
-                                                if (currIdx !== -1) {
-                                                    endIdx = findBalancedClosingBrace(cellContent, currIdx);
-                                                    if (endIdx !== -1) {
-                                                        currIdx = cellContent.indexOf('{', endIdx);
-                                                        if (currIdx !== -1) {
-                                                            endIdx = findBalancedClosingBrace(cellContent, currIdx);
-                                                            if (endIdx !== -1) {
-                                                                cellContent = cellContent.substring(currIdx + 1, endIdx);
-                                                                cellAttrs += ` style="vertical-align: middle;"`;
-                                                            }
+                                }
+                                if (cellContent.startsWith('\\multirow')) {
+                                    let currIdx = cellContent.indexOf('{');
+                                    if (currIdx !== -1) {
+                                        let endIdx = findBalancedClosingBrace(cellContent, currIdx);
+                                        if (endIdx !== -1) {
+                                            currIdx = cellContent.indexOf('{', endIdx);
+                                            if (currIdx !== -1) {
+                                                endIdx = findBalancedClosingBrace(cellContent, currIdx);
+                                                if (endIdx !== -1) {
+                                                    currIdx = cellContent.indexOf('{', endIdx);
+                                                    if (currIdx !== -1) {
+                                                        endIdx = findBalancedClosingBrace(cellContent, currIdx);
+                                                        if (endIdx !== -1) {
+                                                            cellContent = cellContent.substring(currIdx + 1, endIdx);
+                                                            cellAttrs += ` style="vertical-align: middle;"`;
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    cellContent = cellContent.replace(/\\tnote\{([^}]+)\}/g, '<sup>$1</sup>');
-                                    cellContent = resolveLatexStyles(cellContent);
-                                    return `<td ${cellAttrs}>${renderer.renderInline(cellContent)}</td>`;
-                                });
-                                return `<tr>${cells.join('')}</tr>`;
-                            }).join('');
+                                }
+                                cellContent = cellContent.replace(/\\tnote\{([^}]+)\}/g, '<sup>$1</sup>');
+                                cellContent = resolveLatexStyles(cellContent);
+                                return `<td ${cellAttrs}>${renderer.renderInline(cellContent)}</td>`;
+                            });
+                            return `<tr>${cells.join('')}</tr>`;
+                        }).join('');
                         tableHtml = `<table style="border-collapse: collapse; margin: 0 auto; width: 100%;">${rows}</table>`;
                     }
                 }
@@ -656,9 +666,9 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             // 1. Handle \maketitle
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                if (renderer.currentTitle) {titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`;}
-                if (renderer.currentAuthor) {titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`;}
-                if (renderer.currentDate) {titleBlock += `<div class="latex-date">${renderer.currentDate.replace(/\\\\/g, '<br/>')}</div>`;}
+                if (renderer.currentTitle) { titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`; }
+                if (renderer.currentAuthor) { titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`; }
+                if (renderer.currentDate) { titleBlock += `<div class="latex-date">${renderer.currentDate.replace(/\\\\/g, '<br/>')}</div>`; }
                 text = text.replace(/\\maketitle.*/g, `\n\n${titleBlock}\n\n`);
             }
 
@@ -688,10 +698,10 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
             return text.replace(sectionRegex, (match, level, star, content, label) => {
                 let prefix = '##';
-                if (level === 'subsection') {prefix = '###';}
-                else if (level === 'subsubsection') {prefix = '####';}
-                else if (level === 'paragraph') {prefix = '#####';}       // H5
-                else if (level === 'subparagraph') {prefix = '######';}   // H6
+                if (level === 'subsection') { prefix = '###'; }
+                else if (level === 'subsubsection') { prefix = '####'; }
+                else if (level === 'paragraph') { prefix = '#####'; }       // H5
+                else if (level === 'subparagraph') { prefix = '######'; }   // H6
 
                 let numHtml = "";
                 // Only number main sections (up to subsubsection) to match scanner logic

@@ -36,6 +36,8 @@
         "makecell",
         "maketitle",
         "mathml",
+        "mathparagraph",
+        "mathsection",
         "midrule",
         "multicolumn",
         "multirow",

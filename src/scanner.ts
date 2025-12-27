@@ -1,4 +1,3 @@
-import { toRoman } from './utils';
 import { REGEX_STR } from './patterns';
 
 export interface BlockNumbering {

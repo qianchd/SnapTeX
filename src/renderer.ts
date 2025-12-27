@@ -1,8 +1,10 @@
 import MarkdownIt from 'markdown-it';
 const katex = require('katex');
 import * as path from 'path';
-import * as fs from 'fs';
 import * as os from 'os';
+
+// [CHANGE] Remove 'fs' import
+// import * as fs from 'fs';
 
 import { LatexDocument } from './document';
 import { DiffEngine } from './diff';
@@ -11,6 +13,7 @@ import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner, ScanResult } from './scanner';
 import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
+import { IFileProvider } from './file-provider'; // [CHANGE] Import Interface
 
 /**
  * Renderer Service.
@@ -45,7 +48,8 @@ export class SmartRenderer {
     // Current Context
     public currentDocument: LatexDocument | undefined;
 
-    constructor() {
+    // [CHANGE] Inject fileProvider
+    constructor(private fileProvider: IFileProvider) {
         this.rebuildMarkdownEngine({});
         this.reloadAllRules();
     }
@@ -85,8 +89,12 @@ export class SmartRenderer {
     }
 
     private loadConfig(configPath: string) {
-        if (fs.existsSync(configPath)) {
+        // [CHANGE] Use fileProvider.exists instead of fs.existsSync
+        if (this.fileProvider.exists(configPath)) {
             try {
+                // Note: 'require' is still a Node.js runtime concept.
+                // Since this extension runs in Node context, it's acceptable here for dynamic module loading.
+                // However, the file system check is now abstract.
                 delete require.cache[require.resolve(configPath)];
                 const userConfig = require(configPath);
                 if (userConfig && Array.isArray(userConfig.rules)) {
@@ -181,8 +189,13 @@ export class SmartRenderer {
         }
 
         // 2. Prepare text blocks for Diffing
+        // const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
+        // const metaFingerprint = ` [meta:${this.currentTitle || ''}|${safeAuthor}|${this.currentDate}]`;
+
+        const safeTitle = (this.currentTitle || '').replace(/[\r\n]/g, ' ');
         const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
-        const metaFingerprint = ` [meta:${this.currentTitle || ''}|${safeAuthor}|${this.currentDate}]`;
+        const safeDate = (this.currentDate || '').replace(/[\r\n]/g, ' ');
+        const metaFingerprint = ` [meta:${safeTitle}|${safeAuthor}|${safeDate}]`;
 
         const newBlockTexts = doc.blocks.map(b => {
             const rawText = b.text.trim();
@@ -274,7 +287,7 @@ export class SmartRenderer {
             ...this.lastBlocks.slice(this.lastBlocks.length - diff.end)
         ];
 
-        // 10. Dirty Blocks (Partial updates for Bibliography)
+        // 10. Dirty Blocks
         const dirtyBlocksMap: { [index: number]: string } = {};
         if (keysChanged) {
             const bibBlockIndex = this.lastBlocks.findIndex(b => /\\bibliography\{/.test(b.text));
@@ -364,7 +377,7 @@ export class SmartRenderer {
         });
     }
 
-    // --- Sync Scroll Helpers & Delegates (Fixed for Extension Compatibility) ---
+    // --- Sync Scroll Helpers & Delegates ---
 
     public getBlockInfo(index: number): { start: number; count: number } | undefined {
         if (index >= 0 && index < this.blockMap.length) {
@@ -374,6 +387,9 @@ export class SmartRenderer {
     }
 
     public getBlockIndexByLine(line: number): { index: number; ratio: number } {
+        if (this.blockMap.length > 0 && line < this.blockMap[0].start) {
+            return { index: 0, ratio: 0 };
+        }
         for (let i = 0; i < this.blockMap.length; i++) {
             const block = this.blockMap[i];
             const nextBlockStart = (i + 1 < this.blockMap.length) ? this.blockMap[i+1].start : Infinity;
