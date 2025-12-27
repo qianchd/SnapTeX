@@ -63,21 +63,18 @@
     function executeScroll(data) {
         const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
 
-        // Set a strong lock to prevent sending scroll events back to editor
-        // If it's a smooth jump, we need a longer lock (1000ms).
-        // If it's an auto sync, 500ms is usually sufficient, but we keep it safe.
-        isAutoScrolling = true;
-        if (scrollTimeout) clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 1000);
+        lastTargetIndex = index;
+        lastTargetRatio = ratio || 0;
 
         const target = document.querySelector('.latex-block[data-index="' + index + '"]');
         if (target) {
             const calcY = () => {
-                // Safety check: if element was removed/replaced, don't calculate
                 if (!target.isConnected) return window.scrollY;
                 const rect = target.getBoundingClientRect();
                 const absoluteTop = rect.top + window.scrollY;
+
                 let y = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
+
                 if (anchor) {
                     const textTop = findTextOffsetInBlock(target, anchor);
                     if (textTop !== null) {
@@ -88,11 +85,18 @@
             };
 
             const targetY = calcY();
+            const currentY = window.scrollY;
 
-            // const behavior = auto ? 'auto' : 'smooth';
-            const behavior = 'smooth';
+            if (Math.abs(currentY - targetY) < 50) {
+                return;
+            }
 
-            window.scrollTo({ top: targetY, behavior: behavior });
+            isAutoScrolling = true;
+            if (scrollTimeout) clearTimeout(scrollTimeout);
+            const lockTime = auto ? 600 : 1000;
+            scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, lockTime);
+
+            window.scrollTo({ top: targetY, behavior: 'smooth' });
 
             if (!auto) {
                 target.classList.add('jump-highlight');
@@ -100,22 +104,17 @@
                 if (anchor) highlightTextInNode(target, anchor);
             }
 
-            // Wait for potential layout shifts (KaTeX rendering/Images) and correct position.
-            // We run this logic if it's an auto-sync or first load to ensure precision.
             if (isFirstLoad) {
                 setTimeout(() => {
-                    if (!target.isConnected) return; // Guard against detached elements
+                    if (!target.isConnected) return;
                     const newTargetY = calcY();
-                    // Only re-scroll if the deviation is significant (> 2px)
-                    if (Math.abs(window.scrollY - newTargetY) > 100) {
-                        // Refresh the lock before scrolling again
+                    if (Math.abs(window.scrollY - newTargetY) >75) {
                         if (scrollTimeout) clearTimeout(scrollTimeout);
                         isAutoScrolling = true;
                         scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 500);
-
                         window.scrollTo({ top: newTargetY, behavior: 'auto' });
                     }
-                }, 120);
+                }, 150);
             }
         }
     }

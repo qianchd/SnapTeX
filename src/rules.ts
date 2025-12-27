@@ -635,19 +635,21 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     },
 
     // --- Step 7: Theorem and proof environments ---
-    {
+{
         name: 'theorems_and_proofs',
         priority: 150,
         apply: (text, renderer: SmartRenderer) => {
-            // Updated to use REGEX_STR.THEOREM_ENVS
             const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
 
             text = text.replace(thmRegex, (match, envName, optArg, content) => {
                 const displayName = capitalizeFirstLetter(envName);
-                // [NEW] Placeholder
-                let header = `\n<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span></strong>`;
-                if (optArg) { header += `&nbsp;(${optArg})`; }
-                header += `.</span>&nbsp; `;
+                let header = `\n<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span>`;
+
+                if (optArg) {
+                    header += `</strong>&nbsp;(${optArg}).</span>&nbsp; `;
+                } else {
+                    header += `.</strong></span>&nbsp; `;
+                }
                 return `${header}${content.trim()}\n`;
             });
             text = text.replace(/\\begin\{proof\}(?:\[(.*?)\])?/gi, (match, optArg) => {
@@ -706,7 +708,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 let numHtml = "";
                 // Only number main sections (up to subsubsection) to match scanner logic
                 if (star !== '*' && !['paragraph', 'subparagraph'].includes(level)) {
-                    numHtml = `<span class="sn-cnt" data-type="sec"></span> `;
+                    numHtml = `<span class="sn-cnt" data-type="sec"></span>. `;
                 }
 
                 let anchor = "";
