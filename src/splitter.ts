@@ -1,3 +1,5 @@
+import { REGEX_STR } from './patterns';
+
 export interface BlockResult {
     text: string;
     line: number;
@@ -52,6 +54,10 @@ export class LatexBlockSplitter {
         const regex = /(?:\\\$|\\\{|\\\})|(?:(?<!\\)%.*)|(\\begin\{([^}]+)\})|(\\end\{([^}]+)\})|(\{)|(\})|(\n\s*\n)|(?<!\\)(\$\$|\\\[|\\\])/g;
         let lastIndex = 0;
         let match;
+
+        // Pre-compile regex for performance inside loop
+        const ignoredEnvRegex = new RegExp(`^(${REGEX_STR.SPLITTER_IGNORED})$`);
+        const majorEnvRegex = new RegExp(`^(${REGEX_STR.SPLITTER_MAJOR})\\*?$`);
 
         while ((match = regex.exec(text)) !== null) {
             // 1. Process plain text before the match
@@ -113,16 +119,13 @@ export class LatexBlockSplitter {
             // === B. Handle \begin{...} ===
             else if (isBegin && beginName) {
                 // Determine if this environment is "Ignored" (Proof) or "Protected"
-                // 'proof', 'itemize', 'enumerate', 'tikzpicture' are typically treated as structural,
-                // but proof specifically we want to allow splitting inside.
-                // NOTE: 'itemize' etc included in ignore means we allow splitting INSIDE them if \n\n occurs.
-                const isIgnoredEnv = /^(proof|itemize|enumerate|tikzpicture)$/.test(beginName);
+                const isIgnoredEnv = ignoredEnvRegex.test(beginName);
 
                 if (!isIgnoredEnv) {
                     // Split Strategy for Major Environments (Equation, Table, etc.)
                     // Normal: Only split if depth is 0.
                     // Trapped: If buffer is huge, split anyway (assuming previous context was broken).
-                    const isMajorEnv = /^(equation|align|gather|multline|flalign|alignat|figure|table|algorithm|thm|theorem|lemma|prop)\*?$/.test(beginName);
+                    const isMajorEnv = majorEnvRegex.test(beginName);
 
                     if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped)) {
                          if (currentBuffer.trim().length > 0) {
@@ -141,7 +144,7 @@ export class LatexBlockSplitter {
             }
             // === C. Handle \end{...} ===
             else if (isEnd && endName) {
-                const isIgnoredEnv = /^(proof|itemize|enumerate|tikzpicture)$/.test(endName);
+                const isIgnoredEnv = ignoredEnvRegex.test(endName);
                 if (!isIgnoredEnv) {
                     const idx = envStack.lastIndexOf(endName);
                     if (idx !== -1) { envStack = envStack.slice(0, idx); }
@@ -151,7 +154,7 @@ export class LatexBlockSplitter {
 
                 // Split after Major Environments
                 // Trapped Logic: If we are trapped, we might want to forcefully split after a major env closes
-                const isMajorEnv = /^(figure|table|algorithm|thm|theorem|lemma|prop)\*?$/.test(endName);
+                const isMajorEnv = majorEnvRegex.test(endName);
                 if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped)) {
                     if (currentBuffer.trim().length > 0) {
                         const count = currentBuffer.split('\n').length;

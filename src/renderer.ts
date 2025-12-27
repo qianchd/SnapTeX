@@ -9,6 +9,7 @@ import { PreprocessRule, PatchPayload, SourceLocation } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner, ScanResult } from './scanner';
 import { BibTexParser, BibEntry } from './bib';
+import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 
 export class SmartRenderer {
     private lastBlocks: { text: string, html: string }[] = [];
@@ -114,7 +115,7 @@ export class SmartRenderer {
     }
 
     private loadBibliography(text: string) {
-        const match = text.match(/\\bibliography\{([^}]+)\}/);
+        const match = text.match(R_BIBLIOGRAPHY);
         if (match && this.currentDocDir) {
             let bibFile = match[1].trim();
             if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
@@ -148,10 +149,12 @@ export class SmartRenderer {
     private scanCitations(blocks: string[]) {
         blocks.forEach(text => {
             // Regex defined inside loop to avoid statefulness issues with /g
-            const citeRegex = /\\(cite|citep|citet|citeyear)(?:\*?)(?:\s*\[[^\]]*\]){0,2}\s*\{([^}]+)\}/g;
+            // But we use the pattern source and re-create for safety or reset lastIndex
+            R_CITATION.lastIndex = 0;
             let match;
-            while ((match = citeRegex.exec(text)) !== null) {
-                const keys = match[2].split(',').map(k => k.trim());
+            while ((match = R_CITATION.exec(text)) !== null) {
+                // R_CITATION captures: 1=cmd, 2=opt1, 3=opt2, 4=keys
+                const keys = match[4].split(',').map(k => k.trim());
                 keys.forEach(key => this.resolveCitation(key));
             }
         });
@@ -162,10 +165,10 @@ export class SmartRenderer {
      */
     private extractKeysFromText(text: string): Set<string> {
         const keys = new Set<string>();
-        const regex = /\\(?:cite|citep|citet|citeyear)(?:\*?)(?:\s*\[[^\]]*\]){0,2}\s*\{([^}]+)\}/g;
+        R_CITATION.lastIndex = 0;
         let match;
-        while ((match = regex.exec(text)) !== null) {
-            const keyParts = match[1].split(',');
+        while ((match = R_CITATION.exec(text)) !== null) {
+            const keyParts = match[4].split(',');
             keyParts.forEach(k => keys.add(k.trim()));
         }
         return keys;
@@ -405,7 +408,8 @@ export class SmartRenderer {
         const deletedText = deletedBlocks.map(b => b.text).join('\n');
 
         // --- Optimized Citation Logic ---
-        const bibRegex = /\\bibliography\{([^}]+)\}/;
+        // Uses R_BIBLIOGRAPHY logic
+        const bibRegex = R_BIBLIOGRAPHY;
         const bibChanged = bibRegex.test(insertedText) || bibRegex.test(deletedText);
 
         let shouldFullScan = false;

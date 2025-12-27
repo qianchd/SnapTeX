@@ -1,4 +1,5 @@
 import { toRoman } from './utils';
+import { REGEX_STR } from './patterns';
 
 export interface BlockNumbering {
     seq: number;
@@ -35,7 +36,7 @@ export class LatexCounterScanner {
             };
 
             // 1. Sections
-            const secRegex = /\\(section|subsection|subsubsection)(\*?)\s*\{/g;
+            const secRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\s*\\{`, 'g');
             let match;
             while ((match = secRegex.exec(text)) !== null) {
                 if (match[2] === '*') {continue;}
@@ -53,7 +54,7 @@ export class LatexCounterScanner {
             }
 
             // 2. Equations
-            const eqRegex = /\\begin\{(equation|align|gather|multline|flalign)\}(\*?)/g;
+            const eqRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.MATH_ENVS})\\}(\\*?)`, 'g');
             while ((match = eqRegex.exec(text)) !== null) {
                 if (match[2] === '*') {continue;}
                 this.counters.eq++;
@@ -64,7 +65,7 @@ export class LatexCounterScanner {
             }
 
             // 3. Floats (Figure, Table, Algorithm)
-            const floatRegex = /\\begin\{(figure|table|algorithm)\}/g;
+            const floatRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.FLOAT_ENVS})\\}`, 'g');
             while ((match = floatRegex.exec(text)) !== null) {
                 const type = match[1];
                 let numStr = "";
@@ -77,7 +78,7 @@ export class LatexCounterScanner {
             }
 
             // 4. Theorems
-            const thmRegex = /\\begin\{(theorem|lemma|proposition|definition|corollary|condition|condbis|assumption|remark|example)\}/g;
+            const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}`, 'g');
             while ((match = thmRegex.exec(text)) !== null) {
                 this.counters.thm++;
                 const numStr = String(this.counters.thm);

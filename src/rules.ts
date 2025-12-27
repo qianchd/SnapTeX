@@ -2,6 +2,7 @@ import { toRoman, capitalizeFirstLetter, extractAndHideLabels, findBalancedClosi
 import { PreprocessRule } from './types';
 import { SmartRenderer } from './renderer';
 import { BibTexParser } from './bib';
+import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 
 /**
  * Default preprocessing rule set
@@ -50,7 +51,12 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'display_math',
         priority: 40,
         apply: (text, renderer: SmartRenderer) => {
-            const mathBlockRegex = /(\$\$([\s\S]*?)\$\$)|(\\\[([\s\S]*?)\\\])|(\\begin\{(equation|align|gather|multline|flalign|alignat)(\*?)\}([\s\S]*?)\\end\{\6\7\})/gi;
+            // Updated to use REGEX_STR.MATH_ENVS
+            // Group 6: envName, Group 7: star
+            const mathBlockRegex = new RegExp(
+                `(\\$\\$([\\s\\S]*?)\\$\\$)|(\\\\\\[([\\s\\S]*?)\\\\\\])|(\\\\begin\\{(${REGEX_STR.MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\6\\7\\})`,
+                'gi'
+            );
 
             return text.replace(mathBlockRegex, (match, m1, c1, m3, c4, m5, envName, star, c8, offset, fullString) => {
                 if (offset > 0 && fullString[offset - 1] === '\\') {return match;}
@@ -134,14 +140,15 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         priority: 60,
         apply: (text, renderer: SmartRenderer) => {
             // 1. Labels
-            text = text.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
+            // Updated to use R_LABEL
+            text = text.replace(new RegExp(R_LABEL, 'g'), (match, labelName) => {
                 const safeLabel = labelName.replace(/"/g, '&quot;');
                 return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="position:relative; top:-50px; visibility:hidden;"></span>`;
             });
 
             // 2. References (Numbering)
-            // [FIX] \ref just outputs link (number). \eqref outputs link wrapped in ()
-            text = text.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (match, type, labels) => {
+            // Updated to use R_REF
+            text = text.replace(R_REF, (match, type, labels) => {
                 const labelArray = labels.split(',').map((l: string) => l.trim());
                 const htmlLinks = labelArray.map((label: string) => {
                     return `<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>`;
@@ -159,12 +166,15 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'citations',
         priority: 70,
         apply: (text, renderer: SmartRenderer) => {
-            // [FIX] Updated Regex to CAPTURE optional arguments.
-            // Group 2: Optional Arg 1, Group 3: Optional Arg 2, Group 4: Keys
-            // Matches: \cite[post]{key}, \cite[pre][post]{key}
-            const citeRegex = /\\(cite|citep|citet|citeyear)(?:\*?)(?:\s*\[([^\]]*)\])?(?:\s*\[([^\]]*)\])?\s*\{([^}]+)\}/g;
+            // Updated to use R_CITATION
+            // R_CITATION captures: 1=cmd, 2=opt1, 3=opt2, 4=keys
 
-            text = text.replace(citeRegex, (match, cmd, opt1, opt2, keys) => {
+            // We need to reset lastIndex if we were using a global regex object in a loop,
+            // but here we are using .replace which handles it.
+            // However, R_CITATION is defined as global in patterns.ts.
+            // String.prototype.replace works fine with global regex.
+
+            text = text.replace(R_CITATION, (match, cmd, opt1, opt2, keys) => {
                 const keyArray = keys.split(',').map((k: string) => k.trim());
 
                 // Logic for Optional Arguments
@@ -247,7 +257,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'bibliography',
         priority: 71,
         apply: (text, renderer: SmartRenderer) => {
-            return text.replace(/\\bibliography\{([^}]+)\}/g, (match, file) => {
+            // Updated to use R_BIBLIOGRAPHY
+            return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), (match, file) => {
                 if (renderer.citedKeys.length === 0) {
                     return `<div class="latex-bibliography error">No citations found.</div>`;
                 }
@@ -618,8 +629,9 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'theorems_and_proofs',
         priority: 150,
         apply: (text, renderer: SmartRenderer) => {
-            const thmEnvs = ['theorem', 'lemma', 'proposition', 'condition', 'condbis', 'assumption', 'remark', 'definition', 'corollary', 'example'].join('|');
-            const thmRegex = new RegExp(`\\\\begin\\{(${thmEnvs})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
+            // Updated to use REGEX_STR.THEOREM_ENVS
+            const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
+
             text = text.replace(thmRegex, (match, envName, optArg, content) => {
                 const displayName = capitalizeFirstLetter(envName);
                 // [NEW] Placeholder
@@ -671,7 +683,9 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'sections',
         priority: 170,
         apply: (text, renderer: SmartRenderer) => {
-            const sectionRegex = /\\(section|subsection|subsubsection|paragraph|subparagraph)(\*?)\{((?:[^{}]|{[^{}]*})*)\}\s*(\\label\{[^}]+\})?\s*/g;
+            // Updated to use REGEX_STR.SECTION_LEVELS
+            const sectionRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\{((?:[^{}]|{[^{}]*})*)\\}\\s*(\\\\label\\{[^}]+\\})?\\s*`, 'g');
+
             return text.replace(sectionRegex, (match, level, star, content, label) => {
                 let prefix = '##';
                 if (level === 'subsection') {prefix = '###';}
