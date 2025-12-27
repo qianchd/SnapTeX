@@ -45,6 +45,9 @@ It can be installed from the VSC extension market. Find [SnapTeX](https://market
 * **Smart Bi-Directional Sync**:
     * **Forward Sync**: Jump from the editor cursor to the exact location in the preview with `ctrl+alt+n`.
     * **Reverse Sync**: Double-click any element in the preview to jump to the corresponding line in the LaTeX source.
+* **Auto Scrolling**:
+    * `snaptex.autoScrollSync`: Enable cursor and scroll synchronization between editor and preview.
+    * `snaptex.autoScrollDelay`: Debounce/Throttle delay (in ms) for scroll synchronization events.
 
 
 * **Macro Support**: Real-time expansion of `\newcommand`, `\def` and `\DeclareMathOperator` definitions.

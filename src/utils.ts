@@ -61,7 +61,7 @@ export function resolveLatexStyles(text: string): string {
             case 'textbf': startTag = '<strong>'; endTag = '</strong>'; break;
             case 'textit': startTag = '<em>'; endTag = '</em>'; break;
             case 'texttt': startTag = '<code>'; endTag = '</code>'; break;
-            case 'textsf': startTag = '<span style="font-family: sans-serif;">'; endTag = '</span>'; break;
+            case 'textsf': startTag = '<span style="font-family: sans-serif; font-size: 0.85em;">'; endTag = '</span>'; break;
             case 'textrm': startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
             case 'underline': startTag = '<u>'; endTag = '</u>'; break;
         }
@@ -75,7 +75,7 @@ export function resolveLatexStyles(text: string): string {
             case 'bf': startTag = '<strong>'; endTag = '</strong>'; break;
             case 'it': startTag = '<em>'; endTag = '</em>'; break;
             case 'tt': startTag = '<code>'; endTag = '</code>'; break;
-            case 'sf': startTag = '<span style="font-family: sans-serif;">'; endTag = '</span>'; break;
+            case 'sf': startTag = '<span style="font-family: sans-serif; font-size: 0.85em;">'; endTag = '</span>'; break;
             case 'rm': startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
         }
         return applyStyleToTexList(startTag, endTag, content);

@@ -2,6 +2,18 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.3.5] - 2025-12-27
+### Added
+- **AutoScroll**: Auto scrolling like markdown previewers with accurate localization.
+
+## [0.3.4] - 2025-12-26
+### Changed
+- Support input and include multi-files;
+- Config options:
+    - `snaptex.livePreview` controls render lively or on-save;
+    - `snaptex.delay` controls the delay of live render;
+    - `snaptex.renderOnSwitch` controls whether automatically renders the new file when switching editor tabs
+
 ## [0.3.3] - 2025-12-26
 ### Changed
 - **maketitle**: Support date in maketitle

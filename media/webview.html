@@ -24,6 +24,15 @@
     const contentRoot = document.getElementById('content-root');
     const root = document.documentElement;
 
+    // --- Global State ---
+    let isAutoScrolling = true; // Lock to prevent sending scroll events back to editor
+    let scrollTimeout;
+
+    // Rendering State Queue
+    let isRendering = false;      // Is a full update currently in progress?
+    let pendingScroll = null;     // Stores a scroll command received during rendering
+    let isFirstLoad = true;       // Track first load to skip scroll restoration if needed
+
     function saveScrollState() {
         const blocks = document.querySelectorAll('.latex-block');
         for (const block of blocks) {
@@ -44,7 +53,61 @@
         if (block) {
             const newTop = block.getBoundingClientRect().top + window.scrollY;
             let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
+
+            isAutoScrolling = true;
             window.scrollTo({ top: targetY, behavior: 'auto' });
+        }
+    }
+
+    // Extracted Scroll Logic with Re-adjustment
+    function executeScroll(data) {
+        const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
+
+        // Set a strong lock (1000ms) to cover the scroll animation and KaTeX reflow
+        isAutoScrolling = true;
+        if (scrollTimeout) clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 1000);
+
+        const target = document.querySelector('.latex-block[data-index="' + index + '"]');
+        if (target) {
+            const calcY = () => {
+                // Safety check: if element was removed/replaced, don't calculate
+                if (!target.isConnected) return window.scrollY;
+                const rect = target.getBoundingClientRect();
+                const absoluteTop = rect.top + window.scrollY;
+                let y = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
+                if (anchor) {
+                    const textTop = findTextOffsetInBlock(target, anchor);
+                    if (textTop !== null) {
+                        y = textTop + window.scrollY - (window.innerHeight * viewRatio);
+                    }
+                }
+                return y;
+            };
+            const targetY = calcY();
+            const behavior = auto ? 'auto' : 'smooth';
+            window.scrollTo({ top: targetY, behavior: behavior });
+            if (!auto) {
+                target.classList.add('jump-highlight');
+                setTimeout(() => target.classList.remove('jump-highlight'), 1000);
+                if (anchor) highlightTextInNode(target, anchor);
+            }
+
+            // Wait for potential layout shifts (KaTeX rendering) and correct position.
+            if (auto) {
+                setTimeout(() => {
+                    if (!target.isConnected) return; // Guard against detached elements
+                    const newTargetY = calcY();
+                    if (Math.abs(window.scrollY - newTargetY) > 2) {
+                        // Refresh the lock before scrolling again
+                        if (scrollTimeout) clearTimeout(scrollTimeout);
+                        isAutoScrolling = true;
+                        scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 500);
+
+                        window.scrollTo({ top: newTargetY, behavior: 'auto' });
+                    }
+                }, 120);
+            }
         }
     }
 
@@ -67,18 +130,40 @@
                 const span = document.createElement('span');
                 span.className = 'highlight-word';
                 range.surroundContents(span);
-                span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
                 setTimeout(() => {
                     const parent = span.parentNode;
                     if (parent) {
                         parent.replaceChild(document.createTextNode(span.textContent), span);
                         parent.normalize();
                     }
-                }, 3000);
+                }, 2000);
                 return true;
             }
         }
         return false;
+    }
+
+    function findTextOffsetInBlock(rootElement, text) {
+        if (!text || text.length < 3) return null;
+        const walker = document.createTreeWalker(rootElement, NodeFilter.SHOW_TEXT, {
+            acceptNode: (node) => {
+                if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        });
+        let node;
+        while (node = walker.nextNode()) {
+            const val = node.nodeValue;
+            const index = val.indexOf(text);
+            if (index >= 0) {
+                const range = document.createRange();
+                range.setStart(node, index);
+                range.setEnd(node, index + text.length);
+                const rect = range.getBoundingClientRect();
+                return rect.top;
+            }
+        }
+        return null;
     }
 
     function smartFullUpdate(newHtml) {
@@ -96,61 +181,60 @@
         }
     }
 
-    // [Fix] Apply Numbering Logic
     function applyNumbering(data) {
         if (!data) return;
         const { blocks, labels } = data;
-
-        // 1. Update Block Counters
         for (const [idxStr, counts] of Object.entries(blocks)) {
             const idx = parseInt(idxStr);
             const blockEl = document.querySelector('.latex-block[data-index="' + idx + '"]');
             if (!blockEl) continue;
-
             const fill = (type, values) => {
                 if (!values || !values.length) return;
                 const spans = blockEl.querySelectorAll('.sn-cnt[data-type="' + type + '"]');
-                spans.forEach((span, i) => {
-                    if (values[i]) span.textContent = values[i];
-                });
+                spans.forEach((span, i) => { if (values[i]) span.textContent = values[i]; });
             };
-
-            fill('eq', counts.eq);
-            fill('fig', counts.fig);
-            fill('tbl', counts.tbl);
-            fill('alg', counts.alg);
-            fill('sec', counts.sec);
-            fill('thm', counts.thm);
+            fill('eq', counts.eq); fill('fig', counts.fig); fill('tbl', counts.tbl);
+            fill('alg', counts.alg); fill('sec', counts.sec); fill('thm', counts.thm);
         }
-
-        // 2. Update Global References (Links)
         if (labels) {
             const refs = document.querySelectorAll('.sn-ref');
             refs.forEach(ref => {
                 const key = ref.getAttribute('data-key');
-                if (key && labels[key]) {
-                    ref.textContent = labels[key];
-                } else {
-                    ref.textContent = "??";
-                }
+                if (key && labels[key]) { ref.textContent = labels[key]; } else { ref.textContent = "??"; }
             });
         }
     }
 
     window.addEventListener('message', event => {
-        const { command, payload, index, ratio, anchor } = event.data;
-
+        const { command, payload, index, ratio, anchor, auto, viewRatio = 0.5 } = event.data;
         if (command === 'update') {
-            // 1. DOM Update
             if (payload.type === 'full') {
+                isRendering = true;
                 const scrollState = saveScrollState();
                 document.body.classList.add('preload-mode');
                 smartFullUpdate(payload.html);
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => {
-                            restoreScrollState(scrollState);
+                            isRendering = false;
                             document.body.classList.remove('preload-mode');
+                            // Track if we handled a pending scroll
+                            let scrollHandled = false;
+                            if (pendingScroll) {
+                                console.log("[SnapTeX] Executing queued scroll command");
+                                executeScroll(pendingScroll);
+                                pendingScroll = null;
+                                scrollHandled = true; // Mark as handled
+                            } else if (!isFirstLoad) {
+                                restoreScrollState(scrollState);
+                            }
+                            isFirstLoad = false;
+                            // Only reset the lock here if executeScroll DID NOT run.
+                            // If executeScroll ran, it set its own long timer (1000ms), which we must not overwrite with this 200ms one.
+                            if (!scrollHandled) {
+                                if (scrollTimeout) clearTimeout(scrollTimeout);
+                                scrollTimeout = setTimeout(() => { isAutoScrolling = false; }, 200);
+                            }
                         });
                     });
                 });
@@ -175,66 +259,35 @@
                     let node = contentRoot.children[start + htmls.length];
                     while (node) {
                         const oldIdx = parseInt(node.getAttribute('data-index'));
-                        if (!isNaN(oldIdx)) {
-                            node.setAttribute('data-index', oldIdx + shift);
-                        }
+                        if (!isNaN(oldIdx)) { node.setAttribute('data-index', oldIdx + shift); }
                         node = node.nextElementSibling;
                     }
                 }
-
-                // [NEW] Handle Dirty Blocks (Side-channel updates)
-                // This updates blocks that were not part of the main edit range but changed
-                // indirectly (e.g., Bibliography updates when a citation is added).
                 if (payload.dirtyBlocks) {
                     Object.keys(payload.dirtyBlocks).forEach(indexStr => {
                         const idx = parseInt(indexStr);
-                        const newHtml = payload.dirtyBlocks[idx];
-
-                        // Find the existing block by its data-index
                         const targetBlock = document.querySelector('.latex-block[data-index="' + idx + '"]');
-                        if (targetBlock) {
-                            // Replace it directly
-                            targetBlock.outerHTML = newHtml;
-                        }
+                        if (targetBlock) { targetBlock.outerHTML = payload.dirtyBlocks[idx]; }
                     });
                 }
             }
-
-            // 2. [Critical] Apply Numbering AFTER DOM Update
-            if (payload.numbering) {
-                // Use requestAnimationFrame to ensure DOM is ready
-                requestAnimationFrame(() => {
-                    applyNumbering(payload.numbering);
-                });
-            }
-
-            // 3. Trigger PDF update
+            if (payload.numbering) { requestAnimationFrame(() => { applyNumbering(payload.numbering); }); }
             setTimeout(() => {
                 const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
                 pdfCanvases.forEach(canvas => {
                     const uri = canvas.getAttribute('data-pdf-src');
                     const id = canvas.id;
                     const renderedUri = canvas.getAttribute('data-rendered-uri');
-                    if (uri && id && renderedUri !== uri) {
-                        window.renderPdfToCanvas(uri, id);
-                    }
+                    if (uri && id && renderedUri !== uri) { window.renderPdfToCanvas(uri, id); }
                 });
             }, 50);
         }
         else if (command === 'scrollToBlock') {
-            const target = document.querySelector('.latex-block[data-index="' + index + '"]');
-            if (target) {
-                target.classList.add('jump-highlight');
-                setTimeout(() => target.classList.remove('jump-highlight'), 2000);
-                let preciseFound = false;
-                if (anchor) preciseFound = highlightTextInNode(target, anchor);
-                if (!preciseFound) {
-                    const rect = target.getBoundingClientRect();
-                    const absoluteTop = rect.top + window.scrollY;
-                    const offset = (ratio || 0) * rect.height;
-                    const targetY = absoluteTop + offset - (window.innerHeight / 2);
-                    window.scrollTo({ top: targetY, behavior: 'smooth' });
-                }
+            if (isRendering || isFirstLoad) {
+                console.log("[SnapTeX] Queuing scroll command");
+                pendingScroll = event.data;
+            } else {
+                executeScroll(event.data);
             }
         }
     });
@@ -260,9 +313,7 @@
                         let end = offset;
                         while (start > 0 && /\S/.test(text[start - 1])) start--;
                         while (end < text.length && /\S/.test(text[end])) end++;
-                        if (end > start) {
-                            anchorText = text.substring(start, end);
-                        }
+                        if (end > start) { anchorText = text.substring(start, end); }
                     }
                 }
                 vscode.postMessage({
@@ -274,12 +325,34 @@
             }
         }
     });
+    let lastScrollTime = 0;
+    window.addEventListener('scroll', () => {
+        if (isAutoScrolling) return;
+        const now = Date.now();
+        if (now - lastScrollTime < 100) return;
+        lastScrollTime = now;
+        const blocks = document.querySelectorAll('.latex-block');
+        const viewCenter = window.innerHeight / 2;
+        for (const block of blocks) {
+            const rect = block.getBoundingClientRect();
+            if (rect.top <= viewCenter && rect.bottom >= viewCenter) {
+                const index = parseInt(block.getAttribute('data-index'));
+                let ratio = 0;
+                if (rect.height > 0) {
+                    const offset = viewCenter - rect.top;
+                    ratio = offset / rect.height;
+                    ratio = Math.max(0, Math.min(1, ratio));
+                }
+                vscode.postMessage({ command: 'syncScroll', index: index, ratio: ratio });
+                break;
+            }
+        }
+    });
     vscode.postMessage({ command: 'webviewLoaded' });
 </script>
 <script type="module">
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
-
     window.renderPdfToCanvas = async (pdfUri, canvasId) => {
         try {
             const canvas = document.getElementById(canvasId);
@@ -306,9 +379,7 @@
         }
     };
     window.addEventListener('message', event => {
-        // Logic merged into main listener above
     });
-    vscode.postMessage({ command: 'webviewLoaded' });
 </script>
 </body>
 </html>

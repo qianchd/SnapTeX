@@ -13,6 +13,10 @@ export class TexPreviewPanel {
 
     private _sourceUri: vscode.Uri | undefined;
 
+    // [NEW] Event to notify when webview DOM is ready
+    private readonly _onWebviewLoadedEmitter = new vscode.EventEmitter<void>();
+    public readonly onWebviewLoaded = this._onWebviewLoadedEmitter.event;
+
     public get panel() {
         return this._panel;
     }
@@ -102,8 +106,16 @@ export class TexPreviewPanel {
                     console.log('[SnapTeX] Webview reloaded (DOM reset detected). Forcing full re-render.');
                     this._renderer.resetState();
                     this.update();
+                    // [NEW] Fire event
+                    this._onWebviewLoadedEmitter.fire();
                 } else if (message.command === 'revealLine') {
                     this.handleRevealLine(message);
+                } else if (message.command === 'syncScroll') {
+                    vscode.commands.executeCommand(
+                        'snaptex.internal.syncScroll',
+                        message.index,
+                        message.ratio
+                    );
                 }
             },
             null,
@@ -150,19 +162,16 @@ export class TexPreviewPanel {
         const docDir = path.dirname(this._sourceUri.fsPath);
         const text = doc.getText();
 
-        // [修复点] 必须传入文件路径，否则 renderer 找不到同目录下的 .bib 文件
         let payload = this._renderer.render(text, this._sourceUri.fsPath);
 
         // Helper to fix local image paths in the HTML
         const fixPaths = (html: string) => {
-            // Fix standard images: src="LOCAL_IMG:..."
             let fixed = html.replace(/src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
                 const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
                 const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
                 return `src="${uri}"`;
             });
 
-            // Fix PDF canvas sources: data-pdf-src="LOCAL_IMG:..."
             fixed = fixed.replace(/data-pdf-src="LOCAL_IMG:([^"]+)"/g, (match, relPath) => {
                 const fullPath = path.isAbsolute(relPath) ? relPath : path.join(docDir, relPath);
                 const uri = this._panel.webview.asWebviewUri(vscode.Uri.file(fullPath));
@@ -171,19 +180,17 @@ export class TexPreviewPanel {
             return fixed;
         };
 
-        // Apply path fix to the payload
         if (payload.type === 'full' && payload.html) {
             payload.html = fixPaths(payload.html);
         } else if (payload.type === 'patch' && payload.htmls) {
             payload.htmls = payload.htmls.map(h => fixPaths(h));
         }
 
-        // Send the update payload to the Webview
         this._panel.webview.postMessage({ command: 'update', payload });
     }
 
     private _getWebviewSkeleton() {
-        // 1. Resolve VS Code Resource URIs
+        // ... (Unchanged)
         const katexPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'katex', 'katex.min.css'));
         const katexCssUri = this._panel.webview.asWebviewUri(katexPath);
 
@@ -196,7 +203,6 @@ export class TexPreviewPanel {
         const pdfWorkerPath = vscode.Uri.file(path.join(this._extensionPath, 'media', 'vendor', 'pdfjs', 'pdf.worker.mjs'));
         const pdfWorkerUri = this._panel.webview.asWebviewUri(pdfWorkerPath);
 
-        // 2. Read the HTML Template from Disk
         const htmlPath = path.join(this._extensionPath, 'media', 'webview.html');
         let htmlContent = '';
         try {
@@ -206,7 +212,6 @@ export class TexPreviewPanel {
             return `<html><body>Error loading Webview HTML</body></html>`;
         }
 
-        // 3. Inject Variables
         htmlContent = htmlContent
             .replace(/{{cspSource}}/g, this._panel.webview.cspSource)
             .replace(/{{katexCssUri}}/g, katexCssUri.toString())
@@ -219,6 +224,7 @@ export class TexPreviewPanel {
 
     public dispose() {
         TexPreviewPanel.currentPanel = undefined;
+        this._onWebviewLoadedEmitter.dispose(); // Dispose emitter
         this._panel.dispose();
         while (this._disposables.length) { this._disposables.pop()?.dispose(); }
     }
