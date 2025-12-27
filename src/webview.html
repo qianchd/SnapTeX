@@ -85,7 +85,7 @@
                 return y;
             };
             const targetY = calcY();
-            const behavior = auto ? 'auto' : 'smooth';
+            const behavior = 'smooth';
             window.scrollTo({ top: targetY, behavior: behavior });
             if (!auto) {
                 target.classList.add('jump-highlight');

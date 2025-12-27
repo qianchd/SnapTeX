@@ -9,12 +9,10 @@ import { TexPreviewPanel } from './panel';
 //    (Visual feedback when jumping to a line)
 // =========================================================
 
-// High intensity (starting point)
 const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({
     backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'),
     isWholeLine: true,
 });
-// Fading out steps...
 const flashDecorationType80 = vscode.window.createTextEditorDecorationType({
     backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 80%, transparent)',
     isWholeLine: true,
@@ -37,24 +35,18 @@ const flashDecorationType10 = vscode.window.createTextEditorDecorationType({
 // =========================================================
 
 // Lock flag to prevent "Scroll Loop" (Editor -> Preview -> Editor -> ...)
-// When true, we ignore scroll events from the editor to avoid echo.
 let isSyncingFromPreview = false;
 let syncLockTimer: NodeJS.Timeout | undefined;
 
-// Tracks which document URI is currently rendered in the preview.
-// Used to ensure we don't sync scroll for an unrelated active editor.
+// Prevent ratio update during scrolling: Editor Scroll -> Cursor "moves" relatively -> Ratio changes (Bad!)
+let isEditorScrolling = false;
+let scrollEndTimer: NodeJS.Timeout | undefined;
+
 let currentRenderedUri: vscode.Uri | undefined = undefined;
-
-// Cache for the cursor's relative position on screen (0.0 to 1.0).
-// Used to maintain the user's visual context (e.g., keeping cursor at top vs center).
-let activeCursorScreenRatio: number = 0.5;
-
-// Subscription for panel events (used for the "Initial Jump" on load).
+let activeCursorScreenRatio: number = 0.5; // Default center
 let panelLoadSubscription: vscode.Disposable | undefined;
 
-/**
- * Helper to debounce function calls (e.g., scroll events).
- */
+// Helper: Debounce function
 const debounce = (func: Function, wait: number) => {
     let timeout: NodeJS.Timeout | undefined;
     return (...args: any[]) => {
@@ -67,10 +59,6 @@ const debounce = (func: Function, wait: number) => {
 // 3. Helper Functions
 // =========================================================
 
-/**
- * Determines the current workspace root directory.
- * Used for loading local configuration files (snaptex.config.js).
- */
 function getProjectRoot(): string | undefined {
     const editor = vscode.window.activeTextEditor;
     if (editor) {
@@ -83,36 +71,26 @@ function getProjectRoot(): string | undefined {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-/**
- * Extracts a "context snippet" (Anchor) around the target line.
- * This string is sent to the Webview to help fuzzy-match the correct location
- * if the exact line number mapping is slightly off (e.g., due to macros).
- */
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) { return ""; }
-
     const lineObj = doc.lineAt(line);
     const lineText = lineObj.text;
     let rawSnippet = "";
 
-    // Strategy A: Character-based anchor (Precise cursor sync)
     if (char !== undefined && char >= 0) {
         const start = Math.max(0, char - 20);
         const end = Math.min(lineText.length, char + 30);
         rawSnippet = lineText.substring(start, end);
     } else {
-        // Strategy B: Line-based anchor (General scroll sync)
         rawSnippet = lineText.substring(0, 60);
     }
 
-    // Clean up LaTeX syntax to make the anchor more robust
     let clean = rawSnippet
-        .replace(/\\[a-zA-Z]+\*?\{?/g, ' ') // Remove commands like \section{
-        .replace(/[{}$%]/g, ' ')          // Remove special chars
-        .replace(/\s+/g, ' ')             // Normalize whitespace
+        .replace(/\\[a-zA-Z]+\*?\{?/g, ' ')
+        .replace(/[{}$%]/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
 
-    // Fallback if the snippet is too short
     if (clean.length < 5 && char !== undefined) {
         clean = lineText.substring(0, 60)
             .replace(/\\[a-zA-Z]+\*?\{?/g, ' ')
@@ -120,14 +98,11 @@ function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number)
             .replace(/\s+/g, ' ')
             .trim();
     }
-
     if (clean.length < 5) { return ""; }
     return clean.substring(0, 40);
 }
 
-/**
- * Executes a visual "Flash" animation on the editor to highlight a specific range.
- */
+// Logic extracted from original 'snaptex.internal.revealLine' to save lines and improve readability
 async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Range) {
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     const flashSequence = [
@@ -141,44 +116,35 @@ async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Ra
     for (let i = 0; i < flashSequence.length; i++) {
         const step = flashSequence[i];
         const prevStep = i > 0 ? flashSequence[i - 1] : null;
-
         editor.setDecorations(step.decoration, [range]);
-
         if (prevStep) {
             editor.setDecorations(prevStep.decoration, []);
         }
         await sleep(step.duration);
     }
-
-    // Cleanup
     const lastStep = flashSequence[flashSequence.length - 1];
     editor.setDecorations(lastStep.decoration, []);
 }
 
 // =========================================================
-// 4. Extension Activation (Entry Point)
+// 4. Extension Activation
 // =========================================================
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[SnapTeX] Activated!');
 
-    // Initialize the Renderer Service
-    // Note: The renderer holds the state of the document and rules.
     const renderer = new SmartRenderer();
     renderer.reloadAllRules(getProjectRoot());
 
-    // Watch for configuration changes (snaptex.config.js)
+    // --- Config Watcher ---
     const configWatcher = vscode.workspace.createFileSystemWatcher('**/snaptex.config.js');
     configWatcher.onDidChange(() => {
         renderer.reloadAllRules(getProjectRoot());
-        // Trigger a re-render if the panel is active
         TexPreviewPanel.currentPanel?.update();
     });
     context.subscriptions.push(configWatcher);
 
-    // -------------------------------------------------------------------------
-    // Core Logic: Sync Editor -> Preview
-    // -------------------------------------------------------------------------
+    // --- Core Logic: Trigger Sync (Editor -> Preview) ---
     const triggerSyncToPreview = (
         editor: vscode.TextEditor,
         targetLine: number,
@@ -187,47 +153,33 @@ export function activate(context: vscode.ExtensionContext) {
         targetChar?: number
     ) => {
         if (!TexPreviewPanel.currentPanel) { return; }
-
-        // Ensure we are syncing the correct document
-        if (currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) {
-            return;
-        }
+        if (currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) { return; }
 
         const filePath = editor.document.uri.fsPath;
-
-        // Use the proxy method on Renderer to map physical line -> flattened block
-        // (This utilizes the underlying LatexDocument model)
         const flatLine = renderer.getFlattenedLine(filePath, targetLine);
 
         if (flatLine === -1) { return; }
 
-        // Get block index and internal ratio
         const { index, ratio } = renderer.getBlockIndexByLine(flatLine);
         const anchor = getAnchorContext(editor.document, targetLine, targetChar);
 
-        // Send command to Webview
         TexPreviewPanel.currentPanel.postMessage({
             command: 'scrollToBlock',
             index: index,
             ratio: ratio,
             anchor: anchor,
-            auto: isAutoScroll, // 'true' prevents visual highlighting in Webview
+            auto: isAutoScroll,
             viewRatio: viewRatio
         });
     };
 
-    // -------------------------------------------------------------------------
-    // Core Logic: Initial Jump on Load
-    // -------------------------------------------------------------------------
+    // --- Core Logic: Hook Events on Panel Load ---
     const hookPanelEvents = (panel: TexPreviewPanel) => {
         if (panelLoadSubscription) { panelLoadSubscription.dispose(); }
-
-        // When the Webview DOM is ready...
         panelLoadSubscription = panel.onWebviewLoaded(() => {
             const editor = vscode.window.activeTextEditor;
-            // Verify context match
             if (editor && currentRenderedUri && editor.document.uri.toString() === currentRenderedUri.toString()) {
-                // Immediately sync to the current cursor position
+                // Initial jump to cursor position
                 triggerSyncToPreview(
                     editor,
                     editor.selection.active.line,
@@ -239,31 +191,43 @@ export function activate(context: vscode.ExtensionContext) {
         });
     };
 
-    // -------------------------------------------------------------------------
-    // Core Logic: Trigger Preview Update
-    // -------------------------------------------------------------------------
+    // --- Core Logic: Update Preview Content ---
     const updatePreview = (force: boolean = false) => {
         const editor = vscode.window.activeTextEditor;
         if (!editor || !TexPreviewPanel.currentPanel) { return; }
+        if (!force && currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) { return; }
 
-        // Only update if it's the same document or forced (e.g., tab switch)
-        if (!force && currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) {
-            return;
-        }
         currentRenderedUri = editor.document.uri;
-
-        // Reload rules in case project root changed
         renderer.reloadAllRules(getProjectRoot());
-        // Delegate rendering to the Panel (which uses LatexDocument)
         TexPreviewPanel.currentPanel.update();
     };
 
 
     // =========================================================
-    // 5. Command Registration
+    // [RESTORED] Webview Serializer (Session Restore)
+    // =========================================================
+    if (vscode.window.registerWebviewPanelSerializer) {
+        vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
+            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any) {
+                console.log('[SnapTeX] Reviving Webview Panel...');
+                TexPreviewPanel.revive(webviewPanel, context.extensionPath, renderer);
+                if (TexPreviewPanel.currentPanel) {
+                    hookPanelEvents(TexPreviewPanel.currentPanel);
+                    // Try to restore rendered URI from active editor if possible
+                    if (vscode.window.activeTextEditor) {
+                        currentRenderedUri = vscode.window.activeTextEditor.document.uri;
+                        updatePreview(true);
+                    }
+                }
+            }
+        });
+    }
+
+    // =========================================================
+    // Commands Registration
     // =========================================================
 
-    // Command: Start / Open Preview
+    // 1. snaptex.start
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.start', () => {
             if (TexPreviewPanel.currentPanel) {
@@ -280,16 +244,15 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Command: Manual Sync (Ctrl+Alt+N)
+    // 2. snaptex.syncToPreview
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.syncToPreview', () => {
             const editor = vscode.window.activeTextEditor;
             if (editor) {
-                // Manual sync treats isAutoScroll as false (triggers highlight)
                 triggerSyncToPreview(
                     editor,
                     editor.selection.active.line,
-                    false,
+                    false, // Manual sync -> Flash highlight
                     activeCursorScreenRatio,
                     editor.selection.active.character
                 );
@@ -297,15 +260,13 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Command: Reverse Sync (Preview Click -> Editor Jump)
+    // 3. snaptex.internal.revealLine (Preview Click -> Editor)
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (uri: vscode.Uri, index: number, ratio: number, anchor: string) => {
-            // Set lock to prevent echo
             isSyncingFromPreview = true;
             if (syncLockTimer) { clearTimeout(syncLockTimer); }
             syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
 
-            // 1. Map Block -> Source Location (Using Renderer Proxy)
             const flatLine = renderer.getLineByBlockIndex(index, ratio);
             const originalLoc = renderer.getOriginalPosition(flatLine);
             if (!originalLoc) { return; }
@@ -313,7 +274,6 @@ export function activate(context: vscode.ExtensionContext) {
             const targetUri = vscode.Uri.file(originalLoc.file);
             let targetLine = originalLoc.line;
 
-            // 2. Open or Focus Editor
             let targetEditor = vscode.window.visibleTextEditors.find(
                 e => e.document.uri.toString() === targetUri.toString()
             );
@@ -330,12 +290,10 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
             } else {
-                await vscode.window.showTextDocument(targetEditor.document, {
-                    viewColumn: targetEditor.viewColumn
-                });
+                await vscode.window.showTextDocument(targetEditor.document, { viewColumn: targetEditor.viewColumn });
             }
 
-            // 3. Anchor Correction (Fuzzy matching if line is slightly off)
+            // Anchor Search Correction
             if (targetEditor && anchor && anchor.length > 3) {
                 const startSearch = Math.max(0, targetLine - 5);
                 const endSearch = Math.min(targetEditor.document.lineCount, targetLine + 10);
@@ -348,7 +306,6 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
-            // 4. Reveal and Animate
             if (targetEditor) {
                 const safeLine = Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1));
                 const lineObj = targetEditor.document.lineAt(safeLine);
@@ -357,16 +314,19 @@ export function activate(context: vscode.ExtensionContext) {
                 targetEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
                 targetEditor.selection = new vscode.Selection(range.start, range.start);
 
-                // Trigger Flash Animation
+                // Trigger animation
                 performFlashAnimation(targetEditor, range);
             }
         })
     );
 
-    // Command: Internal Sync Scroll (Preview Scroll -> Editor Scroll)
-    // Pure scrolling, no animation.
+    // 4. snaptex.internal.syncScroll (Preview Scroll -> Editor)
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.syncScroll', (index: number, ratio: number) => {
+            const config = vscode.workspace.getConfiguration('snaptex');
+            const enableSync = config.get<boolean>('autoScrollSync', true);
+            if (!enableSync) { return; }
+
             isSyncingFromPreview = true;
             if (syncLockTimer) { clearTimeout(syncLockTimer); }
             syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
@@ -388,30 +348,30 @@ export function activate(context: vscode.ExtensionContext) {
 
 
     // =========================================================
-    // 6. Event Listeners
+    // Event Listeners
     // =========================================================
 
-    // Listener: Cursor Move (Cursor -> Preview)
-    // Calculates screen ratio to keep visual context synced.
+    // Listener 1: Cursor Move (Cursor -> Preview)
     let cursorDebounceTimer: NodeJS.Timeout | undefined;
 
     vscode.window.onDidChangeTextEditorSelection(e => {
         const editor = e.textEditor;
         if (editor !== vscode.window.activeTextEditor) { return; }
 
+        // [Logic] Lock ratio if scrolling (Gaze Locking)
+        if (isEditorScrolling) { return; }
+
         const cursorLine = e.selections[0].active.line;
         const cursorChar = e.selections[0].active.character;
         const visibleRange = editor.visibleRanges[0];
 
-        // Calculate active cursor ratio (0.0 - 1.0 relative to viewport)
+        // Update ratio only when user explicitly moves cursor
         if (visibleRange) {
             if (visibleRange.contains(e.selections[0].active)) {
                 const totalVisibleLines = visibleRange.end.line - visibleRange.start.line;
                 if (totalVisibleLines > 0) {
                     const ratio = (cursorLine - visibleRange.start.line) / totalVisibleLines;
                     activeCursorScreenRatio = Math.max(0.1, Math.min(0.9, ratio));
-                } else {
-                    activeCursorScreenRatio = 0.5;
                 }
             }
         }
@@ -427,13 +387,12 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (cursorDebounceTimer) { clearTimeout(cursorDebounceTimer); }
         cursorDebounceTimer = setTimeout(() => {
-            // isAutoScroll=true (No highlight)
             triggerSyncToPreview(editor, cursorLine, true, activeCursorScreenRatio, cursorChar);
         }, delay);
     }, null, context.subscriptions);
 
 
-    // Listener: Scroll (Editor Scroll -> Preview)
+    // Listener 2: Scroll (Editor Scroll -> Preview)
     let throttleTimer: NodeJS.Timeout | undefined;
 
     vscode.window.onDidChangeTextEditorVisibleRanges(e => {
@@ -444,9 +403,16 @@ export function activate(context: vscode.ExtensionContext) {
 
         const config = vscode.workspace.getConfiguration('snaptex');
         const enableSync = config.get<boolean>('autoScrollSync', true);
-        const delay = config.get<number>('autoScrollDelay', 200);
+        const delay = config.get<number>('autoScrollDelay', 100);
 
         if (!enableSync) { return; }
+
+        // Mark as scrolling
+        isEditorScrolling = true;
+        if (scrollEndTimer) { clearTimeout(scrollEndTimer); }
+        scrollEndTimer = setTimeout(() => {
+            isEditorScrolling = false;
+        }, 200);
 
         if (throttleTimer) { return; }
         throttleTimer = setTimeout(() => {
@@ -454,7 +420,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (e.visibleRanges.length > 0) {
                 const range = e.visibleRanges[0];
                 const visibleHeight = range.end.line - range.start.line;
-                // Calculate target line based on previous cursor ratio
+                // [Logic] Use locked ratio for smooth scrolling
                 const targetLine = Math.floor(range.start.line + (visibleHeight * activeCursorScreenRatio));
                 triggerSyncToPreview(editor, targetLine, true, activeCursorScreenRatio);
             }
@@ -462,7 +428,7 @@ export function activate(context: vscode.ExtensionContext) {
     }, null, context.subscriptions);
 
 
-    // Listener: Document Save
+    // Listener 3: Save -> Update
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(doc => {
             const editor = vscode.window.activeTextEditor;
@@ -472,7 +438,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Listener: Document Edit (Live Preview)
+    // Listener 4: Live Update
     let updateDebounceTimer: NodeJS.Timeout | undefined;
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument(e => {
@@ -492,7 +458,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Listener: Switch Active Tab
+    // Listener 5: Switch Tab
     vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor) {
             const config = vscode.workspace.getConfiguration('snaptex');
