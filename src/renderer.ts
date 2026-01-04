@@ -18,8 +18,11 @@ import { IFileProvider } from './file-provider';
  * Acts as the single source of truth for document synchronization logic.
  */
 export class SmartRenderer {
-    // State: Cache for the last rendered state (for diffing)
-    private lastBlocks: { text: string, html: string }[] = [];
+    // [Memory Optimization]
+    // Removed `lastBlocks: { text: string, html: string }[]` which duplicated the entire DOM in memory.
+    // We only store the plain text of blocks for Diffing.
+    private lastBlockTexts: string[] = [];
+
     private lastMacrosJson: string = "";
     private lastCitedKeys: string[] = [];
 
@@ -113,7 +116,8 @@ export class SmartRenderer {
     }
 
     public resetState() {
-        this.lastBlocks = [];
+        // [Memory Optimization] Clear text cache
+        this.lastBlockTexts = [];
         this.lastMacrosJson = "";
         this.lastCitedKeys = [];
         this.blockMap = [];
@@ -168,6 +172,24 @@ export class SmartRenderer {
 
     // --- Core Rendering Logic ---
 
+    /**
+     * Helper to render a single block text to HTML
+     */
+    private renderBlockToHtml(text: string, index: number): string {
+        let processed = text;
+        this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
+
+        let finalHtml = this.md!.render(processed);
+        finalHtml = this.restoreRenderedMath(finalHtml);
+        finalHtml = this.restoreRawBlocks(finalHtml);
+
+        if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
+            finalHtml = postProcessHtml(finalHtml);
+        }
+
+        return `<div class="latex-block" data-index="${index}">${finalHtml}</div>`;
+    }
+
     public render(doc: LatexDocument): PatchPayload {
         this.currentDocument = doc;
         this.protectedRenderedBlocks = [];
@@ -177,7 +199,7 @@ export class SmartRenderer {
         const currentMacrosJson = JSON.stringify(doc.metadata.macros);
         if (currentMacrosJson !== this.lastMacrosJson) {
             this.rebuildMarkdownEngine(doc.metadata.macros);
-            this.lastBlocks = [];
+            this.lastBlockTexts = []; // Force full re-render
             this.lastMacrosJson = currentMacrosJson;
         }
 
@@ -202,9 +224,20 @@ export class SmartRenderer {
         const scanResult = this.scanner.scan(newBlockTexts);
         this.globalLabelMap = scanResult.labelMap;
 
-        // 5. Diff Computation
-        const oldBlockTexts = this.lastBlocks.map(b => b.text);
-        const diff = DiffEngine.compute(oldBlockTexts, newBlockTexts);
+        const numberingMap: { [index: number]: any } = {};
+        scanResult.blockNumbering.forEach((bn, idx) => {
+            if (Object.values(bn.counts).some(arr => arr.length > 0)) {
+                numberingMap[idx] = bn.counts;
+            }
+        });
+        const numberingData = {
+            blocks: numberingMap,
+            labels: scanResult.labelMap
+        };
+
+        // 5. Diff Computation (Compare Texts Only)
+        // [Memory Optimization] Diffing now operates on string[], no need to map from object array
+        const diff = DiffEngine.compute(this.lastBlockTexts, newBlockTexts);
 
         // 6. Citation Analysis
         const insertedFullText = diff.insertedTexts.join('\n');
@@ -214,7 +247,7 @@ export class SmartRenderer {
 
         let shouldFullScan = false;
 
-        if (bibChanged || this.lastBlocks.length === 0) {
+        if (bibChanged || this.lastBlockTexts.length === 0) {
             shouldFullScan = true;
         } else {
             const deletedKeys = this.extractKeysFromText(deletedFullText);
@@ -242,83 +275,75 @@ export class SmartRenderer {
         const keysChanged = JSON.stringify(this.citedKeys) !== JSON.stringify(this.lastCitedKeys);
         this.lastCitedKeys = [...this.citedKeys];
 
-        // 7. Render Inserted Blocks
-        const insertedBlocksData = diff.insertedTexts.map((text, i) => {
+        // 7. Render Inserted Blocks (Just the new ones)
+        const insertedHtmls = diff.insertedTexts.map((text, i) => {
             const absoluteIndex = diff.start + i;
-            let processed = text;
-            this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
-            let finalHtml = this.md!.render(processed);
-            finalHtml = this.restoreRenderedMath(finalHtml);
-            finalHtml = this.restoreRawBlocks(finalHtml);
-            if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
-                finalHtml = postProcessHtml(finalHtml);
-            }
-            return {
-                text: text,
-                html: `<div class="latex-block" data-index="${absoluteIndex}">${finalHtml}</div>`
+            return this.renderBlockToHtml(text, absoluteIndex);
+        });
+
+        // 8. Decide Payload Type (Full vs Patch)
+        // If too many changes, or first load, do Full Update.
+        const isFullUpdate = this.lastBlockTexts.length === 0 || insertedHtmls.length > 50 || diff.deleteCount > 50;
+
+        let payload: PatchPayload;
+
+        if (isFullUpdate) {
+            // [Memory Optimization]
+            // On full update, we re-render EVERYTHING.
+            // We do NOT rely on cached HTML (which is gone).
+            const fullHtml = newBlockTexts.map((text, index) => {
+                return this.renderBlockToHtml(text, index);
+            }).join('');
+
+            // Update Cache (State Transition)
+            this.lastBlockTexts = newBlockTexts;
+
+            payload = {
+                type: 'full',
+                html: fullHtml,
+                numbering: numberingData // [FIXED] Pass numbering data on full update
             };
-        });
-
-        // 8. Handle Shifts
-        let shift = 0;
-        if (diff.end > 0 && insertedBlocksData.length !== diff.deleteCount) {
-            shift = insertedBlocksData.length - diff.deleteCount;
-            const tailBlocks = this.lastBlocks.slice(this.lastBlocks.length - diff.end);
-            tailBlocks.forEach((b, i) => {
-                const newIdx = diff.start + insertedBlocksData.length + i;
-                b.html = b.html.replace(/data-index="\d+"/, `data-index="${newIdx}"`);
-            });
-        }
-
-        // 9. Update Cache
-        this.lastBlocks = [
-            ...this.lastBlocks.slice(0, diff.start),
-            ...insertedBlocksData,
-            ...this.lastBlocks.slice(this.lastBlocks.length - diff.end)
-        ];
-
-        // 10. Dirty Blocks
-        const dirtyBlocksMap: { [index: number]: string } = {};
-        if (keysChanged) {
-            const bibBlockIndex = this.lastBlocks.findIndex(b => /\\bibliography\{/.test(b.text));
-            const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + insertedBlocksData.length);
-            if (bibBlockIndex !== -1 && !isInsideMainPatch) {
-                const bibBlock = this.lastBlocks[bibBlockIndex];
-                let processed = bibBlock.text;
-                this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
-                let newHtml = this.md!.render(processed);
-                newHtml = this.restoreRenderedMath(newHtml);
-                newHtml = this.restoreRawBlocks(newHtml);
-                newHtml = `<div class="latex-block" data-index="${bibBlockIndex}">${newHtml}</div>`;
-                this.lastBlocks[bibBlockIndex].html = newHtml;
-                dirtyBlocksMap[bibBlockIndex] = newHtml;
+        } else {
+            // Patch Update
+            // 8. Handle Shifts (Logic is now handled by frontend via `shift`, backend just calculates it)
+            // No need to update `lastBlocks` HTML because we don't store it.
+            let shift = 0;
+            if (diff.end > 0 && insertedHtmls.length !== diff.deleteCount) {
+                shift = insertedHtmls.length - diff.deleteCount;
             }
-        }
 
-        // 11. Payload
-        const numberingMap: { [index: number]: any } = {};
-        scanResult.blockNumbering.forEach((bn, idx) => {
-            if (Object.values(bn.counts).some(arr => arr.length > 0)) {
-                numberingMap[idx] = bn.counts;
+            // 9. Update Cache (Text Only)
+            // Splice the text array to match the new state
+            this.lastBlockTexts = [
+                ...this.lastBlockTexts.slice(0, diff.start),
+                ...diff.insertedTexts,
+                ...this.lastBlockTexts.slice(this.lastBlockTexts.length - diff.end)
+            ];
+
+            // 10. Dirty Blocks (Bibliography update)
+            const dirtyBlocksMap: { [index: number]: string } = {};
+            if (keysChanged) {
+                // Find bib block in the NEW state (this.lastBlockTexts is already updated)
+                const bibBlockIndex = this.lastBlockTexts.findIndex(text => /\\bibliography\{/.test(text));
+
+                // Only update if it exists and wasn't just inserted in this patch (to avoid double rendering)
+                const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + insertedHtmls.length);
+
+                if (bibBlockIndex !== -1 && !isInsideMainPatch) {
+                    const newHtml = this.renderBlockToHtml(this.lastBlockTexts[bibBlockIndex], bibBlockIndex);
+                    dirtyBlocksMap[bibBlockIndex] = newHtml;
+                }
             }
-        });
 
-        const payload: PatchPayload = {
-            type: 'patch',
-            start: diff.start,
-            deleteCount: diff.deleteCount,
-            htmls: insertedBlocksData.map(b => b.html),
-            shift: shift,
-            numbering: {
-                blocks: numberingMap,
-                labels: scanResult.labelMap
-            },
-            dirtyBlocks: dirtyBlocksMap
-        };
-
-        if (this.lastBlocks.length === 0 || insertedBlocksData.length > 50 || diff.deleteCount > 50) {
-            payload.type = 'full';
-            payload.html = this.lastBlocks.map(b => b.html).join('');
+            payload = {
+                type: 'patch',
+                start: diff.start,
+                deleteCount: diff.deleteCount,
+                htmls: insertedHtmls,
+                shift: shift,
+                numbering: numberingData, // [FIXED] Pass numbering data
+                dirtyBlocks: dirtyBlocksMap
+            };
         }
 
         return payload;

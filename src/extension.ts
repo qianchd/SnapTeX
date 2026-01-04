@@ -105,6 +105,12 @@ export function activate(context: vscode.ExtensionContext) {
         TexPreviewPanel.currentPanel.update();
     };
 
+    // [OPTIMIZATION] Create a single debounced instance of updatePreview.
+    // This ensures that multiple rapid keystrokes reset the SAME timer.
+    const config = vscode.workspace.getConfiguration('snaptex');
+    const delay = config.get<number>('delay', 200);
+    const debouncedUpdatePreview = debounce((force: boolean) => updatePreview(force), delay);
+
     // --- Commands ---
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {
@@ -174,8 +180,8 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.syncScroll', (index: number, ratio: number) => {
-        const config = vscode.workspace.getConfiguration('snaptex');
-        if (!config.get<boolean>('autoScrollSync', true)) {return;}
+        const currentConfig = vscode.workspace.getConfiguration('snaptex');
+        if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
 
         isSyncingFromPreview = true;
         if (syncLockTimer) {clearTimeout(syncLockTimer);}
@@ -204,18 +210,18 @@ export function activate(context: vscode.ExtensionContext) {
             activeCursorScreenRatio = Math.max(0.1, Math.min(0.9, activeCursorScreenRatio));
         }
 
-        if (!TexPreviewPanel.currentPanel || isSyncingFromPreview) {return;}
-        const config = vscode.workspace.getConfiguration('snaptex');
-        if (!config.get<boolean>('autoScrollSync', true)) {return;}
+        if (!TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
+        const currentConfig = vscode.workspace.getConfiguration('snaptex');
+        if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
 
-        // Use a simpler debounce here
+        // Use a simpler debounce here (inline is fine for simple scroll events, but could be optimized similarly)
         setTimeout(() => triggerSyncToPreview(e.textEditor, sel.line, true, activeCursorScreenRatio, sel.character), 200);
     });
 
     vscode.window.onDidChangeTextEditorVisibleRanges(e => {
-        if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || isSyncingFromPreview) {return;}
-        const config = vscode.workspace.getConfiguration('snaptex');
-        if (!config.get<boolean>('autoScrollSync', true)) {return;}
+        if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
+        const currentConfig = vscode.workspace.getConfiguration('snaptex');
+        if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
 
         isEditorScrolling = true;
         if (scrollEndTimer) {clearTimeout(scrollEndTimer);}
@@ -237,9 +243,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
-            const config = vscode.workspace.getConfiguration('snaptex');
-            if (config.get<boolean>('livePreview', true)) {
-                setTimeout(() => updatePreview(false), config.get<number>('delay', 200));
+            const currentConfig = vscode.workspace.getConfiguration('snaptex');
+            if (currentConfig.get<boolean>('livePreview', true)) {
+                debouncedUpdatePreview(false);
             }
         }
     });
@@ -258,4 +264,4 @@ export function activate(context: vscode.ExtensionContext) {
     }
 }
 
-export function deactivate() {}
+export function deactivate() { }

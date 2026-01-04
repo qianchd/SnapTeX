@@ -280,7 +280,7 @@
                 const lockTime = auto ? 600 : 1000;
                 this.lockScrolling(lockTime);
 
-                window.scrollTo({ top: targetY, behavior: 'smooth' });
+                window.scrollTo({ top: targetY, behavior: 'auto' });
 
                 if (!auto) {
                     target.classList.add('jump-highlight');
@@ -288,7 +288,7 @@
                     if (anchor) this.highlightTextInNode(target, anchor);
                 }
 
-                // [First Load Correction] (Maintained from your stable version)
+                // [First Load Correction]
                 if (this.isFirstLoad) {
                     setTimeout(() => {
                         if (!target.isConnected) return;
@@ -296,7 +296,7 @@
                         // 75px Check
                         if (Math.abs(window.scrollY - newTargetY) > 75 || !auto) {
                             this.lockScrolling(500);
-                            window.scrollTo({ top: newTargetY, behavior: 'smooth' });
+                            window.scrollTo({ top: newTargetY, behavior: 'auto' });
                         }
                     }, 150);
                 }
@@ -452,16 +452,19 @@
 <script type="module">
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
+
     window.renderPdfToCanvas = async (pdfUri, canvasId) => {
+        let pdfDocument = null;
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        if (canvas.getAttribute('data-rendering') === 'true') return;
         try {
-            const canvas = document.getElementById(canvasId);
-            if (!canvas) return;
-            if (canvas.getAttribute('data-rendering') === 'true') return;
             canvas.setAttribute('data-rendering', 'true');
             const loadingTask = pdfjsLib.getDocument(pdfUri);
-            const pdf = await loadingTask.promise;
-            const page = await pdf.getPage(1);
-            const scale = 3;
+            pdfDocument = await loadingTask.promise;
+            const page = await pdfDocument.getPage(1);
+            const scale = 2;
             const viewport = page.getViewport({ scale: scale });
             if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
                 canvas.height = viewport.height;
@@ -469,12 +472,15 @@
             }
             const context = canvas.getContext('2d');
             await page.render({ canvasContext: context, viewport: viewport }).promise;
-            canvas.removeAttribute('data-rendering');
             canvas.setAttribute('data-rendered-uri', pdfUri);
+
         } catch (error) {
             console.error('PDF render error:', error);
-            const c = document.getElementById(canvasId);
-            if(c) c.removeAttribute('data-rendering');
+        } finally {
+            canvas.removeAttribute('data-rendering');
+            if (pdfDocument) {
+                pdfDocument.destroy().catch(err => console.warn('Error destroying PDF doc:', err));
+            }
         }
     };
 </script>

@@ -10,18 +10,13 @@ import { LatexBlockSplitter, BlockResult } from './splitter';
  * Responsibilities: Loading, Flattening, Metadata Extraction, Bib Loading, and Block Splitting.
  */
 export class LatexDocument {
-    // Raw content
-    public rawText: string = "";
-    public flattenedLines: string[] = [];
-    public sourceMap: SourceLocation[] = [];
+    // Structure needed for Sync and Rendering
+    public sourceMap: SourceLocation[] = []; // Maps flattened line index -> original file/line
+    public blocks: BlockResult[] = [];       // The split blocks (holding the actual content)
+    public contentStartLineOffset: number = 0;
 
     // Parsed Metadata
     public metadata: PreambleData = { macros: {} };
-    public cleanedText: string = ""; // Text stripped of preamble
-
-    // Structure
-    public contentStartLineOffset: number = 0;
-    public blocks: BlockResult[] = []; // The split blocks
 
     // Bibliography
     public bibEntries: Map<string, BibEntry> = new Map();
@@ -38,32 +33,35 @@ export class LatexDocument {
         this.rootDir = this.fileProvider.dir(entryPath);
 
         // 1. Load and flatten (handle \input recursively)
+        // [Memory Note] textLines is now local.
         const { textLines, map } = this.loadAndFlatten(entryPath, 0, contentOverride);
-        this.flattenedLines = textLines;
+
+        // We persist the map for sync, but discard the lines after joining.
         this.sourceMap = map;
-        this.rawText = textLines.join('\n');
+        const rawText = textLines.join('\n'); // Local variable
 
         // 2. Normalize and Extract Metadata
-        const normalizedText = this.rawText.replace(/\r\n/g, '\n');
+        const normalizedText = rawText.replace(/\r\n/g, '\n');
         const metaRes: MetadataResult = extractMetadata(normalizedText);
+
         this.metadata = metaRes.data;
-        this.cleanedText = metaRes.cleanedText;
+        const cleanedText = metaRes.cleanedText; // Local variable
 
         // 3. Load Bibliography
-        this.loadBibliography(this.cleanedText);
+        this.loadBibliography(cleanedText);
 
         // 4. Calculate Body Content Offset
         this.calculateContentOffset(normalizedText);
 
         // 5. Split into Blocks
         // We trim the preamble from the text before splitting to avoid interference
-        let bodyText = this.cleanedText;
+        let bodyText = cleanedText;
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
         if (rawDocMatch && rawDocMatch.index !== undefined) {
-             const cleanDocMatch = this.cleanedText.match(/\\begin\{document\}/i);
+             const cleanDocMatch = cleanedText.match(/\\begin\{document\}/i);
              if (cleanDocMatch && cleanDocMatch.index !== undefined) {
                  // Extract only the body content inside \begin{document}...\end{document}
-                 bodyText = this.cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
+                 bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
                      .replace(/\\end\{document\}[\s\S]*/i, '');
              }
         }
@@ -71,6 +69,8 @@ export class LatexDocument {
         const rawBlockObjects = LatexBlockSplitter.split(bodyText);
         // Filter empty blocks
         this.blocks = rawBlockObjects.filter(b => b.text.trim().length > 0);
+
+        // End of reparse: rawText, cleanedText, textLines go out of scope and are collected.
     }
 
     private loadAndFlatten(filePath: string, depth: number = 0, contentOverride?: string): { textLines: string[], map: SourceLocation[] } {
