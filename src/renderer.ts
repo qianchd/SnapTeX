@@ -346,6 +346,10 @@ export class SmartRenderer {
             };
         }
 
+        this.protectedRenderedBlocks = [];
+        this.protectedRawBlocks = [];
+        this.protectedRefs = [];
+
         return payload;
     }
 

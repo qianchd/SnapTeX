@@ -24,12 +24,24 @@ export class LatexDocument {
 
     constructor(private fileProvider: IFileProvider) {}
 
+    private pathPool: Map<string, string> = new Map();
+
+    private intern(pathStr: string): string {
+        let cached = this.pathPool.get(pathStr);
+        if (!cached) {
+            cached = pathStr;
+            this.pathPool.set(pathStr, pathStr);
+        }
+        return cached;
+    }
+
     /**
      * Re-parses the document from the given entry path.
      * @param entryPath The file system path to the root .tex file.
      * @param contentOverride Optional content to use for the root file (e.g., from dirty editor).
      */
     public reparse(entryPath: string, contentOverride?: string) {
+        this.pathPool.clear();
         this.rootDir = this.fileProvider.dir(entryPath);
 
         // 1. Load and flatten (handle \input recursively)
@@ -103,13 +115,15 @@ export class LatexDocument {
         const sourceMap: SourceLocation[] = [];
         const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
 
+        const internedPath = this.intern(filePath);
+
         for (let i = 0; i < rawLines.length; i++) {
             const line = rawLines[i];
             const trimmed = line.trim();
 
             if (trimmed.startsWith('%')) {
                 flattenedLines.push(line);
-                sourceMap.push({ file: filePath, line: i });
+                sourceMap.push({ file: internedPath, line: i });
                 continue;
             }
 

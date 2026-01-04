@@ -21,11 +21,11 @@ let currentRenderedUri: vscode.Uri | undefined = undefined;
 let activeCursorScreenRatio: number = 0.5;
 
 // --- Helpers ---
-const debounce = (func: Function, wait: number) => {
+const debounce = (func: Function, waitGetter: () => number) => {
     let timeout: NodeJS.Timeout | undefined;
     return (...args: any[]) => {
-        if (timeout) {clearTimeout(timeout);}
-        timeout = setTimeout(() => func(...args), wait);
+        if (timeout) { clearTimeout(timeout); }
+        timeout = setTimeout(() => func(...args), waitGetter());
     };
 };
 
@@ -109,7 +109,10 @@ export function activate(context: vscode.ExtensionContext) {
     // This ensures that multiple rapid keystrokes reset the SAME timer.
     const config = vscode.workspace.getConfiguration('snaptex');
     const delay = config.get<number>('delay', 200);
-    const debouncedUpdatePreview = debounce((force: boolean) => updatePreview(force), delay);
+    const debouncedUpdatePreview = debounce(
+        (force: boolean) => updatePreview(force),
+        () => vscode.workspace.getConfiguration('snaptex').get<number>('delay', 200)
+    );
 
     // --- Commands ---
 
