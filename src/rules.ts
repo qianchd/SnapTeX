@@ -385,7 +385,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const imgMatch = body.match(/\\includegraphics(?:\[.*?\])?\{([^}]+)\}/);
                 let inner = body;
                 if (imgMatch) {
-                    const imgPath = imgMatch[1];
+                    const imgPath = imgMatch[1].trim();
                     const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
 
                     // [FIX] For PDF: Use data-req-path to request data via postMessage.

@@ -120,13 +120,12 @@
 
             let scrollHandled = false;
             if (this.pendingScroll) {
-                console.log("[SnapTeX] Executing queued scroll command");
                 this.executeScroll(this.pendingScroll);
                 this.pendingScroll = null;
                 scrollHandled = true;
             } else if (!this.isFirstLoad) {
                 this.restoreScrollState(savedScrollState);
-                scrollHandled = true; // restore sets lock internally
+                scrollHandled = true;
             }
 
             this.isFirstLoad = false;
@@ -141,12 +140,8 @@
         }
 
         handleScrollCommand(data) {
-            if (this.state === 'RENDERING' || this.isFirstLoad) {
-                console.log("[SnapTeX] Queuing scroll command");
-                this.pendingScroll = data;
-            } else {
-                this.executeScroll(data);
-            }
+            if (this.state === 'RENDERING' || this.isFirstLoad) { this.pendingScroll = data; }
+            else { this.executeScroll(data); }
         }
 
         onScroll() {
@@ -169,8 +164,7 @@
                     let ratio = 0;
                     if (rect.height > 0) {
                         const offset = viewCenter - rect.top;
-                        ratio = offset / rect.height;
-                        ratio = Math.max(0, Math.min(1, ratio));
+                        ratio = Math.max(0, Math.min(1, offset / rect.height));
                     }
 
                     // Anti-Loop Check (Optional: You can enable the lastTarget check here if desired,
@@ -225,10 +219,7 @@
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
                 if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                    const index = block.getAttribute('data-index');
-                    const offset = -rect.top;
-                    const ratio = offset / rect.height;
-                    return { index, ratio, offset };
+                    return { index: block.getAttribute('data-index'), ratio: -rect.top / rect.height, offset: -rect.top };
                 }
             }
             return null;
@@ -380,12 +371,14 @@
         }
 
         renderPendingPdfs() {
-            const pdfCanvases = document.querySelectorAll('canvas[data-pdf-src]');
+            const pdfCanvases = document.querySelectorAll('canvas[data-req-path]');
             pdfCanvases.forEach(canvas => {
-                const uri = canvas.getAttribute('data-pdf-src');
+                const path = canvas.getAttribute('data-req-path');
                 const id = canvas.id;
-                const renderedUri = canvas.getAttribute('data-rendered-uri');
-                if (uri && id && renderedUri !== uri) { window.renderPdfToCanvas(uri, id); }
+                // Check if already rendered or requested
+                if (path && id && !canvas.getAttribute('data-rendered') && !canvas.getAttribute('data-requested')) {
+                    window.renderPdfToCanvas(path, id);
+                }
             });
         }
 
@@ -453,16 +446,35 @@
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
 
-    window.renderPdfToCanvas = async (pdfUri, canvasId) => {
-        let pdfDocument = null;
+    // Helper: Base64 to Uint8Array
+    function base64ToUint8Array(base64) {
+        const binary_string = window.atob(base64);
+        const len = binary_string.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binary_string.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    // Listener for PDF Data
+    window.addEventListener('message', event => {
+        const msg = event.data;
+        if (msg.command === 'pdfData') {
+            renderPdfFromData(msg.id, msg.data);
+        }
+    });
+
+    // Main PDF Render Function (Data driven)
+    async function renderPdfFromData(canvasId, base64Data) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
-        if (canvas.getAttribute('data-rendering') === 'true') return;
         try {
-            canvas.setAttribute('data-rendering', 'true');
-            const loadingTask = pdfjsLib.getDocument(pdfUri);
-            pdfDocument = await loadingTask.promise;
+            const pdfData = base64ToUint8Array(base64Data);
+            const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+            const pdfDocument = await loadingTask.promise;
+
             const page = await pdfDocument.getPage(1);
             const scale = 2;
             const viewport = page.getViewport({ scale: scale });
@@ -472,16 +484,30 @@
             }
             const context = canvas.getContext('2d');
             await page.render({ canvasContext: context, viewport: viewport }).promise;
-            canvas.setAttribute('data-rendered-uri', pdfUri);
 
+            canvas.setAttribute('data-rendered', 'true');
         } catch (error) {
             console.error('PDF render error:', error);
-        } finally {
-            canvas.removeAttribute('data-rendering');
-            if (pdfDocument) {
-                pdfDocument.destroy().catch(err => console.warn('Error destroying PDF doc:', err));
-            }
+            const ctx = canvas.getContext('2d');
+            ctx.font = '12px sans-serif';
+            ctx.fillText('Error loading PDF', 10, 50);
         }
+    }
+
+    // Exposed function to initiate request
+    window.renderPdfToCanvas = (path, canvasId) => {
+        const canvas = document.getElementById(canvasId);
+        // Check if already requested to avoid loop
+        if (!canvas || canvas.getAttribute('data-requested') === 'true') return;
+
+        canvas.setAttribute('data-requested', 'true');
+
+        // Post message to extension to fetch file content
+        vscode.postMessage({
+            command: 'requestPdf',
+            id: canvasId,
+            path: path
+        });
     };
 </script>
 </body>

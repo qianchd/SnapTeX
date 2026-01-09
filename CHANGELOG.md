@@ -3,7 +3,7 @@
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## [0.5.2] - 2026-01-09
-- **Fix**: image path
+- **Fix**: image 401 error
 
 ## [0.5.1] - 2026-01-09
 - **Fix**: support uri path

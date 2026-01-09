@@ -87,7 +87,7 @@ export class TexPreviewPanel {
         this._initWebviewHtml();
 
         this._panel.webview.onDidReceiveMessage(
-            message => {
+            async message => {
                 if (message.command === 'webviewLoaded') {
                     console.log('[SnapTeX] Webview reloaded.');
                     this._renderer.resetState();
@@ -97,6 +97,8 @@ export class TexPreviewPanel {
                     this.handleRevealLine(message);
                 } else if (message.command === 'syncScroll') {
                     vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
+                } else if (message.command === 'requestPdf') {
+                    await this.handlePdfRequest(message);
                 }
             },
             null,
@@ -131,27 +133,32 @@ export class TexPreviewPanel {
         }
     }
 
-    private async handlePdfRequest(message: any) {
+    // Read PDF file and send back base64 data
+private async handlePdfRequest(message: any) {
         if (!this._sourceUri || !message.path) return;
-
         try {
             const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
-            // Normalize path separators
-            const relPath = message.path.replace(/\\/g, '/');
-            const pdfUri = vscode.Uri.joinPath(docDir, relPath);
-
+            let cleanPath = message.path.trim().replace(/\\/g, '/');
+            if (cleanPath.startsWith('./')) { cleanPath = cleanPath.substring(2); }
+            let pdfUri = vscode.Uri.joinPath(docDir, cleanPath);
+            if (this._sourceUri.scheme === 'file') {
+                const newPathStr = docDir.path + '/' + cleanPath;
+                const normalizedPathStr = newPathStr.replace(/\/\//g, '/');
+                pdfUri = docDir.with({ path: normalizedPathStr });
+            }
             // Check existence first
             if (await this._fileProvider.exists(pdfUri)) {
                 const fileData = await this._fileProvider.readBuffer(pdfUri);
                 const base64 = uint8ToBase64(fileData);
-
                 this.postMessage({
                     command: 'pdfData',
                     id: message.id,
                     data: base64
                 });
             } else {
-                console.warn(`[SnapTeX] PDF not found: ${pdfUri.toString()}`);
+                console.warn(`[SnapTeX] PDF not found.`);
+                console.warn(`  - Target URI: ${pdfUri.toString()}`);
+                console.warn(`  - Clean Path: ${cleanPath}`);
             }
         } catch (e) {
             console.error('[SnapTeX] Failed to read PDF:', e);
@@ -190,20 +197,18 @@ export class TexPreviewPanel {
             this._currentDocument.releaseTextContent();
 
             const fixPaths = (html: string) => {
+                // Fix standard images (LOCAL_IMG)
+                // Note: PDF requests (data-req-path) are ignored here and handled by JS
                 let fixed = html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (match, attr, relPath) => {
-                    try {
-                        let normalizedPath = relPath.replace(/\\/g, '/');
-                        if (normalizedPath.startsWith('./')) {
-                            normalizedPath = normalizedPath.substring(2);
-                        }
-                        const pathSegments = normalizedPath.split('/');
-                        const fullUri = vscode.Uri.joinPath(docDir, ...pathSegments);
-                        const webviewUri = this._panel.webview.asWebviewUri(fullUri);
-                        return `${attr}="${webviewUri.toString()}"`;
-                    } catch (e) {
-                        console.error(`[SnapTeX] Failed to resolve image path: ${relPath}`, e);
-                        return match;
-                    }
+                    let normalizedPath = relPath.replace(/\\/g, '/');
+                    if (normalizedPath.startsWith('./')) { normalizedPath = normalizedPath.substring(2); }
+
+                    // Use path segments to safely join
+                    const pathSegments = normalizedPath.split('/');
+                    const fullUri = vscode.Uri.joinPath(docDir, ...pathSegments);
+
+                    const webviewUri = this._panel.webview.asWebviewUri(fullUri);
+                    return `${attr}="${webviewUri.toString()}"`;
                 });
                 return fixed;
             };
@@ -219,7 +224,7 @@ export class TexPreviewPanel {
     }
 
     private async _getWebviewSkeleton(): Promise<string> {
-        // [CHANGE] Use joinPath instead of path.join
+        // Use joinPath instead of path.join
         const toUri = (p: string) => this._panel.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, p));
 
         const katexCssUri = toUri('media/vendor/katex/katex.min.css');
