@@ -2,6 +2,8 @@
  * Basic utility function library for string manipulation, parsing, and style conversion.
  */
 
+import * as vscode from 'vscode';
+
 /**
  * Capitalizes the first letter of a string.
  */
@@ -289,4 +291,14 @@ export function getTransparentColor(color: string, opacity: number): string {
     const alpha = Math.round(opacity * 255);
     const alphaHex = (alpha + 0x10000).toString(16).substr(-2);
     return `#${c}${alphaHex}`;
+}
+
+/**
+ * Replacement for path.basename(uri.fsPath)
+ * Works with VS Code URIs which always use '/' as separator.
+ */
+export function getBasename(uri: vscode.Uri): string {
+    const pathStr = uri.path;
+    const idx = pathStr.lastIndexOf('/');
+    return idx === -1 ? pathStr : pathStr.substring(idx + 1);
 }

@@ -1,13 +1,12 @@
 import MarkdownIt from 'markdown-it';
-const katex = require('katex');
-import * as path from 'path';
-import * as os from 'os';
+import katex from 'katex';
+// [WEB COMPATIBILITY] Removed 'os' and 'path' to ensure browser compatibility.
 
 import { LatexDocument } from './document';
 import { DiffEngine } from './diff';
 import { PreprocessRule, PatchPayload, SourceLocation } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
-import { LatexCounterScanner, ScanResult } from './scanner';
+import { LatexCounterScanner } from './scanner';
 import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import { IFileProvider } from './file-provider';
@@ -77,29 +76,10 @@ export class SmartRenderer {
         this.md.disable('code');
     }
 
-    public reloadAllRules(workspaceRoot?: string) {
+    public reloadAllRules() {
+        // [WEB COMPATIBILITY] Removed dynamic require of .js config files.
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
-        const globalConfigPath = path.join(os.homedir(), '.snaptex.global.js');
-        this.loadConfig(globalConfigPath);
-        if (workspaceRoot) {
-            const workspaceConfigPath = path.join(workspaceRoot, 'snaptex.config.js');
-            this.loadConfig(workspaceConfigPath);
-        }
         this._sortRules();
-    }
-
-    private loadConfig(configPath: string) {
-        if (this.fileProvider.exists(configPath)) {
-            try {
-                delete require.cache[require.resolve(configPath)];
-                const userConfig = require(configPath);
-                if (userConfig && Array.isArray(userConfig.rules)) {
-                    userConfig.rules.forEach((r: PreprocessRule) => this.registerPreprocessRule(r));
-                }
-            } catch (e) {
-                console.error(`[TeX Preview] Failed to load config file: ${configPath}`, e);
-            }
-        }
     }
 
     public registerPreprocessRule(rule: PreprocessRule) {
@@ -128,8 +108,7 @@ export class SmartRenderer {
     // --- Helper Methods for Rules ---
 
     public renderInline(text: string): string {
-        if (!this.md) { return text; }
-        return this.md.renderInline(text);
+        return this.md ? this.md.renderInline(text) : text;
     }
 
     public resolveCitation(key: string): number {
@@ -142,15 +121,12 @@ export class SmartRenderer {
     }
 
     public pushInlineProtected(content: string) {
-        const index = this.protectedRawBlocks.length;
         this.protectedRawBlocks.push(content);
-        return `OOSNAPTEXRAW${index}OO`;
+        return `OOSNAPTEXRAW${this.protectedRawBlocks.length - 1}OO`;
     }
-
     public pushProtectedRef(key: string) {
-        const index = this.protectedRefs.length;
         this.protectedRefs.push(key);
-        return `SNREF${index}END`;
+        return `SNREF${this.protectedRefs.length - 1}END`;
     }
 
     public renderAndProtectMath(tex: string, displayMode: boolean): string {
@@ -166,7 +142,7 @@ export class SmartRenderer {
             this.protectedRenderedBlocks.push(html);
             return `OOSNAPTEXMATH${index}OO`;
         } catch (e) {
-            return `<span style="color:red">Math Error: ${(e as Error).message}</span>`;
+            return `<span style="color:red">Math Error</span>`;
         }
     }
 
@@ -194,8 +170,9 @@ export class SmartRenderer {
         this.currentDocument = doc;
         this.protectedRenderedBlocks = [];
         this.protectedRawBlocks = [];
+        this.protectedRefs = [];
 
-        // 1. Check for macro updates
+        // 1. Macros
         const currentMacrosJson = JSON.stringify(doc.metadata.macros);
         if (currentMacrosJson !== this.lastMacrosJson) {
             this.rebuildMarkdownEngine(doc.metadata.macros);
@@ -209,15 +186,15 @@ export class SmartRenderer {
         const safeDate = (this.currentDate || '').replace(/[\r\n]/g, ' ');
         const metaFingerprint = ` [meta:${safeTitle}|${safeAuthor}|${safeDate}]`;
 
-        const newBlockTexts = doc.blocks.map(b => {
-            const rawText = b.text.trim();
-            return rawText.includes('\\maketitle') ? (rawText + metaFingerprint) : rawText;
+        const newBlockTexts = doc.blockTexts.map(rawText => {
+            const trimmed = rawText.trim();
+            return trimmed.includes('\\maketitle') ? (trimmed + metaFingerprint) : trimmed;
         });
 
         // 3. Build Block Map
-        this.blockMap = doc.blocks.map(b => ({
-            start: doc.contentStartLineOffset + b.line,
-            count: b.lineCount
+        this.blockMap = doc.blockLines.map((line, i) => ({
+            start: doc.contentStartLineOffset + line,
+            count: doc.blockLineCounts[i]
         }));
 
         // 4. Run Scanner
@@ -291,9 +268,7 @@ export class SmartRenderer {
             // [Memory Optimization]
             // On full update, we re-render EVERYTHING.
             // We do NOT rely on cached HTML (which is gone).
-            const fullHtml = newBlockTexts.map((text, index) => {
-                return this.renderBlockToHtml(text, index);
-            }).join('');
+            const fullHtml = newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index)).join('');
 
             // Update Cache (State Transition)
             this.lastBlockTexts = newBlockTexts;
@@ -320,18 +295,12 @@ export class SmartRenderer {
                 ...this.lastBlockTexts.slice(this.lastBlockTexts.length - diff.end)
             ];
 
-            // 10. Dirty Blocks (Bibliography update)
             const dirtyBlocksMap: { [index: number]: string } = {};
             if (keysChanged) {
-                // Find bib block in the NEW state (this.lastBlockTexts is already updated)
                 const bibBlockIndex = this.lastBlockTexts.findIndex(text => /\\bibliography\{/.test(text));
-
-                // Only update if it exists and wasn't just inserted in this patch (to avoid double rendering)
                 const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + insertedHtmls.length);
-
                 if (bibBlockIndex !== -1 && !isInsideMainPatch) {
-                    const newHtml = this.renderBlockToHtml(this.lastBlockTexts[bibBlockIndex], bibBlockIndex);
-                    dirtyBlocksMap[bibBlockIndex] = newHtml;
+                    dirtyBlocksMap[bibBlockIndex] = this.renderBlockToHtml(this.lastBlockTexts[bibBlockIndex], bibBlockIndex);
                 }
             }
 
@@ -341,11 +310,12 @@ export class SmartRenderer {
                 deleteCount: diff.deleteCount,
                 htmls: insertedHtmls,
                 shift: shift,
-                numbering: numberingData, // [FIXED] Pass numbering data
+                numbering: numberingData,
                 dirtyBlocks: dirtyBlocksMap
             };
         }
 
+        // [Deep GC] Aggressive Cleanup
         this.protectedRenderedBlocks = [];
         this.protectedRawBlocks = [];
         this.protectedRefs = [];
@@ -376,44 +346,23 @@ export class SmartRenderer {
         }
         return keys;
     }
-
     private restoreRenderedMath(html: string): string {
-        return html.replace(/OOSNAPTEXMATH(\d+)OO/g, (match, index) => {
-            const i = parseInt(index, 10);
-            let rendered = this.protectedRenderedBlocks[i] || match;
-            return rendered.replace(/SNREF(\d+)END/g, (m, refIdx) => {
-                const key = this.protectedRefs[parseInt(refIdx)];
-                if (!key) { return m; }
-                return `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>`;
+        return html.replace(/OOSNAPTEXMATH(\d+)OO/g, (m, i) => {
+            let rendered = this.protectedRenderedBlocks[parseInt(i)] || m;
+            return rendered.replace(/SNREF(\d+)END/g, (mm, ri) => {
+                const key = this.protectedRefs[parseInt(ri)];
+                return key ? `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>` : mm;
             });
         });
     }
-
     private restoreRawBlocks(html: string): string {
-        return html.replace(/OOSNAPTEXRAW(\d+)OO/g, (match, index) => {
-            const i = parseInt(index, 10);
-            return this.protectedRawBlocks[i] || match;
-        });
+        return html.replace(/OOSNAPTEXRAW(\d+)OO/g, (m, i) => this.protectedRawBlocks[parseInt(i)] || m);
     }
 
-    // --- Synchronization Logic (Unified in Step 4) ---
-
-    /**
-     * [STEP 4] Unified Preview Synchronization
-     * Calculates the target block in the preview for a given source line.
-     * * @param filePath Absolute path of the source file.
-     * @param line Zero-based line number in the source file.
-     * @returns Object containing block index and ratio, or null if mapping fails.
-     */
-    public getPreviewSyncData(filePath: string, line: number): { index: number; ratio: number } | null {
-        if (!this.currentDocument) { return null; }
-
-        // 1. Map source line to flat flattened line (handling imports)
+    public getPreviewSyncData(filePath: string, line: number) {
+        if (!this.currentDocument) {return null;}
         const flatLine = this.currentDocument.getFlattenedLine(filePath, line);
-        if (flatLine === -1) { return null; }
-
-        // 2. Map flattened line to block index
-        return this.getBlockIndexByLine(flatLine);
+        return flatLine !== -1 ? this.getBlockIndexByLine(flatLine) : null;
     }
 
     /**
@@ -424,39 +373,35 @@ export class SmartRenderer {
      * @returns SourceLocation object or null if mapping fails.
      */
     public getSourceSyncData(blockIndex: number, ratio: number): SourceLocation | null {
-        if (!this.currentDocument) { return null; }
-
-        // 1. Map block index to flattened line
+        if (!this.currentDocument) {return null;}
         const flatLine = this.getLineByBlockIndex(blockIndex, ratio);
-
-        // 2. Map flattened line back to original source location
         return this.currentDocument.getOriginalPosition(flatLine) || null;
     }
 
     // Internal helpers (kept public if strictly needed for tests, but main logic should use above methods)
 
     public getBlockIndexByLine(line: number): { index: number; ratio: number } {
-        if (this.blockMap.length > 0 && line < this.blockMap[0].start) {
+        if (this.blockMap.length === 0) {
+            return { index: 0, ratio: 0 };
+        }
+        if (line < this.blockMap[0].start) {
             return { index: 0, ratio: 0 };
         }
         for (let i = 0; i < this.blockMap.length; i++) {
-            const block = this.blockMap[i];
-            const nextBlockStart = (i + 1 < this.blockMap.length) ? this.blockMap[i+1].start : Infinity;
-            if (line >= block.start && line < nextBlockStart) {
-                const offset = line - block.start;
-                const count = Math.max(1, block.count);
-                const ratio = Math.max(0, Math.min(1, offset / count));
+            const b = this.blockMap[i];
+            const nextStart = (i + 1 < this.blockMap.length) ? this.blockMap[i+1].start : Infinity;
+            if (line >= b.start && line < nextStart) {
+                const ratio = Math.max(0, Math.min(1, (line - b.start) / Math.max(1, b.count)));
                 return { index: i, ratio };
             }
         }
         return { index: this.blockMap.length - 1, ratio: 0 };
     }
 
-    public getLineByBlockIndex(index: number, ratio: number = 0): number {
+    public getLineByBlockIndex(index: number, ratio: number): number {
         if (index >= 0 && index < this.blockMap.length) {
-            const block = this.blockMap[index];
-            const offset = Math.floor(block.count * ratio);
-            return block.start + offset;
+            const b = this.blockMap[index];
+            return b.start + Math.floor(b.count * ratio);
         }
         return 0;
     }

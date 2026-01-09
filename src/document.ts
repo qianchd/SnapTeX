@@ -1,111 +1,149 @@
+import * as vscode from 'vscode';
 import { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser, BibEntry } from './bib';
 import { SourceLocation, PreambleData, MetadataResult } from './types';
 import { R_BIBLIOGRAPHY } from './patterns';
-import { LatexBlockSplitter, BlockResult } from './splitter';
+import { LatexBlockSplitter } from './splitter';
 
-/**
- * Represents the parsed state of a LaTeX document.
- * Responsibilities: Loading, Flattening, Metadata Extraction, Bib Loading, and Block Splitting.
- */
+export interface DocumentParseResult {
+    blockTexts: string[];
+    blockLines: number[];
+    blockLineCounts: number[];
+    sourceMap: SourceLocation[];
+    metadata: PreambleData;
+    bibEntries: Map<string, BibEntry>;
+    contentStartLineOffset: number;
+}
+
+// [NEW] Cache Entry Interface
+interface BibCacheEntry {
+    mtime: number;
+    entries: Map<string, BibEntry>;
+}
+
 export class LatexDocument {
-    // Structure needed for Sync and Rendering
-    public sourceMap: SourceLocation[] = []; // Maps flattened line index -> original file/line
-    public blocks: BlockResult[] = [];       // The split blocks (holding the actual content)
+    public blockTexts: string[] = [];
+    public blockLines: number[] = [];
+    public blockLineCounts: number[] = [];
+
+    public sourceMap: SourceLocation[] = [];
     public contentStartLineOffset: number = 0;
 
-    // Parsed Metadata
     public metadata: PreambleData = { macros: {} };
-
-    // Bibliography
     public bibEntries: Map<string, BibEntry> = new Map();
-    public rootDir: string = "";
+    public rootDir: vscode.Uri | undefined;
+
+    // [NEW] Cache for BibTeX files
+    private bibCache: Map<string, BibCacheEntry> = new Map();
 
     constructor(private fileProvider: IFileProvider) {}
 
-    private pathPool: Map<string, string> = new Map();
-
-    private intern(pathStr: string): string {
-        let cached = this.pathPool.get(pathStr);
-        if (!cached) {
-            cached = pathStr;
-            this.pathPool.set(pathStr, pathStr);
-        }
-        return cached;
+    public releaseTextContent() {
+        this.blockTexts = [];
     }
 
-    /**
-     * Re-parses the document from the given entry path.
-     * @param entryPath The file system path to the root .tex file.
-     * @param contentOverride Optional content to use for the root file (e.g., from dirty editor).
-     */
-    public reparse(entryPath: string, contentOverride?: string) {
-        this.pathPool.clear();
-        this.rootDir = this.fileProvider.dir(entryPath);
+    public applyResult(result: DocumentParseResult) {
+        this.blockTexts = result.blockTexts;
+        this.blockLines = result.blockLines;
+        this.blockLineCounts = result.blockLineCounts;
+        this.sourceMap = result.sourceMap;
+        this.metadata = result.metadata;
+        this.bibEntries = result.bibEntries;
+        this.contentStartLineOffset = result.contentStartLineOffset;
+    }
 
-        // 1. Load and flatten (handle \input recursively)
-        // [Memory Note] textLines is now local.
-        const { textLines, map } = this.loadAndFlatten(entryPath, 0, contentOverride);
+    public async parse(entryUri: vscode.Uri, contentOverride?: string): Promise<DocumentParseResult> {
+        const localPathPool = new Map<string, string>();
+        const intern = (s: string) => {
+            let c = localPathPool.get(s);
+            if (!c) { c = s; localPathPool.set(s, s); }
+            return c;
+        };
 
-        // We persist the map for sync, but discard the lines after joining.
-        this.sourceMap = map;
-        const rawText = textLines.join('\n'); // Local variable
+        const rootDir = this.fileProvider.dir(entryUri);
+        this.rootDir = rootDir;
 
-        // 2. Normalize and Extract Metadata
+        // 1. Load
+        const { textLines, map } = await this.loadAndFlatten(entryUri, intern, 0, contentOverride);
+        const rawText = textLines.join('\n');
+
+        // 2. Metadata
         const normalizedText = rawText.replace(/\r\n/g, '\n');
         const metaRes: MetadataResult = extractMetadata(normalizedText);
 
-        this.metadata = metaRes.data;
-        const cleanedText = metaRes.cleanedText; // Local variable
+        // 3. Bib (With Caching)
+        const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
 
-        // 3. Load Bibliography
-        this.loadBibliography(cleanedText);
-
-        // 4. Calculate Body Content Offset
-        this.calculateContentOffset(normalizedText);
-
-        // 5. Split into Blocks
-        // We trim the preamble from the text before splitting to avoid interference
-        let bodyText = cleanedText;
+        // 4. Offset
+        let contentStartLineOffset = 0;
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
         if (rawDocMatch && rawDocMatch.index !== undefined) {
-             const cleanDocMatch = cleanedText.match(/\\begin\{document\}/i);
+            const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
+            contentStartLineOffset = preContent.split('\n').length - 1;
+        }
+
+        // 5. Split
+        let bodyText = metaRes.cleanedText;
+        if (rawDocMatch && rawDocMatch.index !== undefined) {
+             const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
              if (cleanDocMatch && cleanDocMatch.index !== undefined) {
-                 // Extract only the body content inside \begin{document}...\end{document}
-                 bodyText = cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
+                 bodyText = metaRes.cleanedText.substring(cleanDocMatch.index + cleanDocMatch[0].length)
                      .replace(/\\end\{document\}[\s\S]*/i, '');
              }
         }
 
         const rawBlockObjects = LatexBlockSplitter.split(bodyText);
-        // Filter empty blocks
-        this.blocks = rawBlockObjects.filter(b => b.text.trim().length > 0);
 
-        // End of reparse: rawText, cleanedText, textLines go out of scope and are collected.
+        const res: DocumentParseResult = {
+            blockTexts: [],
+            blockLines: [],
+            blockLineCounts: [],
+            sourceMap: map,
+            metadata: metaRes.data,
+            bibEntries: bibEntries,
+            contentStartLineOffset: contentStartLineOffset
+        };
+
+        for (const b of rawBlockObjects) {
+            if (b.text.trim().length > 0) {
+                res.blockTexts.push(b.text);
+                res.blockLines.push(b.line);
+                res.blockLineCounts.push(b.lineCount);
+            }
+        }
+
+        return res;
     }
 
-    private loadAndFlatten(filePath: string, depth: number = 0, contentOverride?: string): { textLines: string[], map: SourceLocation[] } {
+    private async loadAndFlatten(
+        fileUri: vscode.Uri,
+        intern: (s: string) => string,
+        depth: number = 0,
+        contentOverride?: string
+    ): Promise<{ textLines: string[], map: SourceLocation[] }> {
         const fallback = { textLines: [], map: [] };
-        if (depth > 20) { return fallback; } // Recursion limit
+        if (depth > 20) { return fallback; }
 
         let content = "";
+        const filePathStr = fileUri.toString();
 
         if (contentOverride !== undefined) {
             content = contentOverride;
         } else {
-            if (!this.fileProvider.exists(filePath)) {
+            // [Optimization] Check existence before reading to avoid error throwing overhead
+            if (!(await this.fileProvider.exists(fileUri))) {
                 return {
-                    textLines: [`% [SnapTeX] File not found: ${filePath}`],
-                    map: [{ file: filePath, line: 0 }]
+                    textLines: [`% [SnapTeX] File not found: ${filePathStr}`],
+                    map: [{ file: filePathStr, line: 0 }]
                 };
             }
             try {
-                content = this.fileProvider.read(filePath);
+                content = await this.fileProvider.read(fileUri);
             } catch (e) {
                 return {
-                    textLines: [`% [SnapTeX] Error reading: ${filePath}`],
-                    map: [{ file: filePath, line: 0 }]
+                    textLines: [`% [SnapTeX] Error reading: ${filePathStr}`],
+                    map: [{ file: filePathStr, line: 0 }]
                 };
             }
         }
@@ -115,7 +153,7 @@ export class LatexDocument {
         const sourceMap: SourceLocation[] = [];
         const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
 
-        const internedPath = this.intern(filePath);
+        const internedPath = intern(fileUri.toString());
 
         for (let i = 0; i < rawLines.length; i++) {
             const line = rawLines[i];
@@ -129,52 +167,66 @@ export class LatexDocument {
 
             const match = line.match(inputRegex);
             if (match) {
-                const relPath = match[2];
-                const currentDir = this.fileProvider.dir(filePath);
-                const targetPath = this.fileProvider.resolve(currentDir, relPath);
+                let relPath = match[2];
+                if (!relPath.toLowerCase().endsWith('.tex')) { relPath += '.tex'; }
 
-                // Recursive load
-                const result = this.loadAndFlatten(targetPath, depth + 1);
+                const currentDir = this.fileProvider.dir(fileUri);
+                const targetUri = this.fileProvider.resolve(currentDir, relPath);
+
+                const result = await this.loadAndFlatten(targetUri, intern, depth + 1);
 
                 flattenedLines.push(...result.textLines);
                 sourceMap.push(...result.map);
             } else {
                 flattenedLines.push(line);
-                sourceMap.push({ file: filePath, line: i });
+                sourceMap.push({ file: internedPath, line: i });
             }
         }
 
         return { textLines: flattenedLines, map: sourceMap };
     }
 
-    private loadBibliography(text: string) {
+    /**
+     * Loads Bibliography with Mtime Caching.
+     * Prevents re-parsing large .bib files if they haven't changed.
+     */
+    private async loadBibliography(text: string, rootDir: vscode.Uri): Promise<Map<string, BibEntry>> {
         const match = text.match(R_BIBLIOGRAPHY);
-        if (match && this.rootDir) {
+        if (match && rootDir) {
             let bibFile = match[1].trim();
             if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
-            const bibPath = this.fileProvider.resolve(this.rootDir, bibFile);
+            const bibUri = this.fileProvider.resolve(rootDir, bibFile);
+            const bibUriStr = bibUri.toString();
 
-            if (this.fileProvider.exists(bibPath)) {
-                try {
-                    const content = this.fileProvider.read(bibPath);
-                    this.bibEntries = BibTexParser.parse(content);
-                } catch (e) {
-                    console.error('Failed to load bib file:', e);
-                    this.bibEntries.clear();
+            try {
+                // 1. Get file stats (lightweight)
+                const { mtime } = await this.fileProvider.stat(bibUri);
+
+                if (mtime === 0) {
+                    // File doesn't exist
+                    return new Map();
                 }
-            }
-        } else {
-            this.bibEntries.clear();
-        }
-    }
 
-    private calculateContentOffset(normalizedText: string) {
-        this.contentStartLineOffset = 0;
-        const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
-        if (rawDocMatch && rawDocMatch.index !== undefined) {
-            const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
-            this.contentStartLineOffset = preContent.split('\n').length - 1;
+                // 2. Check Cache
+                const cached = this.bibCache.get(bibUriStr);
+                if (cached && cached.mtime === mtime) {
+                    // Cache Hit: Return previous result
+                    return cached.entries;
+                }
+
+                // 3. Cache Miss: Read and Parse
+                const content = await this.fileProvider.read(bibUri);
+                const entries = BibTexParser.parse(content);
+
+                // 4. Update Cache
+                this.bibCache.set(bibUriStr, { mtime, entries });
+                return entries;
+
+            } catch (e) {
+                console.error('Failed to load bib file:', e);
+            }
         }
+        return new Map();
     }
 
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {
@@ -185,7 +237,6 @@ export class LatexDocument {
     }
 
     public getFlattenedLine(fsPath: string, originalLine: number): number {
-        // Simple normalization
         const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase();
         const normTarget = normalize(fsPath);
 
@@ -194,7 +245,8 @@ export class LatexDocument {
 
         for (let i = 0; i < this.sourceMap.length; i++) {
             const loc = this.sourceMap[i];
-            if (normalize(loc.file) === normTarget) {
+            const normLoc = normalize(loc.file);
+            if (normLoc.endsWith(normTarget) || normTarget.endsWith(normLoc)) {
                 const diff = Math.abs(loc.line - originalLine);
                 if (diff < minDiff) {
                     minDiff = diff;

@@ -2,6 +2,15 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.2] - 2026-01-09
+- **Fix**: image path
+
+## [0.5.1] - 2026-01-09
+- **Fix**: support uri path
+
+## [0.5.0] - 2026-01-09
+- **Code reconstruction**: Remove node.js and path dependence.
+
 ## [0.4.0] - 2025-12-27
 - **Code reconstruction**: Based on the Model-View-Controller guidance. Better way to avoid auto-sync jittering.
 

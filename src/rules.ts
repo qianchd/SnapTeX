@@ -364,7 +364,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
     // --- Step 3: Figure (Enhanced with PDF support) ---
     // Note: Priority 33 ensures it runs after display_math(30) but before inline_math(40).
-    {
+{
         name: 'figure',
         priority: 120,
         apply: (text: string, renderer: SmartRenderer) => {
@@ -378,8 +378,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderer.renderAndProtectMath(c.trim(), false));
                     captionText = resolveLatexStyles(captionText);
                     captionHtml = `<div class="figure-caption"><strong>Figure <span class="sn-cnt" data-type="fig"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
-
-                    // Remove caption from body to avoid duplication
                     body = body.substring(0, captionRes.start) + body.substring(captionRes.end + 1);
                 }
 
@@ -389,8 +387,11 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 if (imgMatch) {
                     const imgPath = imgMatch[1];
                     const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
+
+                    // [FIX] For PDF: Use data-req-path to request data via postMessage.
+                    // For Images: Keep using LOCAL_IMG which is handled by fixPaths in panel.ts
                     inner = imgPath.toLowerCase().endsWith('.pdf')
-                        ? `<canvas id="${canvasId}" data-pdf-src="LOCAL_IMG:${imgPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`
+                        ? `<canvas id="${canvasId}" data-req-path="${imgPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`
                         : `<img src="LOCAL_IMG:${imgPath}" style="max-width:100%; display:block; margin:0 auto;">`;
                 } else {
                     if (body.replace(/\s/g, '').length === 0) {

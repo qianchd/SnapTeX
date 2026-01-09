@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import * as os from 'os';
 import { SmartRenderer } from './renderer';
 import { TexPreviewPanel } from './panel';
-import { NodeFileProvider } from './file-provider';
+import { VscodeFileProvider } from './file-provider';
 
 // --- Flash Animation Decoration Types ---
 const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({ backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), isWholeLine: true });
@@ -28,15 +26,6 @@ const debounce = (func: Function, waitGetter: () => number) => {
         timeout = setTimeout(() => func(...args), waitGetter());
     };
 };
-
-function getProjectRoot(): string | undefined {
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-        return workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(editor.document.uri.fsPath);
-    }
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
 
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) {return "";}
@@ -67,16 +56,11 @@ async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Ra
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[SnapTeX] Activated!');
-    const fileProvider = new NodeFileProvider();
-    const renderer = new SmartRenderer(fileProvider);
-    renderer.reloadAllRules(getProjectRoot());
 
-    const configWatcher = vscode.workspace.createFileSystemWatcher('**/snaptex.config.js');
-    configWatcher.onDidChange(() => {
-        renderer.reloadAllRules(getProjectRoot());
-        TexPreviewPanel.currentPanel?.update();
-    });
-    context.subscriptions.push(configWatcher);
+    const fileProvider = new VscodeFileProvider();
+    const renderer = new SmartRenderer(fileProvider);
+
+    renderer.reloadAllRules();
 
     // --- Core Sync Logic ---
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
@@ -101,14 +85,12 @@ export function activate(context: vscode.ExtensionContext) {
         if (!force && currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) {return;}
 
         currentRenderedUri = editor.document.uri;
-        renderer.reloadAllRules(getProjectRoot());
+        renderer.reloadAllRules();
         TexPreviewPanel.currentPanel.update();
     };
 
     // [OPTIMIZATION] Create a single debounced instance of updatePreview.
     // This ensures that multiple rapid keystrokes reset the SAME timer.
-    const config = vscode.workspace.getConfiguration('snaptex');
-    const delay = config.get<number>('delay', 200);
     const debouncedUpdatePreview = debounce(
         (force: boolean) => updatePreview(force),
         () => vscode.workspace.getConfiguration('snaptex').get<number>('delay', 200)
@@ -119,7 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {
         if (TexPreviewPanel.currentPanel) { updatePreview(true); }
         else {
-            TexPreviewPanel.createOrShow(context.extensionPath, renderer);
+            TexPreviewPanel.createOrShow(context.extensionUri, renderer);
             if (vscode.window.activeTextEditor) { currentRenderedUri = vscode.window.activeTextEditor.document.uri; }
         }
     }));
@@ -141,7 +123,7 @@ export function activate(context: vscode.ExtensionContext) {
             const sourceLoc = renderer.getSourceSyncData(index, ratio);
             if (!sourceLoc) {return;}
 
-            const targetUri = vscode.Uri.file(sourceLoc.file);
+            const targetUri = vscode.Uri.parse(sourceLoc.file);
             let targetLine = sourceLoc.line;
 
             // Find or Open Editor
@@ -260,8 +242,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Webview Serializer
     if (vscode.window.registerWebviewPanelSerializer) {
         vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
-            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any) {
-                TexPreviewPanel.revive(webviewPanel, context.extensionPath, renderer);
+            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, _state: any) {
+                TexPreviewPanel.revive(webviewPanel, context.extensionUri, renderer);
             }
         });
     }
