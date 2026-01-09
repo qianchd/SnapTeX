@@ -135,7 +135,7 @@ export class TexPreviewPanel {
 
     // Read PDF file and send back base64 data
 private async handlePdfRequest(message: any) {
-        if (!this._sourceUri || !message.path) return;
+        if (!this._sourceUri || !message.path) {return;}
         try {
             const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
             let cleanPath = message.path.trim().replace(/\\/g, '/');

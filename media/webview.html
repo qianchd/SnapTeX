@@ -21,6 +21,11 @@
 
 <script>
     const vscode = acquireVsCodeApi();
+    window.pdfReqQueue = [];
+    window.renderPdfToCanvas = function(path, canvasId) {
+        console.log(`[SnapTeX] Queueing PDF request for ${canvasId}`);
+        window.pdfReqQueue.push({ path, canvasId });
+    };
 
     /**
      * PreviewController: Manages the Webview State and Scrolling Logic
@@ -495,7 +500,7 @@
     }
 
     // Exposed function to initiate request
-    window.renderPdfToCanvas = (path, canvasId) => {
+    const realRequestPdf = (path, canvasId) => {
         const canvas = document.getElementById(canvasId);
         // Check if already requested to avoid loop
         if (!canvas || canvas.getAttribute('data-requested') === 'true') return;
@@ -509,6 +514,13 @@
             path: path
         });
     };
+
+    if (window.pdfReqQueue && window.pdfReqQueue.length > 0) {
+        console.log(`[SnapTeX] Processing ${window.pdfReqQueue.length} queued PDF requests.`);
+        window.pdfReqQueue.forEach(req => realRequestPdf(req.path, req.canvasId));
+    }
+
+    window.renderPdfToCanvas = realRequestPdf;
 </script>
 </body>
 </html>
