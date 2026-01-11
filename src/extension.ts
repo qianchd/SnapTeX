@@ -54,6 +54,23 @@ async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Ra
     editor.setDecorations(seq[seq.length-1].d, []);
 }
 
+/**
+ * [关键修复] URI 比较函数
+ * 忽略大小写（Windows习惯）并标准化路径，解决 d%3A 和 d: 不匹配的问题
+ */
+function areUrisEqual(uri1: vscode.Uri, uri2: vscode.Uri): boolean {
+    // 1. 简单字符串比较 (最快)
+    if (uri1.toString() === uri2.toString()) { return true; }
+
+    // 2. 如果是 file 协议，使用 fsPath 比较 (自动处理分隔符和编码)
+    if (uri1.scheme === 'file' && uri2.scheme === 'file') {
+        return uri1.fsPath.toLowerCase() === uri2.fsPath.toLowerCase();
+    }
+
+    // 3. 通用比较：解码后比较
+    return decodeURIComponent(uri1.toString()).toLowerCase() === decodeURIComponent(uri2.toString()).toLowerCase();
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('[SnapTeX] Activated!');
 
@@ -67,8 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!TexPreviewPanel.currentPanel) {return;}
         if (currentRenderedUri && editor.document.uri.toString() !== currentRenderedUri.toString()) {return;}
 
-        // [Step 4] Use unified sync method from Renderer
-        const syncData = renderer.getPreviewSyncData(editor.document.uri.fsPath, targetLine);
+        const syncData = renderer.getPreviewSyncData(editor.document.uri.toString(), targetLine);
         if (!syncData) {return;}
 
         const { index, ratio } = syncData;
@@ -89,8 +105,6 @@ export function activate(context: vscode.ExtensionContext) {
         TexPreviewPanel.currentPanel.update();
     };
 
-    // [OPTIMIZATION] Create a single debounced instance of updatePreview.
-    // This ensures that multiple rapid keystrokes reset the SAME timer.
     const debouncedUpdatePreview = debounce(
         (force: boolean) => updatePreview(force),
         () => vscode.workspace.getConfiguration('snaptex').get<number>('delay', 200)
@@ -112,7 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     // Command: Reveal Line (Preview -> Editor)
-    // Refactored to use Renderer's unified mapping logic
+    // Refactored to use Renderer's unified mapping logic AND robust URI comparison
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (uri: vscode.Uri, index: number, ratio: number, anchor: string, viewRatio: number = 0.5) => {
             isSyncingFromPreview = true;
@@ -123,11 +137,13 @@ export function activate(context: vscode.ExtensionContext) {
             const sourceLoc = renderer.getSourceSyncData(index, ratio);
             if (!sourceLoc) {return;}
 
+            // [FIX 1] 使用 Parse 而不是 File (sourceLoc.file 已经是 URI 字符串)
             const targetUri = vscode.Uri.parse(sourceLoc.file);
             let targetLine = sourceLoc.line;
 
-            // Find or Open Editor
-            let targetEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === targetUri.toString());
+            // [FIX 2] 使用 areUrisEqual 进行鲁棒的查找
+            let targetEditor = vscode.window.visibleTextEditors.find(e => areUrisEqual(e.document.uri, targetUri));
+
             if (!targetEditor) {
                 try {
                     const doc = await vscode.workspace.openTextDocument(targetUri);
@@ -149,6 +165,8 @@ export function activate(context: vscode.ExtensionContext) {
 
             // Calculate reveal range
             const range = targetEditor.document.lineAt(Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1))).range;
+
+            // [保留功能] Smart Relative Sync (按点击位置比例精细跳转)
             const visible = targetEditor.visibleRanges[0];
             if (visible) {
                 const height = visible.end.line - visible.start.line;
@@ -176,8 +194,12 @@ export function activate(context: vscode.ExtensionContext) {
         const sourceLoc = renderer.getSourceSyncData(index, ratio);
         if (!sourceLoc) {return;}
 
-        const targetUri = vscode.Uri.file(sourceLoc.file);
-        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === targetUri.toString());
+        // [FIX 3] 修复这里的 Uri.file 调用，改为 Uri.parse
+        const targetUri = vscode.Uri.parse(sourceLoc.file);
+
+        // [FIX 4] 同样使用鲁棒的查找
+        const editor = vscode.window.visibleTextEditors.find(e => areUrisEqual(e.document.uri, targetUri));
+
         if (editor) {
             const line = Math.max(0, Math.min(sourceLoc.line, editor.document.lineCount - 1));
             editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.InCenter);

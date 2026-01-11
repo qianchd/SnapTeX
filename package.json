@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -21,7 +21,7 @@
   "keywords": [
     "latex",
     "preview",
-    "katex",
+    "tex",
     "equation",
     "math"
   ],
@@ -36,7 +36,7 @@
       {
         "command": "snaptex.start",
         "title": "SnapTeX Preview: Start",
-        "icon": "$(split-horizontal)",
+        "icon": "$(zap)",
         "category": "SnapTeX"
       },
       {
@@ -45,6 +45,15 @@
         "category": "SnapTeX"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "snaptex.start",
+          "when": "resourceLangId == latex",
+          "group": "navigation"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "snaptex.start",

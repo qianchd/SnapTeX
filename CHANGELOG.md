@@ -2,6 +2,10 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.4] - 2026-01-11
+- **Fix bug**: autoScroll fails for web version
+- **Add**: button to start preview
+
 ## [0.5.3] - 2026-01-09
 - **Fix bug**: webview async image canvas func load
 

@@ -237,7 +237,7 @@ export class LatexDocument {
     }
 
     public getFlattenedLine(fsPath: string, originalLine: number): number {
-        const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+        const normalize = (p: string) => decodeURIComponent(p).replace(/\\/g, '/').toLowerCase();
         const normTarget = normalize(fsPath);
 
         let bestLine = -1;
