@@ -5,6 +5,7 @@ import { BibTexParser, BibEntry } from './bib';
 import { SourceLocation, PreambleData, MetadataResult } from './types';
 import { R_BIBLIOGRAPHY } from './patterns';
 import { LatexBlockSplitter } from './splitter';
+import { normalizeUri } from './utils';
 
 export interface DocumentParseResult {
     blockTexts: string[];
@@ -236,17 +237,20 @@ export class LatexDocument {
         return undefined;
     }
 
-    public getFlattenedLine(fsPath: string, originalLine: number): number {
-        const normalize = (p: string) => decodeURIComponent(p).replace(/\\/g, '/').toLowerCase();
-        const normTarget = normalize(fsPath);
+    /**
+     * Robust matching using normalizeUri
+     */
+    public getFlattenedLine(targetUriString: string, originalLine: number): number {
+        const normTarget = normalizeUri(targetUriString);
 
         let bestLine = -1;
         let minDiff = Infinity;
 
         for (let i = 0; i < this.sourceMap.length; i++) {
             const loc = this.sourceMap[i];
-            const normLoc = normalize(loc.file);
-            if (normLoc.endsWith(normTarget) || normTarget.endsWith(normLoc)) {
+            const normLoc = normalizeUri(loc.file);
+
+            if (normLoc === normTarget || normLoc.endsWith(normTarget) || normTarget.endsWith(normLoc)) {
                 const diff = Math.abs(loc.line - originalLine);
                 if (diff < minDiff) {
                     minDiff = diff;
@@ -254,6 +258,10 @@ export class LatexDocument {
                 }
                 if (diff === 0) { return i; }
             }
+        }
+
+        if (bestLine === -1) {
+            console.warn(`[SnapTeX] Failed to map source line. Target: ${normTarget}`);
         }
         return bestLine;
     }

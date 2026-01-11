@@ -302,3 +302,21 @@ export function getBasename(uri: vscode.Uri): string {
     const idx = pathStr.lastIndexOf('/');
     return idx === -1 ? pathStr : pathStr.substring(idx + 1);
 }
+
+export function normalizeUri(input: vscode.Uri | string): string {
+    let str = typeof input === 'string' ? input : input.toString();
+    try {
+        str = decodeURIComponent(str);
+    } catch (e) {
+    }
+
+    str = str.toLowerCase();
+
+    str = str.replace(/\\/g, '/');
+
+    if (str.startsWith('file://')) {
+        str = str.substring(7);
+    }
+
+    return str;
+}

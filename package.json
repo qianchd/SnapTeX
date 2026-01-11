@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -32,6 +32,13 @@
   "main": "./dist/extension.js",
   "browser": "./dist/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "latex",
+        "extensions": [".tex"],
+        "aliases": ["LaTeX", "tex"]
+      }
+    ],
     "commands": [
       {
         "command": "snaptex.start",
