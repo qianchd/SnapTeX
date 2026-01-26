@@ -74,14 +74,14 @@ export function activate(context: vscode.ExtensionContext) {
     // --- Core Sync Logic (Forward: Tex -> Preview) ---
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
         if (!TexPreviewPanel.currentPanel) {return;}
-        if (currentRenderedUri && !areUrisEqual(editor.document.uri, currentRenderedUri)) { return; }
+        // if (currentRenderedUri && !areUrisEqual(editor.document.uri, currentRenderedUri)) { return; }
 
         // [DEBUG] Forward Sync
         // console.log(`[SnapTeX Forward] Triggered for: ${editor.document.uri.toString()} line ${targetLine}`);
 
         const syncData = renderer.getPreviewSyncData(editor.document.uri.toString(), targetLine);
         if (!syncData) {
-            console.warn(`[SnapTeX Forward] Failed to find preview block for line ${targetLine}`);
+            console.log(`[SnapTeX] Sync failed: No map found for ${editor.document.uri.toString()}`);
             return;
         }
 

@@ -2,6 +2,9 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.7] - 2026-01-26
+- **Fix bug**: forward sync fail for multi-file document (Remove the root file checker);
+
 ## [0.5.6] - 2026-01-26
 - **Add**: tooltip preview panel on hover for cross-refs.
 - **Add**: command `snaptex.toggleAutoScroll`, with a default keyboard shortcut `ctrl+alt+a`
