@@ -37,6 +37,7 @@
         constructor() {
             this.tooltip = document.getElementById('hover-tooltip');
             this.hideTimer = null;
+            this.showTimer = null;
             this.currentLink = null;
             this.bindEvents();
         }
@@ -47,31 +48,58 @@
                 const link = e.target.closest('a');
                 // Only trigger for internal anchor links (#id)
                 if (link && link.getAttribute('href')?.startsWith('#')) {
-                    this.onLinkEnter(link);
+                    this.scheduleShow(link); // [MODIFIED] Use schedule instead of immediate enter
                 }
             });
 
+            // 2. Mouse leaves a link
             document.body.addEventListener('mouseout', (e) => {
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
+                    this.cancelShow(); // [NEW] Cancel pending show if mouse leaves quickly
                     this.onLinkLeave();
                 }
             });
 
-            // 2. [Fix 2] Tooltip Hover Events
-            // Keep tooltip visible when user moves mouse over it to scroll
+            // 3. Mouse enters the Tooltip (Keep it open for scrolling)
             this.tooltip.addEventListener('mouseenter', () => this.clearHideTimer());
+
+            // 4. Mouse leaves the Tooltip (Start closing timer)
             this.tooltip.addEventListener('mouseleave', () => this.startHideTimer());
         }
 
-        onLinkEnter(link) {
+        /**
+         * [NEW] Schedule the tooltip to show after a delay.
+         * Prevents flickering when moving mouse quickly across the screen.
+         */
+        scheduleShow(link) {
             this.clearHideTimer();
 
-            // Avoid re-calculation if already showing the same link
+            // If already showing THIS link, do nothing
             if (this.currentLink === link && this.tooltip.classList.contains('visible')) return;
 
+            // Clear any previous pending show request
+            this.cancelShow();
+
+            // Wait 200ms before showing
+            this.showTimer = setTimeout(() => {
+                this.onLinkEnter(link);
+            }, 180);
+        }
+
+        /**
+         * [NEW] Cancel a pending show request.
+         */
+        cancelShow() {
+            if (this.showTimer) {
+                clearTimeout(this.showTimer);
+                this.showTimer = null;
+            }
+        }
+
+        onLinkEnter(link) {
             this.currentLink = link;
-            const targetId = link.getAttribute('href').substring(1); // Strip '#'
+            const targetId = link.getAttribute('href').substring(1); // Remove '#'
             this.showPreview(link, targetId);
         }
 
@@ -140,7 +168,7 @@
 
             this.tooltip.appendChild(frag);
 
-            // [CRITICAL] Apply Smart Centered Positioning
+            // Apply Positioning (Vertical only; Horizontal is CSS-based)
             this.positionTooltip(linkElement);
 
             this.tooltip.classList.add('visible');
@@ -153,41 +181,39 @@
         }
 
         /**
-         * [UPDATED] Smart Positioning Logic
+         * Smart Positioning Logic
          * - Horizontal: Always CENTERED in the viewport.
          * - Vertical: Based on link position (Top half -> Below, Bottom half -> Above).
          */
         positionTooltip(linkElement) {
-            const rect = linkElement.getBoundingClientRect();
+            const linkRect = linkElement.getBoundingClientRect();
             const tooltipRect = this.tooltip.getBoundingClientRect();
 
             const viewportHeight = window.innerHeight;
-            const margin = 20;
+            const margin = 15; // Vertical spacing
 
-            // 2. Vertical Positioning: Smart Flip
+            // Decide placement based on link's screen position
+            const isTopHalf = linkRect.top < (viewportHeight / 2);
             let top;
 
-            // Check if link is in the upper or lower half of the screen
-            const isTopHalf = rect.top < (viewportHeight / 2);
-
             if (isTopHalf) {
-                // Link is high -> Show BELOW the link
-                top = rect.bottom + margin;
-
-                // Edge case handling (optional): if it overflows bottom
-                // The max-height CSS usually handles this content clipping.
+                // Link is in top half -> Show Tooltip BELOW
+                top = linkRect.bottom + margin;
             } else {
-                // Link is low -> Show ABOVE the link
-                top = rect.top - tooltipRect.height - margin;
+                // Link is in bottom half -> Show Tooltip ABOVE
+                top = linkRect.top - tooltipRect.height - margin;
 
-                // Edge case: If tooltip goes off-screen top
+                // Safety check: Prevent overflowing top of screen
                 if (top < margin) {
                     top = margin;
                 }
             }
 
+            // Apply Top position
             this.tooltip.style.top = `${top}px`;
-            this.tooltip.style.left = `0.5vw`;
+
+            // Ensure no manual 'left' style overrides our CSS centering
+            this.tooltip.style.left = '0.5vw';
         }
     }
 
