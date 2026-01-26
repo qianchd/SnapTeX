@@ -57,8 +57,9 @@ export const REGEX_STR = {
 
 // --- Common Regexes ---
 
-// Matches: \label{key}
-export const R_LABEL = /\\label\{([^}]+)\}/;
+// Matches: \label{key} or \label {key}
+// [FIX] Added \s* to allow spaces
+export const R_LABEL = /\\label\s*\{([^}]+)\}/;
 
 // Matches: \ref{key} or \eqref{key}
 export const R_REF = /\\(ref|eqref)\*?\{([^}]+)\}/g;

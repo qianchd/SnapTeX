@@ -1,6 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import katex from 'katex';
-// [WEB COMPATIBILITY] Removed 'os' and 'path' to ensure browser compatibility.
+// [REMOVED] import katex (Moved to rules.ts)
 
 import { LatexDocument } from './document';
 import { DiffEngine } from './diff';
@@ -11,42 +10,35 @@ import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import { IFileProvider } from './file-provider';
 import { normalizeUri } from './utils';
+import { ProtectionManager } from './protection'; // [NEW]
 
 /**
  * Renderer Service.
  * Coordinates the Document Model, Diff Engine, and Markdown Rendering.
- * Acts as the single source of truth for document synchronization logic.
  */
 export class SmartRenderer {
-    // [Memory Optimization]
-    // Removed `lastBlocks: { text: string, html: string }[]` which duplicated the entire DOM in memory.
-    // We only store the plain text of blocks for Diffing.
     private lastBlockTexts: string[] = [];
-
     private lastMacrosJson: string = "";
     private lastCitedKeys: string[] = [];
 
     // Markdown Engine
     private md: MarkdownIt | null = null;
 
-    // Protection Buffers
-    private protectedRenderedBlocks: string[] = [];
-    private protectedRawBlocks: string[] = [];
-    private protectedRefs: string[] = [];
+    // [NEW] Protection Manager
+    public protector = new ProtectionManager();
+
+    // [REMOVED] All specific protected arrays (protectedRenderedBlocks, etc.)
 
     // Configuration
     private _preprocessRules: PreprocessRule[] = [];
-    private currentMacros: Record<string, string> = {};
 
-    // Mapping for Sync Scroll (Block Index -> Line Number)
+    // [CHANGED] Made public so rules can access it for KaTeX rendering
+    public currentMacros: Record<string, string> = {};
+
     private blockMap: { start: number; count: number }[] = [];
-
-    // Scanners
     private scanner = new LatexCounterScanner();
     public globalLabelMap: Record<string, string> = {};
     public citedKeys: string[] = [];
-
-    // Current Context
     public currentDocument: LatexDocument | undefined;
 
     constructor(private fileProvider: IFileProvider) {
@@ -54,9 +46,6 @@ export class SmartRenderer {
         this.reloadAllRules();
     }
 
-    /**
-     * Accessor used by rules.ts to look up BibEntries
-     */
     public get bibEntries(): Map<string, BibEntry> {
         return this.currentDocument ? this.currentDocument.bibEntries : new Map();
     }
@@ -78,7 +67,6 @@ export class SmartRenderer {
     }
 
     public reloadAllRules() {
-        // [WEB COMPATIBILITY] Removed dynamic require of .js config files.
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
         this._sortRules();
     }
@@ -97,7 +85,6 @@ export class SmartRenderer {
     }
 
     public resetState() {
-        // [Memory Optimization] Clear text cache
         this.lastBlockTexts = [];
         this.lastMacrosJson = "";
         this.lastCitedKeys = [];
@@ -121,60 +108,43 @@ export class SmartRenderer {
         return index + 1;
     }
 
-    public pushInlineProtected(content: string) {
-        this.protectedRawBlocks.push(content);
-        return `OOSNAPTEXRAW${this.protectedRawBlocks.length - 1}OO`;
-    }
-    public pushProtectedRef(key: string) {
-        this.protectedRefs.push(key);
-        return `SNREF${this.protectedRefs.length - 1}END`;
-    }
-
-    public renderAndProtectMath(tex: string, displayMode: boolean): string {
-        try {
-            const html = katex.renderToString(tex, {
-                displayMode: displayMode,
-                macros: this.currentMacros,
-                throwOnError: false,
-                errorColor: '#cc0000',
-                globalGroup: true
-            });
-            const index = this.protectedRenderedBlocks.length;
-            this.protectedRenderedBlocks.push(html);
-            return `OOSNAPTEXMATH${index}OO`;
-        } catch (e) {
-            return `<span style="color:red">Math Error</span>`;
-        }
-    }
-
     /**
-     * Check if a file URI is part of the current document structure (e.g. \input subfiles).
+     * [NEW] Generic protection method used by Rules.
+     * @param namespace e.g. 'math', 'raw', 'ref'
+     * @param content The HTML content to protect
      */
+    public protect(namespace: string, content: string): string {
+        return this.protector.protect(namespace, content);
+    }
+
+    // [REMOVED] pushInlineProtected, pushProtectedRef, renderAndProtectMath
+    // These specific logics are moved to rules.ts
+
     public isKnownFile(uriStr: string): boolean {
         if (!this.currentDocument) { return false; }
-
         const target = normalizeUri(uriStr);
-        // Check if it's the root itself
         if (this.currentDocument.rootDir && normalizeUri(this.currentDocument.rootDir) === target) {
              return true;
         }
-
-        // Check source map (includes root and all included files)
         return this.currentDocument.sourceMap.some(loc => normalizeUri(loc.file) === target);
     }
 
     // --- Core Rendering Logic ---
 
-    /**
-     * Helper to render a single block text to HTML
-     */
     private renderBlockToHtml(text: string, index: number): string {
         let processed = text;
+
+        // 1. Apply Rules (Rules now call renderer.protect() directly)
         this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
 
+        // 2. Render Markdown (Tokens like ｢SNAP:math:0｣ are treated as plain text)
         let finalHtml = this.md!.render(processed);
-        finalHtml = this.restoreRenderedMath(finalHtml);
-        finalHtml = this.restoreRawBlocks(finalHtml);
+
+        // 3. [UPDATED] Universal Recursive Resolution
+        // Replaces all tokens, including nested ones (e.g. Ref inside Math)
+        finalHtml = this.protector.resolve(finalHtml);
+
+        // [REMOVED] Specific restore calls (restoreRenderedMath, restoreRawBlocks)
 
         if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
             finalHtml = postProcessHtml(finalHtml);
@@ -185,19 +155,19 @@ export class SmartRenderer {
 
     public render(doc: LatexDocument): PatchPayload {
         this.currentDocument = doc;
-        this.protectedRenderedBlocks = [];
-        this.protectedRawBlocks = [];
-        this.protectedRefs = [];
+
+        // [UPDATED] Reset protector state
+        this.protector.reset();
 
         // 1. Macros
         const currentMacrosJson = JSON.stringify(doc.metadata.macros);
         if (currentMacrosJson !== this.lastMacrosJson) {
             this.rebuildMarkdownEngine(doc.metadata.macros);
-            this.lastBlockTexts = []; // Force full re-render
+            this.lastBlockTexts = [];
             this.lastMacrosJson = currentMacrosJson;
         }
 
-        // 2. Prepare text blocks for Diffing
+        // 2. Prepare text blocks
         const safeTitle = (this.currentTitle || '').replace(/[\r\n]/g, ' ');
         const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
         const safeDate = (this.currentDate || '').replace(/[\r\n]/g, ' ');
@@ -208,13 +178,13 @@ export class SmartRenderer {
             return trimmed.includes('\\maketitle') ? (trimmed + metaFingerprint) : trimmed;
         });
 
-        // 3. Build Block Map
+        // 3. Block Map
         this.blockMap = doc.blockLines.map((line, i) => ({
             start: doc.contentStartLineOffset + line,
             count: doc.blockLineCounts[i]
         }));
 
-        // 4. Run Scanner
+        // 4. Scanner
         const scanResult = this.scanner.scan(newBlockTexts);
         this.globalLabelMap = scanResult.labelMap;
 
@@ -224,29 +194,23 @@ export class SmartRenderer {
                 numberingMap[idx] = bn.counts;
             }
         });
-        const numberingData = {
-            blocks: numberingMap,
-            labels: scanResult.labelMap
-        };
+        const numberingData = { blocks: numberingMap, labels: scanResult.labelMap };
 
-        // 5. Diff Computation (Compare Texts Only)
-        // [Memory Optimization] Diffing now operates on string[], no need to map from object array
+        // 5. Diff
         const diff = DiffEngine.compute(this.lastBlockTexts, newBlockTexts);
 
-        // 6. Citation Analysis
+        // 6. Citations
         const insertedFullText = diff.insertedTexts.join('\n');
         const deletedFullText = diff.deletedTexts.join('\n');
         const bibRegex = R_BIBLIOGRAPHY;
         const bibChanged = bibRegex.test(insertedFullText) || bibRegex.test(deletedFullText);
 
         let shouldFullScan = false;
-
         if (bibChanged || this.lastBlockTexts.length === 0) {
             shouldFullScan = true;
         } else {
             const deletedKeys = this.extractKeysFromText(deletedFullText);
             const insertedKeys = this.extractKeysFromText(insertedFullText);
-
             if (deletedKeys.size !== insertedKeys.size) {
                 shouldFullScan = true;
             } else {
@@ -269,43 +233,25 @@ export class SmartRenderer {
         const keysChanged = JSON.stringify(this.citedKeys) !== JSON.stringify(this.lastCitedKeys);
         this.lastCitedKeys = [...this.citedKeys];
 
-        // 7. Render Inserted Blocks (Just the new ones)
+        // 7. Render Inserted Blocks
         const insertedHtmls = diff.insertedTexts.map((text, i) => {
             const absoluteIndex = diff.start + i;
             return this.renderBlockToHtml(text, absoluteIndex);
         });
 
-        // 8. Decide Payload Type (Full vs Patch)
-        // If too many changes, or first load, do Full Update.
+        // 8. Payload
         const isFullUpdate = this.lastBlockTexts.length === 0 || insertedHtmls.length > 50 || diff.deleteCount > 50;
-
         let payload: PatchPayload;
 
         if (isFullUpdate) {
-            // [Memory Optimization]
-            // On full update, we re-render EVERYTHING.
-            // We do NOT rely on cached HTML (which is gone).
             const fullHtml = newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index)).join('');
-
-            // Update Cache (State Transition)
             this.lastBlockTexts = newBlockTexts;
-
-            payload = {
-                type: 'full',
-                html: fullHtml,
-                numbering: numberingData // [FIXED] Pass numbering data on full update
-            };
+            payload = { type: 'full', html: fullHtml, numbering: numberingData };
         } else {
-            // Patch Update
-            // 8. Handle Shifts (Logic is now handled by frontend via `shift`, backend just calculates it)
-            // No need to update `lastBlocks` HTML because we don't store it.
             let shift = 0;
             if (diff.end > 0 && insertedHtmls.length !== diff.deleteCount) {
                 shift = insertedHtmls.length - diff.deleteCount;
             }
-
-            // 9. Update Cache (Text Only)
-            // Splice the text array to match the new state
             this.lastBlockTexts = [
                 ...this.lastBlockTexts.slice(0, diff.start),
                 ...diff.insertedTexts,
@@ -332,10 +278,8 @@ export class SmartRenderer {
             };
         }
 
-        // [Deep GC] Aggressive Cleanup
-        this.protectedRenderedBlocks = [];
-        this.protectedRawBlocks = [];
-        this.protectedRefs = [];
+        // [Deep GC] Clear protection storage
+        this.protector.reset();
 
         return payload;
     }
@@ -363,18 +307,8 @@ export class SmartRenderer {
         }
         return keys;
     }
-    private restoreRenderedMath(html: string): string {
-        return html.replace(/OOSNAPTEXMATH(\d+)OO/g, (m, i) => {
-            let rendered = this.protectedRenderedBlocks[parseInt(i)] || m;
-            return rendered.replace(/SNREF(\d+)END/g, (mm, ri) => {
-                const key = this.protectedRefs[parseInt(ri)];
-                return key ? `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>` : mm;
-            });
-        });
-    }
-    private restoreRawBlocks(html: string): string {
-        return html.replace(/OOSNAPTEXRAW(\d+)OO/g, (m, i) => this.protectedRawBlocks[parseInt(i)] || m);
-    }
+
+    // [REMOVED] restoreRenderedMath, restoreRawBlocks
 
     public getPreviewSyncData(filePath: string, line: number) {
         if (!this.currentDocument) {return null;}
@@ -382,28 +316,15 @@ export class SmartRenderer {
         return flatLine !== -1 ? this.getBlockIndexByLine(flatLine) : null;
     }
 
-    /**
-     * [STEP 4] Unified Source Synchronization
-     * Calculates the source location for a given preview block and ratio.
-     * * @param blockIndex Index of the block in the preview.
-     * @param ratio Vertical ratio within the block (0.0 to 1.0).
-     * @returns SourceLocation object or null if mapping fails.
-     */
     public getSourceSyncData(blockIndex: number, ratio: number): SourceLocation | null {
         if (!this.currentDocument) {return null;}
         const flatLine = this.getLineByBlockIndex(blockIndex, ratio);
         return this.currentDocument.getOriginalPosition(flatLine) || null;
     }
 
-    // Internal helpers (kept public if strictly needed for tests, but main logic should use above methods)
-
     public getBlockIndexByLine(line: number): { index: number; ratio: number } {
-        if (this.blockMap.length === 0) {
-            return { index: 0, ratio: 0 };
-        }
-        if (line < this.blockMap[0].start) {
-            return { index: 0, ratio: 0 };
-        }
+        if (this.blockMap.length === 0) { return { index: 0, ratio: 0 }; }
+        if (line < this.blockMap[0].start) { return { index: 0, ratio: 0 }; }
         for (let i = 0; i < this.blockMap.length; i++) {
             const b = this.blockMap[i];
             const nextStart = (i + 1 < this.blockMap.length) ? this.blockMap[i+1].start : Infinity;
@@ -423,7 +344,6 @@ export class SmartRenderer {
         return 0;
     }
 
-    // Forwarding delegates to Document (Legacy support, though internal methods are preferred)
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {
         return this.currentDocument?.getOriginalPosition(flatLine);
     }

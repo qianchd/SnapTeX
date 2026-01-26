@@ -2,6 +2,10 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.9] - 2026-01-26
+- **Fix bug**: cross-ref of figures tables algorithms
+- **Add**: General protection toolkit in rules, which replace the old env-specific protections;
+
 ## [0.5.8] - 2026-01-26
 - **Fix bug**: update when edit subfile
 - **Add**: delay a while for tooltip panel

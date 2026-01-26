@@ -56,7 +56,7 @@
             document.body.addEventListener('mouseout', (e) => {
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
-                    this.cancelShow(); // [NEW] Cancel pending show if mouse leaves quickly
+                    this.cancelShow(); // Cancel pending show if mouse leaves quickly
                     this.onLinkLeave();
                 }
             });
@@ -69,7 +69,7 @@
         }
 
         /**
-         * [NEW] Schedule the tooltip to show after a delay.
+         * Schedule the tooltip to show after a delay.
          * Prevents flickering when moving mouse quickly across the screen.
          */
         scheduleShow(link) {
@@ -81,14 +81,14 @@
             // Clear any previous pending show request
             this.cancelShow();
 
-            // Wait 200ms before showing
+            // Wait 180ms before showing
             this.showTimer = setTimeout(() => {
                 this.onLinkEnter(link);
             }, 180);
         }
 
         /**
-         * [NEW] Cancel a pending show request.
+         * Cancel a pending show request.
          */
         cancelShow() {
             if (this.showTimer) {
@@ -133,7 +133,7 @@
             this.tooltip.innerHTML = '';
             const frag = document.createDocumentFragment();
 
-            // [Fix 5] Context Extraction (Up and Down)
+            // Context Extraction (Up and Down)
             if (container.classList.contains('latex-block')) {
 
                 // 1. Previous Context
@@ -168,13 +168,39 @@
 
             this.tooltip.appendChild(frag);
 
-            // Apply Positioning (Vertical only; Horizontal is CSS-based)
+            // [FIX] Manually refresh PDF canvases in the tooltip
+            // Cloned canvases are blank and have no IDs, so we must re-initialize them.
+            this.refreshTooltipPDFs();
+
+            // Apply Smart Positioning
             this.positionTooltip(linkElement);
 
             this.tooltip.classList.add('visible');
         }
 
-        // Helper: Remove IDs to prevent duplicate ID errors in DOM
+        /**
+         * [NEW] Re-requests rendering for any PDF canvases inside the tooltip.
+         */
+        refreshTooltipPDFs() {
+            const canvases = this.tooltip.querySelectorAll('canvas[data-req-path]');
+            canvases.forEach(canvas => {
+                // 1. Assign a new unique ID (since cleanNode removed the original)
+                const newId = 'tooltip-pdf-' + Math.random().toString(36).substr(2, 9);
+                canvas.id = newId;
+
+                // 2. Reset render flags so the logic treats it as a new request
+                canvas.removeAttribute('data-rendered');
+                canvas.removeAttribute('data-requested');
+
+                // 3. Request rendering
+                const path = canvas.getAttribute('data-req-path');
+                if (path) {
+                    // This calls realRequestPdf (mapped at bottom of script)
+                    window.renderPdfToCanvas(path, newId);
+                }
+            });
+        }
+
         cleanNode(node) {
             if (node.id) node.removeAttribute('id');
             node.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
@@ -189,8 +215,12 @@
             const linkRect = linkElement.getBoundingClientRect();
             const tooltipRect = this.tooltip.getBoundingClientRect();
 
+            const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
-            const margin = 15; // Vertical spacing
+            const margin = 15;
+
+            let left = (viewportWidth - tooltipRect.width) / 2;
+            if (left < margin) left = margin;
 
             // Decide placement based on link's screen position
             const isTopHalf = linkRect.top < (viewportHeight / 2);
