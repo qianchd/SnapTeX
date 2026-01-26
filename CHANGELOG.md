@@ -2,6 +2,10 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.6] - 2026-01-26
+- **Add**: tooltip preview panel on hover for cross-refs.
+- **Add**: command `snaptex.toggleAutoScroll`, with a default keyboard shortcut `ctrl+alt+a`
+
 ## [0.5.5] - 2026-01-11
 - **Fix bug**: unified autoScroll uri formatter across platforms
 - **Feature**: Full support vscode.dev

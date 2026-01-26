@@ -118,6 +118,17 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
+    context.subscriptions.push(vscode.commands.registerCommand('snaptex.toggleAutoScroll', async () => {
+        const config = vscode.workspace.getConfiguration('snaptex');
+        const currentValue = config.get<boolean>('autoScrollSync', true);
+
+        // Update setting globally (User Settings)
+        await config.update('autoScrollSync', !currentValue, vscode.ConfigurationTarget.Global);
+
+        const status = !currentValue ? 'Enabled' : 'Disabled';
+        vscode.window.setStatusBarMessage(`SnapTeX Auto Scroll: ${status}`, 3000);
+    }));
+
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.syncToPreview', () => {
         const editor = vscode.window.activeTextEditor;
         if (editor) { triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character); }

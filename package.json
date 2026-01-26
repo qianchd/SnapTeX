@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -47,6 +47,11 @@
         "category": "SnapTeX"
       },
       {
+        "command": "snaptex.toggleAutoScroll",
+        "title": "SnapTeX: Toggle Auto Scroll",
+        "category": "SnapTeX"
+      },
+      {
         "command": "snaptex.syncToPreview",
         "title": "SnapTeX: Sync to Preview",
         "category": "SnapTeX"
@@ -66,6 +71,12 @@
         "command": "snaptex.start",
         "key": "ctrl+k v",
         "mac": "cmd+k v",
+        "when": "editorLangId == latex || editorLangId == tex"
+      },
+      {
+        "command": "snaptex.toggleAutoScroll",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
         "when": "editorLangId == latex || editorLangId == tex"
       },
       {
