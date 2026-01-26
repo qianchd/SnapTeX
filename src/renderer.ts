@@ -10,6 +10,7 @@ import { LatexCounterScanner } from './scanner';
 import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import { IFileProvider } from './file-provider';
+import { normalizeUri } from './utils';
 
 /**
  * Renderer Service.
@@ -144,6 +145,22 @@ export class SmartRenderer {
         } catch (e) {
             return `<span style="color:red">Math Error</span>`;
         }
+    }
+
+    /**
+     * Check if a file URI is part of the current document structure (e.g. \input subfiles).
+     */
+    public isKnownFile(uriStr: string): boolean {
+        if (!this.currentDocument) { return false; }
+
+        const target = normalizeUri(uriStr);
+        // Check if it's the root itself
+        if (this.currentDocument.rootDir && normalizeUri(this.currentDocument.rootDir) === target) {
+             return true;
+        }
+
+        // Check source map (includes root and all included files)
+        return this.currentDocument.sourceMap.some(loc => normalizeUri(loc.file) === target);
     }
 
     // --- Core Rendering Logic ---

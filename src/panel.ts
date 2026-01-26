@@ -35,7 +35,7 @@ export class TexPreviewPanel {
     private readonly _onWebviewLoadedEmitter = new vscode.EventEmitter<void>();
     public readonly onWebviewLoaded = this._onWebviewLoadedEmitter.event;
 
-    // [CHANGE] Constructor accepts Uri instead of string path
+    // Constructor accepts Uri instead of string path
     public static createOrShow(extensionUri: vscode.Uri, renderer: SmartRenderer): TexPreviewPanel {
         const editor = vscode.window.activeTextEditor;
         const column = editor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One;
@@ -44,7 +44,7 @@ export class TexPreviewPanel {
             return TexPreviewPanel.currentPanel;
         }
 
-        // [CHANGE] Use vscode.Uri.joinPath for resource roots
+        // Use vscode.Uri.joinPath for resource roots
         const mediaRoot = vscode.Uri.joinPath(extensionUri, 'media');
 
         const panel = vscode.window.createWebviewPanel(
@@ -134,7 +134,7 @@ export class TexPreviewPanel {
     }
 
     // Read PDF file and send back base64 data
-private async handlePdfRequest(message: any) {
+    private async handlePdfRequest(message: any) {
         if (!this._sourceUri || !message.path) {return;}
         try {
             const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
@@ -156,9 +156,7 @@ private async handlePdfRequest(message: any) {
                     data: base64
                 });
             } else {
-                console.warn(`[SnapTeX] PDF not found.`);
-                console.warn(`  - Target URI: ${pdfUri.toString()}`);
-                console.warn(`  - Clean Path: ${cleanPath}`);
+                console.warn(`[SnapTeX] PDF not found: ${pdfUri.toString()}`);
             }
         } catch (e) {
             console.error('[SnapTeX] Failed to read PDF:', e);
@@ -169,23 +167,47 @@ private async handlePdfRequest(message: any) {
         this._panel.webview.postMessage(message);
     }
 
-    public async update() {
+    /**
+     * [UPDATED] Update logic to support subfiles.
+     * @param rootUri If provided, forces rendering this specific file (the Root),
+     * ignoring the currently active editor file.
+     */
+    public async update(rootUri?: vscode.Uri) {
         const editor = vscode.window.activeTextEditor;
-        let doc = editor ? editor.document : undefined;
 
-        if (!doc && this._sourceUri) {
-            const docs = vscode.workspace.textDocuments;
-            doc = docs.find(d => d.uri.toString() === this._sourceUri!.toString());
+        // Priority:
+        // 1. Explicit Root (passed from extension.ts logic)
+        // 2. Active Editor Document
+        // 3. Last used Source URI
+        let docUri = rootUri;
+
+        if (!docUri && editor) {
+            docUri = editor.document.uri;
         }
-        if (!doc) { return; }
+        if (!docUri && this._sourceUri) {
+            docUri = this._sourceUri;
+        }
+
+        if (!docUri) { return; }
+
+        // Fetch text content (from open editor buffer if available, else from disk)
+        let text = "";
+        try {
+            const doc = await vscode.workspace.openTextDocument(docUri);
+            text = doc.getText();
+        } catch (e) {
+            console.warn(`[SnapTeX] Could not open document: ${docUri}`);
+            return;
+        }
 
         const currentVersion = ++this._updateVersion;
-        const filename = getBasename(doc.uri);
+        const filename = getBasename(docUri);
         this._panel.title = `𖧼 ${filename}`;
-        this._sourceUri = doc.uri;
+
+        // Update the panel's source of truth to the Root file
+        this._sourceUri = docUri;
 
         const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
-        const text = doc.getText();
 
         if (this._currentDocument) {
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);

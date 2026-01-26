@@ -93,14 +93,53 @@ export function activate(context: vscode.ExtensionContext) {
         });
     };
 
+    /**
+     * [FIXED] Smart Update Preview Logic
+     * Handles file switching policies and subfile detection.
+     * @param force If true, forces a context switch (used by manual commands or explicit tab switch events).
+     */
     const updatePreview = (force: boolean = false) => {
         const editor = vscode.window.activeTextEditor;
         if (!editor || !TexPreviewPanel.currentPanel) {return;}
-        if (!force && currentRenderedUri && !areUrisEqual(editor.document.uri, currentRenderedUri)) {return;}
 
-        currentRenderedUri = editor.document.uri;
+        const activeUri = editor.document.uri;
+        let targetRoot = activeUri; // Default: Assume the active file is the root
+
+        // Check Configuration
+        const config = vscode.workspace.getConfiguration('snaptex');
+        const renderOnSwitch = config.get<boolean>('renderOnSwitch', true);
+
+        // [SMART ROOT DETECTION]
+        if (currentRenderedUri) {
+            // 1. Is it the root itself? -> Keep Root
+            if (areUrisEqual(activeUri, currentRenderedUri)) {
+                targetRoot = currentRenderedUri;
+            }
+            // 2. Is it a known subfile of the current project? -> Keep Root
+            else if (renderer.isKnownFile(activeUri.toString())) {
+                targetRoot = currentRenderedUri;
+            }
+            // 3. Otherwise, it's a completely new/unrelated file.
+            else {
+                // [NEW LOGIC] Check "Render On Switch" policy.
+                // If the user disabled 'renderOnSwitch', and this was NOT a forced update (e.g. manual command),
+                // then we should ignore this unrelated file and keep showing the old project.
+                if (!renderOnSwitch && !force) {
+                    return; // ABORT: Do not render, do not switch.
+                }
+
+                // If policy allows, switch context to the new file.
+                targetRoot = activeUri;
+            }
+        }
+
+        // Apply our decision
+        currentRenderedUri = targetRoot;
+
         renderer.reloadAllRules();
-        TexPreviewPanel.currentPanel.update();
+
+        // Tell the Panel explicitly which file is the Root.
+        TexPreviewPanel.currentPanel.update(targetRoot);
     };
 
     const debouncedUpdatePreview = debounce(
@@ -111,7 +150,10 @@ export function activate(context: vscode.ExtensionContext) {
     // --- Commands ---
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {
-        if (TexPreviewPanel.currentPanel) { updatePreview(true); }
+        if (TexPreviewPanel.currentPanel) {
+            // Manual start always forces an update
+            updatePreview(true);
+        }
         else {
             TexPreviewPanel.createOrShow(context.extensionUri, renderer);
             if (vscode.window.activeTextEditor) { currentRenderedUri = vscode.window.activeTextEditor.document.uri; }
@@ -257,23 +299,27 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     vscode.workspace.onDidSaveTextDocument(doc => {
-        if (vscode.window.activeTextEditor && doc === vscode.window.activeTextEditor.document) {updatePreview(false);}
+        // [FIX] Always try to update. Smart logic inside updatePreview will decide whether to proceed or abort.
+        if (vscode.window.activeTextEditor) {updatePreview(false);}
     });
 
     vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
             const currentConfig = vscode.workspace.getConfiguration('snaptex');
             if (currentConfig.get<boolean>('livePreview', true)) {
+                // Live preview is considered an "implicit" update, so force=false
                 debouncedUpdatePreview(false);
             }
         }
     });
 
     vscode.window.onDidChangeActiveTextEditor(editor => {
-        if (editor && vscode.workspace.getConfiguration('snaptex').get<boolean>('renderOnSwitch', true)) {updatePreview(true);}
+        // [FIX] Only force an update if Render On Switch is ENABLED
+        if (editor && vscode.workspace.getConfiguration('snaptex').get<boolean>('renderOnSwitch', true)) {
+            updatePreview(true);
+        }
     });
 
-    // Webview Serializer
     if (vscode.window.registerWebviewPanelSerializer) {
         vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
             async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, _state: any) {

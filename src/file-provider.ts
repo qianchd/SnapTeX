@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { normalizeUri } from './utils'; // [ADD] Import normalizeUri
 
 /**
  * Interface for file system operations.
@@ -19,6 +20,16 @@ export interface IFileProvider {
  */
 export class VscodeFileProvider implements IFileProvider {
     async read(uri: vscode.Uri): Promise<string> {
+        // [FIX] Prioritize reading from open text documents (dirty buffers).
+        // This is CRITICAL for Live Preview of subfiles (\input).
+        // Without this, the parser reads the old file from disk until you manually save.
+        const targetNorm = normalizeUri(uri);
+        const openDoc = vscode.workspace.textDocuments.find(d => normalizeUri(d.uri) === targetNorm);
+
+        if (openDoc) {
+            return openDoc.getText();
+        }
+
         try {
             const uint8Array = await this.readBuffer(uri);
             return new TextDecoder().decode(uint8Array);
