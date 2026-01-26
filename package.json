@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",

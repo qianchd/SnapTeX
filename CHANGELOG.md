@@ -2,6 +2,9 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.8] - 2026-01-26
+- **Fix bug**: update when edit subfile
+
 ## [0.5.7] - 2026-01-26
 - **Fix bug**: forward sync fail for multi-file document (Remove the root file checker);
 
