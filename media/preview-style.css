@@ -361,6 +361,74 @@ ul li strong:first-child {
     animation: fade-word 1.5s ease-out;
 }
 
+        /* --- [UPDATED] Hover Tooltip Styles --- */
+        .hover-tooltip {
+            position: fixed;
+            z-index: 1000;
+
+            /* [Feature] Transparency & Blur Effect */
+            background: var(--vscode-editor-background, white);
+            /* Slightly transparent when visible (handled in .visible class) */
+            backdrop-filter: blur(4px);
+
+            color: var(--vscode-editor-foreground, #333);
+            border: 1px solid var(--vscode-widget-border, #dcdcdc);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.25); /* Deeper shadow for floating effect */
+            border-radius: 8px;
+            padding: 12px 20px;
+
+            /* [Fix 1] Increased Width & Height */
+            max-width: 95vw;
+            width: max-content;
+            max-height: 48vh;
+
+            overflow-y: auto;
+            overflow-x: hidden;
+
+            /* [Fix 4] Typography adjustment */
+            font-size: 0.8em;
+            line-height: 1.1;
+
+            /* [Fix 2] Allow mouse interaction (scrolling) */
+            pointer-events: auto;
+
+            opacity: 0;
+            transition: opacity 0.15s ease-in-out;
+            visibility: hidden;
+        }
+
+        .hover-tooltip.visible {
+            opacity: 0.9; /* Slight transparency */
+            visibility: visible;
+        }
+
+        /* [Fix 5] Context Block Styles */
+        .hover-tooltip .context-block {
+            opacity: 0.6; /* Context is faded */
+            transform: scale(0.98);
+            margin-bottom: 4px !important;
+            border-left: 3px solid transparent;
+        }
+
+        /* Highlight the actual target */
+        .hover-tooltip .target-block {
+            border-left: 4px solid var(--vscode-textLink-activeForeground, #007acc);
+            padding-left: 12px !important;
+            background-color: var(--vscode-editor-selectionBackground, rgba(0,0,0,0.05));
+            border-radius: 4px;
+            margin: 12px 0 !important;
+        }
+
+        /* Reset internal latex-block styles to fit tooltip */
+        .hover-tooltip .latex-block {
+            margin: 4px 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            background: transparent !important;
+        }
+
+
 /* Styles for VS Code (Webkit) */
 /* Force application to all elements */
 html, body {

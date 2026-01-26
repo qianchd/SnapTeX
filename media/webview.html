@@ -19,6 +19,8 @@
 <body>
 <div id="content-root"></div>
 
+<div id="hover-tooltip" class="hover-tooltip"></div>
+
 <script>
     const vscode = acquireVsCodeApi();
     window.pdfReqQueue = [];
@@ -28,31 +30,186 @@
     };
 
     /**
-     * PreviewController: Manages the Webview State and Scrolling Logic
-     * Implements a State Machine to handle transitions between Idle, Rendering, and Auto-Scrolling.
+     * [UPDATED] HoverPreviewController
+     * Handles displaying context previews (target + neighbors) when hovering over cross-reference links.
+     */
+    class HoverPreviewController {
+        constructor() {
+            this.tooltip = document.getElementById('hover-tooltip');
+            this.hideTimer = null;
+            this.currentLink = null;
+            this.bindEvents();
+        }
+
+        bindEvents() {
+            // 1. Link Hover Events (Delegated on body)
+            document.body.addEventListener('mouseover', (e) => {
+                const link = e.target.closest('a');
+                // Only trigger for internal anchor links (#id)
+                if (link && link.getAttribute('href')?.startsWith('#')) {
+                    this.onLinkEnter(link);
+                }
+            });
+
+            document.body.addEventListener('mouseout', (e) => {
+                const link = e.target.closest('a');
+                if (link && link.getAttribute('href')?.startsWith('#')) {
+                    this.onLinkLeave();
+                }
+            });
+
+            // 2. [Fix 2] Tooltip Hover Events
+            // Keep tooltip visible when user moves mouse over it to scroll
+            this.tooltip.addEventListener('mouseenter', () => this.clearHideTimer());
+            this.tooltip.addEventListener('mouseleave', () => this.startHideTimer());
+        }
+
+        onLinkEnter(link) {
+            this.clearHideTimer();
+
+            // Avoid re-calculation if already showing the same link
+            if (this.currentLink === link && this.tooltip.classList.contains('visible')) return;
+
+            this.currentLink = link;
+            const targetId = link.getAttribute('href').substring(1); // Strip '#'
+            this.showPreview(link, targetId);
+        }
+
+        onLinkLeave() {
+            this.startHideTimer();
+        }
+
+        startHideTimer() {
+            // Delay hiding (300ms) to allow user to move cursor to the tooltip
+            this.hideTimer = setTimeout(() => {
+                this.tooltip.classList.remove('visible');
+                this.currentLink = null;
+            }, 300);
+        }
+
+        clearHideTimer() {
+            if (this.hideTimer) {
+                clearTimeout(this.hideTimer);
+                this.hideTimer = null;
+            }
+        }
+
+        showPreview(linkElement, targetId) {
+            const targetEl = document.getElementById(targetId);
+            if (!targetEl) return;
+
+            // Find semantic container (latex-block or bibliography item)
+            const container = targetEl.closest('.latex-block') || targetEl.closest('.bib-item');
+            if (!container) return;
+
+            this.tooltip.innerHTML = '';
+            const frag = document.createDocumentFragment();
+
+            // [Fix 5] Context Extraction (Up and Down)
+            if (container.classList.contains('latex-block')) {
+
+                // 1. Previous Context
+                const prev = container.previousElementSibling;
+                if (prev && prev.classList.contains('latex-block')) {
+                    const clone = prev.cloneNode(true);
+                    clone.classList.add('context-block');
+                    this.cleanNode(clone);
+                    frag.appendChild(clone);
+                }
+
+                // 2. Target Content
+                const current = container.cloneNode(true);
+                current.classList.add('target-block');
+                this.cleanNode(current);
+                frag.appendChild(current);
+
+                // 3. Next Context
+                const next = container.nextElementSibling;
+                if (next && next.classList.contains('latex-block')) {
+                    const clone = next.cloneNode(true);
+                    clone.classList.add('context-block');
+                    this.cleanNode(clone);
+                    frag.appendChild(clone);
+                }
+            } else {
+                // For bibliography, just show the entry itself
+                const clone = container.cloneNode(true);
+                this.cleanNode(clone);
+                frag.appendChild(clone);
+            }
+
+            this.tooltip.appendChild(frag);
+
+            // [CRITICAL] Apply Smart Centered Positioning
+            this.positionTooltip(linkElement);
+
+            this.tooltip.classList.add('visible');
+        }
+
+        // Helper: Remove IDs to prevent duplicate ID errors in DOM
+        cleanNode(node) {
+            if (node.id) node.removeAttribute('id');
+            node.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+        }
+
+        /**
+         * [UPDATED] Smart Positioning Logic
+         * - Horizontal: Always CENTERED in the viewport.
+         * - Vertical: Based on link position (Top half -> Below, Bottom half -> Above).
+         */
+        positionTooltip(linkElement) {
+            const rect = linkElement.getBoundingClientRect();
+            const tooltipRect = this.tooltip.getBoundingClientRect();
+
+            const viewportHeight = window.innerHeight;
+            const margin = 20;
+
+            // 2. Vertical Positioning: Smart Flip
+            let top;
+
+            // Check if link is in the upper or lower half of the screen
+            const isTopHalf = rect.top < (viewportHeight / 2);
+
+            if (isTopHalf) {
+                // Link is high -> Show BELOW the link
+                top = rect.bottom + margin;
+
+                // Edge case handling (optional): if it overflows bottom
+                // The max-height CSS usually handles this content clipping.
+            } else {
+                // Link is low -> Show ABOVE the link
+                top = rect.top - tooltipRect.height - margin;
+
+                // Edge case: If tooltip goes off-screen top
+                if (top < margin) {
+                    top = margin;
+                }
+            }
+
+            this.tooltip.style.top = `${top}px`;
+            this.tooltip.style.left = `0.5vw`;
+        }
+    }
+
+    /**
+     * PreviewController: Main controller logic
      */
     class PreviewController {
         constructor() {
-            // DOM Elements
             this.contentRoot = document.getElementById('content-root');
-
-            // State Machine: 'IDLE' | 'RENDERING' | 'SCROLLING_AUTO'
-            this.state = 'SCROLLING_AUTO'; // Start locked (initial load)
-
-            // State Data
+            this.state = 'SCROLLING_AUTO';
             this.scrollTimeout = null;
             this.pendingScroll = null;
             this.isFirstLoad = true;
-
-            // Anti-Jitter Data
             this.lastTargetIndex = -1;
             this.lastTargetRatio = 0;
             this.lastScrollTime = 0;
 
-            // Bind Methods
             this.bindEvents();
 
-            // Initial Signal
+            // Initialize Hover Logic
+            this.hoverCtrl = new HoverPreviewController();
+
             vscode.postMessage({ command: 'webviewLoaded' });
         }
 
@@ -62,34 +219,21 @@
             document.addEventListener('dblclick', event => this.onDoubleClick(event));
         }
 
-        // --- State Management ---
-
-        setState(newState) {
-            this.state = newState;
-            // console.log(`[State] -> ${newState}`); // Debug if needed
-        }
+        setState(newState) { this.state = newState; }
 
         lockScrolling(duration) {
             this.setState('SCROLLING_AUTO');
             if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
             this.scrollTimeout = setTimeout(() => {
-                if (this.state === 'SCROLLING_AUTO') {
-                    this.setState('IDLE');
-                }
+                if (this.state === 'SCROLLING_AUTO') { this.setState('IDLE'); }
             }, duration);
         }
-
-        // --- Event Handlers ---
 
         onMessage(event) {
             const { command, payload } = event.data;
             switch (command) {
-                case 'update':
-                    this.handleUpdate(payload);
-                    break;
-                case 'scrollToBlock':
-                    this.handleScrollCommand(event.data);
-                    break;
+                case 'update': this.handleUpdate(payload); break;
+                case 'scrollToBlock': this.handleScrollCommand(event.data); break;
             }
         }
 
@@ -98,31 +242,24 @@
                 this.setState('RENDERING');
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
-
                 this.smartFullUpdate(payload.html);
-
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            this.onRenderComplete(scrollState);
-                        });
+                        requestAnimationFrame(() => { this.onRenderComplete(scrollState); });
                     });
                 });
             } else if (payload.type === 'patch') {
                 this.applyPatch(payload);
             }
-
             if (payload.numbering) {
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
             }
-
             setTimeout(() => this.renderPendingPdfs(), 50);
         }
 
         onRenderComplete(savedScrollState) {
             this.setState('IDLE');
             document.body.classList.remove('preload-mode');
-
             let scrollHandled = false;
             if (this.pendingScroll) {
                 this.executeScroll(this.pendingScroll);
@@ -132,16 +269,9 @@
                 this.restoreScrollState(savedScrollState);
                 scrollHandled = true;
             }
-
             this.isFirstLoad = false;
-
-            // If no scroll action was taken, ensure we unlock quickly (similar to original logic)
-            if (!scrollHandled && this.state === 'SCROLLING_AUTO') {
-                 this.lockScrolling(200);
-            } else if (!scrollHandled) {
-                // Ensure we are IDLE if nothing happened
-                this.setState('IDLE');
-            }
+            if (!scrollHandled && this.state === 'SCROLLING_AUTO') { this.lockScrolling(200); }
+            else if (!scrollHandled) { this.setState('IDLE'); }
         }
 
         handleScrollCommand(data) {
@@ -150,18 +280,12 @@
         }
 
         onScroll() {
-            // Block if locked
             if (this.state !== 'IDLE') return;
-
-            // Throttle
             const now = Date.now();
             if (now - this.lastScrollTime < 100) return;
             this.lastScrollTime = now;
-
-            // Find Center Block
             const blocks = document.querySelectorAll('.latex-block');
             const viewCenter = window.innerHeight / 2;
-
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
                 if (rect.top <= viewCenter && rect.bottom >= viewCenter) {
@@ -171,9 +295,6 @@
                         const offset = viewCenter - rect.top;
                         ratio = Math.max(0, Math.min(1, offset / rect.height));
                     }
-
-                    // Anti-Loop Check (Optional: You can enable the lastTarget check here if desired,
-                    // but sticking to your 'stable' version which just sends it)
                     vscode.postMessage({ command: 'syncScroll', index: index, ratio: ratio });
                     break;
                 }
@@ -189,8 +310,6 @@
                     const relativeY = event.clientY - rect.top;
                     const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
                     let anchorText = "";
-
-                    // Anchor Logic
                     const selection = window.getSelection();
                     if (selection && selection.toString().trim().length > 0) {
                         anchorText = selection.toString().trim();
@@ -205,19 +324,12 @@
                             if (end > start) { anchorText = text.substring(start, end); }
                         }
                     }
-
                     vscode.postMessage({
-                        command: 'revealLine',
-                        index: parseInt(index),
-                        ratio: ratio,
-                        anchor: anchorText,
-                        viewRatio: event.clientY / window.innerHeight
+                        command: 'revealLine', index: parseInt(index), ratio: ratio, anchor: anchorText, viewRatio: event.clientY / window.innerHeight
                     });
                 }
             }
         }
-
-        // --- Logic Methods ---
 
         saveScrollState() {
             const blocks = document.querySelectorAll('.latex-block');
@@ -236,19 +348,15 @@
             if (block) {
                 const newTop = block.getBoundingClientRect().top + window.scrollY;
                 let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
-
-                // Lock and Scroll
-                this.lockScrolling(500); // Standard lock for restore
+                this.lockScrolling(500);
                 window.scrollTo({ top: targetY, behavior: 'auto' });
             }
         }
 
         executeScroll(data) {
             const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
-
             this.lastTargetIndex = index;
             this.lastTargetRatio = ratio || 0;
-
             const target = document.querySelector('.latex-block[data-index="' + index + '"]');
             if (target) {
                 const calcY = () => {
@@ -258,38 +366,25 @@
                     let y = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
                     if (anchor) {
                         const textTop = this.findTextOffsetInBlock(target, anchor);
-                        if (textTop !== null) {
-                            y = textTop + window.scrollY - (window.innerHeight * viewRatio);
-                        }
+                        if (textTop !== null) { y = textTop + window.scrollY - (window.innerHeight * viewRatio); }
                     }
                     return y;
                 };
-
                 const targetY = calcY();
                 const currentY = window.scrollY;
-
-                // [Anti-Jitter Threshold] (Maintained from your stable version)
-                if (Math.abs(currentY - targetY) < 50 && auto) {
-                    return;
-                }
-
+                if (Math.abs(currentY - targetY) < 50 && auto) { return; }
                 const lockTime = auto ? 600 : 1000;
                 this.lockScrolling(lockTime);
-
                 window.scrollTo({ top: targetY, behavior: 'auto' });
-
                 if (!auto) {
                     target.classList.add('jump-highlight');
                     setTimeout(() => target.classList.remove('jump-highlight'), 1000);
                     if (anchor) this.highlightTextInNode(target, anchor);
                 }
-
-                // [First Load Correction]
                 if (this.isFirstLoad) {
                     setTimeout(() => {
                         if (!target.isConnected) return;
                         const newTargetY = calcY();
-                        // 75px Check
                         if (Math.abs(window.scrollY - newTargetY) > 75 || !auto) {
                             this.lockScrolling(500);
                             window.scrollTo({ top: newTargetY, behavior: 'auto' });
@@ -298,8 +393,6 @@
                 }
             }
         }
-
-        // --- DOM Helpers ---
 
         smartFullUpdate(newHtml) {
             const parser = new DOMParser();
@@ -320,7 +413,6 @@
             const { start, deleteCount, htmls = [], shift = 0 } = payload;
             const targetIndex = start + deleteCount;
             const referenceNode = this.contentRoot.children[targetIndex] || null;
-
             for (let i = 0; i < deleteCount; i++) {
                 if (this.contentRoot.children[start]) this.contentRoot.removeChild(this.contentRoot.children[start]);
             }
@@ -380,7 +472,6 @@
             pdfCanvases.forEach(canvas => {
                 const path = canvas.getAttribute('data-req-path');
                 const id = canvas.id;
-                // Check if already rendered or requested
                 if (path && id && !canvas.getAttribute('data-rendered') && !canvas.getAttribute('data-requested')) {
                     window.renderPdfToCanvas(path, id);
                 }
@@ -443,7 +534,6 @@
         }
     }
 
-    // Initialize Controller
     const controller = new PreviewController();
 </script>
 
@@ -451,7 +541,6 @@
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
 
-    // Helper: Base64 to Uint8Array
     function base64ToUint8Array(base64) {
         const binary_string = window.atob(base64);
         const len = binary_string.length;
@@ -462,7 +551,6 @@
         return bytes;
     }
 
-    // Listener for PDF Data
     window.addEventListener('message', event => {
         const msg = event.data;
         if (msg.command === 'pdfData') {
@@ -470,7 +558,6 @@
         }
     });
 
-    // Main PDF Render Function (Data driven)
     async function renderPdfFromData(canvasId, base64Data) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
@@ -499,15 +586,12 @@
         }
     }
 
-    // Exposed function to initiate request
     const realRequestPdf = (path, canvasId) => {
         const canvas = document.getElementById(canvasId);
-        // Check if already requested to avoid loop
         if (!canvas || canvas.getAttribute('data-requested') === 'true') return;
 
         canvas.setAttribute('data-requested', 'true');
 
-        // Post message to extension to fetch file content
         vscode.postMessage({
             command: 'requestPdf',
             id: canvasId,
