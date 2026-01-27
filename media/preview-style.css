@@ -361,73 +361,160 @@ ul li strong:first-child {
     animation: fade-word 1.5s ease-out;
 }
 
-        /* --- [UPDATED] Hover Tooltip Styles --- */
-        .hover-tooltip {
-            position: fixed;
-            z-index: 1000;
 
-            /* [Feature] Transparency & Blur Effect */
-            background: var(--vscode-editor-background, white);
-            /* Slightly transparent when visible (handled in .visible class) */
-            backdrop-filter: blur(4px);
+/* media/preview-style.css - Optimized & Fixed */
 
-            color: var(--vscode-editor-foreground, #333);
-            border: 1px solid var(--vscode-widget-border, #dcdcdc);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.25); /* Deeper shadow for floating effect */
-            border-radius: 8px;
-            padding: 12px 20px;
+/* --- Main Floating Window --- */
+.hover-tooltip {
+    position: fixed;
+    z-index: 1000;
 
-            /* [Fix 1] Increased Width & Height */
-            max-width: 95vw;
-            width: max-content;
-            max-height: 48vh;
+    display: flex;
+    flex-direction: column;
 
-            overflow-y: auto;
-            overflow-x: hidden;
+    /* [RESTORED] Initial Centering */
+    left: 2vw;
+    top: 0;
 
-            /* [Fix 4] Typography adjustment */
-            font-size: 0.8em;
-            line-height: 1.1;
+    /* [FIX] Prevent size jumping during JS resize */
+    box-sizing: border-box;
 
-            /* [Fix 2] Allow mouse interaction (scrolling) */
-            pointer-events: auto;
+    /* Visuals */
+    background: var(--vscode-editor-background, #ffffff);
+    color: var(--vscode-editor-foreground, #333333);
+    border: 1px solid var(--vscode-widget-border, #dcdcdc);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
 
-            opacity: 0;
-            transition: opacity 0.15s ease-in-out;
-            visibility: hidden;
-        }
+    /* Sizing */
+    width: max-content;
+    min-width: 300px;
+    max-width: 96vw;
+    height: auto;
+    max-height: 50vh;
+    min-height: 100px;
 
-        .hover-tooltip.visible {
-            opacity: 0.9; /* Slight transparency */
-            visibility: visible;
-        }
+    pointer-events: auto;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease-in-out; /* Removed visibility transition for cleaner toggle */
 
-        /* [Fix 5] Context Block Styles */
-        .hover-tooltip .context-block {
-            opacity: 0.6; /* Context is faded */
-            transform: scale(0.98);
-            margin-bottom: 4px !important;
-            border-left: 3px solid transparent;
-        }
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
 
-        /* Highlight the actual target */
-        .hover-tooltip .target-block {
-            border-left: 4px solid var(--vscode-textLink-activeForeground, #007acc);
-            padding-left: 12px !important;
-            background-color: var(--vscode-editor-selectionBackground, rgba(0,0,0,0.05));
-            border-radius: 4px;
-            margin: 12px 0 !important;
-        }
+.hover-tooltip.visible {
+    opacity: 0.98;
+    visibility: visible;
+}
 
-        /* Reset internal latex-block styles to fit tooltip */
-        .hover-tooltip .latex-block {
-            margin: 4px 0 !important;
-            padding: 0 !important;
-            border: none !important;
-            box-shadow: none !important;
-            background: transparent !important;
-        }
+/* --- Header --- */
+.tooltip-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 8px;
+    background-color: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.1));
+    border-bottom: 1px solid var(--vscode-widget-border, #dcdcdc);
+    cursor: grab;
+    user-select: none;
+    flex-shrink: 0;
+    /* Ensure header respects border radius of container */
+    border-radius: 8px 8px 0 0;
+}
 
+.tooltip-header:active {
+    cursor: grabbing;
+}
+
+.drag-handle-icon {
+    color: var(--vscode-descriptionForeground, #999);
+    font-size: 0.8em;
+    letter-spacing: 2px;
+    opacity: 0.7;
+    flex: 1;
+}
+
+/* --- Controls (Pin/Close) --- */
+.header-controls {
+    display: flex;
+    gap: 4px;
+}
+
+/* Shared styles for all header buttons */
+.icon-btn {
+    background: none;
+    border: none;
+    color: var(--vscode-icon-foreground, #666);
+    cursor: pointer;
+    font-size: 0.6em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.icon-btn:hover {
+    background-color: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+/* [CLEANUP] Removed redundant styles from pin-btn */
+.pin-btn.active {
+    color: var(--vscode-editor-background, white);
+    background-color: var(--vscode-button-background, #007acc);
+}
+
+.close-btn:hover {
+    background-color: #c42b1c;
+    color: white;
+}
+
+/* --- Content --- */
+.tooltip-content {
+    flex: 1;
+    padding: 12px 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* [CLEANUP] Removed font-family (inherited from body) */
+    font-size: 0.9em;
+    line-height: 1.5;
+    padding-right: 15px; /* Space for scrollbar/handles */
+    padding-bottom: 15px;
+}
+
+/* --- Resize Handles --- */
+.resize-handle-bottom {
+    height: 8px; width: 100%; background: transparent; cursor: ns-resize; flex-shrink: 0; position: relative;
+}
+.resize-handle-bottom::after {
+    content: ''; position: absolute; left: 50%; top: 3px; width: 30px; height: 2px; background-color: var(--vscode-scrollbarSlider-background, #ccc); transform: translateX(-50%); border-radius: 2px;
+}
+
+.resize-handle-right {
+    position: absolute; right: 0; top: 0; bottom: 12px; width: 8px; background: transparent; cursor: ew-resize; z-index: 10;
+}
+
+.resize-handle-corner {
+    position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; z-index: 20;
+}
+.resize-handle-corner::after {
+    content: ''; position: absolute; right: 3px; bottom: 3px; width: 6px; height: 6px; border-right: 2px solid var(--vscode-scrollbarSlider-background, #999); border-bottom: 2px solid var(--vscode-scrollbarSlider-background, #999);
+}
+
+/* --- Latex Injection Styles --- */
+.hover-tooltip .context-block { opacity: 0.6; transform: scale(0.99); margin-bottom: 8px !important; border-left: 3px solid transparent; }
+.hover-tooltip .target-block { border-left: 4px solid var(--vscode-textLink-activeForeground, #007acc); padding-left: 12px !important; background-color: var(--vscode-editor-selectionBackground, rgba(0, 0, 0, 0.05)); border-radius: 4px; margin: 12px 0 !important; }
+.hover-tooltip .latex-block { margin: 0 !important; padding: 2px 0 !important; border: none !important; box-shadow: none !important; background: transparent !important; }
+
+/* --- Scrollbars --- */
+/* Apply globally to webview body and tooltip content */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background-color: var(--vscode-scrollbarSlider-background); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--vscode-scrollbarSlider-hoverBackground); }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* Styles for VS Code (Webkit) */
 /* Force application to all elements */

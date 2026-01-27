@@ -17,12 +17,13 @@
     <title>SnapTeX Preview</title>
 </head>
 <body>
-<div id="content-root"></div>
 
-<div id="hover-tooltip" class="hover-tooltip"></div>
+<div id="content-root"></div>
 
 <script>
     const vscode = acquireVsCodeApi();
+
+    // --- Global PDF Helper ---
     window.pdfReqQueue = [];
     window.renderPdfToCanvas = function(path, canvasId) {
         console.log(`[SnapTeX] Queueing PDF request for ${canvasId}`);
@@ -30,71 +31,279 @@
     };
 
     /**
-     * [UPDATED] HoverPreviewController
-     * Handles displaying context previews (target + neighbors) when hovering over cross-reference links.
+     * Manager: Handles multiple tooltip instances.
      */
-    class HoverPreviewController {
+    class TooltipManager {
         constructor() {
-            this.tooltip = document.getElementById('hover-tooltip');
-            this.hideTimer = null;
-            this.showTimer = null;
-            this.currentLink = null;
-            this.bindEvents();
+            this.activeTransientTooltip = null; // The current unpinned tooltip (reused)
+            this.zIndexCounter = 1000;
+            this.bindGlobalEvents();
         }
 
-        bindEvents() {
-            // 1. Link Hover Events (Delegated on body)
+        bindGlobalEvents() {
+            // Link Hover
             document.body.addEventListener('mouseover', (e) => {
                 const link = e.target.closest('a');
-                // Only trigger for internal anchor links (#id)
                 if (link && link.getAttribute('href')?.startsWith('#')) {
-                    this.scheduleShow(link); // [MODIFIED] Use schedule instead of immediate enter
+                    this.onLinkEnter(link);
                 }
             });
 
-            // 2. Mouse leaves a link
             document.body.addEventListener('mouseout', (e) => {
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
-                    this.cancelShow(); // Cancel pending show if mouse leaves quickly
                     this.onLinkLeave();
                 }
             });
 
-            // 3. Mouse enters the Tooltip (Keep it open for scrolling)
-            this.tooltip.addEventListener('mouseenter', () => this.clearHideTimer());
-
-            // 4. Mouse leaves the Tooltip (Start closing timer)
-            this.tooltip.addEventListener('mouseleave', () => this.startHideTimer());
+            // Global Mouse Interaction (Delegated to instances usually, but handled here for coordination)
+            window.addEventListener('mousemove', (e) => this.broadcastMouseMove(e));
+            window.addEventListener('mouseup', () => this.broadcastMouseUp());
         }
 
-        /**
-         * Schedule the tooltip to show after a delay.
-         * Prevents flickering when moving mouse quickly across the screen.
-         */
+        onLinkEnter(link) {
+            // 1. If we have an active transient tooltip, use it.
+            // 2. If it's pinned, it's no longer transient, so we create a NEW one.
+            if (!this.activeTransientTooltip || this.activeTransientTooltip.isPinned) {
+                this.activeTransientTooltip = new Tooltip(this);
+            }
+
+            this.activeTransientTooltip.scheduleShow(link);
+        }
+
+        onLinkLeave() {
+            if (this.activeTransientTooltip) {
+                this.activeTransientTooltip.onLinkLeave();
+            }
+        }
+
+        getTopZIndex() {
+            return ++this.zIndexCounter;
+        }
+
+        // Notify all tooltips of mouse moves (for drag/resize)
+        broadcastMouseMove(e) {
+            // Optimization: Only strictly needed if we tracked active draggers globally,
+            // but currently Tooltip instances listen to window events conditionally.
+            // We can leave this empty or use it to manage cursors.
+        }
+
+        broadcastMouseUp() {
+            // Handled by instances
+        }
+    }
+
+    /**
+     * Individual Tooltip Window Class
+     */
+    class Tooltip {
+        constructor(manager) {
+            this.manager = manager;
+            this.element = this.createDOM();
+            document.body.appendChild(this.element);
+
+            // References
+            this.header = this.element.querySelector('.tooltip-header');
+            this.contentContainer = this.element.querySelector('.tooltip-content');
+            this.pinBtn = this.element.querySelector('.pin-btn');
+            this.closeBtn = this.element.querySelector('.close-btn');
+
+            // Handles
+            this.resizeRight = this.element.querySelector('.resize-handle-right');
+            this.resizeBottom = this.element.querySelector('.resize-handle-bottom');
+            this.resizeCorner = this.element.querySelector('.resize-handle-corner');
+
+            // State
+            this.isPinned = false;
+            this.currentLink = null;
+            this.hideTimer = null;
+            this.showTimer = null;
+
+            this.isDragging = false;
+            this.resizeState = null;
+
+            this.bindEvents();
+            this.bringToFront();
+        }
+
+        createDOM() {
+            const el = document.createElement('div');
+            el.className = 'hover-tooltip';
+            el.innerHTML = `
+                <div class="tooltip-header">
+                    <span class="drag-handle-icon">::::</span>
+                    <div class="header-controls">
+                        <button class="icon-btn pin-btn" title="Pin / Unpin">📌</button>
+                        <button class="icon-btn close-btn" title="Close">✕</button>
+                    </div>
+                </div>
+                <div class="tooltip-content"></div>
+                <div class="resize-handle-right"></div>
+                <div class="resize-handle-bottom"></div>
+                <div class="resize-handle-corner"></div>
+            `;
+            return el;
+        }
+
+        bindEvents() {
+            // Self Hover (Prevent hide)
+            this.element.addEventListener('mouseenter', () => this.clearHideTimer());
+            this.element.addEventListener('mouseleave', () => this.startHideTimer());
+
+            // Bring to front on click
+            this.element.addEventListener('mousedown', () => this.bringToFront());
+
+            // Controls
+            this.pinBtn.addEventListener('click', (e) => { e.stopPropagation(); this.togglePin(); });
+            this.closeBtn.addEventListener('click', (e) => { e.stopPropagation(); this.dispose(); });
+
+            // Drag
+            this.header.addEventListener('mousedown', (e) => this.startDrag(e));
+
+            // Resize
+            this.resizeBottom.addEventListener('mousedown', (e) => this.startResize(e, false, true));
+            this.resizeRight.addEventListener('mousedown', (e) => this.startResize(e, true, false));
+            this.resizeCorner.addEventListener('mousedown', (e) => this.startResize(e, true, true));
+
+            // Window level events for Drag/Resize continuity
+            // We use bounded functions to be able to remove them later (memory management)
+            this._onWindowMouseMove = (e) => this.onMouseMove(e);
+            this._onWindowMouseUp = (e) => this.onMouseUp(e);
+            window.addEventListener('mousemove', this._onWindowMouseMove);
+            window.addEventListener('mouseup', this._onWindowMouseUp);
+        }
+
+        bringToFront() {
+            this.element.style.zIndex = this.manager.getTopZIndex();
+        }
+
+        togglePin() {
+            this.isPinned = !this.isPinned;
+            if (this.isPinned) {
+                this.pinBtn.classList.add('active');
+                this.clearHideTimer(); // Stay open indefinitely
+                // Once pinned, the manager forgets this tooltip as the "transient" one,
+                // so the next hover will create a NEW tooltip.
+                if (this.manager.activeTransientTooltip === this) {
+                    this.manager.activeTransientTooltip = null;
+                }
+            } else {
+                this.pinBtn.classList.remove('active');
+                // Revert to auto-hide behavior
+                // Note: We don't necessarily re-attach to manager.activeTransientTooltip.
+                // We just let it close naturally on mouse leave.
+                // If mouse is already outside, close immediately (or start timer).
+                if (!this.element.matches(':hover')) {
+                    this.startHideTimer();
+                }
+            }
+        }
+
+        dispose() {
+            if (this.element && this.element.parentNode) {
+                this.element.parentNode.removeChild(this.element);
+            }
+            window.removeEventListener('mousemove', this._onWindowMouseMove);
+            window.removeEventListener('mouseup', this._onWindowMouseUp);
+
+            // Clean up manager reference if we were the active transient one
+            if (this.manager.activeTransientTooltip === this) {
+                this.manager.activeTransientTooltip = null;
+            }
+        }
+
+        // --- Drag Logic ---
+        startDrag(e) {
+            this.isDragging = true;
+
+            // [FIX] First, lock the geometry to absolute pixels
+            this.ensureAbsolutePosition();
+
+            // [FIX] Then measure (now that layout is stable)
+            const rect = this.element.getBoundingClientRect();
+
+            this.element.style.cursor = 'grabbing';
+            this.dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+            e.preventDefault();
+        }
+
+        startResize(e, dirX, dirY) {
+            // [FIX] First, lock the geometry.
+            // This converts 'auto' width/height to explicit 'px' values immediately.
+            this.ensureAbsolutePosition();
+
+            // [FIX] Then capture the starting dimensions from the locked element
+            const rect = this.element.getBoundingClientRect();
+
+            this.resizeState = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startWidth: rect.width, // Using rect.width is safer with border-box
+                startHeight: rect.height,
+                dirX, dirY
+            };
+
+            // Release constraints to allow resizing
+            this.element.style.maxHeight = 'none';
+            this.element.style.maxWidth = 'none';
+
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ensureAbsolutePosition() {
+            const rect = this.element.getBoundingClientRect();
+
+            // Disable CSS centering
+            this.element.style.transform = 'none';
+
+            // Freeze position
+            this.element.style.left = `${rect.left}px`;
+            this.element.style.top = `${rect.top}px`;
+            this.element.style.bottom = '';
+
+            // Freeze dimensions (Essential for smooth resizing start)
+            this.element.style.width = `${rect.width}px`;
+            this.element.style.height = `${rect.height}px`;
+        }
+
+        onMouseMove(e) {
+            if (this.isDragging) {
+                const x = e.clientX - this.dragOffset.x;
+                const y = e.clientY - this.dragOffset.y;
+                this.element.style.left = `${x}px`;
+                this.element.style.top = `${y}px`;
+                // Ensure transform is cleared so left/top work absolutely
+                this.element.style.transform = 'none';
+            } else if (this.resizeState) {
+                const { startX, startY, startWidth, startHeight, dirX, dirY } = this.resizeState;
+                if (dirX) {
+                    this.element.style.width = `${Math.max(300, startWidth + (e.clientX - startX))}px`;
+                }
+                if (dirY) {
+                    this.element.style.height = `${Math.max(100, startHeight + (e.clientY - startY))}px`;
+                }
+            }
+        }
+
+        onMouseUp() {
+            this.isDragging = false;
+            this.resizeState = null;
+            this.element.style.cursor = '';
+        }
+
+        // --- Show/Hide Logic ---
         scheduleShow(link) {
             this.clearHideTimer();
+            if (this.currentLink === link && this.element.classList.contains('visible')) return;
 
-            // If already showing THIS link, do nothing
-            if (this.currentLink === link && this.tooltip.classList.contains('visible')) return;
+            // Cancel any pending show for OTHER links on this same tooltip
+            if (this.showTimer) clearTimeout(this.showTimer);
 
-            // Clear any previous pending show request
-            this.cancelShow();
-
-            // Wait 180ms before showing
             this.showTimer = setTimeout(() => {
                 this.onLinkEnter(link);
-            }, 180);
-        }
-
-        /**
-         * Cancel a pending show request.
-         */
-        cancelShow() {
-            if (this.showTimer) {
-                clearTimeout(this.showTimer);
-                this.showTimer = null;
-            }
+            }, 200);
         }
 
         onLinkEnter(link) {
@@ -108,10 +317,11 @@
         }
 
         startHideTimer() {
-            // Delay hiding (300ms) to allow user to move cursor to the tooltip
+            if (this.isPinned) return; // Never hide if pinned
+
+            if (this.hideTimer) clearTimeout(this.hideTimer);
             this.hideTimer = setTimeout(() => {
-                this.tooltip.classList.remove('visible');
-                this.currentLink = null;
+                this.hide();
             }, 300);
         }
 
@@ -122,21 +332,27 @@
             }
         }
 
+        hide() {
+            this.element.classList.remove('visible');
+            // Wait for transition to finish then remove from DOM (since it's transient)
+            setTimeout(() => {
+                if (!this.element.classList.contains('visible')) {
+                    this.dispose();
+                }
+            }, 200);
+        }
+
         showPreview(linkElement, targetId) {
             const targetEl = document.getElementById(targetId);
             if (!targetEl) return;
 
-            // Find semantic container (latex-block or bibliography item)
             const container = targetEl.closest('.latex-block') || targetEl.closest('.bib-item');
             if (!container) return;
 
-            this.tooltip.innerHTML = '';
+            this.contentContainer.innerHTML = '';
             const frag = document.createDocumentFragment();
 
-            // Context Extraction (Up and Down)
             if (container.classList.contains('latex-block')) {
-
-                // 1. Previous Context
                 const prev = container.previousElementSibling;
                 if (prev && prev.classList.contains('latex-block')) {
                     const clone = prev.cloneNode(true);
@@ -144,14 +360,10 @@
                     this.cleanNode(clone);
                     frag.appendChild(clone);
                 }
-
-                // 2. Target Content
                 const current = container.cloneNode(true);
                 current.classList.add('target-block');
                 this.cleanNode(current);
                 frag.appendChild(current);
-
-                // 3. Next Context
                 const next = container.nextElementSibling;
                 if (next && next.classList.contains('latex-block')) {
                     const clone = next.cloneNode(true);
@@ -160,44 +372,18 @@
                     frag.appendChild(clone);
                 }
             } else {
-                // For bibliography, just show the entry itself
                 const clone = container.cloneNode(true);
                 this.cleanNode(clone);
                 frag.appendChild(clone);
             }
 
-            this.tooltip.appendChild(frag);
-
-            // [FIX] Manually refresh PDF canvases in the tooltip
-            // Cloned canvases are blank and have no IDs, so we must re-initialize them.
-            this.refreshTooltipPDFs();
-
-            // Apply Smart Positioning
+            this.contentContainer.appendChild(frag);
+            this.refreshPDFs();
             this.positionTooltip(linkElement);
 
-            this.tooltip.classList.add('visible');
-        }
-
-        /**
-         * [NEW] Re-requests rendering for any PDF canvases inside the tooltip.
-         */
-        refreshTooltipPDFs() {
-            const canvases = this.tooltip.querySelectorAll('canvas[data-req-path]');
-            canvases.forEach(canvas => {
-                // 1. Assign a new unique ID (since cleanNode removed the original)
-                const newId = 'tooltip-pdf-' + Math.random().toString(36).substr(2, 9);
-                canvas.id = newId;
-
-                // 2. Reset render flags so the logic treats it as a new request
-                canvas.removeAttribute('data-rendered');
-                canvas.removeAttribute('data-requested');
-
-                // 3. Request rendering
-                const path = canvas.getAttribute('data-req-path');
-                if (path) {
-                    // This calls realRequestPdf (mapped at bottom of script)
-                    window.renderPdfToCanvas(path, newId);
-                }
+            // Make visible (ensure DOM is updated first)
+            requestAnimationFrame(() => {
+                this.element.classList.add('visible');
             });
         }
 
@@ -206,50 +392,41 @@
             node.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
         }
 
-        /**
-         * Smart Positioning Logic
-         * - Horizontal: Always CENTERED in the viewport.
-         * - Vertical: Based on link position (Top half -> Below, Bottom half -> Above).
-         */
+        refreshPDFs() {
+            const canvases = this.contentContainer.querySelectorAll('canvas[data-req-path]');
+            canvases.forEach(canvas => {
+                const newId = 'tooltip-pdf-' + Math.random().toString(36).substr(2, 9);
+                canvas.id = newId;
+                canvas.removeAttribute('data-rendered');
+                canvas.removeAttribute('data-requested');
+                const path = canvas.getAttribute('data-req-path');
+                if (path) { window.renderPdfToCanvas(path, newId); }
+            });
+        }
+
         positionTooltip(linkElement) {
             const linkRect = linkElement.getBoundingClientRect();
-            const tooltipRect = this.tooltip.getBoundingClientRect();
-
+            const tooltipRect = this.element.getBoundingClientRect();
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
             const margin = 15;
 
-            let left = (viewportWidth - tooltipRect.width) / 2;
-            if (left < margin) left = margin;
-
-            // Decide placement based on link's screen position
+            // Vertical Flip
             const isTopHalf = linkRect.top < (viewportHeight / 2);
-            let top;
 
             if (isTopHalf) {
-                // Link is in top half -> Show Tooltip BELOW
-                top = linkRect.bottom + margin;
+                // Show Below
+                this.element.style.top = `${linkRect.bottom + margin}px`;
             } else {
-                // Link is in bottom half -> Show Tooltip ABOVE
-                top = linkRect.top - tooltipRect.height - margin;
-
-                // Safety check: Prevent overflowing top of screen
-                if (top < margin) {
-                    top = margin;
-                }
+                // Show Above (Using Bottom property to stick to link)
+                const bottomDist = viewportHeight - linkRect.top + margin;
+                this.element.style.bottom = `${bottomDist}px`;
+                this.element.style.top = 'auto'; // Clear top
             }
-
-            // Apply Top position
-            this.tooltip.style.top = `${top}px`;
-
-            // Ensure no manual 'left' style overrides our CSS centering
-            this.tooltip.style.left = '0.5vw';
         }
     }
 
-    /**
-     * PreviewController: Main controller logic
-     */
+    // --- Main Preview Controller ---
     class PreviewController {
         constructor() {
             this.contentRoot = document.getElementById('content-root');
@@ -261,11 +438,10 @@
             this.lastTargetRatio = 0;
             this.lastScrollTime = 0;
 
+            // Initialize Tooltip Manager
+            this.tooltipManager = new TooltipManager();
+
             this.bindEvents();
-
-            // Initialize Hover Logic
-            this.hoverCtrl = new HoverPreviewController();
-
             vscode.postMessage({ command: 'webviewLoaded' });
         }
 
