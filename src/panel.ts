@@ -209,6 +209,15 @@ export class TexPreviewPanel {
 
         const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
 
+        // [FIX] CRITICAL: Grant Webview access to the document's folder.
+        // Without this, the Webview CANNOT load local images (PNG/JPG) due to security policies.
+        // We update the options dynamically for the current document.
+        const mediaRoot = vscode.Uri.joinPath(this._extensionUri, 'media');
+        this._panel.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri, mediaRoot, docDir]
+        };
+
         if (this._currentDocument) {
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);
 

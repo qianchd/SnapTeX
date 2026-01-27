@@ -45,6 +45,12 @@
             document.body.addEventListener('mouseover', (e) => {
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
+                    // Prevent triggering new preview inside an UNPINNED tooltip.
+                    // This prevents infinite nesting or accidental popups while reading a transient tooltip.
+                    const parentTooltip = link.closest('.hover-tooltip');
+                    if (parentTooltip && !parentTooltip.classList.contains('pinned')) {
+                        return;
+                    }
                     this.onLinkEnter(link);
                 }
             });
@@ -52,6 +58,12 @@
             document.body.addEventListener('mouseout', (e) => {
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
+                    // [FIX] Don't trigger leave if moving internally within the tooltip or into the tooltip
+                    // This prevents the hide timer from starting when hovering links inside the tooltip itself
+                    if (this.activeTransientTooltip &&
+                        this.activeTransientTooltip.element.contains(e.relatedTarget)) {
+                        return;
+                    }
                     this.onLinkLeave();
                 }
             });
@@ -181,6 +193,8 @@
             this.isPinned = !this.isPinned;
             if (this.isPinned) {
                 this.pinBtn.classList.add('active');
+                // Mark as pinned for CSS or logic checks
+                this.element.classList.add('pinned');
                 this.clearHideTimer(); // Stay open indefinitely
                 // Once pinned, the manager forgets this tooltip as the "transient" one,
                 // so the next hover will create a NEW tooltip.
@@ -189,6 +203,7 @@
                 }
             } else {
                 this.pinBtn.classList.remove('active');
+                this.element.classList.remove('pinned');
                 // Revert to auto-hide behavior
                 // Note: We don't necessarily re-attach to manager.activeTransientTooltip.
                 // We just let it close naturally on mouse leave.
@@ -306,6 +321,13 @@
             }, 200);
         }
 
+        cancelShow() {
+            if (this.showTimer) {
+                clearTimeout(this.showTimer);
+                this.showTimer = null;
+            }
+        }
+
         onLinkEnter(link) {
             this.currentLink = link;
             const targetId = link.getAttribute('href').substring(1); // Remove '#'
@@ -313,6 +335,7 @@
         }
 
         onLinkLeave() {
+            this.cancelShow();
             this.startHideTimer();
         }
 
@@ -406,8 +429,6 @@
 
         positionTooltip(linkElement) {
             const linkRect = linkElement.getBoundingClientRect();
-            const tooltipRect = this.element.getBoundingClientRect();
-            const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
             const margin = 15;
 

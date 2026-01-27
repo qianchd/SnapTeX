@@ -326,7 +326,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-// --- Step 3: Figure (Structure Extraction + Label Recovery) ---
+    // --- Figure (Structure Extraction + Label Recovery) ---
     {
         name: 'figure',
         priority: 120,
@@ -346,30 +346,27 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     body = body.substring(0, captionRes.start) + body.substring(captionRes.end + 1);
                 }
 
-                // 2. Extract Image
-                const imgMatch = body.match(/\\includegraphics(?:\[.*?\])?\{([^}]+)\}/);
-                let inner = '';
-                if (imgMatch) {
-                    const imgPath = imgMatch[1].trim();
-                    const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
-                    inner = imgPath.toLowerCase().endsWith('.pdf')
-                        ? `<canvas id="${canvasId}" data-req-path="${imgPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`
-                        : `<img src="LOCAL_IMG:${imgPath}" style="max-width:100%; display:block; margin:0 auto;">`;
-                } else {
-                    // Only show placeholder if body is emptyish AND no image found
-                    if (body.replace(/\s/g, '').length === 0) {
-                        inner = `<div style="border:1px dashed #ccc; padding:10px; color:#666;">[Image Not Found or Empty Figure]</div>`;
-                    }
-                }
-
-                // 3. [FIX] Recover "lost" labels
-                // Since \label has already been turned into a token by the 'refs_and_labels' rule (priority 60),
-                // it looks like ｢SNAP:raw:5｣ in the 'body' string.
-                // We scan 'body' for these tokens and append them so the anchor exists in the HTML.
+                // Recover "lost" labels using existing helper
                 const hiddenLabels = recoverPreservedTokens(body);
 
+                body = body.trim().replace(/\\centering/g, '');
+
+                // In-place replacement for images to support PNG/JPG/PDF and multiple images
+                // Regex allows spaces (\s*) and uses global flag (g)
+                body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (m: String, imgPath: String) => {
+                    const cleanPath = imgPath.trim();
+                    const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
+
+                    if (cleanPath.toLowerCase().endsWith('.pdf')) {
+                        return `<canvas id="${canvasId}" data-req-path="${cleanPath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`;
+                    } else {
+                        // Use LOCAL_IMG prefix, which panel.ts will convert to vscode-webview-resource URI
+                        return `<img src="LOCAL_IMG:${cleanPath}" style="max-width:100%; display:block; margin:0 auto;">`;
+                    }
+                });
+
                 // Reconstruct clean HTML
-                return `\n\n` + renderer.protect('fig', `<div class="latex-block figure">${inner}${captionHtml}${hiddenLabels}</div>`) + `\n\n`;
+                return `\n\n` + renderer.protect('fig', `<div class="latex-block figure">${body}${captionHtml}${hiddenLabels}</div>`) + `\n\n`;
             });
         }
     },

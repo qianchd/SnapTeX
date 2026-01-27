@@ -32,17 +32,23 @@ export class ProtectionManager {
     public resolve(text: string): string {
         let currentText = text;
         let depth = 0;
-        const maxDepth = 15; // Safety break for circular dependencies
+        const maxDepth = 15;
+
+        // Matches: <p> TOKEN </p>  OR  TOKEN
+        // This handles cases where Markdown-it wraps our block tokens in paragraphs
+        const resolvePattern = /<p>\s*(｢SNAP:[a-zA-Z0-9_-]+:\d+｣)\s*<\/p>|(｢SNAP:[a-zA-Z0-9_-]+:\d+｣)/g;
 
         while (this.tokenPattern.test(currentText) && depth < maxDepth) {
-            this.tokenPattern.lastIndex = 0; // Reset regex index
-            currentText = currentText.replace(this.tokenPattern, (fullMatch, ns, id) => {
-                const val = this.storage.get(fullMatch);
+            this.tokenPattern.lastIndex = 0;
+            currentText = currentText.replace(resolvePattern, (fullMatch, pWrappedToken, bareToken) => {
+                // Determine which group matched
+                const token = pWrappedToken || bareToken;
+                const val = this.storage.get(token);
+                // If content exists, return it (stripping <p> if it was wrapped). Otherwise keep original.
                 return val !== undefined ? val : fullMatch;
             });
             depth++;
         }
-
         return currentText;
     }
 
