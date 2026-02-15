@@ -477,11 +477,10 @@ ul li strong:first-child {
     padding: 12px 20px;
     overflow-y: auto;
     overflow-x: hidden;
-    /* [CLEANUP] Removed font-family (inherited from body) */
-    font-size: 0.9em;
-    line-height: 1.5;
-    padding-right: 15px; /* Space for scrollbar/handles */
-    padding-bottom: 15px;
+    font-size: 0.85em;
+    line-height: 1.1;
+    padding-right: 8px; /* Space for scrollbar/handles */
+    padding-bottom: 8px;
 }
 
 /* --- Resize Handles --- */

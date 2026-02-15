@@ -41,8 +41,8 @@ function createRefLink(key: string, renderer: SmartRenderer, type: 'ref' | 'eqre
  * outside the main content (e.g. \label after \caption or \includegraphics).
  */
 function recoverPreservedTokens(text: string): string {
-    // Matches tokens format defined in ProtectionManager: ｢SNAP:namespace:id｣
-    const tokenRegex = /｢SNAP:[a-zA-Z0-9_-]+:\d+｣/g;
+    // Matches tokens format defined in ProtectionManager: XSNAP:namespace:idY
+    const tokenRegex = /XSNAP:[a-zA-Z0-9_-]+:\d+Y/g;
     let found = "";
     let match;
     while ((match = tokenRegex.exec(text)) !== null) {

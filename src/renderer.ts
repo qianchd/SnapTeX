@@ -137,7 +137,7 @@ export class SmartRenderer {
         // 1. Apply Rules (Rules now call renderer.protect() directly)
         this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
 
-        // 2. Render Markdown (Tokens like ｢SNAP:math:0｣ are treated as plain text)
+        // 2. Render Markdown (Tokens like XSNAP:math:0Y are treated as plain text)
         let finalHtml = this.md!.render(processed);
 
         // 3. [UPDATED] Universal Recursive Resolution

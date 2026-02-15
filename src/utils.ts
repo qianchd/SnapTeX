@@ -103,7 +103,9 @@ export function extractAndHideLabels(content: string) {
     const labels: string[] = [];
     const cleanContent = content.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
         const safeLabel = labelName.replace(/"/g, '&quot;');
-        labels.push(`<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="display:none"></span>`);
+        // [FIX] Use visibility:hidden instead of display:none so the anchor exists in the layout tree
+        // and can be targeted by scrollIntoView (or native hash navigation).
+        labels.push(`<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`);
         return '';
     });
     return { cleanContent, hiddenHtml: labels.join('') };

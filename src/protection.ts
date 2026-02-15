@@ -8,9 +8,9 @@ export class ProtectionManager {
     private counter: number = 0;
 
     // Use a distinct pattern unlikely to occur in user text.
-    // Format: ｢SNAP:{namespace}:{id}｣
-    // We use Halfwidth and Fullwidth Forms/Block Elements characters or just obscure brackets ｢ ｣
-    private readonly tokenPattern = /｢SNAP:([a-zA-Z0-9_-]+):(\d+)｣/g;
+    // Format: XSNAP:{namespace}:{id}Y
+    // We use Halfwidth and Fullwidth Forms/Block Elements characters or just obscure brackets X Y
+    private readonly tokenPattern = /XSNAP:([a-zA-Z0-9_-]+):(\d+)Y/g;
 
     /**
      * Registers content to be protected and returns a token.
@@ -19,7 +19,7 @@ export class ProtectionManager {
      */
     public protect(namespace: string, content: string): string {
         const id = this.counter++;
-        const token = `｢SNAP:${namespace}:${id}｣`;
+        const token = `XSNAP:${namespace}:${id}Y`;
         this.storage.set(token, content);
         return token;
     }
@@ -36,7 +36,7 @@ export class ProtectionManager {
 
         // Matches: <p> TOKEN </p>  OR  TOKEN
         // This handles cases where Markdown-it wraps our block tokens in paragraphs
-        const resolvePattern = /<p>\s*(｢SNAP:[a-zA-Z0-9_-]+:\d+｣)\s*<\/p>|(｢SNAP:[a-zA-Z0-9_-]+:\d+｣)/g;
+        const resolvePattern = /<p>\s*(XSNAP:[a-zA-Z0-9_-]+:\d+Y)\s*<\/p>|(XSNAP:[a-zA-Z0-9_-]+:\d+Y)/g;
 
         while (this.tokenPattern.test(currentText) && depth < maxDepth) {
             this.tokenPattern.lastIndex = 0;

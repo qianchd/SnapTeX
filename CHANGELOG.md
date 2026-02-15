@@ -5,6 +5,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 ## [0.5.10] - 2026-01-27
 - **Fix bug**: png and jpg display;
 - **Fix bug**: figure display in tooltips
+- **Fix bug**: jump for equation href
 - **Add**: pin and close buttons, resize draggers for tooltips;
 - **Add**: multiple tooltips panels support;
 
