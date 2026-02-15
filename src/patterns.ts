@@ -39,7 +39,8 @@ export const SPLITTER_MAJOR_ENVS = [
     ...MATH_ENVS,
     ...FLOAT_ENVS,
     ...THEOREM_ENVS,
-    'thm', 'prop' // Short aliases sometimes used
+    'thm', 'prop', // Short aliases sometimes used
+    'tikzpicture'
 ];
 
 // --- Helper for Regex Construction ---

@@ -1,12 +1,13 @@
 const esbuild = require("esbuild");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
 /**
- * Custom plugin to automatically copy assets (KaTeX, PDF.js) from node_modules to the media directory.
+ * Custom plugin to automatically copy assets (KaTeX, PDF.js, TikZJax) from node_modules to the media directory.
  * This ensures that necessary static files are available for the Webview at runtime.
  * @type {import('esbuild').Plugin}
  */
@@ -87,6 +88,100 @@ const copyAssetsPlugin = {
                     console.warn(`[build] Warning: PDF.js file not found: ${srcFile}`);
                 }
             });
+
+            // --- 3. TikZJax Configuration ---
+            const tikzRoot = path.join(__dirname, 'node_modules', '@planktimerr', 'tikzjax');
+            const tikzDest = path.join(__dirname, 'media', 'vendor', 'tikzjax');
+
+            if (!fs.existsSync(tikzDest)) {
+                fs.mkdirSync(tikzDest, { recursive: true });
+            }
+
+            const tikzFiles = [
+                'tikzjax.js',
+                'fonts.css',
+                'tex.wasm.gz',
+                'run-tex.js',
+                'core.dump.gz'
+
+            ];
+
+            // Define search paths relative to the package root
+            const searchPaths = ['', 'dist', 'lib', 'build'];
+
+            tikzFiles.forEach(fileName => {
+                let found = false;
+                for (const subDir of searchPaths) {
+                    const srcPath = path.join(tikzRoot, subDir);
+                    const srcFile = path.join(srcPath, fileName);
+                    const destFile = path.join(tikzDest, fileName);
+
+                    // 1. Try direct copy
+                    if (fs.existsSync(srcFile)) {
+                        fs.copyFileSync(srcFile, destFile);
+                        found = true;
+                        break;
+                    }
+
+                    // 2. For tex.wasm, try .gz extension and decompress
+                    // if (fileName === 'tex.wasm' || 'core.dump') {
+                    //     const srcFileGz = srcFile + '.gz';
+                    //     if (fs.existsSync(srcFileGz)) {
+                    //         console.log(`[build] Found compressed file: ${srcFileGz}. Decompressing...`);
+                    //         try {
+                    //             const fileBuffer = fs.readFileSync(srcFileGz);
+                    //             const decompressed = zlib.gunzipSync(fileBuffer);
+                    //             fs.writeFileSync(destFile, decompressed);
+                    //             found = true;
+                    //             break;
+                    //         } catch (err) {
+                    //             console.error(`[build] Failed to decompress ${srcFileGz}:`, err);
+                    //         }
+                    //     }
+                    // }
+                }
+
+                if (!found) {
+                    console.warn(`[build] Warning: TikZJax file not found: ${fileName} in ${tikzRoot}`);
+                }
+            });
+
+            // Copy tex_files
+            const texFilesSrc = path.join(tikzRoot, 'dist', 'tex_files');
+            const texFilesDest = path.join(tikzDest, 'tex_files');
+
+            if (fs.existsSync(texFilesSrc)) {
+                if (!fs.existsSync(texFilesDest)) fs.mkdirSync(texFilesDest, { recursive: true });
+                fs.readdirSync(texFilesSrc).forEach(file => {
+                    fs.copyFileSync(path.join(texFilesSrc, file), path.join(texFilesDest, file));
+                });
+                console.log(`[build] Copied ${fs.readdirSync(texFilesSrc).length} files to tex_files/`);
+            }
+
+            // Copy Fonts
+            const tikzFontsDest = path.join(tikzDest, 'fonts');
+            if (!fs.existsSync(tikzFontsDest)) {
+                fs.mkdirSync(tikzFontsDest, { recursive: true });
+            }
+
+            let fontsFound = false;
+            for (const subDir of searchPaths) {
+                const fontsSrc = path.join(tikzRoot, subDir, 'fonts');
+                if (fs.existsSync(fontsSrc) && fs.statSync(fontsSrc).isDirectory()) {
+                    const files = fs.readdirSync(fontsSrc);
+                    for (const file of files) {
+                        fs.copyFileSync(
+                            path.join(fontsSrc, file),
+                            path.join(tikzFontsDest, file)
+                        );
+                    }
+                    fontsFound = true;
+                    break;
+                }
+            }
+            if (!fontsFound) {
+                 console.warn(`[build] Warning: TikZJax fonts directory not found.`);
+            }
 
             console.log('[build] Assets copied successfully.');
         });

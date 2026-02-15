@@ -263,6 +263,10 @@ export class TexPreviewPanel {
         const pdfJsUri = toUri('media/vendor/pdfjs/pdf.mjs');
         const pdfWorkerUri = toUri('media/vendor/pdfjs/pdf.worker.mjs');
 
+        // Added TikZJax URIs
+        const tikzJaxJsUri = toUri('media/vendor/tikzjax/tikzjax.js');
+        const tikzJaxCssUri = toUri('media/vendor/tikzjax/fonts.css');
+
         const htmlUri = vscode.Uri.joinPath(this._extensionUri, 'media', 'webview.html');
         let htmlContent = '';
         try {
@@ -277,7 +281,10 @@ export class TexPreviewPanel {
             .replace(/{{katexCssUri}}/g, katexCssUri.toString())
             .replace(/{{styleUri}}/g, styleUri.toString())
             .replace(/{{pdfJsUri}}/g, pdfJsUri.toString())
-            .replace(/{{pdfWorkerUri}}/g, pdfWorkerUri.toString());
+            .replace(/{{pdfWorkerUri}}/g, pdfWorkerUri.toString())
+            // Inject the TikZJax variables
+            .replace(/{{tikzJaxJsUri}}/g, tikzJaxJsUri.toString())
+            .replace(/{{tikzJaxCssUri}}/g, tikzJaxCssUri.toString());
     }
 
     public dispose() {

@@ -62,6 +62,38 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             return text.replace(/(?<!\\)%.*(\r?\n)?/g, '');
         }
     },
+
+    // --- [NEW] TikZJax Support (Priority 6) ---
+    // This must run BEFORE escaped_char_dollar (Priority 10) to preserve special characters
+    // inside the tikzpicture environment (e.g. $, &, #).
+    {
+        name: 'tikzpicture',
+        priority: 6,
+        apply: (text, renderer: SmartRenderer) => {
+            // Match \\begin{tikzpicture}...\\end{tikzpicture}
+            // Use [\\s\\S] to match across newlines
+            return text.replace(/\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g, (_match, opt, content) => {
+                // Extract and hide labels so they work with the reference system
+                const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
+
+                const options = opt ? `[${opt}]` : '';
+                // Reconstruct the block for TikZJax consumption
+                const tikzCode = `\\begin{tikzpicture}${options}${cleanContent}\\end{tikzpicture}`;
+
+                // Wrap in the <script> tag required by TikZJax
+                // We wrap this in a container div for styling/layout
+                const html = `<div class="tikz-container" style="text-align: center; margin: 1em 0;">
+                    <script type="text/tikz" data-show-console="true">
+                        ${tikzCode}
+                    </script>
+                </div>`;
+
+                // Protect the HTML output so subsequent rules don't modify the script tag
+                return renderer.protect('tikz', html) + hiddenHtml;
+            });
+        }
+    },
+
     // --- Step 0: Handle escape characters (Highest priority, prevents interference with subsequent regex) ---
     {
         name: 'escaped_char_dollar',

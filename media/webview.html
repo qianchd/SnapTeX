@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'none';
-        script-src {{cspSource}} 'unsafe-inline' blob: https://unpkg.com;
+        script-src {{cspSource}} 'unsafe-inline' 'unsafe-eval' blob: https://unpkg.com;
         worker-src {{cspSource}} blob:;
         style-src {{cspSource}} 'unsafe-inline';
         font-src {{cspSource}} data:;
@@ -14,6 +14,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{katexCssUri}}">
     <link rel="stylesheet" href="{{styleUri}}">
+
+    <link rel="stylesheet" href="{{tikzJaxCssUri}}">
+    <script src="{{tikzJaxJsUri}}" id="tikzjax-script" defer></script>
+
     <title>SnapTeX Preview</title>
 </head>
 <body>
@@ -330,7 +334,7 @@
 
         onLinkEnter(link) {
             this.currentLink = link;
-            const targetId = link.getAttribute('href').substring(1); // Remove '#'
+            const targetId = link.getAttribute('href').substring(1);
             this.showPreview(link, targetId);
         }
 
@@ -404,10 +408,20 @@
             this.refreshPDFs();
             this.positionTooltip(linkElement);
 
-            // Make visible (ensure DOM is updated first)
+            // Trigger TikZ Rendering for tooltip content
+            setTimeout(() => {
+                 this.triggerTikzRendering();
+            }, 10);
+
             requestAnimationFrame(() => {
                 this.element.classList.add('visible');
             });
+        }
+
+        triggerTikzRendering() {
+            if (this.contentContainer.querySelector('script[type="text/tikz"]')) {
+                 window.dispatchEvent(new Event('load'));
+            }
         }
 
         cleanNode(node) {
@@ -508,6 +522,21 @@
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
             }
             setTimeout(() => this.renderPendingPdfs(), 50);
+
+            // Trigger TikZ Rendering after update
+            this.triggerTikzRendering();
+        }
+
+        // Manually trigger TikZJax to scan the document
+        triggerTikzRendering() {
+            setTimeout(() => {
+                const unrendered = document.querySelector('script[type="text/tikz"]');
+                if (unrendered) {
+                    console.log('[SnapTeX] Triggering TikZ re-render...');
+                    // Dispatch 'load' event to force TikZJax scan
+                    window.dispatchEvent(new Event('load'));
+                }
+            }, 100);
         }
 
         onRenderComplete(savedScrollState) {
