@@ -35,8 +35,13 @@
     "languages": [
       {
         "id": "latex",
-        "extensions": [".tex"],
-        "aliases": ["LaTeX", "tex"]
+        "extensions": [
+          ".tex"
+        ],
+        "aliases": [
+          "LaTeX",
+          "tex"
+        ]
       }
     ],
     "commands": [
