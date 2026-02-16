@@ -8,6 +8,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Fix bug**: jump for equation href
 - **Add**: pin and close buttons, resize draggers for tooltips;
 - **Add**: multiple tooltips panels support;
+- **Add**: support tikz
 
 ## [0.5.9] - 2026-01-26
 - **Fix bug**: cross-ref of figures tables algorithms
