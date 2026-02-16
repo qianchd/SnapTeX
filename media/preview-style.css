@@ -134,6 +134,35 @@ p:has(.no-indent-marker) {
     contain: layout;
 }
 
+/* TikZ Container */
+.tikz-container {
+    /* [CHANGED] Switch to block layout. Flexbox sometimes respects SVG intrinsic 'pt' width too stubbornly. */
+    display: block;
+    width: 100%;
+    margin: 0em 0;
+    text-align: center;
+    overflow: visible; /* Allow content to stretch */
+}
+
+/* Ensure SVG scales responsively and FILLS width */
+.tikz-container svg {
+    /* [CRITICAL] Force width to match container (window) width */
+    width: 100% !important;
+    /* [CRITICAL] Auto height uses the viewBox aspect ratio, ignoring the 'height=35pt' attribute */
+    height: auto !important;
+
+    /* Ensure it behaves like a block element to fill space */
+    display: block;
+    margin: 0 auto;
+
+    /* Remove any potential max-width limits */
+    max-width: none !important;
+
+    /* Color inheritance */
+    color: var(--vscode-editor-foreground);
+    fill: currentColor;
+}
+
 /* --- Theorem Environments (Theorem/Lemma) --- */
 .latex-thm-head {
     display: inline;

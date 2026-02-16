@@ -37,7 +37,7 @@ function createRefLink(key: string, renderer: SmartRenderer, type: 'ref' | 'eqre
 }
 
 /**
- * [NEW] Scans text for protection tokens (like hidden labels) that might be floating
+ * Scans text for protection tokens (like hidden labels) that might be floating
  * outside the main content (e.g. \label after \caption or \includegraphics).
  */
 function recoverPreservedTokens(text: string): string {
@@ -49,6 +49,41 @@ function recoverPreservedTokens(text: string): string {
         found += match[0];
     }
     return found;
+}
+
+/**
+ * Recursive Dependency Resolver
+ * Scans the content for macro usages and pulls in their definitions from the map.
+ * Handles nested dependencies (e.g. A uses B, B uses C).
+ */
+function resolveDependencies(content: string, macroMap: Map<string, string>): string {
+    const usedMacros = new Set<string>();
+    const queue: string[] = [content];
+    const resolvedDefs: string[] = [];
+
+    // Regex to find control sequences like \foo, \bar123
+    const tokenRegex = /\\[a-zA-Z@]+/g;
+
+    while (queue.length > 0) {
+        const text = queue.pop()!;
+        let match;
+        // Reset regex state if reused (though match() doesn't need it, exec() does)
+
+        const tokens = text.match(tokenRegex);
+        if (tokens) {
+            for (const token of tokens) {
+                if (macroMap.has(token) && !usedMacros.has(token)) {
+                    usedMacros.add(token);
+                    const def = macroMap.get(token)!;
+                    resolvedDefs.push(def);
+                    // Add the definition body to queue to scan for nested dependencies
+                    queue.push(def);
+                }
+            }
+        }
+    }
+
+    return resolvedDefs.join('\n');
 }
 
 export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
@@ -63,32 +98,43 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- [NEW] TikZJax Support (Priority 6) ---
-    // This must run BEFORE escaped_char_dollar (Priority 10) to preserve special characters
-    // inside the tikzpicture environment (e.g. $, &, #).
+// 5. TikZ Picture (Smart On-Demand Injection)
     {
         name: 'tikzpicture',
         priority: 6,
         apply: (text, renderer: SmartRenderer) => {
-            // Match \\begin{tikzpicture}...\\end{tikzpicture}
-            // Use [\\s\\S] to match across newlines
-            return text.replace(/\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g, (_match, opt, content) => {
-                // Extract and hide labels so they work with the reference system
+            const regex = /\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g;
+
+            return text.replace(regex, (_match, options, content) => {
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
+                const opts = options ? `[${options}]` : '';
 
-                const options = opt ? `[${opt}]` : '';
-                // Reconstruct the block for TikZJax consumption
-                const tikzCode = `\\begin{tikzpicture}${options}${cleanContent}\\end{tikzpicture}`;
+                // 1. Get Always-Include Globals (Libraries, Colors, TikzSets)
+                const globalPreamble = renderer.currentDocument?.metadata.tikzGlobal || "";
 
-                // Wrap in the <script> tag required by TikZJax
-                // We wrap this in a container div for styling/layout
-                const html = `<div class="tikz-container" style="text-align: center; margin: 1em 0;">
-                    <script type="text/tikz" data-show-console="true">
-                        ${tikzCode}
+                // 2. Resolve Macros On-Demand (Tree Shaking)
+                const macroMap = renderer.currentDocument?.metadata.tikzMacroMap || new Map();
+                // Scan both options and content for dependencies
+                const neededMacros = resolveDependencies(opts + cleanContent, macroMap);
+
+                const fontConfig = `\\tikzset{every node/.append style={font=\\sffamily\\small}}\n`;
+
+                // 3. Assemble
+                const fullCode = [
+                    globalPreamble,  // 1. Libraries
+                    neededMacros,    // 2. Only used \\newcommand definitions
+                    fontConfig,      // 3. System font settings
+                    `\\begin{tikzpicture}${opts}`,
+                    cleanContent,
+                    `\\end{tikzpicture}`
+                ].join('\n');
+
+                const html = `<div class="tikz-container">
+                    <script type="text/tikz" data-show-console="false">
+                        ${fullCode}
                     </script>
                 </div>`;
 
-                // Protect the HTML output so subsequent rules don't modify the script tag
                 return renderer.protect('tikz', html) + hiddenHtml;
             });
         }
@@ -373,14 +419,19 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     let captionText = captionRes.content;
                     captionText = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderMath(c.trim(), false, renderer));
                     captionText = resolveLatexStyles(captionText);
+
                     captionHtml = `<div class="figure-caption"><strong>Figure <span class="sn-cnt" data-type="fig"></span>:</strong> ${renderer.renderInline(captionText)}</div>`;
+
                     // Remove caption from body to avoid duplication
                     body = body.substring(0, captionRes.start) + body.substring(captionRes.end + 1);
                 }
 
-                // Recover "lost" labels using existing helper
-                const hiddenLabels = recoverPreservedTokens(body);
+                // 2. Handle Labels (Extract labels defined in the figure environment)
+                // Replaced 'recoverPreservedTokens' with standard 'extractAndHideLabels'
+                const { cleanContent, hiddenHtml } = extractAndHideLabels(body);
+                body = cleanContent;
 
+                // 3. Cleanup
                 body = body.trim().replace(/\\centering/g, '');
 
                 // In-place replacement for images to support PNG/JPG/PDF and multiple images
@@ -397,8 +448,12 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     }
                 });
 
-                // Reconstruct clean HTML
-                return `\n\n` + renderer.protect('fig', `<div class="latex-block figure">${body}${captionHtml}${hiddenLabels}</div>`) + `\n\n`;
+                // 5. Wrap and Protect
+                // We wrap the body (which may contain XSNAP tokens from TikZ or img tags) and caption
+                // into a container, and protect the WHOLE thing.
+                const finalHtml = `<div class="latex-block figure latex-figure" style="text-align: center; margin: 1em 0;">${body}${captionHtml}${hiddenHtml}</div>`;
+
+                return `\n\n` + renderer.protect('fig', finalHtml) + `\n\n`;
             });
         }
     },

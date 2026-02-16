@@ -31,7 +31,11 @@ export class LatexDocument {
     public sourceMap: SourceLocation[] = [];
     public contentStartLineOffset: number = 0;
 
-    public metadata: PreambleData = { macros: {} };
+    public metadata: PreambleData = {
+        macros: {},
+        tikzGlobal: "",
+        tikzMacroMap: new Map()
+    };
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: vscode.Uri | undefined;
 

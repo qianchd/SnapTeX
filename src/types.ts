@@ -1,5 +1,15 @@
+export interface SourceLocation {
+    file: string;
+    line: number;
+}
+
 export interface PreambleData {
-    macros: Record<string, string>;
+    macros: Record<string, string>; // For KaTeX (existing)
+
+    // [CHANGE] Split TikZ data into global settings and individual macros
+    tikzGlobal: string; // \\usetikzlibrary, \\tikzset, \\definecolor (Always inject)
+    tikzMacroMap: Map<string, string>; // Key: "\\macroName", Value: "\\def\\macroName{...}" (Inject on demand)
+
     title?: string;
     author?: string;
     date?: string;
@@ -39,25 +49,3 @@ export interface PreprocessRule {
     priority: number;
     apply: (text: string, renderer: any) => string;
 }
-
-export interface SourceLocation {
-    file: string;
-    line: number;
-}
-
-// --- Communication Protocol ---
-
-/**
- * Messages sent FROM the Extension TO the Webview
- */
-export type ToWebviewMessage =
-    | { command: 'update'; payload: PatchPayload }
-    // Add other commands if strictly needed by panel.ts in future refactoring
-
-/**
- * Messages sent FROM the Webview TO the Extension
- */
-export type FromWebviewMessage =
-    | { command: 'webviewLoaded' }
-    | { command: 'revealLine'; index: number; ratio: number; anchor?: boolean }
-    | { command: 'syncScroll'; index: number; ratio: number };
