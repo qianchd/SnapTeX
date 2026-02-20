@@ -144,7 +144,7 @@ export function findBalancedClosingBrace(text: string, startIndex: number): numb
  */
 export function findCommand(text: string, tagName: string) {
     // Improved regex: Supports optional parameters [\s\S]*? and spaces between command and left brace
-    const regex = new RegExp(`\\\\${tagName}(?:\\s*\\[[\\s\\S]*?\\])?\\s*\\{`, 'g');
+    const regex = new RegExp(`\\${tagName}(?:\\s*\\[[\\s\\S]*?\\])?\\s*\\{`, 'g');
     const match = regex.exec(text);
 
     if (match) {
@@ -213,11 +213,6 @@ function applyStyleToTexList(startTag: string, endTag: string, content: string):
  * Keeps text content but removes common formatting commands.
  * This is essential for rendering clean text inside Algorithms, Figures, and Tables.
  */
-/**
- * Helper: Simple cleanup of LaTeX commands for preview purposes.
- * Keeps text content but removes common formatting commands.
- * This is essential for rendering clean text inside Algorithms, Figures, and Tables.
- */
 export function cleanLatexCommands(text: string, renderer: any): string {
     if (!text) {return '';}
 
@@ -227,7 +222,7 @@ export function cleanLatexCommands(text: string, renderer: any): string {
 
     // 1. First, handle inline math inside the text to prevent it from being stripped
     processed = processed.replace(/\$((?:\\.|[^\\$])*)\$/g, (match) => {
-        return renderer.pushInlineProtected(match);
+        return renderer.protect('math', match);
     });
 
     // 2. Clean common formatting but keep content
@@ -245,24 +240,19 @@ export function cleanLatexCommands(text: string, renderer: any): string {
     // e.g. \mycommand{Content} -> Content
     processed = processed.replace(/\\(?:[a-zA-Z]+)(?:\[.*?\])?(?:\{([^}]*)\})?/g, (match, content) => {
         // If it looks like a protection placeholder, don't strip it
-        if (match.includes('OOSNAPTEX')) {
+        if (match.includes('XSNAP:')) {
             return match;
         }
         return content || '';
     });
 
-    // 4. [FIX] Final Cleanup: Remove residual BibTeX protection braces
-    // e.g. {Li} -> Li
-    // We only remove braces that are NOT part of our protection tokens
-    processed = processed.replace(/([{}])/g, (match) => {
-        // Simple heuristic: if the brace is part of a token like OOSNAPTEX...OO, we shouldn't have touched it anyway
-        // because those are hidden in step 1.
-        // So safe to remove all remaining curly braces.
-        return '';
-    });
+    // 4. Final Cleanup: Remove residual BibTeX protection braces
+    // We only remove braces that are NOT part of our protection tokens (tokens don't have braces anyway)
+    processed = processed.replace(/([{}])/g, () => '');
 
     return processed;
 }
+
 
 /**
  * Mix two HEX colors by a weight percentage.

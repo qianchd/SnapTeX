@@ -117,9 +117,6 @@ export class SmartRenderer {
         return this.protector.protect(namespace, content);
     }
 
-    // [REMOVED] pushInlineProtected, pushProtectedRef, renderAndProtectMath
-    // These specific logics are moved to rules.ts
-
     public isKnownFile(uriStr: string): boolean {
         if (!this.currentDocument) { return false; }
         const target = normalizeUri(uriStr);

@@ -137,9 +137,11 @@ p:has(.no-indent-marker) {
 /* TikZ Container */
 .tikz-container {
     /* [CHANGED] Switch to block layout. Flexbox sometimes respects SVG intrinsic 'pt' width too stubbornly. */
-    display: block;
+    display: flex;
+    justify-content: center; /* Horizontally center */
+    align-items: center;     /* Vertically center */
     width: 100%;
-    margin: 0em 0;
+    margin: 0 0;
     text-align: center;
     overflow: visible; /* Allow content to stretch */
 }
@@ -152,7 +154,7 @@ p:has(.no-indent-marker) {
     height: auto !important;
 
     /* Ensure it behaves like a block element to fill space */
-    display: block;
+    display: flex;
     margin: 0 auto;
 
     /* Remove any potential max-width limits */
@@ -160,20 +162,83 @@ p:has(.no-indent-marker) {
 
     /* Color inheritance */
     color: var(--vscode-editor-foreground);
-    fill: currentColor;
+    text-align: center;
 }
 
-/* --- Theorem Environments (Theorem/Lemma) --- */
-.latex-thm-head {
-    display: inline;
-    white-space: nowrap;
-    margin-right: 0.3em;
+/* ==========================================================================
+   Dark Mode Adaptation for TikZ
+   ========================================================================== */
+
+/* Strategy: In dark mode, TikZ's default "black" (#000) is invisible.
+   We use Attribute Selectors to target elements specifically set to black,
+   and force them to use the VS Code foreground color (light).
+
+   We do NOT use 'filter: invert(1)' because that would mess up Red/Blue colors.
+*/
+
+/* 1. Invert Black Strokes (Lines, Arrows, Borders) */
+body.vscode-dark .tikz-container svg [stroke="#000"],
+body.vscode-dark .tikz-container svg [stroke="black"],
+body.vscode-dark .tikz-container svg [stroke="rgb(0,0,0)"],
+body.vscode-dark .tikz-container svg [stroke="rgb(0, 0, 0)"] {
+    stroke: var(--vscode-editor-foreground) !important;
 }
 
+/* 2. Invert Black Fills (Text, Solid Shapes) */
+/* Note: Pattern fills use url(#id), so they won't match these selectors, which is good. */
+/* body.vscode-dark .tikz-container svg [fill="#000"],
+body.vscode-dark .tikz-container svg [fill="black"],
+body.vscode-dark .tikz-container svg [fill="rgb(0,0,0)"],
+body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
+    fill: var(--vscode-editor-foreground) !important;
+} */
+
+/* 3. Ensure Text elements default to foreground if no fill is specified */
+/* body.vscode-dark .tikz-container svg text {
+    fill: var(--vscode-editor-foreground);
+} */
+
+/* ==========================================================================
+   Theorem Blocks (Theme-Adaptive Box)
+   ========================================================================== */
+
+.latex-theorem {
+    /* [MAGIC] 混合 10% 的主题色与 90% 的透明度，生成极浅的背景 */
+    background-color: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
+
+    /* 边框直接使用 100% 的主题色 */
+    border-left: 4px solid color-mix(in srgb, var(--vscode-textLink-foreground) 40%, transparent);
+
+    padding: 10px 15px;
+    margin: 1.5em 0;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    page-break-inside: avoid;
+}
+
+/* Header Styling */
 .latex-theorem-header {
-    font-weight: bold;
-    margin-right: 0.5em;
+    /* 标题颜色与边框保持一致 */
+    color: var(--vscode-textLink-foreground);
 }
+
+/* Paragraph handling inside theorem */
+.latex-theorem p {
+    margin: 0.5em 0;
+    display: inline-block;
+    width: 100%;
+}
+.latex-theorem p:first-of-type {
+    margin-top: 0;
+    display: inline;
+}
+
+/* Proof QED Symbol */
+.latex-qed {
+    color: var(--vscode-editor-foreground);
+    opacity: 0.7;
+}
+
 
 /* --- Float Placeholders (Figure/Table) --- */
 .latex-float-placeholder {

@@ -655,15 +655,17 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
             text = text.replace(thmRegex, (match, envName, optArg, content) => {
                 const displayName = capitalizeFirstLetter(envName);
-                let header = `\n<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span>`;
+                let header = `<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span>`;
 
                 if (optArg) {
                     header += `</strong>&nbsp;(${optArg}).</span>&nbsp; `;
                 } else {
                     header += `.</strong></span>&nbsp; `;
                 }
-                return `${header}${content.trim()}\n`;
+
+                return `\n\n<div class="latex-theorem">\n\n${header}${content.trim()}\n\n</div>\n\n`;
             });
+
             text = text.replace(/\\begin\{proof\}(?:\[(.*?)\])?/gi, (match, optArg) => {
                 const title = optArg ? `Proof (${optArg}).` : `Proof.`;
                 return `\n<span class="no-indent-marker"></span>**${title}** `;
