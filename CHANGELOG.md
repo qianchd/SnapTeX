@@ -2,14 +2,15 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
-## [0.5.10] - 2026-01-27
+## [0.5.10] - 2026-03-02
 - **Fix bug**: png and jpg display;
 - **Fix bug**: figure display in tooltips
 - **Fix bug**: jump for equation href
 - **Add**: pin and close buttons, resize draggers for tooltips;
 - **Add**: multiple tooltips panels support;
-- **Add**: support tikz;
+- **Add**: Support tikz;
 - **Add**: Color box for theorem, lemma, ...
+- **Add**: Support math and `\today` in `\maketitle`
 
 ## [0.5.9] - 2026-01-26
 - **Fix bug**: cross-ref of figures tables algorithms

@@ -144,7 +144,7 @@ export function findBalancedClosingBrace(text: string, startIndex: number): numb
  */
 export function findCommand(text: string, tagName: string) {
     // Improved regex: Supports optional parameters [\s\S]*? and spaces between command and left brace
-    const regex = new RegExp(`\\${tagName}(?:\\s*\\[[\\s\\S]*?\\])?\\s*\\{`, 'g');
+    const regex = new RegExp(`\\\\${tagName}(?:\\s*\\[[\\s\\S]*?\\])?\\s*\\{`, 'g');
     const match = regex.exec(text);
 
     if (match) {

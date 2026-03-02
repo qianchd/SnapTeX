@@ -674,7 +674,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 8: Metadata \maketitle and abstract ---
+// --- Step 8: Metadata \maketitle and abstract ---
     {
         name: 'maketitle_and_abstract',
         priority: 160,
@@ -682,9 +682,24 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             // 1. Handle \maketitle
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                if (renderer.currentTitle) { titleBlock += `<h1 class="latex-title">${renderer.currentTitle}</h1>`; }
-                if (renderer.currentAuthor) { titleBlock += `<div class="latex-author">${renderer.currentAuthor.replace(/\\\\/g, '<br/>')}</div>`; }
-                if (renderer.currentDate) { titleBlock += `<div class="latex-date">${renderer.currentDate.replace(/\\\\/g, '<br/>')}</div>`; }
+                const meta = renderer.currentDocument?.metadata;
+
+                const processMeta = (val: string | undefined) => {
+                    if (!val) return '';
+                    let res = val.replace(/\\\\/g, '<br/>');
+                    res = res.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderMath(c.trim(), false, renderer));
+                    res = resolveLatexStyles(res);
+                    return res;
+                };
+
+                const safeTitle = processMeta(meta?.title);
+                const safeAuthor = processMeta(meta?.author);
+                const safeDate = processMeta(meta?.date);
+
+                if (safeTitle) { titleBlock += `<h1 class="latex-title">${safeTitle}</h1>`; }
+                if (safeAuthor) { titleBlock += `<div class="latex-author">${safeAuthor}</div>`; }
+                if (safeDate) { titleBlock += `<div class="latex-date">${safeDate}</div>`; }
+
                 text = text.replace(/\\maketitle.*/g, `\n\n` + renderer.protect('meta', titleBlock) + `\n\n`);
             }
 

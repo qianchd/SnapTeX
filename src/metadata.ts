@@ -49,6 +49,9 @@ export function extractMetadata(text: string): MetadataResult {
     // clean $$$$
     cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
 
+    const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    cleanedText = cleanedText.replace(/\\today\b/g, todayStr);
+
     let title: string | undefined;
     let author: string | undefined;
     let date: string | undefined;
