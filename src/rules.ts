@@ -685,7 +685,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const meta = renderer.currentDocument?.metadata;
 
                 const processMeta = (val: string | undefined) => {
-                    if (!val) return '';
+                    if (!val) {return '';}
                     let res = val.replace(/\\\\/g, '<br/>');
                     res = res.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderMath(c.trim(), false, renderer));
                     res = resolveLatexStyles(res);

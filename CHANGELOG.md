@@ -2,47 +2,50 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.11] - 2026-03-02
+- **Fixed**: Improved scrollbar usability in tooltips by increasing the clickable area and preventing overlap with resize handles.
+
 ## [0.5.10] - 2026-03-02
-- **Fix bug**: png and jpg display;
-- **Fix bug**: figure display in tooltips
-- **Fix bug**: jump for equation href
-- **Add**: pin and close buttons, resize draggers for tooltips;
-- **Add**: multiple tooltips panels support;
-- **Add**: Support tikz;
-- **Add**: Color box for theorem, lemma, ...
-- **Add**: Support math and `\today` in `\maketitle`
+- **Fixed**: png and jpg display;
+- **Fixed**: figure display in tooltips
+- **Fixed**: jump for equation href
+- **Added**: pin and close buttons, resize draggers for tooltips;
+- **Added**: multiple tooltips panels support;
+- **Added**: Support tikz;
+- **Added**: Color box for theorem, lemma, ...
+- **Added**: Support math and `\today` in `\maketitle`
 
 ## [0.5.9] - 2026-01-26
-- **Fix bug**: cross-ref of figures tables algorithms
-- **Add**: General protection toolkit in rules, which replace the old env-specific protections;
+- **Fixed**: cross-ref of figures tables algorithms
+- **Added**: General protection toolkit in rules, which replace the old env-specific protections;
 
 ## [0.5.8] - 2026-01-26
-- **Fix bug**: update when edit subfile
-- **Add**: delay a while for tooltip panel
+- **Fixed**: update when edit subfile
+- **Added**: delay a while for tooltip panel
 
 ## [0.5.7] - 2026-01-26
-- **Fix bug**: forward sync fail for multi-file document (Remove the root file checker);
+- **Fixed**: forward sync fail for multi-file document (Remove the root file checker);
 
 ## [0.5.6] - 2026-01-26
-- **Add**: tooltip preview panel on hover for cross-refs.
-- **Add**: command `snaptex.toggleAutoScroll`, with a default keyboard shortcut `ctrl+alt+a`
+- **Added**: tooltip preview panel on hover for cross-refs.
+- **Added**: command `snaptex.toggleAutoScroll`, with a default keyboard shortcut `ctrl+alt+a`
 
 ## [0.5.5] - 2026-01-11
-- **Fix bug**: unified autoScroll uri formatter across platforms
+- **Fixed**: unified autoScroll uri formatter across platforms
 - **Feature**: Full support vscode.dev
 
 ## [0.5.4] - 2026-01-11
-- **Fix bug**: autoScroll fails for web version
-- **Add**: button to start preview
+- **Fixed**: autoScroll fails for web version
+- **Added**: button to start preview
 
 ## [0.5.3] - 2026-01-09
-- **Fix bug**: webview async image canvas func load
+- **Fixed**: webview async image canvas func load
 
 ## [0.5.2] - 2026-01-09
-- **Fix**: image 401 error
+- **Fixed**: image 401 error
 
 ## [0.5.1] - 2026-01-09
-- **Fix**: support uri path
+- **Fixed**: support uri path
 
 ## [0.5.0] - 2026-01-09
 - **Code reconstruction**: Remove node.js and path dependence.
@@ -74,7 +77,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## [0.3.1] - 2025-12-25
 ### Changed
-- **Fix bug in label scanning:** Label in Nested Envs fails to be found.
+- **Fixed in label scanning:** Label in Nested Envs fails to be found.
 
 ## [0.3.0] - 2025-12-24
 ### Added
