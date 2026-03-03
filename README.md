@@ -68,15 +68,16 @@ SnapTeX is designed to be "zero-config." It works out of the box with no externa
 * Simply open a `.tex` file and run the preview command.
 * For math rendering, it uses an internal bundled version of KaTeX.
 
-## Extension Settings
-
-## Requirements
-
 ## Known Issues and update plan
 
-* **Complex Packages**: Since this is a regex-based parser and not a full TeX engine, highly complex macro-heavy packages (like `tikz` or `pgfplots`) will be displayed as placeholders.
+* Planned: Add support for commonly used packages, potentially using an approach similar to tikzjax.
 
+## Dependence
 
+* MarkdownIt: made parser simple
+* KaTeX: for rendering math
+* Pdfjs: for import pdf-type figures.
+* Tikzjax: [Jim Fowler's original](https://github.com/kisonecat/tikzjax); [Glenn Rice's fork](https://github.com/drgrice1/tikzjax);
 
 ---
 
