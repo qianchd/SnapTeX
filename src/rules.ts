@@ -409,7 +409,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'figure',
         priority: 120,
         apply: (text: string, renderer: SmartRenderer) => {
-            return text.replace(/\\begin\{figure\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\}/gi, (match, content) => {
+            return text.replace(/\\begin\{figure(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\1\}/gi, (match, star, content) => {
                 // 1. Extract Caption
                 const captionRes = findCommand(content, 'caption');
                 let captionHtml = '';
@@ -463,7 +463,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'algorithm',
         priority: 130,
         apply: (text: string, renderer: SmartRenderer) => {
-            return text.replace(/\\begin\{algorithm\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\}/gi, (match, content) => {
+            return text.replace(/\\begin\{algorithm(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\1\}/gi, (match, star, content) => {
                 const captionRes = findCommand(content, 'caption');
                 let captionHtml = '';
                 if (captionRes) {
