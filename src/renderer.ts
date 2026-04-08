@@ -239,29 +239,41 @@ export class SmartRenderer {
         }
         this.lastCitedKeys = [...this.citedKeys];
 
-        // 7. Render Inserted Blocks
-        // Read directly from newBlockTexts based on indices
-        const insertedHtmls: string[] = [];
-        for (let i = 0; i < diff.insertCount; i++) {
-            const absoluteIndex = diff.start + i;
-            insertedHtmls.push(this.renderBlockToHtml(newBlockTexts[absoluteIndex], absoluteIndex));
-        }
-        // 8. Payload
-        const isFullUpdate = this.lastBlockTexts.length === 0 || insertedHtmls.length > 50 || diff.deleteCount > 50;
+        // 7. Determine Update Strategy (Evaluate using diff.insertCount instead of insertedHtmls.length)
+        const isFullUpdate = this.lastBlockTexts.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
         let payload: PatchPayload;
 
         if (isFullUpdate) {
+            // [Full Render] Branch
+            // Directly render all content, skipping premature partial block rendering
             const fullHtml = newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index)).join('');
+
             this.lastBlockTexts = newBlockTexts;
-            payload = { type: 'full', html: fullHtml, numbering: numberingData };
+            payload = {
+                type: 'full',
+                html: fullHtml,
+                start: undefined,
+                deleteCount: undefined,
+                htmls: undefined,
+                shift: undefined,
+                numbering: numberingData,
+                dirtyBlocks: undefined
+            };
         } else {
+            // [Partial/Patch Render] Branch
+            // Only consume CPU to render changed blocks if we are sure a full update is not needed
+            const insertedHtmls: string[] = [];
+            for (let i = 0; i < diff.insertCount; i++) {
+                const absoluteIndex = diff.start + i;
+                insertedHtmls.push(this.renderBlockToHtml(newBlockTexts[absoluteIndex], absoluteIndex));
+            }
+
             let shift = 0;
             if (diff.end > 0 && insertedHtmls.length !== diff.deleteCount) {
                 shift = insertedHtmls.length - diff.deleteCount;
             }
 
             // O(1) assignment. Stop spreading massive arrays!
-            // This single line saves huge amounts of memory allocation.
             this.lastBlockTexts = newBlockTexts;
 
             const dirtyBlocksMap: { [index: number]: string } = {};
@@ -275,6 +287,7 @@ export class SmartRenderer {
 
             payload = {
                 type: 'patch',
+                html: undefined,
                 start: diff.start,
                 deleteCount: diff.deleteCount,
                 htmls: insertedHtmls,

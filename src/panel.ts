@@ -6,17 +6,17 @@ import { getBasename } from './utils';
 
 // Helper: Convert Uint8Array to Base64
 function uint8ToBase64(u8: Uint8Array): string {
-    let binary = '';
-    const len = u8.byteLength;
-    for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(u8[i]);
-    }
-    if (typeof btoa === 'function') {
-        return btoa(binary);
-    } else if (typeof Buffer !== 'undefined') {
+    if (typeof Buffer !== 'undefined') {
         return Buffer.from(u8).toString('base64');
     }
-    return '';
+
+    const CHUNK_SIZE = 0x8000;
+    const chunks: string[] = [];
+    for (let i = 0; i < u8.length; i += CHUNK_SIZE) {
+        const chunk = u8.subarray(i, i + CHUNK_SIZE);
+        chunks.push(String.fromCharCode.apply(null, chunk as unknown as number[]));
+    }
+    return btoa(chunks.join(''));
 }
 
 export class TexPreviewPanel {
@@ -246,11 +246,23 @@ export class TexPreviewPanel {
 
             if (payload.type === 'full' && payload.html) {
                 payload.html = fixPaths(payload.html);
-            } else if (payload.type === 'patch' && payload.htmls) {
-                payload.htmls = payload.htmls.map(h => fixPaths(h));
-            }
 
-            this._panel.webview.postMessage({ command: 'update', payload });
+                const encoder = new TextEncoder();
+                const binaryHtml = encoder.encode(payload.html);
+
+                const { html, ...payloadWithoutHtml } = payload;
+
+                this._panel.webview.postMessage({
+                    command: 'update_binary',
+                    payload: payloadWithoutHtml,
+                    binaryData: binaryHtml
+                });
+            } else {
+                if (payload.type === 'patch' && payload.htmls) {
+                    payload.htmls = payload.htmls.map(h => fixPaths(h));
+                }
+                this._panel.webview.postMessage({ command: 'update', payload });
+            }
         }
     }
 
