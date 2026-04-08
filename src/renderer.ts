@@ -253,15 +253,15 @@ export class SmartRenderer {
         if (isFullUpdate) {
             // [Full Render] Branch
             // Directly render all content, skipping premature partial block rendering
-            const fullHtml = newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index)).join('');
+            const insertedHtmls = newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index));
 
             this.lastBlockTexts = newBlockTexts;
+
             payload = {
                 type: 'full',
-                html: fullHtml,
+                htmls: insertedHtmls,
                 start: undefined,
                 deleteCount: undefined,
-                htmls: undefined,
                 shift: undefined,
                 numbering: numberingData,
                 dirtyBlocks: undefined
@@ -294,7 +294,6 @@ export class SmartRenderer {
 
             payload = {
                 type: 'patch',
-                html: undefined,
                 start: diff.start,
                 deleteCount: diff.deleteCount,
                 htmls: insertedHtmls,

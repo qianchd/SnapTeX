@@ -244,17 +244,23 @@ export class TexPreviewPanel {
                 return fixed;
             };
 
-            if (payload.type === 'full' && payload.html) {
-                payload.html = fixPaths(payload.html);
+            if (payload.type === 'full' && payload.htmls) {
 
-                const encoder = new TextEncoder();
-                const binaryHtml = encoder.encode(payload.html);
+                const cleanedHtmls = payload.htmls.map(h => fixPaths(h));
+                const fullHtml = cleanedHtmls.join('');
 
-                const { html, ...payloadWithoutHtml } = payload;
+                let binaryHtml: Uint8Array;
+                if (typeof Buffer !== 'undefined') {
+                    binaryHtml = Buffer.from(fullHtml);
+                } else {
+                    const encoder = new TextEncoder();
+                    binaryHtml = encoder.encode(fullHtml);
+                }
+                const { htmls, ...payloadWithoutHtmls } = payload;
 
                 this._panel.webview.postMessage({
                     command: 'update_binary',
-                    payload: payloadWithoutHtml,
+                    payload: payloadWithoutHtmls,
                     binaryData: binaryHtml
                 });
             } else {

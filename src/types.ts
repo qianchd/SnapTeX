@@ -22,7 +22,6 @@ export interface MetadataResult {
 
 export interface PatchPayload {
     type: 'full' | 'patch';
-    html?: string;
     start?: number;
     deleteCount?: number;
     htmls?: string[];

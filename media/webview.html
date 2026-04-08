@@ -504,9 +504,23 @@
                     break;
 
                 case 'update_binary':
+                    let u8array;
+                    if (binaryData instanceof Uint8Array) {
+                        u8array = binaryData; // Web Worker environment
+                    } else if (binaryData && binaryData.type === 'Buffer') {
+                        u8array = new Uint8Array(binaryData.data); // Node.js environment (serialized Buffer)
+                    } else {
+                        u8array = new Uint8Array(binaryData); // Fallback for raw arrays
+                    }
+
+                    // 2. Use the browser's native TextDecoder to instantly decompress
                     const decoder = new TextDecoder('utf-8');
-                    const htmlString = decoder.decode(binaryData);
+                    const htmlString = decoder.decode(u8array);
+
+                    // 3. Inject the decompressed giant HTML string back into the payload object.
                     payload.html = htmlString;
+
+                    // 4. Pass the payload to the existing rendering pipeline seamlessly.
                     this.handleUpdate(payload);
                     break;
 
