@@ -4,11 +4,11 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Under dev
 
-- **Fixed**: preambles now only supports math mode
 
-## [0.5.12] -
+## [0.5.12] - 2026-03-31
 
 - **Fixed**: Match {figure*} and {algorithm*}
+- **Optim**: Memory efficient flatten lines in multiple docs
 
 ## [0.5.11] - 2026-03-26
 - **Fixed**: Improved scrollbar usability in tooltips by increasing the clickable area and preventing overlap with resize handles.

@@ -8,23 +8,15 @@ export interface DiffResult {
     deleteCount: number;
     /** Number of matching blocks at the end of both arrays */
     end: number;
-    /** The new text blocks that need to be inserted */
-    insertedTexts: string[];
-    /** The old text blocks that are being removed (useful for analysis) */
-    deletedTexts: string[];
+    /** Number of new blocks to insert from the NEW array */
+    insertCount: number;
 }
 
 /**
  * Engine responsible for calculating the difference between two states of blocks.
- * Pure logic, no side effects.
+ * Pure logic, no side effects, zero array allocations.
  */
 export class DiffEngine {
-    /**
-     * Computes the difference between two arrays of block texts.
-     * Uses a simple prefix/suffix matching algorithm optimized for sequential editing.
-     * @param oldBlockTexts The list of texts from the previous render.
-     * @param newBlockTexts The list of texts from the current document state.
-     */
     public static compute(oldBlockTexts: string[], newBlockTexts: string[]): DiffResult {
         let start = 0;
         const minLen = Math.min(newBlockTexts.length, oldBlockTexts.length);
@@ -47,17 +39,12 @@ export class DiffEngine {
             end++;
         }
 
-        // 3. Extract diff regions
-        const insertedTexts = newBlockTexts.slice(start, newBlockTexts.length - end);
-        const deletedTexts = oldBlockTexts.slice(start, oldBlockTexts.length - end);
-        const deleteCount = oldBlockTexts.length - start - end;
-
+        // 3. Return only indices, avoid array slicing
         return {
             start,
-            deleteCount,
+            deleteCount: oldBlockTexts.length - start - end,
             end,
-            insertedTexts,
-            deletedTexts
+            insertCount: newBlockTexts.length - start - end
         };
     }
 }

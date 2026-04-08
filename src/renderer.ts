@@ -123,7 +123,7 @@ export class SmartRenderer {
         if (this.currentDocument.rootDir && normalizeUri(this.currentDocument.rootDir) === target) {
              return true;
         }
-        return this.currentDocument.sourceMap.some(loc => normalizeUri(loc.file) === target);
+        return this.currentDocument.filePool.some(file => normalizeUri(file) === target);
     }
 
     // --- Core Rendering Logic ---
@@ -137,15 +137,15 @@ export class SmartRenderer {
         // 2. Render Markdown (Tokens like XSNAP:math:0Y are treated as plain text)
         let finalHtml = this.md!.render(processed);
 
-        // 3. [UPDATED] Universal Recursive Resolution
+        // 3. Universal Recursive Resolution
         // Replaces all tokens, including nested ones (e.g. Ref inside Math)
         finalHtml = this.protector.resolve(finalHtml);
-
-        // [REMOVED] Specific restore calls (restoreRenderedMath, restoreRawBlocks)
 
         if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
             finalHtml = postProcessHtml(finalHtml);
         }
+
+        this.protector.reset();
 
         return `<div class="latex-block" data-index="${index}">${finalHtml}</div>`;
     }
@@ -153,7 +153,7 @@ export class SmartRenderer {
     public render(doc: LatexDocument): PatchPayload {
         this.currentDocument = doc;
 
-        // [UPDATED] Reset protector state
+        // Reset protector state
         this.protector.reset();
 
         // 1. Macros
@@ -197,8 +197,9 @@ export class SmartRenderer {
         const diff = DiffEngine.compute(this.lastBlockTexts, newBlockTexts);
 
         // 6. Citations
-        const insertedFullText = diff.insertedTexts.join('\n');
-        const deletedFullText = diff.deletedTexts.join('\n');
+        // Slice only locally when strictly needed for text joining
+        const insertedFullText = newBlockTexts.slice(diff.start, diff.start + diff.insertCount).join('\n');
+        const deletedFullText = this.lastBlockTexts.slice(diff.start, diff.start + diff.deleteCount).join('\n');
         const bibRegex = R_BIBLIOGRAPHY;
         const bibChanged = bibRegex.test(insertedFullText) || bibRegex.test(deletedFullText);
 
@@ -227,15 +228,24 @@ export class SmartRenderer {
             this.citedKeys = [...this.lastCitedKeys];
         }
 
-        const keysChanged = JSON.stringify(this.citedKeys) !== JSON.stringify(this.lastCitedKeys);
+        let keysChanged = this.citedKeys.length !== this.lastCitedKeys.length;
+        if (!keysChanged) {
+            for (let i = 0; i < this.citedKeys.length; i++) {
+                if (this.citedKeys[i] !== this.lastCitedKeys[i]) {
+                    keysChanged = true;
+                    break;
+                }
+            }
+        }
         this.lastCitedKeys = [...this.citedKeys];
 
         // 7. Render Inserted Blocks
-        const insertedHtmls = diff.insertedTexts.map((text, i) => {
+        // Read directly from newBlockTexts based on indices
+        const insertedHtmls: string[] = [];
+        for (let i = 0; i < diff.insertCount; i++) {
             const absoluteIndex = diff.start + i;
-            return this.renderBlockToHtml(text, absoluteIndex);
-        });
-
+            insertedHtmls.push(this.renderBlockToHtml(newBlockTexts[absoluteIndex], absoluteIndex));
+        }
         // 8. Payload
         const isFullUpdate = this.lastBlockTexts.length === 0 || insertedHtmls.length > 50 || diff.deleteCount > 50;
         let payload: PatchPayload;
@@ -249,16 +259,15 @@ export class SmartRenderer {
             if (diff.end > 0 && insertedHtmls.length !== diff.deleteCount) {
                 shift = insertedHtmls.length - diff.deleteCount;
             }
-            this.lastBlockTexts = [
-                ...this.lastBlockTexts.slice(0, diff.start),
-                ...diff.insertedTexts,
-                ...this.lastBlockTexts.slice(this.lastBlockTexts.length - diff.end)
-            ];
+
+            // O(1) assignment. Stop spreading massive arrays!
+            // This single line saves huge amounts of memory allocation.
+            this.lastBlockTexts = newBlockTexts;
 
             const dirtyBlocksMap: { [index: number]: string } = {};
             if (keysChanged) {
                 const bibBlockIndex = this.lastBlockTexts.findIndex(text => /\\bibliography\{/.test(text));
-                const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + insertedHtmls.length);
+                const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + diff.insertCount);
                 if (bibBlockIndex !== -1 && !isInsideMainPatch) {
                     dirtyBlocksMap[bibBlockIndex] = this.renderBlockToHtml(this.lastBlockTexts[bibBlockIndex], bibBlockIndex);
                 }

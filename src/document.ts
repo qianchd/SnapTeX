@@ -11,13 +11,16 @@ export interface DocumentParseResult {
     blockTexts: string[];
     blockLines: number[];
     blockLineCounts: number[];
-    sourceMap: SourceLocation[];
+    // memory-efficient TypedArrays
+    filePool: string[];
+    sourceFileIndices: Uint16Array;
+    sourceLines: Int32Array;
     metadata: PreambleData;
     bibEntries: Map<string, BibEntry>;
     contentStartLineOffset: number;
 }
 
-// [NEW] Cache Entry Interface
+// Cache Entry Interface
 interface BibCacheEntry {
     mtime: number;
     entries: Map<string, BibEntry>;
@@ -28,7 +31,10 @@ export class LatexDocument {
     public blockLines: number[] = [];
     public blockLineCounts: number[] = [];
 
-    public sourceMap: SourceLocation[] = [];
+    public filePool: string[] = [];
+    public sourceFileIndices: Uint16Array = new Uint16Array(0);
+    public sourceLines: Int32Array = new Int32Array(0);
+
     public contentStartLineOffset: number = 0;
 
     public metadata: PreambleData = {
@@ -39,7 +45,7 @@ export class LatexDocument {
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: vscode.Uri | undefined;
 
-    // [NEW] Cache for BibTeX files
+    // Cache for BibTeX files
     private bibCache: Map<string, BibCacheEntry> = new Map();
 
     constructor(private fileProvider: IFileProvider) {}
@@ -52,29 +58,31 @@ export class LatexDocument {
         this.blockTexts = result.blockTexts;
         this.blockLines = result.blockLines;
         this.blockLineCounts = result.blockLineCounts;
-        this.sourceMap = result.sourceMap;
+
+        // Apply optimized arrays
+        this.filePool = result.filePool;
+        this.sourceFileIndices = result.sourceFileIndices;
+        this.sourceLines = result.sourceLines;
+
         this.metadata = result.metadata;
         this.bibEntries = result.bibEntries;
         this.contentStartLineOffset = result.contentStartLineOffset;
     }
 
     public async parse(entryUri: vscode.Uri, contentOverride?: string): Promise<DocumentParseResult> {
-        const localPathPool = new Map<string, string>();
-        const intern = (s: string) => {
-            let c = localPathPool.get(s);
-            if (!c) { c = s; localPathPool.set(s, s); }
-            return c;
-        };
+        // Using filePool directly for string interning
+        const filePool: string[] = [];
 
         const rootDir = this.fileProvider.dir(entryUri);
         this.rootDir = rootDir;
 
-        // 1. Load
-        const { textLines, map } = await this.loadAndFlatten(entryUri, intern, 0, contentOverride);
-        const rawText = textLines.join('\n');
+        // 1. Load (Now returns parallel raw arrays)
+        const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, 0, contentOverride);
+        // const rawText = textLines.join('\n');
+        const normalizedText = textLines.join('\n');
 
         // 2. Metadata
-        const normalizedText = rawText.replace(/\r\n/g, '\n');
+        // const normalizedText = rawText.replace(/\r\n/g, '\n');
         const metaRes: MetadataResult = extractMetadata(normalizedText);
 
         // 3. Bib (With Caching)
@@ -104,7 +112,10 @@ export class LatexDocument {
             blockTexts: [],
             blockLines: [],
             blockLineCounts: [],
-            sourceMap: map,
+            // TypedArray to seal memory
+            filePool: filePool,
+            sourceFileIndices: new Uint16Array(fileIndices),
+            sourceLines: new Int32Array(lines),
             metadata: metaRes.data,
             bibEntries: bibEntries,
             contentStartLineOffset: contentStartLineOffset
@@ -112,6 +123,7 @@ export class LatexDocument {
 
         for (const b of rawBlockObjects) {
             if (b.text.trim().length > 0) {
+                // const flattenedText = (' ' + b.text).slice(1);
                 res.blockTexts.push(b.text);
                 res.blockLines.push(b.line);
                 res.blockLineCounts.push(b.lineCount);
@@ -123,24 +135,32 @@ export class LatexDocument {
 
     private async loadAndFlatten(
         fileUri: vscode.Uri,
-        intern: (s: string) => string,
+        filePool: string[],
         depth: number = 0,
         contentOverride?: string
-    ): Promise<{ textLines: string[], map: SourceLocation[] }> {
-        const fallback = { textLines: [], map: [] };
+    ): Promise<{ textLines: string[], fileIndices: number[], lines: number[] }> {
+        const fallback = { textLines: [], fileIndices: [], lines: [] };
         if (depth > 20) { return fallback; }
 
         let content = "";
         const filePathStr = fileUri.toString();
 
+        // Find or add the current file to the String Pool
+        let currentFileIndex = filePool.indexOf(filePathStr);
+        if (currentFileIndex === -1) {
+            currentFileIndex = filePool.length;
+            filePool.push(filePathStr);
+        }
+
         if (contentOverride !== undefined) {
             content = contentOverride;
         } else {
-            // [Optimization] Check existence before reading to avoid error throwing overhead
+            // Check existence before reading to avoid error throwing overhead
             if (!(await this.fileProvider.exists(fileUri))) {
                 return {
                     textLines: [`% [SnapTeX] File not found: ${filePathStr}`],
-                    map: [{ file: filePathStr, line: 0 }]
+                    fileIndices: [currentFileIndex],
+                    lines: [0]
                 };
             }
             try {
@@ -148,25 +168,27 @@ export class LatexDocument {
             } catch (e) {
                 return {
                     textLines: [`% [SnapTeX] Error reading: ${filePathStr}`],
-                    map: [{ file: filePathStr, line: 0 }]
+                    fileIndices: [currentFileIndex],
+                    lines: [0]
                 };
             }
         }
 
         const rawLines = content.split(/\r?\n/);
         const flattenedLines: string[] = [];
-        const sourceMap: SourceLocation[] = [];
+        // Collect primitive numbers instead of Objects
+        const outIndices: number[] = [];
+        const outLines: number[] = [];
         const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
 
-        const internedPath = intern(fileUri.toString());
-
         for (let i = 0; i < rawLines.length; i++) {
-            const line = rawLines[i];
+            const line = rawLines[i].replace(/\r/g, '');
             const trimmed = line.trim();
 
             if (trimmed.startsWith('%')) {
                 flattenedLines.push(line);
-                sourceMap.push({ file: internedPath, line: i });
+                outIndices.push(currentFileIndex);
+                outLines.push(i);
                 continue;
             }
 
@@ -178,23 +200,21 @@ export class LatexDocument {
                 const currentDir = this.fileProvider.dir(fileUri);
                 const targetUri = this.fileProvider.resolve(currentDir, relPath);
 
-                const result = await this.loadAndFlatten(targetUri, intern, depth + 1);
+                const result = await this.loadAndFlatten(targetUri, filePool, depth + 1);
 
                 flattenedLines.push(...result.textLines);
-                sourceMap.push(...result.map);
+                outIndices.push(...result.fileIndices);
+                outLines.push(...result.lines);
             } else {
                 flattenedLines.push(line);
-                sourceMap.push({ file: internedPath, line: i });
+                outIndices.push(currentFileIndex);
+                outLines.push(i);
             }
         }
 
-        return { textLines: flattenedLines, map: sourceMap };
+        return { textLines: flattenedLines, fileIndices: outIndices, lines: outLines };
     }
 
-    /**
-     * Loads Bibliography with Mtime Caching.
-     * Prevents re-parsing large .bib files if they haven't changed.
-     */
     private async loadBibliography(text: string, rootDir: vscode.Uri): Promise<Map<string, BibEntry>> {
         const match = text.match(R_BIBLIOGRAPHY);
         if (match && rootDir) {
@@ -204,29 +224,14 @@ export class LatexDocument {
             const bibUriStr = bibUri.toString();
 
             try {
-                // 1. Get file stats (lightweight)
                 const { mtime } = await this.fileProvider.stat(bibUri);
-
-                if (mtime === 0) {
-                    // File doesn't exist
-                    return new Map();
-                }
-
-                // 2. Check Cache
+                if (mtime === 0) { return new Map(); }
                 const cached = this.bibCache.get(bibUriStr);
-                if (cached && cached.mtime === mtime) {
-                    // Cache Hit: Return previous result
-                    return cached.entries;
-                }
-
-                // 3. Cache Miss: Read and Parse
+                if (cached && cached.mtime === mtime) { return cached.entries; }
                 const content = await this.fileProvider.read(bibUri);
                 const entries = BibTexParser.parse(content);
-
-                // 4. Update Cache
                 this.bibCache.set(bibUriStr, { mtime, entries });
                 return entries;
-
             } catch (e) {
                 console.error('Failed to load bib file:', e);
             }
@@ -235,27 +240,42 @@ export class LatexDocument {
     }
 
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {
-        if (flatLine >= 0 && flatLine < this.sourceMap.length) {
-            return this.sourceMap[flatLine];
+        // Reconstruct SourceLocation on demand from TypedArrays
+        if (flatLine >= 0 && flatLine < this.sourceLines.length) {
+            return {
+                file: this.filePool[this.sourceFileIndices[flatLine]],
+                line: this.sourceLines[flatLine]
+            };
         }
         return undefined;
     }
 
-    /**
-     * Robust matching using normalizeUri
-     */
     public getFlattenedLine(targetUriString: string, originalLine: number): number {
         const normTarget = normalizeUri(targetUriString);
 
         let bestLine = -1;
         let minDiff = Infinity;
 
-        for (let i = 0; i < this.sourceMap.length; i++) {
-            const loc = this.sourceMap[i];
-            const normLoc = normalizeUri(loc.file);
-
+        // Fast-path: Pre-calculate matching file indices.
+        // This avoids executing heavy string normalization 50,000+ times inside the main loop.
+        const matchingIndices = new Set<number>();
+        for (let i = 0; i < this.filePool.length; i++) {
+            const normLoc = normalizeUri(this.filePool[i]);
             if (normLoc === normTarget || normLoc.endsWith(normTarget) || normTarget.endsWith(normLoc)) {
-                const diff = Math.abs(loc.line - originalLine);
+                matchingIndices.add(i);
+            }
+        }
+
+        if (matchingIndices.size === 0) {
+            console.warn(`[SnapTeX] Failed to map source line. Target: ${normTarget}`);
+            return bestLine;
+        }
+
+        // Iterate over flat primitive arrays (extremely fast and cache-friendly)
+        const len = this.sourceLines.length;
+        for (let i = 0; i < len; i++) {
+            if (matchingIndices.has(this.sourceFileIndices[i])) {
+                const diff = Math.abs(this.sourceLines[i] - originalLine);
                 if (diff < minDiff) {
                     minDiff = diff;
                     bestLine = i;
@@ -264,9 +284,6 @@ export class LatexDocument {
             }
         }
 
-        if (bestLine === -1) {
-            console.warn(`[SnapTeX] Failed to map source line. Target: ${normTarget}`);
-        }
         return bestLine;
     }
 }
