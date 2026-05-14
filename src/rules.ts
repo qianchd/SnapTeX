@@ -153,6 +153,23 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     },
 
     {
+        name: 'clean_layout_cmds',
+        priority: 15,
+        apply: (text, renderer: SmartRenderer) => {
+
+            text = text.replace(/\\(baselineskip|parskip|parindent)\s*=?\s*[-+]?\d+(?:\.\d+)?\s*[a-zA-Z]{2}\s*/g, '');
+            text = text.replace(/\\(vspace|hspace)\*?\{[^}]+\}\s*/g, '');
+            text = text.replace(/\\(setlength|addtolength)\{[^}]+\}\{[^}]+\}\s*/g, '');
+
+            // text = text.replace(/\\linespread\{[^}]+\}\s*/g, '');
+
+            text = text.replace(/\\noindent\s*/g, () => renderer.protect('raw', '<span class="no-indent-marker"></span>'));
+
+            return text;
+        }
+    },
+
+    {
         name: 'mbox',
         priority: 20,
         apply: (text, renderer: SmartRenderer) => {
@@ -168,7 +185,8 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             text = text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (match, cmd, numStr) => {
                 return toRoman(parseInt(numStr), cmd === 'Rmnum');
             });
-            return text.replace(/\\noindent\s*/g, () => renderer.protect('raw', '<span class="no-indent-marker"></span>'));
+            return text;
+            // return text.replace(/\\noindent\s*/g, () => renderer.protect('raw', '<span class="no-indent-marker"></span>'));
         }
     },
 
