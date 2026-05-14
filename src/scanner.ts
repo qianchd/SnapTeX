@@ -20,9 +20,21 @@ export interface ScanResult {
 export class LatexCounterScanner {
     private counters = {
         sec: 0, subsec: 0, subsubsec: 0,
-        eq: 0, fig: 0, tbl: 0, alg: 0, thm: 0
+        eq: 0, fig: 0, tbl: 0, alg: 0
     };
+
+    // Use Record to allow dynamic keys for theorem-like environments (theorem, lemma, definition, etc.)
+    private dynamicCounters: Record<string, number> = {};
     private labelMap: Record<string, string> = {};
+
+    private getNextNumber(envName: string): string {
+        const name = envName.toLowerCase();
+        if (!this.dynamicCounters[name]) {
+            this.dynamicCounters[name] = 0;
+        }
+        this.dynamicCounters[name]++;
+        return String(this.dynamicCounters[name]);
+    }
 
     public scan(blocks: string[]): ScanResult {
         this.reset();
@@ -40,7 +52,7 @@ export class LatexCounterScanner {
             };
 
             // 1. Sections
-            secRegex.lastIndex = 0; // Reset state before reusing global regex
+            secRegex.lastIndex = 0;
             let match;
             while ((match = secRegex.exec(text)) !== null) {
                 if (match[2] === '*') {continue;}
@@ -58,18 +70,17 @@ export class LatexCounterScanner {
             }
 
             // 2. Equations
-            eqRegex.lastIndex = 0; // Reset state
+            eqRegex.lastIndex = 0;
             while ((match = eqRegex.exec(text)) !== null) {
                 if (match[2] === '*') {continue;}
                 this.counters.eq++;
                 const numStr = String(this.counters.eq);
                 blockRes.counts.eq.push(numStr);
-                // [FIX] Pass environment name to handle nesting correctly
                 this.extractLabelInEnv(text, match.index, numStr, match[1]);
             }
 
             // 3. Floats (Figure, Table, Algorithm)
-            floatRegex.lastIndex = 0; // Reset state
+            floatRegex.lastIndex = 0;
             while ((match = floatRegex.exec(text)) !== null) {
                 const type = match[1];
                 let numStr = "";
@@ -77,17 +88,16 @@ export class LatexCounterScanner {
                 else if (type === 'table') { this.counters.tbl++; numStr = String(this.counters.tbl); blockRes.counts.tbl.push(numStr); }
                 else if (type === 'algorithm') { this.counters.alg++; numStr = String(this.counters.alg); blockRes.counts.alg.push(numStr); }
 
-                // Pass environment name (type) to handle nested tikz/tables correctly
                 this.extractLabelInEnv(text, match.index, numStr, type);
             }
 
             // 4. Theorems
-            thmRegex.lastIndex = 0; // Reset state
+            thmRegex.lastIndex = 0;
             while ((match = thmRegex.exec(text)) !== null) {
-                this.counters.thm++;
-                const numStr = String(this.counters.thm);
+                const envName = match[1].toLowerCase();
+                const numStr = this.getNextNumber(envName); // 每个环境名独立计数
+
                 blockRes.counts.thm.push(numStr);
-                // Pass environment name
                 this.extractLabelInEnv(text, match.index, numStr, match[1]);
             }
 
@@ -101,7 +111,8 @@ export class LatexCounterScanner {
     }
 
     private reset() {
-        this.counters = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, tbl: 0, alg: 0, thm: 0 };
+        this.counters = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, tbl: 0, alg: 0 };
+        this.dynamicCounters = {};
         this.labelMap = {};
     }
 
@@ -118,22 +129,14 @@ export class LatexCounterScanner {
         if (m) {this.labelMap[m[1]] = val;}
     }
 
-    /**
-     * [FIXED] Robust label extraction that respects nested environments.
-     * It now looks for the matching closing tag \end{envName} instead of the first \end{...}.
-     */
     private extractLabelInEnv(text: string, startIdx: number, val: string, envName: string) {
         const sub = text.substring(startIdx);
-
-        // Match the specific closing tag for this environment
-        // e.g., if envName is "figure", find "\end{figure}"
         const endRegex = new RegExp(`\\\\end\\{${envName}\\*?\\}`);
         const endMatch = sub.match(endRegex);
 
         const limit = endMatch ? (endMatch.index! + endMatch[0].length) : sub.length;
         const block = sub.substring(0, limit);
 
-        // Extract label
         const m = block.match(/\\label\{([^}]+)\}/);
         if (m) {
             this.labelMap[m[1]] = val;

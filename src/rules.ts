@@ -653,8 +653,28 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         apply: (text, renderer: SmartRenderer) => {
             const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
 
+            const DISPLAY_MAP: Record<string, string> = {
+                'thm': 'Theorem',
+                'prop': 'Proposition',
+                'propo': 'Proposition',
+                'lem': 'Lemma',
+                'def': 'Definition',
+                'defi': 'Definition',
+                'cond': 'Condition',
+                'ass': 'Assumption',
+                'assu': 'Assumption',
+                'cor': 'Corollary',
+                'coro': 'Corollary',
+                'rem': 'Remark',
+                'rmk': 'Remark',
+                'ex': 'Example',
+                'exam': 'Example',
+            };
+
             text = text.replace(thmRegex, (match, envName, optArg, content) => {
-                const displayName = capitalizeFirstLetter(envName);
+                const rawName = envName.toLowerCase();
+                const displayName = DISPLAY_MAP[rawName] || capitalizeFirstLetter(envName);
+
                 let header = `<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span>`;
 
                 if (optArg) {
@@ -701,6 +721,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 if (safeDate) { titleBlock += `<div class="latex-date">${safeDate}</div>`; }
 
                 text = text.replace(/\\maketitle.*/g, `\n\n` + renderer.protect('meta', titleBlock) + `\n\n`);
+                text = text.replace(/ \[meta:.*?\]/g, '');
             }
 
             // 2. Enhanced Abstract recognition

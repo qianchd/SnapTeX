@@ -57,7 +57,7 @@ export function decodeLatexAccents(text: string): string {
  */
 export function resolveLatexStyles(text: string): string {
     // 1. Standard styles: \textbf{...}, \textit{...}, etc.
-    text = text.replace(/\\(textbf|textit|textio|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
+    text = text.replace(/\\(textbf|textit|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
         let startTag = '', endTag = '';
         switch (cmd) {
             case 'textbf': startTag = '<strong>'; endTag = '</strong>'; break;

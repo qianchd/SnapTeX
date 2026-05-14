@@ -172,7 +172,7 @@ export class SmartRenderer {
 
         const newBlockTexts = doc.blockTexts.map(rawText => {
             const trimmed = rawText.trim();
-            return trimmed.includes('\\maketitle') ? (trimmed + metaFingerprint) : trimmed;
+            return trimmed.includes('\\maketitle') ? trimmed.replace('\\maketitle', `\\maketitle${metaFingerprint}`) : trimmed;
         });
 
         // 3. Block Map

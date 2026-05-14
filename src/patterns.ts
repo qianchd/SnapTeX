@@ -14,10 +14,16 @@ export const FLOAT_ENVS = [
 ];
 
 export const THEOREM_ENVS = [
-    'theorem', 'lemma', 'proposition', 'condition', 'condbis',
-    'assumption', 'remark', 'definition', 'corollary', 'example'
+    'theorem', 'thm',
+    'proposition', 'prop',
+    'lemma', 'lem',
+    'definition', 'def', 'defi',
+    'condition', 'cond',
+    'assumption', 'assum', 'assu',
+    'remark', 'rem', 'rmk',
+    'corollary', 'cor', 'coro',
+    'example', 'ex'
 ];
-
 // Note: Section levels usually map to specific logic, but good to have listed.
 export const SECTION_LEVELS = [
     'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'
