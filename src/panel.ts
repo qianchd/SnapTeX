@@ -67,6 +67,12 @@ export function normalizePdfRequestPath(input: unknown): string | undefined {
     return cleanPath;
 }
 
+export type PdfRequestMode = 'uri' | 'base64';
+
+export function getPdfRequestMode(message: { transport?: unknown } | undefined): PdfRequestMode {
+    return message?.transport === 'base64' ? 'base64' : 'uri';
+}
+
 function normalizeUriPathForContainment(uri: vscode.Uri): string {
     let path = uri.path.replace(/\/+/g, '/');
     if (path.length > 1) {
@@ -209,7 +215,7 @@ export class TexPreviewPanel {
         }
     }
 
-    // Read PDF file and send back base64 data
+    // Prefer webview resource URIs for PDFs, with base64 retained as a fallback path.
     private async handlePdfRequest(message: any) {
         if (!this._sourceUri) {return;}
 
@@ -237,11 +243,22 @@ export class TexPreviewPanel {
 
             // Check existence first
             if (await this._fileProvider.exists(pdfUri)) {
+                if (getPdfRequestMode(message) === 'uri') {
+                    const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
+                    this.postMessage({
+                        command: 'pdfUri',
+                        id: requestId,
+                        uri: webviewUri.toString(),
+                        path: cleanPath
+                    });
+                    return;
+                }
+
                 const fileData = await this._fileProvider.readBuffer(pdfUri);
                 const base64 = uint8ToBase64(fileData);
                 this.postMessage({
                     command: 'pdfData',
-                    id: message.id,
+                    id: requestId,
                     data: base64
                 });
             } else {

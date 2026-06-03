@@ -29,9 +29,9 @@
 
     // --- Global PDF Helper ---
     window.pdfReqQueue = [];
-    window.renderPdfToCanvas = function(path, canvasId) {
+    window.renderPdfToCanvas = function(path, canvasId, transport) {
         console.log(`[SnapTeX] Queueing PDF request for ${canvasId}`);
-        window.pdfReqQueue.push({ path, canvasId });
+        window.pdfReqQueue.push({ path, canvasId, transport });
     };
 
     /**
@@ -476,10 +476,12 @@
                 autoScrollDelay: 100,
                 debugMemory: false
             };
+            this.pdfObserver = null;
 
             // Initialize Tooltip Manager
             this.tooltipManager = new TooltipManager();
 
+            this.initPdfObserver();
             this.bindEvents();
             vscode.postMessage({ command: 'webviewLoaded' });
         }
@@ -805,13 +807,38 @@
             }
         }
 
+        initPdfObserver() {
+            if (!('IntersectionObserver' in window)) return;
+            this.pdfObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const canvas = entry.target;
+                    this.requestPdfCanvas(canvas);
+                    this.pdfObserver.unobserve(canvas);
+                    canvas.removeAttribute('data-pdf-observed');
+                });
+            }, { rootMargin: '1200px' });
+        }
+
+        requestPdfCanvas(canvas) {
+            const path = canvas.getAttribute('data-req-path');
+            const id = canvas.id;
+            if (path && id && !canvas.getAttribute('data-rendered') && !canvas.getAttribute('data-requested')) {
+                window.renderPdfToCanvas(path, id);
+            }
+        }
+
         renderPendingPdfs() {
             const pdfCanvases = document.querySelectorAll('canvas[data-req-path]');
             pdfCanvases.forEach(canvas => {
-                const path = canvas.getAttribute('data-req-path');
-                const id = canvas.id;
-                if (path && id && !canvas.getAttribute('data-rendered') && !canvas.getAttribute('data-requested')) {
-                    window.renderPdfToCanvas(path, id);
+                if (canvas.getAttribute('data-rendered') || canvas.getAttribute('data-requested')) return;
+                if (this.pdfObserver) {
+                    if (!canvas.getAttribute('data-pdf-observed')) {
+                        canvas.setAttribute('data-pdf-observed', 'true');
+                        this.pdfObserver.observe(canvas);
+                    }
+                } else {
+                    this.requestPdfCanvas(canvas);
                 }
             });
         }
@@ -897,6 +924,12 @@
             } else {
                 renderPdfFromData(msg.id, msg.data);
             }
+        } else if (msg.command === 'pdfUri') {
+            if (msg.error || !msg.uri) {
+                renderPdfError(msg.id, msg.error || 'Error loading PDF');
+            } else {
+                renderPdfFromUrl(msg.id, msg.uri, msg.path);
+            }
         }
     });
 
@@ -914,14 +947,9 @@
         canvas.removeAttribute('data-requested');
     }
 
-    async function renderPdfFromData(canvasId, base64Data) {
-        const canvas = document.getElementById(canvasId);
-        if (!canvas) return;
-
+    async function renderPdfDocument(canvas, loadingTask) {
         let pdfDocument = null;
         try {
-            const pdfData = base64ToUint8Array(base64Data);
-            const loadingTask = pdfjsLib.getDocument({ data: pdfData });
             pdfDocument = await loadingTask.promise;
 
             const page = await pdfDocument.getPage(1);
@@ -932,16 +960,13 @@
                 canvas.width = viewport.width;
             }
             const context = canvas.getContext('2d');
+            if (!context) return;
             await page.render({ canvasContext: context, viewport: viewport }).promise;
 
             canvas.setAttribute('data-rendered', 'true');
+            canvas.removeAttribute('data-requested');
 
             page.cleanup();
-        } catch (error) {
-            console.error('PDF render error:', error);
-            const ctx = canvas.getContext('2d');
-            ctx.font = '12px sans-serif';
-            ctx.fillText('Error loading PDF', 10, 50);
         } finally {
             if (pdfDocument) {
                 pdfDocument.destroy();
@@ -949,7 +974,37 @@
         }
     }
 
-    const realRequestPdf = (path, canvasId) => {
+    async function renderPdfFromUrl(canvasId, pdfUri, path) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        try {
+            await renderPdfDocument(canvas, pdfjsLib.getDocument({ url: pdfUri }));
+        } catch (error) {
+            console.error('PDF URI render error:', error);
+            canvas.removeAttribute('data-requested');
+            if (path) {
+                realRequestPdf(path, canvasId, 'base64');
+            } else {
+                renderPdfError(canvasId, 'Error loading PDF');
+            }
+        }
+    }
+
+    async function renderPdfFromData(canvasId, base64Data) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        try {
+            const pdfData = base64ToUint8Array(base64Data);
+            await renderPdfDocument(canvas, pdfjsLib.getDocument({ data: pdfData }));
+        } catch (error) {
+            console.error('PDF render error:', error);
+            renderPdfError(canvasId, 'Error loading PDF');
+        }
+    }
+
+    const realRequestPdf = (path, canvasId, transport) => {
         const canvas = document.getElementById(canvasId);
         if (!canvas || canvas.getAttribute('data-requested') === 'true') return;
 
@@ -958,13 +1013,14 @@
         vscode.postMessage({
             command: 'requestPdf',
             id: canvasId,
-            path: path
+            path: path,
+            transport: transport
         });
     };
 
     if (window.pdfReqQueue && window.pdfReqQueue.length > 0) {
         console.log(`[SnapTeX] Processing ${window.pdfReqQueue.length} queued PDF requests.`);
-        window.pdfReqQueue.forEach(req => realRequestPdf(req.path, req.canvasId));
+        window.pdfReqQueue.forEach(req => realRequestPdf(req.path, req.canvasId, req.transport));
     }
 
     window.renderPdfToCanvas = realRequestPdf;

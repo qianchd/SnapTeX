@@ -7,7 +7,7 @@ import { LatexDocument } from '../document';
 import { DiffEngine } from '../diff';
 import { IFileProvider } from '../file-provider';
 import { extractMetadata } from '../metadata';
-import { isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
+import { getPdfRequestMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { ProtectionManager } from '../protection';
 import { LatexCounterScanner } from '../scanner';
 import { LatexBlockSplitter } from '../splitter';
@@ -466,6 +466,13 @@ suite('PDF request validation', () => {
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.file('/project/chapter/figures/a.pdf'), [docDir, root]), true);
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.file('/project2/a.pdf'), [root]), false);
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.parse('https://example.com/a.pdf'), [root]), false);
+    });
+
+    test('uses webview URI mode by default and base64 only when requested', () => {
+        assert.equal(getPdfRequestMode({}), 'uri');
+        assert.equal(getPdfRequestMode({ transport: 'uri' }), 'uri');
+        assert.equal(getPdfRequestMode({ transport: 'base64' }), 'base64');
+        assert.equal(getPdfRequestMode({ transport: 42 }), 'uri');
     });
 });
 

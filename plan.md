@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 27 tests.  
+> Last verified: `npm test` passed with 28 tests.  
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -186,10 +186,10 @@
 
 ### D. PDF Pipeline Optimization
 
-- [ ] Return webview URIs for PDF files instead of reading and base64-posting by default.
-- [ ] Keep the existing base64 `pdfData` path as fallback for remote or unsupported cases.
-- [ ] Use PDF.js `getDocument({ url })` when a URI is available.
-- [ ] Lazy-render PDF canvases with `IntersectionObserver`.
+- [x] Return webview URIs for PDF files instead of reading and base64-posting by default.
+- [x] Keep the existing base64 `pdfData` path as fallback for remote or unsupported cases.
+- [x] Use PDF.js `getDocument({ url })` when a URI is available.
+- [x] Lazy-render PDF canvases with `IntersectionObserver`.
 - [ ] Release far-offscreen PDF canvas bitmaps.
 - [ ] Add webview-side tests or smoke coverage for PDF request lifecycle where practical.
 
