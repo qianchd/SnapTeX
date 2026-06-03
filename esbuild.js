@@ -6,6 +6,29 @@ const zlib = require("zlib");
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
+function patchTikzJaxWorkerTimeout(tikzDest) {
+    const tikzJaxFile = path.join(tikzDest, 'tikzjax.js');
+    const original = 'r=await t(new o(`${e}/run-tex.js`));';
+    const patched = 'r=await t(new o(`${e}/run-tex.js`),{timeout:60000});';
+
+    if (!fs.existsSync(tikzJaxFile)) {
+        return;
+    }
+
+    const source = fs.readFileSync(tikzJaxFile, 'utf8');
+    if (source.includes(patched)) {
+        return;
+    }
+
+    if (!source.includes(original)) {
+        console.warn('[build] Warning: TikZJax worker timeout patch target not found.');
+        return;
+    }
+
+    fs.writeFileSync(tikzJaxFile, source.replace(original, patched));
+    console.log('[build] Patched TikZJax worker init timeout.');
+}
+
 /**
  * Custom plugin to automatically copy assets (KaTeX, PDF.js, TikZJax) from node_modules to the media directory.
  * This ensures that necessary static files are available for the Webview at runtime.
@@ -145,6 +168,7 @@ const copyAssetsPlugin = {
                     console.warn(`[build] Warning: TikZJax file not found: ${fileName} in ${tikzRoot}`);
                 }
             });
+            patchTikzJaxWorkerTimeout(tikzDest);
 
             // Copy tex_files
             const texFilesSrc = path.join(tikzRoot, 'dist', 'tex_files');

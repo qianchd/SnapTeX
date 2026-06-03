@@ -464,6 +464,35 @@ suite('SmartRenderer', () => {
         assert.match(html, /<script type="text\/tikz"/);
         assert.doesNotMatch(html, /\\resizebox/);
     });
+
+    test('stabilizes consecutive TikZ statements inside resizebox figures', () => {
+        const html = renderBlocks([
+            [
+                '\\begin{figure}[H]',
+                '\\centering',
+                '\\resizebox{\\textwidth}{!}{',
+                '\\begin{tikzpicture}',
+                '    \\path coordinate (A) at (0, 0)',
+                '          coordinate (E) at (15, 0);',
+                '    \\path coordinate (B) at ($ (A)!.25!(E) $)',
+                '          coordinate (C) at ($ (A)!.5!(E) $)',
+                '          coordinate (D) at ($ (A)!.75!(E) $);',
+                '    \\draw[line width=.5pt]',
+                '       (A) -- (B) -- (C) -- (D) -- (E);',
+                '    \\node[dot, label = {$\\htau_{a}$}] at (A) {};',
+                '    \\node[dot, label = {$\\tau_{h}^\\ast$}] at (B) {};',
+                '    \\node[dot, label = {$\\cdots$}] at (C) {};',
+                '    \\node[dot, label = {$\\tau_{h+t}^\\ast$}] at (D) {};',
+                '    \\node[dot, label = {$\\htau_{a+1}$}] at (E) {};',
+                '\\end{tikzpicture}}',
+                '\\end{figure}'
+            ].join('\n')
+        ]);
+        const tikzScript = html.match(/<script type="text\/tikz"[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? '';
+
+        assert.match(tikzScript, /coordinate \(D\) at \(\$ \(A\)!\.75!\(E\) \$\);\n\n\s*\\draw\[line width=\.5pt\]/);
+        assert.doesNotMatch(html, /\\resizebox/);
+    });
 });
 
 suite('PDF request validation', () => {
@@ -566,6 +595,16 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /setTikzContainerState\(container, 'queued'\)/);
         assert.match(webviewSource, /setTikzContainerState\(container, 'rendering'\)/);
         assert.doesNotMatch(webviewSource, /setTimeout\(\(\) => \{[\s\S]*window\.failPendingTikzContainers\('TikZ rendering timed out\.'\)/);
+    });
+
+    test('extends TikZJax worker initialization timeout for VS Code webviews', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
+        const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
+
+        assert.match(buildSource, /patchTikzJaxWorkerTimeout/);
+        assert.match(buildSource, /timeout:60000/);
+        assert.match(tikzJaxSource, /run-tex\.js`\),\{timeout:60000\}/);
     });
 });
 

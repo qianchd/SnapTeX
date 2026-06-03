@@ -58,6 +58,13 @@ function unwrapResizeboxAroundProtectedContent(text: string): string {
     );
 }
 
+function stabilizeTikzContentForTikzJax(content: string): string {
+    return content.replace(
+        /;(\r?\n)(?=[ \t]*\\(?:path|draw|fill|filldraw|node|coordinate|clip|shade|foreach|begin|end)\b)/g,
+        ';$1$1'
+    );
+}
+
 /**
  * Recursive Dependency Resolver
  * Scans the content for macro usages and pulls in their definitions from the map.
@@ -123,6 +130,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const macroMap = renderer.currentDocument?.metadata.tikzMacroMap || new Map();
                 // Scan both options and content for dependencies
                 const neededMacros = resolveDependencies(opts + cleanContent, macroMap);
+                const stabilizedContent = stabilizeTikzContentForTikzJax(cleanContent);
 
                 const fontConfig = `\\tikzset{every node/.append style={font=\\sffamily\\small}}\n`;
 
@@ -132,7 +140,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     neededMacros,    // 2. Only used \\newcommand definitions
                     fontConfig,      // 3. System font settings
                     `\\begin{tikzpicture}${opts}`,
-                    cleanContent,
+                    stabilizedContent,
                     `\\end{tikzpicture}`
                 ].join('\n');
 
