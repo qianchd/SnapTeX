@@ -29,9 +29,9 @@
 
     // --- Global PDF Helper ---
     window.pdfReqQueue = [];
-    window.renderPdfToCanvas = function(path, canvasId, transport) {
+    window.renderPdfToCanvas = function(path, canvasId) {
         console.log(`[SnapTeX] Queueing PDF request for ${canvasId}`);
-        window.pdfReqQueue.push({ path, canvasId, transport });
+        window.pdfReqQueue.push({ path, canvasId });
     };
 
     /**
@@ -906,29 +906,13 @@
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
 
-    function base64ToUint8Array(base64) {
-        const binary_string = window.atob(base64);
-        const len = binary_string.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binary_string.charCodeAt(i);
-        }
-        return bytes;
-    }
-
     window.addEventListener('message', event => {
         const msg = event.data;
-        if (msg.command === 'pdfData') {
-            if (msg.error || !msg.data) {
-                renderPdfError(msg.id, msg.error || 'Error loading PDF');
-            } else {
-                renderPdfFromData(msg.id, msg.data);
-            }
-        } else if (msg.command === 'pdfUri') {
+        if (msg.command === 'pdfUri') {
             if (msg.error || !msg.uri) {
                 renderPdfError(msg.id, msg.error || 'Error loading PDF');
             } else {
-                renderPdfFromUrl(msg.id, msg.uri, msg.path);
+                renderPdfFromUrl(msg.id, msg.uri);
             }
         }
     });
@@ -974,7 +958,7 @@
         }
     }
 
-    async function renderPdfFromUrl(canvasId, pdfUri, path) {
+    async function renderPdfFromUrl(canvasId, pdfUri) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
@@ -983,28 +967,11 @@
         } catch (error) {
             console.error('PDF URI render error:', error);
             canvas.removeAttribute('data-requested');
-            if (path) {
-                realRequestPdf(path, canvasId, 'base64');
-            } else {
-                renderPdfError(canvasId, 'Error loading PDF');
-            }
-        }
-    }
-
-    async function renderPdfFromData(canvasId, base64Data) {
-        const canvas = document.getElementById(canvasId);
-        if (!canvas) return;
-
-        try {
-            const pdfData = base64ToUint8Array(base64Data);
-            await renderPdfDocument(canvas, pdfjsLib.getDocument({ data: pdfData }));
-        } catch (error) {
-            console.error('PDF render error:', error);
             renderPdfError(canvasId, 'Error loading PDF');
         }
     }
 
-    const realRequestPdf = (path, canvasId, transport) => {
+    const realRequestPdf = (path, canvasId) => {
         const canvas = document.getElementById(canvasId);
         if (!canvas || canvas.getAttribute('data-requested') === 'true') return;
 
@@ -1013,14 +980,13 @@
         vscode.postMessage({
             command: 'requestPdf',
             id: canvasId,
-            path: path,
-            transport: transport
+            path: path
         });
     };
 
     if (window.pdfReqQueue && window.pdfReqQueue.length > 0) {
         console.log(`[SnapTeX] Processing ${window.pdfReqQueue.length} queued PDF requests.`);
-        window.pdfReqQueue.forEach(req => realRequestPdf(req.path, req.canvasId, req.transport));
+        window.pdfReqQueue.forEach(req => realRequestPdf(req.path, req.canvasId));
     }
 
     window.renderPdfToCanvas = realRequestPdf;

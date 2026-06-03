@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 28 tests.  
+> Last verified: `npm test` passed with 28 tests after the URI-only PDF transport cleanup.  
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -187,11 +187,12 @@
 ### D. PDF Pipeline Optimization
 
 - [x] Return webview URIs for PDF files instead of reading and base64-posting by default.
-- [x] Keep the existing base64 `pdfData` path as fallback for remote or unsupported cases.
+- [x] Remove the old base64 `pdfData` fallback so URI rendering is the single PDF transport path.
 - [x] Use PDF.js `getDocument({ url })` when a URI is available.
 - [x] Lazy-render PDF canvases with `IntersectionObserver`.
+- [x] Add a test guard that prevents the removed `pdfData`/base64 transport branch from returning silently.
 - [ ] Release far-offscreen PDF canvas bitmaps.
-- [ ] Add webview-side tests or smoke coverage for PDF request lifecycle where practical.
+- [ ] Add webview-side tests or smoke coverage that verifies URI PDF rendering in local, remote, and web extension hosts where practical.
 
 ### E. Full Update Payload and DOM Update Model
 

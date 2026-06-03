@@ -4,21 +4,6 @@ import { LatexDocument } from './document';
 import { VscodeFileProvider } from './file-provider';
 import { getBasename } from './utils';
 
-// Helper: Convert Uint8Array to Base64
-function uint8ToBase64(u8: Uint8Array): string {
-    if (typeof Buffer !== 'undefined') {
-        return Buffer.from(u8).toString('base64');
-    }
-
-    const CHUNK_SIZE = 0x8000;
-    const chunks: string[] = [];
-    for (let i = 0; i < u8.length; i += CHUNK_SIZE) {
-        const chunk = u8.subarray(i, i + CHUNK_SIZE);
-        chunks.push(String.fromCharCode.apply(null, chunk as unknown as number[]));
-    }
-    return btoa(chunks.join(''));
-}
-
 function isDebugMemoryEnabled(): boolean {
     return vscode.workspace.getConfiguration('snaptex').get<boolean>('debugMemory', false);
 }
@@ -65,12 +50,6 @@ export function normalizePdfRequestPath(input: unknown): string | undefined {
     }
 
     return cleanPath;
-}
-
-export type PdfRequestMode = 'uri' | 'base64';
-
-export function getPdfRequestMode(message: { transport?: unknown } | undefined): PdfRequestMode {
-    return message?.transport === 'base64' ? 'base64' : 'uri';
 }
 
 function normalizeUriPathForContainment(uri: vscode.Uri): string {
@@ -215,14 +194,14 @@ export class TexPreviewPanel {
         }
     }
 
-    // Prefer webview resource URIs for PDFs, with base64 retained as a fallback path.
+    // PDF resources are loaded through webview URIs only; rendering failures should surface directly.
     private async handlePdfRequest(message: any) {
         if (!this._sourceUri) {return;}
 
         const requestId = typeof message.id === 'string' ? message.id : '';
         const fail = (error: string) => {
             if (requestId) {
-                this.postMessage({ command: 'pdfData', id: requestId, error });
+                this.postMessage({ command: 'pdfUri', id: requestId, error });
             }
         };
 
@@ -243,23 +222,12 @@ export class TexPreviewPanel {
 
             // Check existence first
             if (await this._fileProvider.exists(pdfUri)) {
-                if (getPdfRequestMode(message) === 'uri') {
-                    const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
-                    this.postMessage({
-                        command: 'pdfUri',
-                        id: requestId,
-                        uri: webviewUri.toString(),
-                        path: cleanPath
-                    });
-                    return;
-                }
-
-                const fileData = await this._fileProvider.readBuffer(pdfUri);
-                const base64 = uint8ToBase64(fileData);
+                const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
-                    command: 'pdfData',
+                    command: 'pdfUri',
                     id: requestId,
-                    data: base64
+                    uri: webviewUri.toString(),
+                    path: cleanPath
                 });
             } else {
                 console.warn(`[SnapTeX] PDF not found: ${pdfUri.toString()}`);

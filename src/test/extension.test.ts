@@ -1,13 +1,15 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { BibTexParser } from '../bib';
 import { LatexDocument } from '../document';
 import { DiffEngine } from '../diff';
 import { IFileProvider } from '../file-provider';
 import { extractMetadata } from '../metadata';
-import { getPdfRequestMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
+import { isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { ProtectionManager } from '../protection';
 import { LatexCounterScanner } from '../scanner';
 import { LatexBlockSplitter } from '../splitter';
@@ -468,11 +470,17 @@ suite('PDF request validation', () => {
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.parse('https://example.com/a.pdf'), [root]), false);
     });
 
-    test('uses webview URI mode by default and base64 only when requested', () => {
-        assert.equal(getPdfRequestMode({}), 'uri');
-        assert.equal(getPdfRequestMode({ transport: 'uri' }), 'uri');
-        assert.equal(getPdfRequestMode({ transport: 'base64' }), 'base64');
-        assert.equal(getPdfRequestMode({ transport: 42 }), 'uri');
+    test('keeps PDF loading on the URI-only transport path', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.doesNotMatch(panelSource, /\bpdfData\b/);
+        assert.doesNotMatch(panelSource, /\bbase64\b/i);
+        assert.doesNotMatch(panelSource, /\btransport\b/);
+        assert.doesNotMatch(webviewSource, /\bpdfData\b/);
+        assert.doesNotMatch(webviewSource, /\bbase64\b/i);
+        assert.doesNotMatch(webviewSource, /\btransport\b/);
     });
 });
 
