@@ -500,6 +500,17 @@ suite('PDF request validation', () => {
         assert.match(webviewSource, /disableStream:\s*true/);
         assert.match(webviewSource, /disableAutoFetch:\s*true/);
     });
+
+    test('creates a blob module worker for PDF.js inside the webview sandbox', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /async function setupPdfWorker\(\)/);
+        assert.match(webviewSource, /URL\.createObjectURL\(new Blob/);
+        assert.match(webviewSource, /new Worker\(workerBlobUrl,\s*\{\s*type:\s*'module'\s*\}\)/);
+        assert.match(webviewSource, /pdfjsLib\.GlobalWorkerOptions\.workerPort = worker/);
+        assert.match(webviewSource, /await pdfWorkerReady/);
+    });
 });
 
 suite('Metadata extraction', () => {

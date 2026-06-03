@@ -932,6 +932,37 @@
 <script type="module">
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
+    const pdfWorkerReady = setupPdfWorker();
+
+    async function setupPdfWorker() {
+        if (!('Worker' in window) || !('fetch' in window) || !('Blob' in window) || !URL.createObjectURL) {
+            return;
+        }
+
+        let workerBlobUrl = null;
+        try {
+            const response = await fetch('{{pdfWorkerUri}}');
+            if (!response.ok) {
+                throw new Error(`PDF worker fetch failed: ${response.status}`);
+            }
+
+            const workerCode = await response.text();
+            workerBlobUrl = URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' }));
+            const worker = new Worker(workerBlobUrl, { type: 'module' });
+            pdfjsLib.GlobalWorkerOptions.workerPort = worker;
+
+            window.addEventListener('unload', () => {
+                pdfjsLib.GlobalWorkerOptions.workerPort = null;
+                worker.terminate();
+                URL.revokeObjectURL(workerBlobUrl);
+            }, { once: true });
+        } catch (error) {
+            if (workerBlobUrl) {
+                URL.revokeObjectURL(workerBlobUrl);
+            }
+            console.warn('[SnapTeX] PDF worker blob setup failed; falling back to PDF.js workerSrc.', error);
+        }
+    }
 
     window.addEventListener('message', event => {
         const msg = event.data;
@@ -990,6 +1021,7 @@
         if (!canvas) return;
 
         try {
+            await pdfWorkerReady;
             await renderPdfDocument(canvas, pdfjsLib.getDocument({
                 url: pdfUri,
                 disableRange: true,

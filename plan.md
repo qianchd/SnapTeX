@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 30 tests after disabling PDF.js range/stream loading for webview resource URIs.  
+> Last verified: `npm test` passed with 31 tests after using a blob module worker for PDF.js in the webview sandbox.  
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -193,6 +193,7 @@
 - [x] Add a test guard that prevents the removed `pdfData`/base64 transport branch from returning silently.
 - [x] Request viewport-near PDF canvases immediately instead of waiting for an observer scroll event.
 - [x] Disable PDF.js range/stream/auto-fetch loading for webview resource URIs to avoid slow request probing.
+- [x] Create a blob module worker for PDF.js so PDF rendering does not fall back to the slow fake worker path.
 - [ ] Release far-offscreen PDF canvas bitmaps.
 - [ ] Add webview-side tests or smoke coverage that verifies URI PDF rendering in local, remote, and web extension hosts where practical.
 
