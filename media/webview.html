@@ -28,6 +28,7 @@
     window.tikzJaxJsUri = '{{tikzJaxJsUri}}';
     window.tikzJaxLoadPromise = null;
     window.tikzJaxFailed = false;
+    const TIKZ_ACTIVE_RENDER_TIMEOUT_MS = 120000;
 
     window.ensureTikzJaxLoaded = function() {
         if (window.TikzJax) {
@@ -66,32 +67,72 @@
         }
     });
 
+    function getTikzContainerFromEvent(event) {
+        const target = event.target;
+        return target && target.closest ? target.closest('.tikz-container') : null;
+    }
+
+    function setTikzContainerState(container, state) {
+        container.setAttribute('data-tikz-state', state);
+    }
+
+    function clearTikzRenderTimer(container) {
+        if (container.__snaptexTikzRenderTimer) {
+            clearTimeout(container.__snaptexTikzRenderTimer);
+            container.__snaptexTikzRenderTimer = null;
+        }
+    }
+
+    function armTikzRenderTimer(container) {
+        clearTikzRenderTimer(container);
+        container.__snaptexTikzRenderTimer = setTimeout(() => {
+            if (!container.isConnected || container.querySelector('svg[role="img"]')) return;
+            window.failTikzContainer(container, 'TikZ rendering timed out.');
+        }, TIKZ_ACTIVE_RENDER_TIMEOUT_MS);
+    }
+
+    window.failTikzContainer = function(container, message) {
+        if (!container || !container.isConnected || container.querySelector('svg[role="img"]')) return;
+
+        clearTikzRenderTimer(container);
+        setTikzContainerState(container, 'failed');
+        const errorEl = document.createElement('div');
+        errorEl.className = 'tikz-error';
+        errorEl.style.cssText = 'padding: 12px; color: #8a1f11; background: #fff3f0; border: 1px solid #f0c6bd; font: 12px sans-serif;';
+        errorEl.textContent = message;
+        container.replaceChildren(errorEl);
+    };
+
     window.failPendingTikzContainers = function(message) {
         document.querySelectorAll('.tikz-container').forEach(container => {
-            if (container.querySelector('svg[role="img"]')) return;
-
-            container.setAttribute('data-tikz-state', 'failed');
-            const errorEl = document.createElement('div');
-            errorEl.className = 'tikz-error';
-            errorEl.style.cssText = 'padding: 12px; color: #8a1f11; background: #fff3f0; border: 1px solid #f0c6bd; font: 12px sans-serif;';
-            errorEl.textContent = message;
-            container.replaceChildren(errorEl);
+            window.failTikzContainer(container, message);
         });
     };
 
     window.watchPendingTikzContainers = function(root = document) {
         root.querySelectorAll('.tikz-container').forEach(container => {
-            if (container.getAttribute('data-tikz-watchdog') === 'true' || container.querySelector('svg[role="img"]')) return;
+            if (container.querySelector('svg[role="img"]') || container.getAttribute('data-tikz-state') === 'failed') return;
 
+            setTikzContainerState(container, 'queued');
             container.setAttribute('data-tikz-watchdog', 'true');
-            setTimeout(() => {
-                if (!container.isConnected || container.querySelector('svg[role="img"]')) return;
-                if (container.querySelector('script[type="text/tikz"], svg:not([role="img"])')) {
-                    window.failPendingTikzContainers('TikZ rendering timed out.');
-                }
-            }, 20000);
         });
     };
+
+    document.addEventListener('tikzjax-tex-input', event => {
+        const container = getTikzContainerFromEvent(event);
+        if (!container) return;
+
+        setTikzContainerState(container, 'rendering');
+        armTikzRenderTimer(container);
+    });
+
+    document.addEventListener('tikzjax-load-finished', event => {
+        const container = getTikzContainerFromEvent(event);
+        if (!container) return;
+
+        clearTikzRenderTimer(container);
+        setTikzContainerState(container, 'rendered');
+    });
 
     // --- Global PDF Helper ---
     window.pdfReqQueue = [];

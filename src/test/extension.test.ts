@@ -555,6 +555,18 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /TikZ rendering timed out/);
         assert.match(webviewSource, /svg\[role="img"\]/);
     });
+
+    test('does not timeout TikZ containers while they are only waiting in the TikZJax queue', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /document\.addEventListener\('tikzjax-tex-input'/);
+        assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-finished'/);
+        assert.match(webviewSource, /window\.failTikzContainer = function\(container, message\)/);
+        assert.match(webviewSource, /setTikzContainerState\(container, 'queued'\)/);
+        assert.match(webviewSource, /setTikzContainerState\(container, 'rendering'\)/);
+        assert.doesNotMatch(webviewSource, /setTimeout\(\(\) => \{[\s\S]*window\.failPendingTikzContainers\('TikZ rendering timed out\.'\)/);
+    });
 });
 
 suite('Metadata extraction', () => {
