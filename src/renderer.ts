@@ -247,8 +247,13 @@ export class SmartRenderer {
         }
         this.lastCitedKeys = [...this.citedKeys];
 
-        // 7. Determine Update Strategy (Evaluate using diff.insertCount instead of insertedHtmls.length)
-        const isFullUpdate = this.lastBlockTexts.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
+        // 7. Determine Update Strategy.
+        // Long documents can still benefit from patch updates when a large absolute
+        // number of blocks changes but the edit remains local relative to the file.
+        const changedBlocks = diff.insertCount + diff.deleteCount;
+        const totalBlocks = Math.max(1, newBlockTexts.length);
+        const fullUpdateThreshold = Math.max(200, 0.6 * totalBlocks);
+        const isFullUpdate = this.lastBlockTexts.length === 0 || changedBlocks > fullUpdateThreshold;
         let payload: PatchPayload;
 
         if (isFullUpdate) {

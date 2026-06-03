@@ -390,6 +390,32 @@ suite('SmartRenderer', () => {
         assert.match(payload.htmls?.[0] ?? '', /B changed/);
     });
 
+    test('keeps proportionally modest long-document edits on the patch path', () => {
+        const renderer = new SmartRenderer(new MemoryFileProvider());
+        const oldBlocks = Array.from({ length: 300 }, (_, index) => `Block ${index}`);
+        const newBlocks = oldBlocks.map((text, index) => index >= 100 && index < 200 ? `${text} changed` : text);
+        renderer.render(createDocument(oldBlocks));
+
+        const payload = renderer.render(createDocument(newBlocks));
+
+        assert.equal(payload.type, 'patch');
+        assert.equal(payload.start, 100);
+        assert.equal(payload.deleteCount, 100);
+        assert.equal(payload.htmls?.length, 100);
+    });
+
+    test('uses full render for very large replacement edits', () => {
+        const renderer = new SmartRenderer(new MemoryFileProvider());
+        const oldBlocks = Array.from({ length: 300 }, (_, index) => `Block ${index}`);
+        const newBlocks = oldBlocks.map((text, index) => index < 220 ? `${text} changed` : text);
+        renderer.render(createDocument(oldBlocks));
+
+        const payload = renderer.render(createDocument(newBlocks));
+
+        assert.equal(payload.type, 'full');
+        assert.equal(payload.htmls?.length, 300);
+    });
+
     test('forces a full render when macros change', () => {
         const renderer = new SmartRenderer(new MemoryFileProvider());
         renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'x' } }));

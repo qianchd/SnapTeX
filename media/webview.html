@@ -473,7 +473,8 @@
             this.lastTargetRatio = 0;
             this.lastScrollTime = 0;
             this.config = {
-                autoScrollDelay: 100
+                autoScrollDelay: 100,
+                debugMemory: false
             };
 
             // Initialize Tooltip Manager
@@ -535,6 +536,9 @@
                     if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
                         this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
                     }
+                    if (event.data.config && typeof event.data.config.debugMemory === 'boolean') {
+                        this.config.debugMemory = event.data.config.debugMemory;
+                    }
                     break;
             }
         }
@@ -545,6 +549,7 @@
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
                 this.smartFullUpdate(payload.html);
+                this.logDomStats('after full update');
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => { this.onRenderComplete(scrollState); });
@@ -552,14 +557,30 @@
                 });
             } else if (payload.type === 'patch') {
                 this.applyPatch(payload);
+                this.logDomStats('after patch update');
             }
             if (payload.numbering) {
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
             }
-            setTimeout(() => this.renderPendingPdfs(), 50);
+            setTimeout(() => {
+                this.renderPendingPdfs();
+                this.logDomStats('after renderPendingPdfs');
+            }, 50);
 
             // Trigger TikZ Rendering after update
             this.triggerTikzRendering();
+        }
+
+        logDomStats(label) {
+            if (!this.config.debugMemory) return;
+            console.log('[SnapTeX][webview]', label, {
+                blocks: document.querySelectorAll('.latex-block').length,
+                pdfCanvases: document.querySelectorAll('canvas[data-req-path]').length,
+                renderedPdfs: document.querySelectorAll('canvas[data-rendered="true"]').length,
+                tikzScripts: document.querySelectorAll('script[type="text/tikz"]').length,
+                svgCount: document.querySelectorAll('svg').length,
+                scrollHeight: document.documentElement.scrollHeight
+            });
         }
 
         // Manually trigger TikZJax to scan the document

@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 25 tests.  
+> Last verified: `npm test` passed with 27 tests.  
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -160,27 +160,27 @@
 
 ### C. Memory Instrumentation and Low-Risk Wins
 
-- [ ] Add `snaptex.debugMemory` configuration.
-- [ ] Add extension-host memory logging in `panel.update()`.
+- [x] Add `snaptex.debugMemory` configuration.
+- [x] Add extension-host memory logging in `panel.update()`.
   - before/after `getText`.
   - after parse.
   - after render.
   - after path fixing.
   - after full HTML or block payload construction.
   - after postMessage.
-- [ ] Add webview DOM/PDF/TikZ stats logging.
+- [x] Add webview DOM/PDF/TikZ stats logging.
   - `.latex-block` count.
   - PDF canvas count.
   - rendered PDF count.
   - TikZ script count.
   - SVG count.
   - scroll height.
-- [ ] Coalesce `TexPreviewPanel.update()` calls.
+- [x] Coalesce `TexPreviewPanel.update()` calls.
   - Prevent concurrent parse/render runs.
   - Always render the latest pending update.
-- [ ] Add `snaptex.retainContextWhenHidden`, default `false`.
-- [ ] Avoid extra `cleanedHtmls` array in full update while the old full-string model still exists.
-- [ ] Reduce full-update frequency.
+- [x] Add `snaptex.retainContextWhenHidden`, default `false`.
+- [x] Avoid extra `cleanedHtmls` array in full update while the old full-string model still exists.
+- [x] Reduce full-update frequency.
   - Use proportion thresholds instead of fixed `> 50`.
   - Keep full update for macro/metadata-sensitive changes.
 
