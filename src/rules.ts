@@ -112,14 +112,15 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const afterMatch = fullString.substring(offset + match.length);
                 const isFollowedByText = /^\s*\S/.test(afterMatch) && !/^\s*\n\n/.test(afterMatch);
 
-                let result = protectedTag + hiddenHtml;
+                const hiddenLabels = hiddenHtml ? renderer.protect('raw', hiddenHtml) : '';
+                let result = protectedTag + hiddenLabels;
                 if (eqNumHTML) {
-                    result = `<div class="equation-container" style="position: relative; width: 100%;">
+                    result = renderer.protect('math-block', `<div class="equation-container" style="position: relative; width: 100%;">
                                 ${protectedTag}
                                 <span class="eq-no" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); pointer-events: none;">
                                     ${eqNumHTML}
                                 </span>
-                            </div>${hiddenHtml}`;
+                            </div>${hiddenLabels}`);
                 }
                 return result + (isFollowedByText ? renderer.protect('raw', '<span class="no-indent-marker"></span>') : '');
             });

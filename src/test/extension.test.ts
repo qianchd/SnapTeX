@@ -822,6 +822,16 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /href="javascript:alert/i);
     });
 
+    test('keeps numbered display math containers protected under raw-HTML-disabled Markdown', () => {
+        const html = renderBlocks(['\\begin{equation}\\label{obj:inSample}x=1\\end{equation}']);
+
+        assert.match(html, /<div class="equation-container"/);
+        assert.match(html, /<span class="eq-no"/);
+        assert.match(html, /id="obj:inSample"/);
+        assert.doesNotMatch(html, /&lt;div class=&quot;equation-container/);
+        assert.doesNotMatch(html, /&lt;span class=&quot;eq-no/);
+    });
+
     test('updates maketitle metadata without exposing raw metadata in block hashes', () => {
         const renderer = new SmartRenderer();
         renderer.render(createDocument(['\\maketitle'], { title: 'First' }));
