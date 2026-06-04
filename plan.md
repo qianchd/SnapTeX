@@ -360,7 +360,7 @@
 - [x] Make forward sync mount target shells before calculating block-relative scroll position.
 - [x] Use directional preload and retain windows instead of manual `scrollY` compensation for smoother upward scrolling.
 - [x] Lock shell heights during mount and refresh real measured height only when the shell is not above the viewport.
-- [x] Make preview-to-editor double-click use shell/block index safely.
+- [ ] Make preview-to-editor double-click use shell/block index safely.
 - [x] Add height estimation and hash-based height cache.
 - [x] Reevaluate `content-visibility` with shell virtualization.
 

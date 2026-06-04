@@ -23,7 +23,6 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Changed**: Simplified virtual shell mounting by removing an obsolete height-update option and added webview-side hash checks before caching on-demand block HTML.
 - **Changed**: Simplified extension-host update posting by using one shared path for block path rewriting and webview update messages.
 - **Changed**: Virtualized full updates can now send block metadata first and request block HTML on demand only when a shell needs to mount, reducing initial DOM/HTML/PDF/TikZ memory for long previews while keeping the existing non-virtualized payload paths as fallbacks.
-- **Fixed**: Made preview-to-editor double-click sync work on virtualized shell placeholders as well as mounted preview blocks.
 - **Changed**: Disabled `content-visibility:auto` inside virtualized block shells so mounted blocks report real heights while non-virtualized previews keep the existing browser lazy-layout optimization.
 
 ## [0.5.13] - 2026-05-14
