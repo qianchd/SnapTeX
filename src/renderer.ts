@@ -155,13 +155,29 @@ export class SmartRenderer {
         return `<div class="latex-block" data-index="${index}" data-block-hash="${stableHash(text)}">${finalHtml}</div>`;
     }
 
+    private extractBlockAnchors(text: string): string[] {
+        const anchors = new Set<string>();
+        const labelRegex = /\\label\s*\{([^}]+)\}/g;
+        let match;
+        while ((match = labelRegex.exec(text)) !== null) {
+            anchors.add(match[1]);
+        }
+
+        if (R_BIBLIOGRAPHY.test(text)) {
+            this.citedKeys.forEach(key => anchors.add(`ref-${key}`));
+        }
+
+        return Array.from(anchors);
+    }
+
     private buildBlockMeta(text: string, index: number): RenderedBlockMeta {
         const map = this.blockMap[index];
         return {
             index,
             hash: stableHash(text),
             line: map?.start ?? 0,
-            lineCount: map?.count ?? text.split(/\r?\n/).length
+            lineCount: map?.count ?? text.split(/\r?\n/).length,
+            anchors: this.extractBlockAnchors(text)
         };
     }
 

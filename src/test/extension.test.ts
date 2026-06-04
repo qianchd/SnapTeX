@@ -488,15 +488,21 @@ suite('SmartRenderer', () => {
 
     test('can defer full HTML and render block HTML on demand', () => {
         const renderer = new SmartRenderer(new MemoryFileProvider());
-        const payload = renderer.render(createDocument(['A', 'B']), { deferFullHtml: true });
+        const payload = renderer.render(createDocument([
+            'See Figure~\\ref{fig:a} and \\cite{smith2024}.',
+            '\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}',
+            '\\bibliography{refs}'
+        ]), { deferFullHtml: true });
 
         assert.equal(payload.type, 'full');
         assert.equal(payload.htmls, undefined);
-        assert.equal(payload.blocks?.length, 2);
-        assert.deepStrictEqual(payload.blocks?.map(block => block.index), [0, 1]);
-        assert.equal(payload.blocks?.[1].hash, stableHash('B'));
+        assert.equal(payload.blocks?.length, 3);
+        assert.deepStrictEqual(payload.blocks?.map(block => block.index), [0, 1, 2]);
+        assert.equal(payload.blocks?.[1].hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));
+        assert.deepStrictEqual(payload.blocks?.[1].anchors, ['fig:a']);
+        assert.ok(payload.blocks?.[2].anchors.includes('ref-smith2024'));
         assert.match(renderer.renderBlockByIndex(1) ?? '', /data-index="1"/);
-        assert.match(renderer.renderBlockByIndex(1) ?? '', new RegExp(`data-block-hash="${stableHash('B')}"`));
+        assert.match(renderer.renderBlockByIndex(1) ?? '', new RegExp(`data-block-hash="${stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}')}"`));
     });
 
     test('escapes maketitle metadata while preserving LaTeX formatting', () => {
@@ -780,6 +786,8 @@ suite('PDF request validation', () => {
         assert.match(webviewSource, /vscode\.postMessage\(\{ command: 'requestBlockHtml', id, index, hash \}\)/);
         assert.match(webviewSource, /case 'blockHtml':/);
         assert.match(webviewSource, /parseBlockHtml\(html\)/);
+        assert.match(webviewSource, /callbacks: requestOptions\.onLoaded \? \[requestOptions\.onLoaded\] : \[\]/);
+        assert.match(webviewSource, /pending\.callbacks\.push\(requestOptions\.onLoaded\)/);
         assert.match(webviewSource, /this\.smartFullUpdateFromBlocks\(payload\.htmls, payload\.preserveUnchangedBlocks !== false\)/);
     });
 
@@ -905,6 +913,8 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /rememberBlockHeight\(block\)/);
         assert.match(webviewSource, /createShellForBlock\(block\)/);
         assert.match(webviewSource, /createShellForMeta\(meta\)/);
+        assert.match(webviewSource, /getAnchorIdsFromBlock\(block\)/);
+        assert.match(webviewSource, /findShellByAnchorId\(anchorId\)/);
         assert.match(webviewSource, /data-html-loaded/);
         assert.match(webviewSource, /data-html-requested/);
         assert.match(webviewSource, /className = 'latex-block-shell'/);
@@ -921,6 +931,22 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /getBlockOrShellByIndex\(index\)/);
         assert.match(webviewSource, /window\.addEventListener\('resize', \(\) => this\.updateVirtualizedBlocks\(\)\)/);
         assert.match(webviewSource, /this\.virtualization\.rememberBlockHeight\(oldBlock\)/);
+    });
+
+    test('routes virtualized refs and tooltips through anchor-aware shell mounting', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /window\.snaptexPreviewController = this/);
+        assert.match(webviewSource, /document\.addEventListener\('click', event => this\.onInternalLinkClick\(event\)\)/);
+        assert.match(webviewSource, /async ensureAnchorMounted\(anchorId\)/);
+        assert.match(webviewSource, /this\.virtualization\.findShellByAnchorId\(anchorId\)/);
+        assert.match(webviewSource, /await this\.ensureShellMounted\(shell\)/);
+        assert.match(webviewSource, /async onInternalLinkClick\(event\)/);
+        assert.match(webviewSource, /event\.preventDefault\(\)/);
+        assert.match(webviewSource, /await this\.ensureAnchorMounted\(anchorId\)/);
+        assert.match(webviewSource, /async resolveTargetElement\(targetId\)/);
+        assert.match(webviewSource, /controller\.ensureAnchorMounted\(targetId\)/);
     });
 
     test('routes TikZ compile failures through the webview error state', () => {

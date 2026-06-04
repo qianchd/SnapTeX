@@ -25,6 +25,7 @@ export interface RenderedBlockMeta {
     hash: string;
     line: number;
     lineCount: number;
+    anchors: string[];
 }
 
 export interface PatchPayload {

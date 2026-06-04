@@ -35,6 +35,8 @@
 - [x] Send only block metadata for virtualized full updates.
 - [x] Request block HTML from the extension host only when a shell needs to mount.
 - [x] Validate requested block index/hash before returning block HTML to the webview.
+- [x] Preserve internal `\ref`/citation jumps by indexing anchors on virtual block shells and mounting the target on demand.
+- [x] Preserve hover tooltip previews by resolving offscreen anchors through the same shell-mount path.
 - [x] Keep existing full block payload and `update_binary` paths as fallbacks while the experimental path is off.
 
 ### Correctness and Safety Quick Wins
@@ -336,6 +338,8 @@
 - [x] Render PDF/TikZ/images only inside mounted blocks.
 - [x] Release resources on unmount.
 - [x] Make editor-to-preview sync target shells first, then refine after mount.
+- [x] Make `\ref`/citation anchor clicks mount target shells before scrolling.
+- [x] Make hover tooltips mount target shells before cloning preview content.
 - [ ] Make preview-to-editor double-click use shell/block index safely.
 - [x] Add height estimation and hash-based height cache.
 - [ ] Reevaluate `content-visibility` with shell virtualization.

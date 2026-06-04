@@ -141,6 +141,27 @@
             return tempDiv.firstElementChild;
         }
 
+        getAnchorIdsFromBlock(block) {
+            if (!block) return [];
+            const anchors = new Set();
+            if (block.id) { anchors.add(block.id); }
+            block.querySelectorAll('[id]').forEach(element => anchors.add(element.id));
+            return Array.from(anchors);
+        }
+
+        setShellAnchors(shell, anchors) {
+            shell._snaptexAnchorIds = Array.isArray(anchors) ? anchors : [];
+        }
+
+        getShellAnchors(shell) {
+            return Array.isArray(shell?._snaptexAnchorIds) ? shell._snaptexAnchorIds : [];
+        }
+
+        findShellByAnchorId(anchorId) {
+            if (!anchorId) return null;
+            return this.getShells().find(shell => this.getShellAnchors(shell).includes(anchorId)) || null;
+        }
+
         createShellForBlock(block) {
             const index = this.getBlockIndex(block);
             const hash = block.getAttribute('data-block-hash') || '';
@@ -158,6 +179,7 @@
             shell.style.minHeight = `${estimatedHeight}px`;
             shell.setAttribute('data-mounted', 'false');
             shell.setAttribute('data-html-loaded', 'true');
+            this.setShellAnchors(shell, this.getAnchorIdsFromBlock(block));
             return shell;
         }
 
@@ -175,6 +197,7 @@
             const cachedHeight = this.heightCache.get(meta.hash);
             const estimatedHeight = cachedHeight || this.estimateBlockHeightFromMeta(meta);
             shell.style.minHeight = `${estimatedHeight}px`;
+            this.setShellAnchors(shell, meta.anchors);
             return shell;
         }
 
@@ -210,6 +233,7 @@
             shell.style.height = '';
             shell.setAttribute('data-mounted', 'true');
             shell.setAttribute('data-html-loaded', 'true');
+            this.setShellAnchors(shell, this.getAnchorIdsFromBlock(block));
             return block;
         }
 
@@ -765,8 +789,9 @@
             }, 200);
         }
 
-        showPreview(linkElement, targetId) {
-            const targetEl = document.getElementById(targetId);
+        async showPreview(linkElement, targetId) {
+            const targetEl = await this.resolveTargetElement(targetId);
+            if (this.currentLink !== linkElement) return;
             if (!targetEl) return;
 
             const container = targetEl.closest('.latex-block') || targetEl.closest('.bib-item');
@@ -812,6 +837,17 @@
             requestAnimationFrame(() => {
                 this.element.classList.add('visible');
             });
+        }
+
+        async resolveTargetElement(targetId) {
+            const existing = document.getElementById(targetId);
+            if (existing) return existing;
+
+            const controller = window.snaptexPreviewController;
+            if (controller && typeof controller.ensureAnchorMounted === 'function') {
+                return await controller.ensureAnchorMounted(targetId);
+            }
+            return null;
         }
 
         triggerTikzRendering() {
@@ -884,6 +920,7 @@
             this.pdfObserver = null;
             this.pdfRenderTimer = null;
             this.virtualization = new BlockVirtualizationController(this.contentRoot);
+            window.snaptexPreviewController = this;
             this.tikzRenderScheduler = new CoalescingTaskScheduler({
                 debounceMs: TIKZ_RENDER_DEBOUNCE_MS,
                 run: () => this.runTikzRenderBatch(),
@@ -909,6 +946,7 @@
             });
             window.addEventListener('resize', () => this.updateVirtualizedBlocks());
             document.addEventListener('dblclick', event => this.onDoubleClick(event));
+            document.addEventListener('click', event => this.onInternalLinkClick(event));
         }
 
         setState(newState) { this.state = newState; }
@@ -1086,17 +1124,95 @@
             return shell;
         }
 
-        requestVirtualBlockHtml(shell) {
-            if (!shell || shell.getAttribute('data-html-requested') === 'true') return;
+        ensureShellMounted(shell) {
+            const existingBlock = this.virtualization.getShellBlock(shell);
+            if (existingBlock) return Promise.resolve(existingBlock);
+
+            const mounted = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
+            if (mounted) {
+                this.onVirtualBlockMounted(mounted);
+                return Promise.resolve(mounted);
+            }
+
+            return new Promise(resolve => {
+                let resolved = false;
+                const finish = block => {
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(timeout);
+                    resolve(block || null);
+                };
+                const timeout = setTimeout(() => finish(null), 6000);
+                const requested = this.requestVirtualBlockHtml(shell, { forceMount: true, onLoaded: finish });
+                if (!requested) { finish(null); }
+            });
+        }
+
+        async ensureAnchorMounted(anchorId) {
+            const existing = document.getElementById(anchorId);
+            if (existing) return existing;
+            if (!this.virtualization.isEnabled()) return null;
+
+            const shell = this.virtualization.findShellByAnchorId(anchorId);
+            if (!shell) return null;
+
+            await this.ensureShellMounted(shell);
+            if (this.currentNumbering) {
+                await new Promise(resolve => requestAnimationFrame(resolve));
+            }
+            return document.getElementById(anchorId);
+        }
+
+        async onInternalLinkClick(event) {
+            const link = event.target.closest('a');
+            const href = link?.getAttribute('href');
+            if (!href || !href.startsWith('#') || href.length <= 1) return;
+
+            event.preventDefault();
+            let anchorId = href.substring(1);
+            try { anchorId = decodeURIComponent(anchorId); } catch {}
+
+            const target = await this.ensureAnchorMounted(anchorId);
+            if (!target) return;
+
+            const targetY = target.getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * 0.25);
+            this.lockScrolling(900);
+            window.scrollTo({ top: Math.max(0, targetY), behavior: 'auto' });
+
+            const block = target.closest('.latex-block') || target.closest('.bib-item') || target;
+            block.classList.add('jump-highlight');
+            setTimeout(() => block.classList.remove('jump-highlight'), 1000);
+        }
+
+        requestVirtualBlockHtml(shell, options = {}) {
+            if (!shell) return false;
+            const requestOptions = typeof options === 'function'
+                ? { onLoaded: options, forceMount: true }
+                : options;
+
+            const existingId = shell.getAttribute('data-html-request-id');
+            if (existingId && this.pendingBlockHtmlRequests.has(existingId)) {
+                const pending = this.pendingBlockHtmlRequests.get(existingId);
+                if (requestOptions.onLoaded) { pending.callbacks.push(requestOptions.onLoaded); }
+                pending.forceMount = pending.forceMount || requestOptions.forceMount === true;
+                return true;
+            }
 
             const index = parseInt(shell.getAttribute('data-index'));
             const hash = shell.getAttribute('data-block-hash') || '';
-            if (Number.isNaN(index)) return;
+            if (Number.isNaN(index)) return false;
 
             const id = `block-${++this.blockHtmlRequestSeq}`;
             shell.setAttribute('data-html-requested', 'true');
-            this.pendingBlockHtmlRequests.set(id, { index, hash });
+            shell.setAttribute('data-html-request-id', id);
+            this.pendingBlockHtmlRequests.set(id, {
+                index,
+                hash,
+                forceMount: requestOptions.forceMount === true,
+                callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
+            });
             vscode.postMessage({ command: 'requestBlockHtml', id, index, hash });
+            return true;
         }
 
         handleBlockHtml(message) {
@@ -1107,17 +1223,29 @@
             if (message.error || !message.html) {
                 const index = pending?.index ?? message.index;
                 const shell = document.querySelector('.latex-block-shell[data-index="' + index + '"]');
-                if (shell) { shell.removeAttribute('data-html-requested'); }
+                if (shell) {
+                    shell.removeAttribute('data-html-requested');
+                    shell.removeAttribute('data-html-request-id');
+                }
+                pending?.callbacks?.forEach(callback => callback(null));
                 return;
             }
 
             const index = typeof message.index === 'number' ? message.index : pending?.index;
             const hash = message.hash || pending?.hash || '';
             const shell = this.virtualization.storeBlockHtml(index, hash, message.html);
-            if (!shell || !this.virtualization.isShellNearViewport(shell)) return;
+            if (shell) {
+                shell.removeAttribute('data-html-request-id');
+            }
+            if (!shell) {
+                pending?.callbacks?.forEach(callback => callback(null));
+                return;
+            }
+            if (!pending?.forceMount && !this.virtualization.isShellNearViewport(shell)) return;
 
             const block = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
             if (block) { this.onVirtualBlockMounted(block); }
+            pending?.callbacks?.forEach(callback => callback(block || null));
         }
 
         getPendingTikzContainers(root = document) {
