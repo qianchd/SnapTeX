@@ -160,6 +160,8 @@ export class TexPreviewPanel {
                     vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
                 } else if (message.command === 'requestPdf') {
                     await this.handlePdfRequest(message);
+                } else if (message.command === 'requestBlockHtml') {
+                    this.handleBlockHtmlRequest(message);
                 }
             },
             null,
@@ -237,6 +239,56 @@ export class TexPreviewPanel {
             console.error('[SnapTeX] Failed to read PDF:', e);
             fail('Failed to read PDF');
         }
+    }
+
+    private fixHtmlPaths(html: string): string {
+        if (!this._sourceUri) { return html; }
+
+        const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
+        return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (match, attr, relPath) => {
+            let normalizedPath = relPath.replace(/\\/g, '/');
+            if (normalizedPath.startsWith('./')) { normalizedPath = normalizedPath.substring(2); }
+
+            const pathSegments = normalizedPath.split('/');
+            const fullUri = vscode.Uri.joinPath(docDir, ...pathSegments);
+            const webviewUri = this._panel.webview.asWebviewUri(fullUri);
+            return `${attr}="${webviewUri.toString()}"`;
+        });
+    }
+
+    private handleBlockHtmlRequest(message: any) {
+        const id = typeof message.id === 'string' ? message.id : '';
+        const index = typeof message.index === 'number' ? message.index : parseInt(message.index, 10);
+        const requestedHash = typeof message.hash === 'string' ? message.hash : '';
+
+        if (!id || Number.isNaN(index)) {
+            return;
+        }
+
+        const meta = this._renderer.getBlockMeta(index);
+        if (!meta) {
+            this.postMessage({ command: 'blockHtml', id, index, error: 'Block not found' });
+            return;
+        }
+
+        if (requestedHash && meta.hash !== requestedHash) {
+            this.postMessage({ command: 'blockHtml', id, index, hash: meta.hash, error: 'Block hash changed' });
+            return;
+        }
+
+        const html = this._renderer.renderBlockByIndex(index);
+        if (!html) {
+            this.postMessage({ command: 'blockHtml', id, index, hash: meta.hash, error: 'Block not found' });
+            return;
+        }
+
+        this.postMessage({
+            command: 'blockHtml',
+            id,
+            index,
+            hash: meta.hash,
+            html: this.fixHtmlPaths(html)
+        });
     }
 
     public postMessage(message: any) {
@@ -326,39 +378,25 @@ export class TexPreviewPanel {
         this.postWebviewConfig();
 
         if (this._currentDocument) {
+            const virtualizeBlocks = vscode.workspace
+                .getConfiguration('snaptex')
+                .get<boolean>('experimentalVirtualization', false);
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);
             logHostMemory('after parse');
 
             this._currentDocument.applyResult(parseResult);
-            const payload = this._renderer.render(this._currentDocument);
+            const payload = this._renderer.render(this._currentDocument, { deferFullHtml: virtualizeBlocks });
             logHostMemory('after render');
             this._currentDocument.releaseTextContent();
 
-            const fixPaths = (html: string) => {
-                // Fix standard images (LOCAL_IMG)
-                // Note: PDF requests (data-req-path) are ignored here and handled by JS
-                let fixed = html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (match, attr, relPath) => {
-                    let normalizedPath = relPath.replace(/\\/g, '/');
-                    if (normalizedPath.startsWith('./')) { normalizedPath = normalizedPath.substring(2); }
-
-                    // Use path segments to safely join
-                    const pathSegments = normalizedPath.split('/');
-                    const fullUri = vscode.Uri.joinPath(docDir, ...pathSegments);
-
-                    const webviewUri = this._panel.webview.asWebviewUri(fullUri);
-                    return `${attr}="${webviewUri.toString()}"`;
-                });
-                return fixed;
-            };
-
             if (payload.type === 'full' && payload.htmls) {
-                payload.htmls = payload.htmls.map(h => fixPaths(h));
+                payload.htmls = payload.htmls.map(h => this.fixHtmlPaths(h));
                 logHostMemory('after fixPaths/fullBlocks');
                 this._panel.webview.postMessage({ command: 'update', payload });
                 logHostMemory('after postMessage');
             } else {
                 if (payload.type === 'patch' && payload.htmls) {
-                    payload.htmls = payload.htmls.map(h => fixPaths(h));
+                    payload.htmls = payload.htmls.map(h => this.fixHtmlPaths(h));
                 }
                 logHostMemory('after fixPaths');
                 this._panel.webview.postMessage({ command: 'update', payload });

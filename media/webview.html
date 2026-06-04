@@ -118,6 +118,11 @@
             return Math.max(BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT, Math.min(1400, (lineBreaks + byLength) * 10));
         }
 
+        estimateBlockHeightFromMeta(meta) {
+            const lineCount = typeof meta.lineCount === 'number' ? meta.lineCount : 1;
+            return Math.max(BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT, Math.min(1400, lineCount * 28));
+        }
+
         rememberBlockHeight(block) {
             if (!block) return;
 
@@ -152,6 +157,24 @@
             const estimatedHeight = cachedHeight || this.estimateBlockHeightFromHtml(html);
             shell.style.minHeight = `${estimatedHeight}px`;
             shell.setAttribute('data-mounted', 'false');
+            shell.setAttribute('data-html-loaded', 'true');
+            return shell;
+        }
+
+        createShellForMeta(meta) {
+            const shell = document.createElement('div');
+            shell.className = 'latex-block-shell';
+            shell.setAttribute('data-index', String(meta.index));
+            shell.setAttribute('data-block-hash', meta.hash);
+            shell.setAttribute('data-block-key', meta.hash || String(meta.index));
+            shell.setAttribute('data-line', String(meta.line ?? 0));
+            shell.setAttribute('data-line-count', String(meta.lineCount ?? 1));
+            shell.setAttribute('data-mounted', 'false');
+            shell.setAttribute('data-html-loaded', 'false');
+
+            const cachedHeight = this.heightCache.get(meta.hash);
+            const estimatedHeight = cachedHeight || this.estimateBlockHeightFromMeta(meta);
+            shell.style.minHeight = `${estimatedHeight}px`;
             return shell;
         }
 
@@ -168,12 +191,15 @@
             return rect.bottom >= -BLOCK_VIRTUALIZATION_MARGIN && rect.top <= window.innerHeight + BLOCK_VIRTUALIZATION_MARGIN;
         }
 
-        mountShell(shell) {
+        mountShell(shell, onMissingHtml) {
             if (!this.enabled || this.getShellBlock(shell)) return null;
 
             const key = this.getBlockKey(shell);
             const html = this.htmlCache.get(key) || this.htmlCache.get(this.getBlockIndex(shell));
-            if (!html) return null;
+            if (!html) {
+                if (onMissingHtml) { onMissingHtml(shell); }
+                return null;
+            }
 
             const block = this.parseBlockHtml(html);
             if (!block) return null;
@@ -183,6 +209,7 @@
             shell.style.minHeight = '';
             shell.style.height = '';
             shell.setAttribute('data-mounted', 'true');
+            shell.setAttribute('data-html-loaded', 'true');
             return block;
         }
 
@@ -199,13 +226,13 @@
             shell.setAttribute('data-mounted', 'false');
         }
 
-        updateMountedShells(onMount) {
+        updateMountedShells(onMount, onMissingHtml) {
             if (!this.enabled) return [];
 
             const mounted = [];
             this.getShells().forEach(shell => {
                 if (this.isShellNearViewport(shell)) {
-                    const block = this.mountShell(shell);
+                    const block = this.mountShell(shell, onMissingHtml);
                     if (block) {
                         mounted.push(block);
                         if (onMount) { onMount(block); }
@@ -222,6 +249,24 @@
             blocks.forEach(block => fragment.appendChild(this.createShellForBlock(block)));
             this.contentRoot.replaceChildren(fragment);
             this.updateMountedShells(onMount);
+        }
+
+        replaceContentWithBlockMetadata(blocks, onMount, onMissingHtml) {
+            const fragment = document.createDocumentFragment();
+            blocks.forEach(meta => fragment.appendChild(this.createShellForMeta(meta)));
+            this.contentRoot.replaceChildren(fragment);
+            this.updateMountedShells(onMount, onMissingHtml);
+        }
+
+        storeBlockHtml(index, hash, html) {
+            const key = hash || String(index);
+            this.htmlCache.set(key, html);
+            const shell = this.contentRoot.querySelector(`.latex-block-shell[data-index="${index}"]`);
+            if (shell) {
+                shell.removeAttribute('data-html-requested');
+                shell.setAttribute('data-html-loaded', 'true');
+            }
+            return shell;
         }
 
         remapShellIndices(start, delta) {
@@ -834,6 +879,8 @@
                 experimentalVirtualization: false
             };
             this.currentNumbering = null;
+            this.blockHtmlRequestSeq = 0;
+            this.pendingBlockHtmlRequests = new Map();
             this.pdfObserver = null;
             this.pdfRenderTimer = null;
             this.virtualization = new BlockVirtualizationController(this.contentRoot);
@@ -906,6 +953,10 @@
                     this.handleScrollCommand(event.data);
                     break;
 
+                case 'blockHtml':
+                    this.handleBlockHtml(event.data);
+                    break;
+
                 case 'config':
                     if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
                         this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
@@ -928,7 +979,9 @@
                 this.setState('RENDERING');
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
-                if (payload.htmls) {
+                if (payload.blocks && this.virtualization.isEnabled()) {
+                    this.smartFullUpdateFromBlockMetadata(payload.blocks, payload.preserveUnchangedBlocks !== false);
+                } else if (payload.htmls) {
                     this.smartFullUpdateFromBlocks(payload.htmls, payload.preserveUnchangedBlocks !== false);
                 } else {
                     this.smartFullUpdate(payload.html, payload.preserveUnchangedBlocks !== false);
@@ -1012,7 +1065,10 @@
 
         updateVirtualizedBlocks() {
             if (!this.virtualization.isEnabled()) return;
-            this.virtualization.updateMountedShells(block => this.onVirtualBlockMounted(block));
+            this.virtualization.updateMountedShells(
+                block => this.onVirtualBlockMounted(block),
+                shell => this.requestVirtualBlockHtml(shell)
+            );
         }
 
         getBlockOrShellByIndex(index) {
@@ -1022,12 +1078,46 @@
             const shell = document.querySelector('.latex-block-shell[data-index="' + index + '"]');
             if (!shell) return null;
 
-            const mounted = this.virtualization.mountShell(shell);
+            const mounted = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
             if (mounted) {
                 this.onVirtualBlockMounted(mounted);
                 return mounted;
             }
             return shell;
+        }
+
+        requestVirtualBlockHtml(shell) {
+            if (!shell || shell.getAttribute('data-html-requested') === 'true') return;
+
+            const index = parseInt(shell.getAttribute('data-index'));
+            const hash = shell.getAttribute('data-block-hash') || '';
+            if (Number.isNaN(index)) return;
+
+            const id = `block-${++this.blockHtmlRequestSeq}`;
+            shell.setAttribute('data-html-requested', 'true');
+            this.pendingBlockHtmlRequests.set(id, { index, hash });
+            vscode.postMessage({ command: 'requestBlockHtml', id, index, hash });
+        }
+
+        handleBlockHtml(message) {
+            const pending = this.pendingBlockHtmlRequests.get(message.id);
+            if (pending) {
+                this.pendingBlockHtmlRequests.delete(message.id);
+            }
+            if (message.error || !message.html) {
+                const index = pending?.index ?? message.index;
+                const shell = document.querySelector('.latex-block-shell[data-index="' + index + '"]');
+                if (shell) { shell.removeAttribute('data-html-requested'); }
+                return;
+            }
+
+            const index = typeof message.index === 'number' ? message.index : pending?.index;
+            const hash = message.hash || pending?.hash || '';
+            const shell = this.virtualization.storeBlockHtml(index, hash, message.html);
+            if (!shell || !this.virtualization.isShellNearViewport(shell)) return;
+
+            const block = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
+            if (block) { this.onVirtualBlockMounted(block); }
         }
 
         getPendingTikzContainers(root = document) {
@@ -1267,6 +1357,14 @@
                 .map(html => this.parseBlockHtml(html))
                 .filter(Boolean);
             this.smartFullUpdateElements(newElements, preserveUnchangedBlocks);
+        }
+
+        smartFullUpdateFromBlockMetadata(blocks, preserveUnchangedBlocks = true) {
+            this.virtualization.replaceContentWithBlockMetadata(
+                blocks,
+                block => this.onVirtualBlockMounted(block),
+                shell => this.requestVirtualBlockHtml(shell)
+            );
         }
 
         smartFullUpdateElements(newElements, preserveUnchangedBlocks = true) {
