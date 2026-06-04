@@ -29,6 +29,7 @@
     window.tikzJaxLoadPromise = null;
     window.tikzJaxFailed = false;
     const TIKZ_ACTIVE_RENDER_TIMEOUT_MS = 120000;
+    const TIKZ_BATCH_RENDER_TIMEOUT_MS = 125000;
     const TIKZ_RENDER_DEBOUNCE_MS = 200;
     const TIKZ_PENDING_SCRIPT_TYPE = 'text/snaptex-tikz';
     const TIKZ_ACTIVE_SCRIPT_TYPE = 'text/tikz';
@@ -833,8 +834,8 @@
 
         waitForTikzBatch(containers) {
             return new Promise(resolve => {
-                const events = ['tikzjax-load-finished', 'tikzjax-load-failed', 'snaptex-tikz-settled'];
                 let interval = null;
+                let timeout = null;
                 let resolved = false;
                 const isSettled = container => (
                     !container.isConnected
@@ -842,9 +843,12 @@
                     || container.getAttribute('data-tikz-state') === 'failed'
                 );
                 const cleanup = () => {
-                    events.forEach(event => document.removeEventListener(event, check, true));
+                    document.removeEventListener('snaptex-tikz-settled', check, true);
                     if (interval) {
                         clearInterval(interval);
+                    }
+                    if (timeout) {
+                        clearTimeout(timeout);
                     }
                 };
                 const check = () => {
@@ -855,22 +859,29 @@
                     resolve();
                 };
 
-                events.forEach(event => document.addEventListener(event, check, true));
+                document.addEventListener('snaptex-tikz-settled', check, true);
                 interval = setInterval(check, 100);
+                timeout = setTimeout(() => {
+                    if (resolved) return;
+
+                    resolved = true;
+                    cleanup();
+                    resolve();
+                }, TIKZ_BATCH_RENDER_TIMEOUT_MS);
                 setTimeout(check, 0);
             });
         }
 
         async runTikzRenderBatch() {
-            if (!document.querySelector(TIKZ_SCRIPT_SELECTOR) || window.tikzJaxFailed) return;
+            if (!this.contentRoot.querySelector(TIKZ_SCRIPT_SELECTOR) || window.tikzJaxFailed) return;
 
             await window.ensureTikzJaxLoaded();
-            const containers = this.getPendingTikzContainers(document);
+            const containers = this.getPendingTikzContainers(this.contentRoot);
             if (containers.length === 0 || window.tikzJaxFailed) return;
 
             console.log('[SnapTeX] Loading TikZJax for TikZ content...');
-            window.watchPendingTikzContainers(document);
-            const activated = window.activatePendingTikzScripts(document);
+            window.watchPendingTikzContainers(this.contentRoot);
+            const activated = window.activatePendingTikzScripts(this.contentRoot);
             if (activated === 0) return;
 
             await this.waitForTikzBatch(containers);
@@ -878,7 +889,7 @@
 
         // Manually trigger TikZJax to scan the document
         triggerTikzRendering() {
-            const pendingTikz = document.querySelector(TIKZ_SCRIPT_SELECTOR);
+            const pendingTikz = this.contentRoot.querySelector(TIKZ_SCRIPT_SELECTOR);
             if (!pendingTikz || window.tikzJaxFailed) return;
 
             window.ensureTikzJaxLoaded().catch(() => {});

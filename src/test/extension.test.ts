@@ -640,8 +640,14 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /this\.tikzRenderScheduler = new CoalescingTaskScheduler/);
         assert.match(webviewSource, /runTikzRenderBatch\(\)/);
         assert.match(webviewSource, /waitForTikzBatch\(containers\)/);
+        assert.match(webviewSource, /TIKZ_BATCH_RENDER_TIMEOUT_MS/);
+        assert.match(webviewSource, /setTimeout\(\(\) => \{[\s\S]*resolve\(\);[\s\S]*\}, TIKZ_BATCH_RENDER_TIMEOUT_MS\)/);
         assert.match(webviewSource, /snaptex-tikz-settled/);
-        assert.match(webviewSource, /window\.activatePendingTikzScripts\(document\)/);
+        assert.match(webviewSource, /this\.contentRoot\.querySelector\(TIKZ_SCRIPT_SELECTOR\)/);
+        assert.match(webviewSource, /this\.getPendingTikzContainers\(this\.contentRoot\)/);
+        assert.match(webviewSource, /window\.watchPendingTikzContainers\(this\.contentRoot\)/);
+        assert.match(webviewSource, /window\.activatePendingTikzScripts\(this\.contentRoot\)/);
+        assert.doesNotMatch(webviewSource, /window\.activatePendingTikzScripts\(document\)/);
         assert.match(webviewSource, /script\.replaceWith\(activeScript\)/);
     });
 
