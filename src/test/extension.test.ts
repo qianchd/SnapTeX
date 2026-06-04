@@ -568,24 +568,23 @@ suite('Webview resource loading', () => {
         assert.doesNotMatch(webviewSource, /setTimeout\(\(\) => \{[\s\S]*window\.failPendingTikzContainers\('TikZ rendering timed out\.'\)/);
     });
 
-    test('bootstraps TikZJax run-tex worker from a blob URL in VS Code webviews', () => {
+    test('starts TikZJax run-tex as a direct webview worker without the importScripts workaround', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
         const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
         const runTexSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'run-tex.js'), 'utf8');
+        const calcLibraryPath = path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tex_files', 'tikzlibrarycalc.code.tex.gz');
 
         assert.match(buildSource, /patchTikzJaxWorkerBootstrap/);
         assert.match(buildSource, /CORSWorkaround:!1/);
-        assert.match(tikzJaxSource, /fetch\(`\$\{e\}\/run-tex\.js`\)/);
-        assert.match(tikzJaxSource, /tex\.wasm\.gz/);
-        assert.match(tikzJaxSource, /core\.dump\.gz/);
-        assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:/);
-        assert.match(tikzJaxSource, /URL\.createObjectURL\(new Blob/);
-        assert.match(tikzJaxSource, /new o\([^,]+,\{CORSWorkaround:!1\}\)/);
+        assert.match(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`,\{CORSWorkaround:!1\}\)/);
+        assert.match(tikzJaxSource, /await r\.load\(e\);return r/);
+        assert.ok(fs.existsSync(calcLibraryPath));
+        assert.doesNotMatch(tikzJaxSource, /fetch\(`\$\{e\}\/run-tex\.js`\)/);
         assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`\)/);
+        assert.doesNotMatch(tikzJaxSource, /r\.load\(\{base:e,assets:/);
         assert.doesNotMatch(tikzJaxSource, /try\{await r\.load\(e\)\}catch\(e\)\{console\.log\(e\)\}return r/);
-        assert.match(runTexSource, /snaptexAssetUrls&&snaptexAssetUrls\[A\]/);
-        assert.match(runTexSource, /snaptexAssetUrls=A&&A\.assets\|\|null/);
+        assert.doesNotMatch(runTexSource, /snaptexAssetUrls/);
     });
 });
 
