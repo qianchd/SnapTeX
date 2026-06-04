@@ -1,6 +1,8 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { BibTexParser } from '../bib';
 import { LatexDocument } from '../document';
@@ -466,6 +468,48 @@ suite('PDF request validation', () => {
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.file('/project/chapter/figures/a.pdf'), [docDir, root]), true);
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.file('/project2/a.pdf'), [root]), false);
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.parse('https://example.com/a.pdf'), [root]), false);
+    });
+
+    test('keeps PDF loading on the URI-only transport path', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.doesNotMatch(panelSource, /\bpdfData\b/);
+        assert.doesNotMatch(panelSource, /\bbase64\b/i);
+        assert.doesNotMatch(panelSource, /\btransport\b/);
+        assert.doesNotMatch(webviewSource, /\bpdfData\b/);
+        assert.doesNotMatch(webviewSource, /\bbase64\b/i);
+        assert.doesNotMatch(webviewSource, /\btransport\b/);
+    });
+
+    test('requests viewport-near PDF canvases without waiting for observer scroll events', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /isPdfCanvasNearViewport\(canvas\)/);
+        assert.match(webviewSource, /this\.requestPdfCanvas\(canvas\);\s*return;/);
+        assert.match(webviewSource, /schedulePendingPdfRender\(\)/);
+    });
+
+    test('uses non-streaming PDF.js URL loading for webview resource URIs', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /disableRange:\s*true/);
+        assert.match(webviewSource, /disableStream:\s*true/);
+        assert.match(webviewSource, /disableAutoFetch:\s*true/);
+    });
+
+    test('creates a blob module worker for PDF.js inside the webview sandbox', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /async function setupPdfWorker\(\)/);
+        assert.match(webviewSource, /URL\.createObjectURL\(new Blob/);
+        assert.match(webviewSource, /new Worker\(workerBlobUrl,\s*\{\s*type:\s*'module'\s*\}\)/);
+        assert.match(webviewSource, /pdfjsLib\.GlobalWorkerOptions\.workerPort = worker/);
+        assert.match(webviewSource, /await pdfWorkerReady/);
     });
 });
 

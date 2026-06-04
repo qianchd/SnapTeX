@@ -4,21 +4,6 @@ import { LatexDocument } from './document';
 import { VscodeFileProvider } from './file-provider';
 import { getBasename } from './utils';
 
-// Helper: Convert Uint8Array to Base64
-function uint8ToBase64(u8: Uint8Array): string {
-    if (typeof Buffer !== 'undefined') {
-        return Buffer.from(u8).toString('base64');
-    }
-
-    const CHUNK_SIZE = 0x8000;
-    const chunks: string[] = [];
-    for (let i = 0; i < u8.length; i += CHUNK_SIZE) {
-        const chunk = u8.subarray(i, i + CHUNK_SIZE);
-        chunks.push(String.fromCharCode.apply(null, chunk as unknown as number[]));
-    }
-    return btoa(chunks.join(''));
-}
-
 function isDebugMemoryEnabled(): boolean {
     return vscode.workspace.getConfiguration('snaptex').get<boolean>('debugMemory', false);
 }
@@ -209,14 +194,14 @@ export class TexPreviewPanel {
         }
     }
 
-    // Read PDF file and send back base64 data
+    // PDF resources are loaded through webview URIs only; rendering failures should surface directly.
     private async handlePdfRequest(message: any) {
         if (!this._sourceUri) {return;}
 
         const requestId = typeof message.id === 'string' ? message.id : '';
         const fail = (error: string) => {
             if (requestId) {
-                this.postMessage({ command: 'pdfData', id: requestId, error });
+                this.postMessage({ command: 'pdfUri', id: requestId, error });
             }
         };
 
@@ -237,12 +222,12 @@ export class TexPreviewPanel {
 
             // Check existence first
             if (await this._fileProvider.exists(pdfUri)) {
-                const fileData = await this._fileProvider.readBuffer(pdfUri);
-                const base64 = uint8ToBase64(fileData);
+                const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
-                    command: 'pdfData',
-                    id: message.id,
-                    data: base64
+                    command: 'pdfUri',
+                    id: requestId,
+                    uri: webviewUri.toString(),
+                    path: cleanPath
                 });
             } else {
                 console.warn(`[SnapTeX] PDF not found: ${pdfUri.toString()}`);

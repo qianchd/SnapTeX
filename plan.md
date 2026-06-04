@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 27 tests.  
+> Last verified: `npm test` passed with 31 tests after using a blob module worker for PDF.js in the webview sandbox.  
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -186,12 +186,16 @@
 
 ### D. PDF Pipeline Optimization
 
-- [ ] Return webview URIs for PDF files instead of reading and base64-posting by default.
-- [ ] Keep the existing base64 `pdfData` path as fallback for remote or unsupported cases.
-- [ ] Use PDF.js `getDocument({ url })` when a URI is available.
-- [ ] Lazy-render PDF canvases with `IntersectionObserver`.
+- [x] Return webview URIs for PDF files instead of reading and base64-posting by default.
+- [x] Remove the old base64 `pdfData` fallback so URI rendering is the single PDF transport path.
+- [x] Use PDF.js `getDocument({ url })` when a URI is available.
+- [x] Lazy-render PDF canvases with `IntersectionObserver`.
+- [x] Add a test guard that prevents the removed `pdfData`/base64 transport branch from returning silently.
+- [x] Request viewport-near PDF canvases immediately instead of waiting for an observer scroll event.
+- [x] Disable PDF.js range/stream/auto-fetch loading for webview resource URIs to avoid slow request probing.
+- [x] Create a blob module worker for PDF.js so PDF rendering does not fall back to the slow fake worker path.
 - [ ] Release far-offscreen PDF canvas bitmaps.
-- [ ] Add webview-side tests or smoke coverage for PDF request lifecycle where practical.
+- [ ] Add webview-side tests or smoke coverage that verifies URI PDF rendering in local, remote, and web extension hosts where practical.
 
 ### E. Full Update Payload and DOM Update Model
 

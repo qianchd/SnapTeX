@@ -476,10 +476,13 @@
                 autoScrollDelay: 100,
                 debugMemory: false
             };
+            this.pdfObserver = null;
+            this.pdfRenderTimer = null;
 
             // Initialize Tooltip Manager
             this.tooltipManager = new TooltipManager();
 
+            this.initPdfObserver();
             this.bindEvents();
             vscode.postMessage({ command: 'webviewLoaded' });
         }
@@ -562,10 +565,7 @@
             if (payload.numbering) {
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
             }
-            setTimeout(() => {
-                this.renderPendingPdfs();
-                this.logDomStats('after renderPendingPdfs');
-            }, 50);
+            this.schedulePendingPdfRender();
 
             // Trigger TikZ Rendering after update
             this.triggerTikzRendering();
@@ -610,6 +610,7 @@
             this.isFirstLoad = false;
             if (!scrollHandled && this.state === 'SCROLLING_AUTO') { this.lockScrolling(200); }
             else if (!scrollHandled) { this.setState('IDLE'); }
+            this.schedulePendingPdfRender();
         }
 
         handleScrollCommand(data) {
@@ -805,13 +806,66 @@
             }
         }
 
+        initPdfObserver() {
+            if (!('IntersectionObserver' in window)) return;
+            this.pdfObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const canvas = entry.target;
+                    this.requestPdfCanvas(canvas);
+                    this.pdfObserver.unobserve(canvas);
+                    canvas.removeAttribute('data-pdf-observed');
+                });
+            }, { rootMargin: '1200px' });
+        }
+
+        requestPdfCanvas(canvas) {
+            const path = canvas.getAttribute('data-req-path');
+            const id = canvas.id;
+            if (path && id && !canvas.getAttribute('data-rendered') && !canvas.getAttribute('data-requested')) {
+                window.renderPdfToCanvas(path, id);
+            }
+        }
+
+        isPdfCanvasNearViewport(canvas) {
+            const rect = canvas.getBoundingClientRect();
+            const margin = 1200;
+            return rect.bottom >= -margin && rect.top <= window.innerHeight + margin;
+        }
+
+        schedulePendingPdfRender() {
+            if (this.pdfRenderTimer) clearTimeout(this.pdfRenderTimer);
+
+            const run = () => {
+                this.renderPendingPdfs();
+                this.logDomStats('after renderPendingPdfs');
+            };
+
+            requestAnimationFrame(() => {
+                requestAnimationFrame(run);
+            });
+
+            this.pdfRenderTimer = setTimeout(() => {
+                this.pdfRenderTimer = null;
+                run();
+            }, 250);
+        }
+
         renderPendingPdfs() {
             const pdfCanvases = document.querySelectorAll('canvas[data-req-path]');
             pdfCanvases.forEach(canvas => {
-                const path = canvas.getAttribute('data-req-path');
-                const id = canvas.id;
-                if (path && id && !canvas.getAttribute('data-rendered') && !canvas.getAttribute('data-requested')) {
-                    window.renderPdfToCanvas(path, id);
+                if (canvas.getAttribute('data-rendered') || canvas.getAttribute('data-requested')) return;
+                if (this.isPdfCanvasNearViewport(canvas)) {
+                    this.requestPdfCanvas(canvas);
+                    return;
+                }
+                if (this.pdfObserver) {
+                    if (!canvas.getAttribute('data-pdf-observed')) {
+                        canvas.setAttribute('data-pdf-observed', 'true');
+                        this.pdfObserver.observe(canvas);
+                    }
+                } else {
+                    this.requestPdfCanvas(canvas);
                 }
             });
         }
@@ -878,24 +932,45 @@
 <script type="module">
     import * as pdfjsLib from '{{pdfJsUri}}';
     pdfjsLib.GlobalWorkerOptions.workerSrc = '{{pdfWorkerUri}}';
+    const pdfWorkerReady = setupPdfWorker();
 
-    function base64ToUint8Array(base64) {
-        const binary_string = window.atob(base64);
-        const len = binary_string.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binary_string.charCodeAt(i);
+    async function setupPdfWorker() {
+        if (!('Worker' in window) || !('fetch' in window) || !('Blob' in window) || !URL.createObjectURL) {
+            return;
         }
-        return bytes;
+
+        let workerBlobUrl = null;
+        try {
+            const response = await fetch('{{pdfWorkerUri}}');
+            if (!response.ok) {
+                throw new Error(`PDF worker fetch failed: ${response.status}`);
+            }
+
+            const workerCode = await response.text();
+            workerBlobUrl = URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' }));
+            const worker = new Worker(workerBlobUrl, { type: 'module' });
+            pdfjsLib.GlobalWorkerOptions.workerPort = worker;
+
+            window.addEventListener('unload', () => {
+                pdfjsLib.GlobalWorkerOptions.workerPort = null;
+                worker.terminate();
+                URL.revokeObjectURL(workerBlobUrl);
+            }, { once: true });
+        } catch (error) {
+            if (workerBlobUrl) {
+                URL.revokeObjectURL(workerBlobUrl);
+            }
+            console.warn('[SnapTeX] PDF worker blob setup failed; falling back to PDF.js workerSrc.', error);
+        }
     }
 
     window.addEventListener('message', event => {
         const msg = event.data;
-        if (msg.command === 'pdfData') {
-            if (msg.error || !msg.data) {
+        if (msg.command === 'pdfUri') {
+            if (msg.error || !msg.uri) {
                 renderPdfError(msg.id, msg.error || 'Error loading PDF');
             } else {
-                renderPdfFromData(msg.id, msg.data);
+                renderPdfFromUrl(msg.id, msg.uri);
             }
         }
     });
@@ -914,14 +989,9 @@
         canvas.removeAttribute('data-requested');
     }
 
-    async function renderPdfFromData(canvasId, base64Data) {
-        const canvas = document.getElementById(canvasId);
-        if (!canvas) return;
-
+    async function renderPdfDocument(canvas, loadingTask) {
         let pdfDocument = null;
         try {
-            const pdfData = base64ToUint8Array(base64Data);
-            const loadingTask = pdfjsLib.getDocument({ data: pdfData });
             pdfDocument = await loadingTask.promise;
 
             const page = await pdfDocument.getPage(1);
@@ -932,20 +1002,36 @@
                 canvas.width = viewport.width;
             }
             const context = canvas.getContext('2d');
+            if (!context) return;
             await page.render({ canvasContext: context, viewport: viewport }).promise;
 
             canvas.setAttribute('data-rendered', 'true');
+            canvas.removeAttribute('data-requested');
 
             page.cleanup();
-        } catch (error) {
-            console.error('PDF render error:', error);
-            const ctx = canvas.getContext('2d');
-            ctx.font = '12px sans-serif';
-            ctx.fillText('Error loading PDF', 10, 50);
         } finally {
             if (pdfDocument) {
                 pdfDocument.destroy();
             }
+        }
+    }
+
+    async function renderPdfFromUrl(canvasId, pdfUri) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        try {
+            await pdfWorkerReady;
+            await renderPdfDocument(canvas, pdfjsLib.getDocument({
+                url: pdfUri,
+                disableRange: true,
+                disableStream: true,
+                disableAutoFetch: true
+            }));
+        } catch (error) {
+            console.error('PDF URI render error:', error);
+            canvas.removeAttribute('data-requested');
+            renderPdfError(canvasId, 'Error loading PDF');
         }
     }
 
