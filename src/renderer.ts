@@ -3,7 +3,7 @@ import MarkdownIt from 'markdown-it';
 
 import { LatexDocument } from './document';
 import { DiffEngine } from './diff';
-import { PreprocessRule, PatchPayload, SourceLocation } from './types';
+import { PreprocessRule, PatchPayload, RenderedBlockMeta, SourceLocation } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner } from './scanner';
 import { BibEntry } from './bib';
@@ -11,6 +11,10 @@ import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import { IFileProvider } from './file-provider';
 import { normalizeUri, stableHash } from './utils';
 import { ProtectionManager } from './protection'; // [NEW]
+
+export interface RenderOptions {
+    deferFullHtml?: boolean;
+}
 
 /**
  * Renderer Service.
@@ -151,7 +155,29 @@ export class SmartRenderer {
         return `<div class="latex-block" data-index="${index}" data-block-hash="${stableHash(text)}">${finalHtml}</div>`;
     }
 
-    public render(doc: LatexDocument): PatchPayload {
+    private buildBlockMeta(text: string, index: number): RenderedBlockMeta {
+        const map = this.blockMap[index];
+        return {
+            index,
+            hash: stableHash(text),
+            line: map?.start ?? 0,
+            lineCount: map?.count ?? text.split(/\r?\n/).length
+        };
+    }
+
+    public renderBlockByIndex(index: number): string | undefined {
+        const text = this.lastBlockTexts[index];
+        if (text === undefined) { return undefined; }
+        return this.renderBlockToHtml(text, index);
+    }
+
+    public getBlockMeta(index: number): RenderedBlockMeta | undefined {
+        const text = this.lastBlockTexts[index];
+        if (text === undefined) { return undefined; }
+        return this.buildBlockMeta(text, index);
+    }
+
+    public render(doc: LatexDocument, options: RenderOptions = {}): PatchPayload {
         this.currentDocument = doc;
 
         // Reset protector state
@@ -254,14 +280,13 @@ export class SmartRenderer {
 
         if (isFullUpdate) {
             // [Full Render] Branch
-            // Directly render all content, skipping premature partial block rendering
-            const insertedHtmls = newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index));
-
             this.lastBlockTexts = newBlockTexts;
+            const blockMeta = newBlockTexts.map((text, index) => this.buildBlockMeta(text, index));
 
             payload = {
                 type: 'full',
-                htmls: insertedHtmls,
+                htmls: options.deferFullHtml ? undefined : newBlockTexts.map((text, index) => this.renderBlockToHtml(text, index)),
+                blocks: options.deferFullHtml ? blockMeta : undefined,
                 start: undefined,
                 deleteCount: undefined,
                 shift: undefined,

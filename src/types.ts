@@ -20,11 +20,19 @@ export interface MetadataResult {
     cleanedText: string;
 }
 
+export interface RenderedBlockMeta {
+    index: number;
+    hash: string;
+    line: number;
+    lineCount: number;
+}
+
 export interface PatchPayload {
     type: 'full' | 'patch';
     start?: number;
     deleteCount?: number;
     htmls?: string[];
+    blocks?: RenderedBlockMeta[];
     shift?: number;
     preserveUnchangedBlocks?: boolean;
 

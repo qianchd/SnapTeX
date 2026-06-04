@@ -37,6 +37,8 @@
     const TIKZ_SCRIPT_SELECTOR = `${TIKZ_PENDING_SCRIPT_SELECTOR}, script[type="${TIKZ_ACTIVE_SCRIPT_TYPE}"]`;
     const PDF_RENDER_MARGIN = 1200;
     const PDF_RELEASE_MARGIN = 3600;
+    const BLOCK_VIRTUALIZATION_MARGIN = 2400;
+    const BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT = 180;
 
     function hasRenderedTikz(container) {
         return !!container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
@@ -89,14 +91,36 @@
             this.contentRoot = contentRoot;
             this.enabled = false;
             this.heightCache = new Map();
+            this.htmlCache = new Map();
         }
 
         setEnabled(enabled) {
             this.enabled = enabled === true;
         }
 
-        getBlockKey(block) {
-            return block.getAttribute('data-block-hash') || block.getAttribute('data-index');
+        isEnabled() {
+            return this.enabled;
+        }
+
+        getBlockKey(element) {
+            if (!element) return '';
+            return element.getAttribute('data-block-hash') || element.getAttribute('data-index') || '';
+        }
+
+        getBlockIndex(element) {
+            if (!element) return null;
+            return element.getAttribute('data-index');
+        }
+
+        estimateBlockHeightFromHtml(html) {
+            const lineBreaks = (html.match(/<br\b|\n|<\/p>|<\/div>|<\/li>/g) || []).length;
+            const byLength = Math.ceil(html.length / 36);
+            return Math.max(BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT, Math.min(1400, (lineBreaks + byLength) * 10));
+        }
+
+        estimateBlockHeightFromMeta(meta) {
+            const lineCount = typeof meta.lineCount === 'number' ? meta.lineCount : 1;
+            return Math.max(BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT, Math.min(1400, lineCount * 28));
         }
 
         rememberBlockHeight(block) {
@@ -109,6 +133,152 @@
             if (rect.height > 0) {
                 this.heightCache.set(key, Math.ceil(rect.height));
             }
+        }
+
+        parseBlockHtml(html) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = html;
+            return tempDiv.firstElementChild;
+        }
+
+        createShellForBlock(block) {
+            const index = this.getBlockIndex(block);
+            const hash = block.getAttribute('data-block-hash') || '';
+            const key = this.getBlockKey(block);
+            const html = block.outerHTML;
+            const shell = document.createElement('div');
+            shell.className = 'latex-block-shell';
+            if (index !== null) { shell.setAttribute('data-index', index); }
+            if (hash) { shell.setAttribute('data-block-hash', hash); }
+            if (key) { shell.setAttribute('data-block-key', key); }
+
+            this.htmlCache.set(key || index, html);
+            const cachedHeight = this.heightCache.get(key);
+            const estimatedHeight = cachedHeight || this.estimateBlockHeightFromHtml(html);
+            shell.style.minHeight = `${estimatedHeight}px`;
+            shell.setAttribute('data-mounted', 'false');
+            shell.setAttribute('data-html-loaded', 'true');
+            return shell;
+        }
+
+        createShellForMeta(meta) {
+            const shell = document.createElement('div');
+            shell.className = 'latex-block-shell';
+            shell.setAttribute('data-index', String(meta.index));
+            shell.setAttribute('data-block-hash', meta.hash);
+            shell.setAttribute('data-block-key', meta.hash || String(meta.index));
+            shell.setAttribute('data-line', String(meta.line ?? 0));
+            shell.setAttribute('data-line-count', String(meta.lineCount ?? 1));
+            shell.setAttribute('data-mounted', 'false');
+            shell.setAttribute('data-html-loaded', 'false');
+
+            const cachedHeight = this.heightCache.get(meta.hash);
+            const estimatedHeight = cachedHeight || this.estimateBlockHeightFromMeta(meta);
+            shell.style.minHeight = `${estimatedHeight}px`;
+            return shell;
+        }
+
+        getShells() {
+            return Array.from(this.contentRoot.querySelectorAll('.latex-block-shell'));
+        }
+
+        getShellBlock(shell) {
+            return shell ? shell.querySelector(':scope > .latex-block') : null;
+        }
+
+        isShellNearViewport(shell) {
+            const rect = shell.getBoundingClientRect();
+            return rect.bottom >= -BLOCK_VIRTUALIZATION_MARGIN && rect.top <= window.innerHeight + BLOCK_VIRTUALIZATION_MARGIN;
+        }
+
+        mountShell(shell, onMissingHtml) {
+            if (!this.enabled || this.getShellBlock(shell)) return null;
+
+            const key = this.getBlockKey(shell);
+            const html = this.htmlCache.get(key) || this.htmlCache.get(this.getBlockIndex(shell));
+            if (!html) {
+                if (onMissingHtml) { onMissingHtml(shell); }
+                return null;
+            }
+
+            const block = this.parseBlockHtml(html);
+            if (!block) return null;
+
+            shell.textContent = '';
+            shell.appendChild(block);
+            shell.style.minHeight = '';
+            shell.style.height = '';
+            shell.setAttribute('data-mounted', 'true');
+            shell.setAttribute('data-html-loaded', 'true');
+            return block;
+        }
+
+        unmountShell(shell) {
+            const block = this.getShellBlock(shell);
+            if (!block) return;
+
+            this.rememberBlockHeight(block);
+            const key = this.getBlockKey(block);
+            const height = this.heightCache.get(key) || Math.ceil(block.getBoundingClientRect().height) || BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT;
+            block.remove();
+            shell.style.minHeight = `${height}px`;
+            shell.style.height = `${height}px`;
+            shell.setAttribute('data-mounted', 'false');
+        }
+
+        updateMountedShells(onMount, onMissingHtml) {
+            if (!this.enabled) return [];
+
+            const mounted = [];
+            this.getShells().forEach(shell => {
+                if (this.isShellNearViewport(shell)) {
+                    const block = this.mountShell(shell, onMissingHtml);
+                    if (block) {
+                        mounted.push(block);
+                        if (onMount) { onMount(block); }
+                    }
+                } else {
+                    this.unmountShell(shell);
+                }
+            });
+            return mounted;
+        }
+
+        replaceContentWithShells(blocks, onMount) {
+            const fragment = document.createDocumentFragment();
+            blocks.forEach(block => fragment.appendChild(this.createShellForBlock(block)));
+            this.contentRoot.replaceChildren(fragment);
+            this.updateMountedShells(onMount);
+        }
+
+        replaceContentWithBlockMetadata(blocks, onMount, onMissingHtml) {
+            const fragment = document.createDocumentFragment();
+            blocks.forEach(meta => fragment.appendChild(this.createShellForMeta(meta)));
+            this.contentRoot.replaceChildren(fragment);
+            this.updateMountedShells(onMount, onMissingHtml);
+        }
+
+        storeBlockHtml(index, hash, html) {
+            const key = hash || String(index);
+            this.htmlCache.set(key, html);
+            const shell = this.contentRoot.querySelector(`.latex-block-shell[data-index="${index}"]`);
+            if (shell) {
+                shell.removeAttribute('data-html-requested');
+                shell.setAttribute('data-html-loaded', 'true');
+            }
+            return shell;
+        }
+
+        remapShellIndices(start, delta) {
+            if (delta === 0) return;
+            this.getShells().forEach(shell => {
+                const oldIdx = parseInt(shell.getAttribute('data-index'));
+                if (!isNaN(oldIdx) && oldIdx >= start) {
+                    shell.setAttribute('data-index', oldIdx + delta);
+                    const block = this.getShellBlock(shell);
+                    if (block) { block.setAttribute('data-index', oldIdx + delta); }
+                }
+            });
         }
     }
 
@@ -705,8 +875,12 @@
             this.lastScrollTime = 0;
             this.config = {
                 autoScrollDelay: 100,
-                debugMemory: false
+                debugMemory: false,
+                experimentalVirtualization: false
             };
+            this.currentNumbering = null;
+            this.blockHtmlRequestSeq = 0;
+            this.pendingBlockHtmlRequests = new Map();
             this.pdfObserver = null;
             this.pdfRenderTimer = null;
             this.virtualization = new BlockVirtualizationController(this.contentRoot);
@@ -729,7 +903,11 @@
 
         bindEvents() {
             window.addEventListener('message', event => this.onMessage(event));
-            window.addEventListener('scroll', () => this.onScroll());
+            window.addEventListener('scroll', () => {
+                this.updateVirtualizedBlocks();
+                this.onScroll();
+            });
+            window.addEventListener('resize', () => this.updateVirtualizedBlocks());
             document.addEventListener('dblclick', event => this.onDoubleClick(event));
         }
 
@@ -775,6 +953,10 @@
                     this.handleScrollCommand(event.data);
                     break;
 
+                case 'blockHtml':
+                    this.handleBlockHtml(event.data);
+                    break;
+
                 case 'config':
                     if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
                         this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
@@ -782,17 +964,24 @@
                     if (event.data.config && typeof event.data.config.debugMemory === 'boolean') {
                         this.config.debugMemory = event.data.config.debugMemory;
                     }
+                    this.config.experimentalVirtualization = event.data.config.experimentalVirtualization === true;
                     this.virtualization.setEnabled(event.data.config.experimentalVirtualization === true);
+                    this.updateVirtualizedBlocks();
                     break;
             }
         }
 
         handleUpdate(payload) {
+            if (payload.numbering) {
+                this.currentNumbering = payload.numbering;
+            }
             if (payload.type === 'full') {
                 this.setState('RENDERING');
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
-                if (payload.htmls) {
+                if (payload.blocks && this.virtualization.isEnabled()) {
+                    this.smartFullUpdateFromBlockMetadata(payload.blocks, payload.preserveUnchangedBlocks !== false);
+                } else if (payload.htmls) {
                     this.smartFullUpdateFromBlocks(payload.htmls, payload.preserveUnchangedBlocks !== false);
                 } else {
                     this.smartFullUpdate(payload.html, payload.preserveUnchangedBlocks !== false);
@@ -820,6 +1009,8 @@
             if (!this.config.debugMemory) return;
             console.log('[SnapTeX][webview]', label, {
                 blocks: document.querySelectorAll('.latex-block').length,
+                shells: document.querySelectorAll('.latex-block-shell').length,
+                mountedShells: document.querySelectorAll('.latex-block-shell[data-mounted="true"]').length,
                 pdfCanvases: document.querySelectorAll('canvas[data-req-path]').length,
                 renderedPdfs: document.querySelectorAll('canvas[data-rendered="true"]').length,
                 tikzScripts: document.querySelectorAll('script[type="text/tikz"]').length,
@@ -860,6 +1051,73 @@
             this.virtualization.rememberBlockHeight(oldBlock);
             oldBlock.replaceWith(newBlock);
             this.applyStaleTikzPreviewsToBlock(newBlock, oldBlock);
+        }
+
+        onVirtualBlockMounted(block) {
+            if (!block) return;
+
+            if (this.currentNumbering) {
+                requestAnimationFrame(() => this.applyNumbering(this.currentNumbering));
+            }
+            this.schedulePendingPdfRender();
+            this.triggerTikzRendering();
+        }
+
+        updateVirtualizedBlocks() {
+            if (!this.virtualization.isEnabled()) return;
+            this.virtualization.updateMountedShells(
+                block => this.onVirtualBlockMounted(block),
+                shell => this.requestVirtualBlockHtml(shell)
+            );
+        }
+
+        getBlockOrShellByIndex(index) {
+            let target = document.querySelector('.latex-block[data-index="' + index + '"]');
+            if (target) return target;
+
+            const shell = document.querySelector('.latex-block-shell[data-index="' + index + '"]');
+            if (!shell) return null;
+
+            const mounted = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
+            if (mounted) {
+                this.onVirtualBlockMounted(mounted);
+                return mounted;
+            }
+            return shell;
+        }
+
+        requestVirtualBlockHtml(shell) {
+            if (!shell || shell.getAttribute('data-html-requested') === 'true') return;
+
+            const index = parseInt(shell.getAttribute('data-index'));
+            const hash = shell.getAttribute('data-block-hash') || '';
+            if (Number.isNaN(index)) return;
+
+            const id = `block-${++this.blockHtmlRequestSeq}`;
+            shell.setAttribute('data-html-requested', 'true');
+            this.pendingBlockHtmlRequests.set(id, { index, hash });
+            vscode.postMessage({ command: 'requestBlockHtml', id, index, hash });
+        }
+
+        handleBlockHtml(message) {
+            const pending = this.pendingBlockHtmlRequests.get(message.id);
+            if (pending) {
+                this.pendingBlockHtmlRequests.delete(message.id);
+            }
+            if (message.error || !message.html) {
+                const index = pending?.index ?? message.index;
+                const shell = document.querySelector('.latex-block-shell[data-index="' + index + '"]');
+                if (shell) { shell.removeAttribute('data-html-requested'); }
+                return;
+            }
+
+            const index = typeof message.index === 'number' ? message.index : pending?.index;
+            const hash = message.hash || pending?.hash || '';
+            const shell = this.virtualization.storeBlockHtml(index, hash, message.html);
+            if (!shell || !this.virtualization.isShellNearViewport(shell)) return;
+
+            const block = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
+            if (block) { this.onVirtualBlockMounted(block); }
         }
 
         getPendingTikzContainers(root = document) {
@@ -961,7 +1219,7 @@
             const now = Date.now();
             if (now - this.lastScrollTime < this.config.autoScrollDelay) return;
             this.lastScrollTime = now;
-            const blocks = document.querySelectorAll('.latex-block');
+            const blocks = document.querySelectorAll('.latex-block, .latex-block-shell');
             const viewCenter = window.innerHeight / 2;
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
@@ -1009,7 +1267,7 @@
         }
 
         saveScrollState() {
-            const blocks = document.querySelectorAll('.latex-block');
+            const blocks = document.querySelectorAll('.latex-block, .latex-block-shell');
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
                 if (rect.bottom > 0 && rect.top < window.innerHeight) {
@@ -1021,7 +1279,7 @@
 
         restoreScrollState(state) {
             if (!state || !state.index) return;
-            const block = document.querySelector('.latex-block[data-index="' + state.index + '"]');
+            const block = this.getBlockOrShellByIndex(state.index);
             if (block) {
                 const newTop = block.getBoundingClientRect().top + window.scrollY;
                 let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
@@ -1034,7 +1292,7 @@
             const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
             this.lastTargetIndex = index;
             this.lastTargetRatio = ratio || 0;
-            const target = document.querySelector('.latex-block[data-index="' + index + '"]');
+            const target = this.getBlockOrShellByIndex(index);
             if (target) {
                 const calcY = () => {
                     if (!target.isConnected) return window.scrollY;
@@ -1101,7 +1359,20 @@
             this.smartFullUpdateElements(newElements, preserveUnchangedBlocks);
         }
 
+        smartFullUpdateFromBlockMetadata(blocks, preserveUnchangedBlocks = true) {
+            this.virtualization.replaceContentWithBlockMetadata(
+                blocks,
+                block => this.onVirtualBlockMounted(block),
+                shell => this.requestVirtualBlockHtml(shell)
+            );
+        }
+
         smartFullUpdateElements(newElements, preserveUnchangedBlocks = true) {
+            if (this.virtualization.isEnabled()) {
+                this.virtualization.replaceContentWithShells(newElements, block => this.onVirtualBlockMounted(block));
+                return;
+            }
+
             const oldElements = Array.from(this.contentRoot.children);
             const maxLen = Math.max(newElements.length, oldElements.length);
             for (let i = 0; i < maxLen; i++) {
@@ -1122,6 +1393,11 @@
         }
 
         applyPatch(payload) {
+            if (this.virtualization.isEnabled()) {
+                this.applyVirtualPatch(payload);
+                return;
+            }
+
             const { start, deleteCount, htmls = [], shift = 0 } = payload;
             const targetIndex = start + deleteCount;
             const referenceNode = this.contentRoot.children[targetIndex] || null;
@@ -1180,6 +1456,57 @@
                     }
                 });
             }
+        }
+
+        applyVirtualPatch(payload) {
+            const { start, deleteCount, htmls = [], shift = 0 } = payload;
+            const referenceNode = this.contentRoot.children[start + deleteCount] || null;
+
+            for (let i = 0; i < deleteCount; i++) {
+                const shell = this.contentRoot.children[start];
+                if (!shell) break;
+                this.virtualization.rememberBlockHeight(shell);
+                shell.remove();
+            }
+
+            const tempDiv = document.createElement('div');
+            const insertedShells = [];
+            htmls.forEach(html => {
+                tempDiv.innerHTML = html;
+                const block = tempDiv.firstElementChild;
+                if (!block) return;
+
+                const shell = this.virtualization.createShellForBlock(block);
+                insertedShells.push(shell);
+            });
+
+            if (insertedShells.length > 0) {
+                const fragment = document.createDocumentFragment();
+                insertedShells.forEach(shell => fragment.appendChild(shell));
+                this.contentRoot.insertBefore(fragment, referenceNode);
+            }
+
+            if (shift !== 0) {
+                this.virtualization.remapShellIndices(start + insertedShells.length, shift);
+            }
+
+            if (payload.dirtyBlocks) {
+                Object.keys(payload.dirtyBlocks).forEach(indexStr => {
+                    const idx = parseInt(indexStr);
+                    const shell = document.querySelector('.latex-block-shell[data-index="' + idx + '"]');
+                    if (!shell) return;
+
+                    const temp = document.createElement('div');
+                    temp.innerHTML = payload.dirtyBlocks[idx];
+                    const replacement = temp.firstElementChild;
+                    if (!replacement) return;
+
+                    const newShell = this.virtualization.createShellForBlock(replacement);
+                    shell.replaceWith(newShell);
+                });
+            }
+
+            this.updateVirtualizedBlocks();
         }
 
         applyNumbering(data) {

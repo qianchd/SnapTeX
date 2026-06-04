@@ -486,6 +486,19 @@ suite('SmartRenderer', () => {
         assert.equal(next.preserveUnchangedBlocks, false);
     });
 
+    test('can defer full HTML and render block HTML on demand', () => {
+        const renderer = new SmartRenderer(new MemoryFileProvider());
+        const payload = renderer.render(createDocument(['A', 'B']), { deferFullHtml: true });
+
+        assert.equal(payload.type, 'full');
+        assert.equal(payload.htmls, undefined);
+        assert.equal(payload.blocks?.length, 2);
+        assert.deepStrictEqual(payload.blocks?.map(block => block.index), [0, 1]);
+        assert.equal(payload.blocks?.[1].hash, stableHash('B'));
+        assert.match(renderer.renderBlockByIndex(1) ?? '', /data-index="1"/);
+        assert.match(renderer.renderBlockByIndex(1) ?? '', new RegExp(`data-block-hash="${stableHash('B')}"`));
+    });
+
     test('escapes maketitle metadata while preserving LaTeX formatting', () => {
         const renderer = new SmartRenderer(new MemoryFileProvider());
         const payload = renderer.render(createDocument(['\\maketitle'], {
@@ -753,11 +766,19 @@ suite('PDF request validation', () => {
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
         const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
 
-        assert.match(panelSource, /payload\.htmls = payload\.htmls\.map\(h => fixPaths\(h\)\)/);
+        assert.match(panelSource, /payload\.htmls = payload\.htmls\.map\(h => this\.fixHtmlPaths\(h\)\)/);
+        assert.match(panelSource, /this\._renderer\.render\(this\._currentDocument, \{ deferFullHtml: virtualizeBlocks \}\)/);
+        assert.match(panelSource, /message\.command === 'requestBlockHtml'/);
+        assert.match(panelSource, /command: 'blockHtml'/);
+        assert.match(panelSource, /this\._renderer\.renderBlockByIndex\(index\)/);
         assert.match(panelSource, /this\._panel\.webview\.postMessage\(\{ command: 'update', payload \}\)/);
         assert.doesNotMatch(panelSource, /Buffer\.from\(fullHtml\)/);
         assert.doesNotMatch(panelSource, /command: 'update_binary'/);
         assert.match(webviewSource, /smartFullUpdateFromBlocks\(htmls, preserveUnchangedBlocks = true\)/);
+        assert.match(webviewSource, /smartFullUpdateFromBlockMetadata\(blocks, preserveUnchangedBlocks = true\)/);
+        assert.match(webviewSource, /payload\.blocks && this\.virtualization\.isEnabled\(\)/);
+        assert.match(webviewSource, /vscode\.postMessage\(\{ command: 'requestBlockHtml', id, index, hash \}\)/);
+        assert.match(webviewSource, /case 'blockHtml':/);
         assert.match(webviewSource, /parseBlockHtml\(html\)/);
         assert.match(webviewSource, /this\.smartFullUpdateFromBlocks\(payload\.htmls, payload\.preserveUnchangedBlocks !== false\)/);
     });
@@ -880,8 +901,25 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /class BlockVirtualizationController/);
         assert.match(webviewSource, /this\.enabled = false/);
         assert.match(webviewSource, /this\.heightCache = new Map\(\)/);
+        assert.match(webviewSource, /this\.htmlCache = new Map\(\)/);
         assert.match(webviewSource, /rememberBlockHeight\(block\)/);
+        assert.match(webviewSource, /createShellForBlock\(block\)/);
+        assert.match(webviewSource, /createShellForMeta\(meta\)/);
+        assert.match(webviewSource, /data-html-loaded/);
+        assert.match(webviewSource, /data-html-requested/);
+        assert.match(webviewSource, /className = 'latex-block-shell'/);
+        assert.match(webviewSource, /data-mounted/);
+        assert.match(webviewSource, /mountShell\(shell\)/);
+        assert.match(webviewSource, /unmountShell\(shell\)/);
+        assert.match(webviewSource, /updateMountedShells\(onMount\)/);
+        assert.match(webviewSource, /replaceContentWithShells\(blocks, onMount\)/);
+        assert.match(webviewSource, /replaceContentWithBlockMetadata\(blocks, onMount, onMissingHtml\)/);
+        assert.match(webviewSource, /storeBlockHtml\(index, hash, html\)/);
         assert.match(webviewSource, /this\.virtualization\.setEnabled\(event\.data\.config\.experimentalVirtualization === true\)/);
+        assert.match(webviewSource, /this\.virtualization\.replaceContentWithShells\(newElements/);
+        assert.match(webviewSource, /applyVirtualPatch\(payload\)/);
+        assert.match(webviewSource, /getBlockOrShellByIndex\(index\)/);
+        assert.match(webviewSource, /window\.addEventListener\('resize', \(\) => this\.updateVirtualizedBlocks\(\)\)/);
         assert.match(webviewSource, /this\.virtualization\.rememberBlockHeight\(oldBlock\)/);
     });
 
