@@ -90,10 +90,15 @@ function readFixture(name: string): string {
 }
 
 function readWebviewRuntimeSource(repoRoot: string): string {
+    const webviewSourceDir = path.join(repoRoot, 'src', 'webview');
+    const webviewSources = fs.readdirSync(webviewSourceDir)
+        .filter(file => file.endsWith('.ts'))
+        .sort()
+        .map(file => path.join(webviewSourceDir, file));
+
     return [
         path.join(repoRoot, 'media', 'webview.html'),
-        path.join(repoRoot, 'src', 'webview', 'main.ts'),
-        path.join(repoRoot, 'src', 'webview', 'pdf.ts')
+        ...webviewSources
     ].map(file => fs.readFileSync(file, 'utf8')).join('\n');
 }
 

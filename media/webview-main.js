@@ -1,28 +1,6 @@
 "use strict";
 var SnapTeXWebview = (() => {
-  // src/webview/main.ts
-  var vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
-  window.snaptexVsCodeApi = vscode;
-  window.tikzJaxJsUri = document.body.dataset.tikzJaxJsUri || "";
-  window.tikzJaxLoadPromise = null;
-  window.tikzJaxFailed = false;
-  var TIKZ_ACTIVE_RENDER_TIMEOUT_MS = 6e4;
-  var TIKZ_BATCH_RENDER_TIMEOUT_MS = 65e3;
-  var TIKZ_RENDER_DEBOUNCE_MS = 200;
-  var TIKZ_PENDING_SCRIPT_TYPE = "text/snaptex-tikz";
-  var TIKZ_ACTIVE_SCRIPT_TYPE = "text/tikz";
-  var TIKZ_PENDING_SCRIPT_SELECTOR = `script[type="${TIKZ_PENDING_SCRIPT_TYPE}"]`;
-  var TIKZ_SCRIPT_SELECTOR = `${TIKZ_PENDING_SCRIPT_SELECTOR}, script[type="${TIKZ_ACTIVE_SCRIPT_TYPE}"]`;
-  var PDF_RENDER_MARGIN = 1200;
-  var PDF_RELEASE_MARGIN = 3600;
-  var BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN = 5200;
-  var BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN = 5200;
-  var BLOCK_VIRTUALIZATION_RETAIN_MARGIN = 14e3;
-  var BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS = 700;
-  var BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT = 180;
-  function hasRenderedTikz(container) {
-    return !!container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
-  }
+  // src/webview/scheduler.ts
   var CoalescingTaskScheduler = class {
     constructor({ debounceMs, run, onError }) {
       this.debounceMs = debounceMs;
@@ -61,6 +39,13 @@ var SnapTeXWebview = (() => {
       }
     }
   };
+
+  // src/webview/virtualization.ts
+  var BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN = 5200;
+  var BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN = 5200;
+  var BLOCK_VIRTUALIZATION_RETAIN_MARGIN = 14e3;
+  var BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS = 700;
+  var BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT = 180;
   var BlockVirtualizationController = class {
     constructor(contentRoot) {
       this.contentRoot = contentRoot;
@@ -362,6 +347,21 @@ var SnapTeXWebview = (() => {
       });
     }
   };
+
+  // src/webview/tikz.ts
+  window.tikzJaxJsUri = document.body.dataset.tikzJaxJsUri || "";
+  window.tikzJaxLoadPromise = null;
+  window.tikzJaxFailed = false;
+  var TIKZ_ACTIVE_RENDER_TIMEOUT_MS = 6e4;
+  var TIKZ_BATCH_RENDER_TIMEOUT_MS = 65e3;
+  var TIKZ_RENDER_DEBOUNCE_MS = 200;
+  var TIKZ_PENDING_SCRIPT_TYPE = "text/snaptex-tikz";
+  var TIKZ_ACTIVE_SCRIPT_TYPE = "text/tikz";
+  var TIKZ_PENDING_SCRIPT_SELECTOR = `script[type="${TIKZ_PENDING_SCRIPT_TYPE}"]`;
+  var TIKZ_SCRIPT_SELECTOR = `${TIKZ_PENDING_SCRIPT_SELECTOR}, script[type="${TIKZ_ACTIVE_SCRIPT_TYPE}"]`;
+  function hasRenderedTikz(container) {
+    return !!container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
+  }
   function notifyTikzContainerSettled(container) {
     if (!container || !container.isConnected) return;
     container.dispatchEvent(new CustomEvent("snaptex-tikz-settled", { bubbles: true }));
@@ -481,6 +481,12 @@ var SnapTeXWebview = (() => {
     const message = event.detail?.message || "TikZ rendering failed.";
     window.failTikzContainer(container, message);
   });
+
+  // src/webview/main.ts
+  var vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
+  window.snaptexVsCodeApi = vscode;
+  var PDF_RENDER_MARGIN = 1200;
+  var PDF_RELEASE_MARGIN = 3600;
   window.pdfReqQueue = [];
   window.renderPdfToCanvas = function(path, canvasId) {
     console.log(`[SnapTeX] Queueing PDF request for ${canvasId}`);
