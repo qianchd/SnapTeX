@@ -19,6 +19,30 @@ function uint8ToBase64(u8: Uint8Array): string {
     return btoa(chunks.join(''));
 }
 
+function isDebugMemoryEnabled(): boolean {
+    return vscode.workspace.getConfiguration('snaptex').get<boolean>('debugMemory', false);
+}
+
+function logHostMemory(label: string) {
+    if (!isDebugMemoryEnabled()) {
+        return;
+    }
+
+    if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') {
+        console.log(`[SnapTeX][mem] ${label}`, { unavailable: true });
+        return;
+    }
+
+    const memory = process.memoryUsage();
+    const mb = (value: number) => `${Math.round(value / 1024 / 1024)}MB`;
+    console.log(`[SnapTeX][mem] ${label}`, {
+        rss: mb(memory.rss),
+        heapUsed: mb(memory.heapUsed),
+        heapTotal: mb(memory.heapTotal),
+        external: mb(memory.external)
+    });
+}
+
 export function normalizePdfRequestPath(input: unknown): string | undefined {
     if (typeof input !== 'string') {
         return undefined;
@@ -78,7 +102,8 @@ export class TexPreviewPanel {
 
     private _sourceUri: vscode.Uri | undefined;
     private _currentDocument: LatexDocument | undefined;
-    private _updateVersion = 0;
+    private _updateRunning = false;
+    private _pendingRootUri: vscode.Uri | undefined;
 
     private readonly _onWebviewLoadedEmitter = new vscode.EventEmitter<void>();
     public readonly onWebviewLoaded = this._onWebviewLoadedEmitter.event;
@@ -94,6 +119,9 @@ export class TexPreviewPanel {
 
         // Use vscode.Uri.joinPath for resource roots
         const mediaRoot = vscode.Uri.joinPath(extensionUri, 'media');
+        const retainContextWhenHidden = vscode.workspace
+            .getConfiguration('snaptex')
+            .get<boolean>('retainContextWhenHidden', false);
 
         const panel = vscode.window.createWebviewPanel(
             TexPreviewPanel.viewType,
@@ -102,7 +130,7 @@ export class TexPreviewPanel {
             {
                 enableScripts: true,
                 localResourceRoots: [extensionUri, mediaRoot],
-                retainContextWhenHidden: true
+                retainContextWhenHidden
             }
         );
 
@@ -235,9 +263,23 @@ export class TexPreviewPanel {
         this.postMessage({
             command: 'config',
             config: {
-                autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100))
+                autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
+                debugMemory: config.get<boolean>('debugMemory', false)
             }
         });
+    }
+
+    private resolveUpdateUri(rootUri?: vscode.Uri): vscode.Uri | undefined {
+        if (rootUri) {
+            return rootUri;
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            return editor.document.uri;
+        }
+
+        return this._sourceUri;
     }
 
     /**
@@ -246,34 +288,39 @@ export class TexPreviewPanel {
      * ignoring the currently active editor file.
      */
     public async update(rootUri?: vscode.Uri) {
-        const editor = vscode.window.activeTextEditor;
-
-        // Priority:
-        // 1. Explicit Root (passed from extension.ts logic)
-        // 2. Active Editor Document
-        // 3. Last used Source URI
-        let docUri = rootUri;
-
-        if (!docUri && editor) {
-            docUri = editor.document.uri;
-        }
-        if (!docUri && this._sourceUri) {
-            docUri = this._sourceUri;
-        }
-
+        const docUri = this.resolveUpdateUri(rootUri);
         if (!docUri) { return; }
 
+        this._pendingRootUri = docUri;
+        if (this._updateRunning) {
+            return;
+        }
+
+        this._updateRunning = true;
+        try {
+            while (this._pendingRootUri) {
+                const nextUri = this._pendingRootUri;
+                this._pendingRootUri = undefined;
+                await this.updateOnce(nextUri);
+            }
+        } finally {
+            this._updateRunning = false;
+        }
+    }
+
+    private async updateOnce(docUri: vscode.Uri) {
         // Fetch text content (from open editor buffer if available, else from disk)
         let text = "";
         try {
+            logHostMemory('before getText');
             const doc = await vscode.workspace.openTextDocument(docUri);
             text = doc.getText();
+            logHostMemory('after getText');
         } catch (e) {
             console.warn(`[SnapTeX] Could not open document: ${docUri}`);
             return;
         }
 
-        const currentVersion = ++this._updateVersion;
         const filename = getBasename(docUri);
         this._panel.title = `𖧼 ${filename}`;
 
@@ -294,11 +341,11 @@ export class TexPreviewPanel {
 
         if (this._currentDocument) {
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);
-
-            if (currentVersion !== this._updateVersion) { return; }
+            logHostMemory('after parse');
 
             this._currentDocument.applyResult(parseResult);
-            let payload = this._renderer.render(this._currentDocument);
+            const payload = this._renderer.render(this._currentDocument);
+            logHostMemory('after render');
             this._currentDocument.releaseTextContent();
 
             const fixPaths = (html: string) => {
@@ -320,8 +367,11 @@ export class TexPreviewPanel {
 
             if (payload.type === 'full' && payload.htmls) {
 
-                const cleanedHtmls = payload.htmls.map(h => fixPaths(h));
-                const fullHtml = cleanedHtmls.join('');
+                let fullHtml = '';
+                for (const html of payload.htmls) {
+                    fullHtml += fixPaths(html);
+                }
+                logHostMemory('after fixPaths/fullHtml');
 
                 let binaryHtml: Uint8Array;
                 if (typeof Buffer !== 'undefined') {
@@ -330,6 +380,7 @@ export class TexPreviewPanel {
                     const encoder = new TextEncoder();
                     binaryHtml = encoder.encode(fullHtml);
                 }
+                logHostMemory('after Buffer');
                 const { htmls, ...payloadWithoutHtmls } = payload;
 
                 this._panel.webview.postMessage({
@@ -337,11 +388,14 @@ export class TexPreviewPanel {
                     payload: payloadWithoutHtmls,
                     binaryData: binaryHtml
                 });
+                logHostMemory('after postMessage');
             } else {
                 if (payload.type === 'patch' && payload.htmls) {
                     payload.htmls = payload.htmls.map(h => fixPaths(h));
                 }
+                logHostMemory('after fixPaths');
                 this._panel.webview.postMessage({ command: 'update', payload });
+                logHostMemory('after postMessage');
             }
         }
     }

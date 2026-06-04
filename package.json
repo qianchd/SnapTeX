@@ -118,6 +118,16 @@
           "type": "number",
           "default": 100,
           "description": "Debounce/Throttle delay (in ms) for scroll synchronization events."
+        },
+        "snaptex.debugMemory": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log SnapTeX extension-host memory and webview DOM/PDF/TikZ stats for debugging long-document performance."
+        },
+        "snaptex.retainContextWhenHidden": {
+          "type": "boolean",
+          "default": false,
+          "description": "Keep the preview webview DOM alive while hidden. Disable for lower memory usage on long documents."
         }
       }
     }
