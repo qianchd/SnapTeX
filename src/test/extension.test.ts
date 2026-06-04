@@ -557,6 +557,16 @@ suite('SmartRenderer', () => {
         assert.ok(!payload.htmls?.[0].includes('xBA'));
     });
 
+    test('keeps preprocess rules behind a narrow render context', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const rulesSource = fs.readFileSync(path.join(repoRoot, 'src', 'rules.ts'), 'utf8');
+        const typesSource = fs.readFileSync(path.join(repoRoot, 'src', 'types.ts'), 'utf8');
+
+        assert.doesNotMatch(rulesSource, /from '\.\/renderer'/);
+        assert.match(typesSource, /export interface RenderContext/);
+        assert.match(typesSource, /apply: \(text: string, renderer: RenderContext\) => string/);
+    });
+
     test('returns patch payloads for small localized edits', () => {
         const renderer = new SmartRenderer(new MemoryFileProvider());
         renderer.render(createDocument(['A', 'B', 'C']));

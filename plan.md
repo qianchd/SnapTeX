@@ -307,9 +307,9 @@
 
 ### G. Architecture Refactoring
 
-- [ ] Introduce a narrow `RenderContext` interface.
-- [ ] Remove the `rules.ts -> SmartRenderer` import.
-- [ ] Replace `PreprocessRule.apply(..., renderer: any)` with `RenderContext`.
+- [x] Introduce a narrow `RenderContext` interface.
+- [x] Remove the `rules.ts -> SmartRenderer` import.
+- [x] Replace `PreprocessRule.apply(..., renderer: any)` with `RenderContext`.
 - [ ] Split `rules.ts` into modules.
   - math.
   - refs.

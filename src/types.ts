@@ -1,3 +1,5 @@
+import type { BibEntry } from './bib';
+
 export interface SourceLocation {
     file: string;
     line: number;
@@ -53,8 +55,19 @@ export interface PatchPayload {
     dirtyBlocks?: { [index: number]: string };
 }
 
+export interface RenderContext {
+    currentMacros: Record<string, string>;
+    currentDocument?: { metadata: PreambleData };
+    globalLabelMap: Record<string, string>;
+    citedKeys: string[];
+    bibEntries: Map<string, BibEntry>;
+    protect(namespace: string, content: string): string;
+    renderInline(text: string): string;
+    resolveCitation(key: string): number;
+}
+
 export interface PreprocessRule {
     name: string;
     priority: number;
-    apply: (text: string, renderer: any) => string;
+    apply: (text: string, renderer: RenderContext) => string;
 }

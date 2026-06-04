@@ -1,6 +1,5 @@
 import { toRoman, capitalizeFirstLetter, escapeHtml, extractAndHideLabels, findBalancedClosingBrace, resolveLatexStyles, findCommand } from './utils';
-import { PreprocessRule } from './types';
-import { SmartRenderer } from './renderer';
+import { PreprocessRule, RenderContext } from './types';
 import { BibTexParser } from './bib';
 import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import katex from 'katex';
@@ -8,7 +7,7 @@ import katex from 'katex';
 /**
  * Helper to render math using KaTeX and protect it.
  */
-function renderMath(tex: string, displayMode: boolean, renderer: SmartRenderer): string {
+function renderMath(tex: string, displayMode: boolean, renderer: RenderContext): string {
     try {
         const html = katex.renderToString(tex, {
             displayMode: displayMode,
@@ -27,7 +26,7 @@ function renderMath(tex: string, displayMode: boolean, renderer: SmartRenderer):
 /**
  * Helper to create a protected reference link
  */
-function createRefLink(key: string, renderer: SmartRenderer, type: 'ref' | 'eqref' = 'ref'): string {
+function createRefLink(key: string, renderer: RenderContext, type: 'ref' | 'eqref' = 'ref'): string {
     const html = `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>`;
     const token = renderer.protect('ref', html);
     if (type === 'eqref') {
@@ -223,7 +222,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'clean_comments',
         priority: 5,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return text
                 .replace(/^[ \t]*%.*(?:\r?\n|$)/gm, '')
                 .replace(/(?<!\\)%.*(\r?\n)?/g, '');
@@ -234,7 +233,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'tikzpicture',
         priority: 6,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             const regex = /\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g;
 
             return text.replace(regex, (_match, options, content) => {
@@ -279,7 +278,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'escaped_char_dollar',
         priority: 10,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return text.replace(/\\([$])/g, (match, char) => {
                 const entities: Record<string, string> = { '$': '&#36;' };
                 return renderer.protect('raw', entities[char] || char);
@@ -290,7 +289,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'clean_layout_cmds',
         priority: 15,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
 
             text = text.replace(/\\(baselineskip|parskip|parindent)\s*=?\s*[-+]?\d+(?:\.\d+)?\s*[a-zA-Z]{2}\s*/g, '');
             text = text.replace(/\\(vspace|hspace)\*?\{[^}]+\}\s*/g, '');
@@ -307,7 +306,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'mbox',
         priority: 20,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return text.replace(/\\mbox/g, '\\text');
         }
     },
@@ -316,7 +315,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'romannumeral',
         priority: 30,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             text = text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (match, cmd, numStr) => {
                 return toRoman(parseInt(numStr), cmd === 'Rmnum');
             });
@@ -329,7 +328,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'display_math',
         priority: 40,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             const mathBlockRegex = new RegExp(
                 `(\\$\\$([\\s\\S]*?)\\$\\$)|(\\\\\\[([\\s\\S]*?)\\\\\\])|(\\\\begin\\{(${REGEX_STR.MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\6\\7\\})`,
                 'gi'
@@ -384,7 +383,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'inline_math',
         priority: 50,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             const processInline = (content: string) => {
                 let safeContent = content.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (m, reftype, key) => {
                     return createRefLink(key, renderer, reftype as any);
@@ -404,7 +403,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'refs_and_labels',
         priority: 60,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             // 1. Labels
             text = text.replace(new RegExp(R_LABEL, 'g'), (match, labelName) => {
                 const safeLabel = labelName.replace(/"/g, '&quot;');
@@ -430,7 +429,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'citations',
         priority: 70,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             text = text.replace(R_CITATION, (match, cmd, opt1, opt2, keys) => {
                 const keyArray = keys.split(',').map((k: string) => k.trim());
                 let pre = '';
@@ -490,7 +489,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'bibliography',
         priority: 71,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), (match, file) => {
                 if (renderer.citedKeys.length === 0) {
                     return `<div class="latex-bibliography error">No citations found.</div>`;
@@ -521,7 +520,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'escaped_chars2',
         priority: 90,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return text.replace(/\\([%#&])/g, (match, char) => {
                 const entities: Record<string, string> = { '#': '&#35;', '&': '&amp;', '%': '&#37;' };
                 return renderer.protect('raw', entities[char] || char);
@@ -532,7 +531,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'latex_quotes',
         priority: 100,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             let processed = text.replace(/``([\s\S]*?)''/g, (match, content) => {
                 const open = renderer.protect('quote', '&ldquo;');
                 const close = renderer.protect('quote', '&rdquo;');
@@ -552,7 +551,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'latex_special_spaces',
         priority: 110,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return text.replace(/~/g, () => renderer.protect('space', '&nbsp;'));
         }
     },
@@ -561,7 +560,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'figure',
         priority: 120,
-        apply: (text: string, renderer: SmartRenderer) => {
+        apply: (text: string, renderer: RenderContext) => {
             return text.replace(/\\begin\{figure(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\1\}/gi, (match, star, content) => {
                 // 1. Extract Caption
                 const captionRes = findCommand(content, 'caption');
@@ -616,7 +615,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'algorithm',
         priority: 130,
-        apply: (text: string, renderer: SmartRenderer) => {
+        apply: (text: string, renderer: RenderContext) => {
             return text.replace(/\\begin\{algorithm(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\1\}/gi, (match, star, content) => {
                 const captionRes = findCommand(content, 'caption');
                 let captionHtml = '';
@@ -697,7 +696,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'table',
         priority: 140,
-        apply: (text: string, renderer: SmartRenderer) => {
+        apply: (text: string, renderer: RenderContext) => {
             return text.replace(/\\begin\{table(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{table\1\}/gi, (match, star, content) => {
                 const captionRes = findCommand(content, 'caption');
                 let captionHtml = '';
@@ -804,7 +803,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'theorems_and_proofs',
         priority: 150,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
 
             const DISPLAY_MAP: Record<string, string> = {
@@ -852,7 +851,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'maketitle_and_abstract',
         priority: 160,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             // 1. Handle \maketitle
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
@@ -901,7 +900,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'sections',
         priority: 170,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             const sectionRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\{((?:[^{}]|{[^{}]*})*)\\}\\s*(\\\\label\\{[^}]+\\})?\\s*`, 'g');
 
             return text.replace(sectionRegex, (match, level, star, content, label) => {
@@ -933,7 +932,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'lists',
         priority: 180,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             const listStack: string[] = [];
             return text.replace(/(\\begin\{(?:itemize|enumerate)\})|(\\end\{(?:itemize|enumerate)\})|(\\item(?:\[(.*?)\])?)/g, (match, pBegin, pEnd, pItem, pLabel) => {
                 if (pBegin) {
@@ -958,7 +957,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     {
         name: 'text_styles',
         priority: 190,
-        apply: (text, renderer: SmartRenderer) => {
+        apply: (text, renderer: RenderContext) => {
             return resolveLatexStyles(text);
         }
     }
