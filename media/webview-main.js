@@ -503,6 +503,23 @@ var SnapTeXWebview = (() => {
     window.failTikzContainer(container, message);
   });
 
+  // src/webview-messages.ts
+  var WebviewToExtensionCommand = {
+    WebviewLoaded: "webviewLoaded",
+    RevealLine: "revealLine",
+    SyncScroll: "syncScroll",
+    RequestPdf: "requestPdf",
+    RequestBlockHtml: "requestBlockHtml"
+  };
+  var ExtensionToWebviewCommand = {
+    Update: "update",
+    UpdateBinary: "update_binary",
+    ScrollToBlock: "scrollToBlock",
+    PdfUri: "pdfUri",
+    BlockHtml: "blockHtml",
+    Config: "config"
+  };
+
   // src/webview/main.ts
   var vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
   window.snaptexVsCodeApi = vscode;
@@ -884,7 +901,7 @@ var SnapTeXWebview = (() => {
       this.tooltipManager = new TooltipManager();
       this.initPdfObserver();
       this.bindEvents();
-      vscode.postMessage({ command: "webviewLoaded" });
+      vscode.postMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
     }
     bindEvents() {
       window.addEventListener("message", (event) => this.onMessage(event));
@@ -913,10 +930,10 @@ var SnapTeXWebview = (() => {
     onMessage(event) {
       const { command, payload, binaryData } = event.data;
       switch (command) {
-        case "update":
+        case ExtensionToWebviewCommand.Update:
           this.handleUpdate(payload);
           break;
-        case "update_binary":
+        case ExtensionToWebviewCommand.UpdateBinary:
           let u8array;
           if (binaryData instanceof Uint8Array) {
             u8array = binaryData;
@@ -930,13 +947,13 @@ var SnapTeXWebview = (() => {
           payload.html = htmlString;
           this.handleUpdate(payload);
           break;
-        case "scrollToBlock":
+        case ExtensionToWebviewCommand.ScrollToBlock:
           this.handleScrollCommand(event.data);
           break;
-        case "blockHtml":
+        case ExtensionToWebviewCommand.BlockHtml:
           this.handleBlockHtml(event.data);
           break;
-        case "config":
+        case ExtensionToWebviewCommand.Config:
           if (event.data.config && typeof event.data.config.autoScrollDelay === "number") {
             this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
           }
@@ -1184,7 +1201,7 @@ var SnapTeXWebview = (() => {
         forceMount: requestOptions.forceMount === true,
         callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
       });
-      vscode.postMessage({ command: "requestBlockHtml", id, index, hash });
+      vscode.postMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash });
       return true;
     }
     handleBlockHtml(message) {
@@ -1322,7 +1339,7 @@ var SnapTeXWebview = (() => {
             const offset = viewCenter - rect.top;
             ratio = Math.max(0, Math.min(1, offset / rect.height));
           }
-          vscode.postMessage({ command: "syncScroll", index, ratio });
+          vscode.postMessage({ command: WebviewToExtensionCommand.SyncScroll, index, ratio });
           break;
         }
       }
@@ -1353,7 +1370,7 @@ var SnapTeXWebview = (() => {
             }
           }
           vscode.postMessage({
-            command: "revealLine",
+            command: WebviewToExtensionCommand.RevealLine,
             index: parseInt(index),
             ratio,
             anchor: anchorText,

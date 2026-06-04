@@ -1,5 +1,22 @@
 "use strict";
 var SnapTeXPdfRuntime = (() => {
+  // src/webview-messages.ts
+  var WebviewToExtensionCommand = {
+    WebviewLoaded: "webviewLoaded",
+    RevealLine: "revealLine",
+    SyncScroll: "syncScroll",
+    RequestPdf: "requestPdf",
+    RequestBlockHtml: "requestBlockHtml"
+  };
+  var ExtensionToWebviewCommand = {
+    Update: "update",
+    UpdateBinary: "update_binary",
+    ScrollToBlock: "scrollToBlock",
+    PdfUri: "pdfUri",
+    BlockHtml: "blockHtml",
+    Config: "config"
+  };
+
   // src/webview/pdf.ts
   var vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
   window.snaptexVsCodeApi = vscode;
@@ -39,7 +56,7 @@ var SnapTeXPdfRuntime = (() => {
   }
   window.addEventListener("message", (event) => {
     const msg = event.data;
-    if (msg.command === "pdfUri") {
+    if (msg.command === ExtensionToWebviewCommand.PdfUri) {
       if (msg.error || !msg.uri) {
         renderPdfError(msg.id, msg.error || "Error loading PDF");
       } else {
@@ -109,7 +126,7 @@ var SnapTeXPdfRuntime = (() => {
     if (!canvas || canvas.getAttribute("data-requested") === "true") return;
     canvas.setAttribute("data-requested", "true");
     vscode.postMessage({
-      command: "requestPdf",
+      command: WebviewToExtensionCommand.RequestPdf,
       id: canvasId,
       path
     });

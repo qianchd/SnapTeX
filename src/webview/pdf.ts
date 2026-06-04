@@ -1,5 +1,7 @@
 // @ts-nocheck
 /* eslint-disable curly */
+import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
+
 const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
     window.snaptexVsCodeApi = vscode;
     const pdfJsUri = document.body.dataset.pdfJsUri || '';
@@ -43,7 +45,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
     window.addEventListener('message', event => {
         const msg = event.data;
-        if (msg.command === 'pdfUri') {
+        if (msg.command === ExtensionToWebviewCommand.PdfUri) {
             if (msg.error || !msg.uri) {
                 renderPdfError(msg.id, msg.error || 'Error loading PDF');
             } else {
@@ -123,7 +125,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         canvas.setAttribute('data-requested', 'true');
 
         vscode.postMessage({
-            command: 'requestPdf',
+            command: WebviewToExtensionCommand.RequestPdf,
             id: canvasId,
             path: path
         });

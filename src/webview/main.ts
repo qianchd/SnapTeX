@@ -3,6 +3,7 @@
 import { CoalescingTaskScheduler } from './scheduler';
 import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController } from './virtualization';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
+import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
 const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
     window.snaptexVsCodeApi = vscode;
     const PDF_RENDER_MARGIN = 1200;
@@ -500,7 +501,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
             this.initPdfObserver();
             this.bindEvents();
-            vscode.postMessage({ command: 'webviewLoaded' });
+            vscode.postMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
         }
 
         bindEvents() {
@@ -529,11 +530,11 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         onMessage(event) {
             const { command, payload, binaryData } = event.data;
             switch (command) {
-                case 'update':
+                case ExtensionToWebviewCommand.Update:
                     this.handleUpdate(payload);
                     break;
 
-                case 'update_binary':
+                case ExtensionToWebviewCommand.UpdateBinary:
                     let u8array;
                     if (binaryData instanceof Uint8Array) {
                         u8array = binaryData; // Web Worker environment
@@ -554,15 +555,15 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                     this.handleUpdate(payload);
                     break;
 
-                case 'scrollToBlock':
+                case ExtensionToWebviewCommand.ScrollToBlock:
                     this.handleScrollCommand(event.data);
                     break;
 
-                case 'blockHtml':
+                case ExtensionToWebviewCommand.BlockHtml:
                     this.handleBlockHtml(event.data);
                     break;
 
-                case 'config':
+                case ExtensionToWebviewCommand.Config:
                     if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
                         this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
                     }
@@ -844,7 +845,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 forceMount: requestOptions.forceMount === true,
                 callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
             });
-            vscode.postMessage({ command: 'requestBlockHtml', id, index, hash });
+            vscode.postMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash });
             return true;
         }
 
@@ -994,7 +995,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                         const offset = viewCenter - rect.top;
                         ratio = Math.max(0, Math.min(1, offset / rect.height));
                     }
-                    vscode.postMessage({ command: 'syncScroll', index: index, ratio: ratio });
+                    vscode.postMessage({ command: WebviewToExtensionCommand.SyncScroll, index: index, ratio: ratio });
                     break;
                 }
             }
@@ -1024,7 +1025,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                         }
                     }
                     vscode.postMessage({
-                        command: 'revealLine', index: parseInt(index), ratio: ratio, anchor: anchorText, viewRatio: event.clientY / window.innerHeight
+                        command: WebviewToExtensionCommand.RevealLine, index: parseInt(index), ratio: ratio, anchor: anchorText, viewRatio: event.clientY / window.innerHeight
                     });
                 }
             }

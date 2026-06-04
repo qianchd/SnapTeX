@@ -3,6 +3,16 @@ import { SmartRenderer } from './renderer';
 import { LatexDocument } from './document';
 import { VscodeFileProvider } from './file-provider';
 import { getBasename, normalizeUri } from './utils';
+import {
+    assertNever,
+    ExtensionToWebviewCommand,
+    isWebviewToExtensionMessage,
+    WebviewToExtensionCommand,
+    type ExtensionToWebviewMessage,
+    type RequestBlockHtmlMessage,
+    type RequestPdfMessage,
+    type RevealLineMessage
+} from './webview-messages';
 
 function isDebugMemoryEnabled(): boolean {
     return vscode.workspace.getConfiguration('snaptex').get<boolean>('debugMemory', false);
@@ -158,20 +168,33 @@ export class TexPreviewPanel {
 
         this._panel.webview.onDidReceiveMessage(
             async message => {
-                if (message.command === 'webviewLoaded') {
-                    console.log('[SnapTeX] Webview reloaded.');
-                    this._webviewReady = true;
-                    this._renderer.resetState();
-                    void this.update(this._pendingRootUri);
-                    this._onWebviewLoadedEmitter.fire();
-                } else if (message.command === 'revealLine') {
-                    this.handleRevealLine(message);
-                } else if (message.command === 'syncScroll') {
-                    vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
-                } else if (message.command === 'requestPdf') {
-                    await this.handlePdfRequest(message);
-                } else if (message.command === 'requestBlockHtml') {
-                    this.handleBlockHtmlRequest(message);
+                if (!isWebviewToExtensionMessage(message)) {
+                    console.warn('[SnapTeX] Ignoring malformed webview message.');
+                    return;
+                }
+
+                switch (message.command) {
+                    case WebviewToExtensionCommand.WebviewLoaded:
+                        console.log('[SnapTeX] Webview reloaded.');
+                        this._webviewReady = true;
+                        this._renderer.resetState();
+                        void this.update(this._pendingRootUri);
+                        this._onWebviewLoadedEmitter.fire();
+                        break;
+                    case WebviewToExtensionCommand.RevealLine:
+                        this.handleRevealLine(message);
+                        break;
+                    case WebviewToExtensionCommand.SyncScroll:
+                        vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
+                        break;
+                    case WebviewToExtensionCommand.RequestPdf:
+                        await this.handlePdfRequest(message);
+                        break;
+                    case WebviewToExtensionCommand.RequestBlockHtml:
+                        this.handleBlockHtmlRequest(message);
+                        break;
+                    default:
+                        assertNever(message);
                 }
             },
             null,
@@ -193,7 +216,7 @@ export class TexPreviewPanel {
      * Directly forwards the block index and ratio to the extension command.
      * Does NOT attempt to calculate the line number here.
      */
-    private handleRevealLine(message: any) {
+    private handleRevealLine(message: RevealLineMessage) {
         if (this._sourceUri) {
             // Simply pass the URI (as context) and the raw message data
             // The extension command 'snaptex.internal.revealLine' expects (uri, index, ratio, anchor)
@@ -209,13 +232,13 @@ export class TexPreviewPanel {
     }
 
     // PDF resources are loaded through webview URIs only; rendering failures should surface directly.
-    private async handlePdfRequest(message: any) {
+    private async handlePdfRequest(message: RequestPdfMessage) {
         if (!this._sourceUri) {return;}
 
-        const requestId = typeof message.id === 'string' ? message.id : '';
+        const requestId = message.id;
         const fail = (error: string) => {
             if (requestId) {
-                this.postMessage({ command: 'pdfUri', id: requestId, error });
+                this.postMessage({ command: ExtensionToWebviewCommand.PdfUri, id: requestId, error });
             }
         };
 
@@ -238,7 +261,7 @@ export class TexPreviewPanel {
             if (await this._fileProvider.exists(pdfUri)) {
                 const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
-                    command: 'pdfUri',
+                    command: ExtensionToWebviewCommand.PdfUri,
                     id: requestId,
                     uri: webviewUri.toString(),
                     path: cleanPath
@@ -268,10 +291,10 @@ export class TexPreviewPanel {
         });
     }
 
-    private handleBlockHtmlRequest(message: any) {
-        const id = typeof message.id === 'string' ? message.id : '';
-        const index = typeof message.index === 'number' ? message.index : parseInt(message.index, 10);
-        const requestedHash = typeof message.hash === 'string' ? message.hash : '';
+    private handleBlockHtmlRequest(message: RequestBlockHtmlMessage) {
+        const id = message.id;
+        const index = message.index;
+        const requestedHash = message.hash;
 
         if (!id || Number.isNaN(index)) {
             return;
@@ -279,23 +302,23 @@ export class TexPreviewPanel {
 
         const meta = this._renderer.getBlockMeta(index);
         if (!meta) {
-            this.postMessage({ command: 'blockHtml', id, index, error: 'Block not found' });
+            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, error: 'Block not found' });
             return;
         }
 
         if (requestedHash && meta.hash !== requestedHash) {
-            this.postMessage({ command: 'blockHtml', id, index, hash: meta.hash, error: 'Block hash changed' });
+            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: meta.hash, error: 'Block hash changed' });
             return;
         }
 
         const html = this._renderer.renderBlockByIndex(index);
         if (!html) {
-            this.postMessage({ command: 'blockHtml', id, index, hash: meta.hash, error: 'Block not found' });
+            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: meta.hash, error: 'Block not found' });
             return;
         }
 
         this.postMessage({
-            command: 'blockHtml',
+            command: ExtensionToWebviewCommand.BlockHtml,
             id,
             index,
             hash: meta.hash,
@@ -303,14 +326,14 @@ export class TexPreviewPanel {
         });
     }
 
-    public postMessage(message: any) {
+    public postMessage(message: ExtensionToWebviewMessage) {
         this._panel.webview.postMessage(message);
     }
 
     private postWebviewConfig() {
         const config = vscode.workspace.getConfiguration('snaptex');
         this.postMessage({
-            command: 'config',
+            command: ExtensionToWebviewCommand.Config,
             config: {
                 autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
                 debugMemory: config.get<boolean>('debugMemory', false),
@@ -415,7 +438,7 @@ export class TexPreviewPanel {
                 payload.htmls = payload.htmls.map(h => this.fixHtmlPaths(h));
             }
             logHostMemory('after fixPaths');
-            this._panel.webview.postMessage({ command: 'update', payload });
+            this.postMessage({ command: ExtensionToWebviewCommand.Update, payload });
             logHostMemory('after postMessage');
         }
     }

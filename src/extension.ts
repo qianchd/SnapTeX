@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SmartRenderer } from './renderer';
 import { TexPreviewPanel } from './panel';
 import { normalizeUri } from './utils';
+import { ExtensionToWebviewCommand } from './webview-messages';
 
 // --- Flash Animation Decoration Types ---
 const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({ backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), isWholeLine: true });
@@ -90,7 +91,7 @@ export function activate(context: vscode.ExtensionContext) {
         const anchor = getAnchorContext(editor.document, targetLine, targetChar);
 
         TexPreviewPanel.currentPanel.postMessage({
-            command: 'scrollToBlock', index, ratio, anchor, auto: isAutoScroll, viewRatio
+            command: ExtensionToWebviewCommand.ScrollToBlock, index, ratio, anchor, auto: isAutoScroll, viewRatio
         });
     };
 

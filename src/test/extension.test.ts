@@ -15,6 +15,7 @@ import { LatexCounterScanner } from '../scanner';
 import { LatexBlockSplitter } from '../splitter';
 import { SmartRenderer } from '../renderer';
 import { cleanLatexCommands, extractAndHideLabels, findCommand, normalizeUri, resolveLatexStyles, stableHash } from '../utils';
+import { ExtensionToWebviewCommand, isWebviewToExtensionMessage, WebviewToExtensionCommand } from '../webview-messages';
 import {
     createBlockTextProvider,
     createDocument,
@@ -1151,17 +1152,17 @@ suite('PDF request validation', () => {
 
         assert.match(panelSource, /if \(payload\.htmls\) \{\s*payload\.htmls = payload\.htmls\.map\(h => this\.fixHtmlPaths\(h\)\)/);
         assert.match(panelSource, /this\._renderer\.render\(this\._currentDocument, \{ deferFullHtml: virtualizeBlocks \}\)/);
-        assert.match(panelSource, /message\.command === 'requestBlockHtml'/);
-        assert.match(panelSource, /command: 'blockHtml'/);
+        assert.match(panelSource, /WebviewToExtensionCommand\.RequestBlockHtml/);
+        assert.match(panelSource, /ExtensionToWebviewCommand\.BlockHtml/);
         assert.match(panelSource, /this\._renderer\.renderBlockByIndex\(index\)/);
-        assert.match(panelSource, /this\._panel\.webview\.postMessage\(\{ command: 'update', payload \}\)/);
+        assert.match(panelSource, /this\.postMessage\(\{ command: ExtensionToWebviewCommand\.Update, payload \}\)/);
         assert.doesNotMatch(panelSource, /Buffer\.from\(fullHtml\)/);
         assert.doesNotMatch(panelSource, /command: 'update_binary'/);
         assert.match(webviewSource, /smartFullUpdateFromBlocks\(htmls, preserveUnchangedBlocks = true\)/);
         assert.match(webviewSource, /smartFullUpdateFromBlockMetadata\(blocks, preserveUnchangedBlocks = true\)/);
         assert.match(webviewSource, /payload\.blocks && this\.virtualization\.isEnabled\(\)/);
-        assert.match(webviewSource, /vscode\.postMessage\(\{ command: 'requestBlockHtml', id, index, hash \}\)/);
-        assert.match(webviewSource, /case 'blockHtml':/);
+        assert.match(webviewSource, /vscode\.postMessage\(\{ command: WebviewToExtensionCommand\.RequestBlockHtml, id, index, hash \}\)/);
+        assert.match(webviewSource, /case ExtensionToWebviewCommand\.BlockHtml:/);
         assert.match(webviewSource, /parseBlockHtml\(html\)/);
         assert.match(webviewSource, /const shellHash = shell\.getAttribute\('data-block-hash'\) \|\| ''/);
         assert.match(webviewSource, /if \(hash && shellHash && shellHash !== hash\) return null/);
@@ -1185,7 +1186,7 @@ suite('PDF request validation', () => {
         const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
 
         assert.match(panelSource, /private _webviewReady = false/);
-        assert.match(panelSource, /message\.command === 'webviewLoaded'[\s\S]*this\._webviewReady = true/);
+        assert.match(panelSource, /case WebviewToExtensionCommand\.WebviewLoaded:[\s\S]*this\._webviewReady = true/);
         assert.match(panelSource, /void this\.update\(this\._pendingRootUri\)/);
         assert.match(panelSource, /const docUri = rootUri \?\? this\._pendingRootUri \?\? this\.resolveUpdateUri\(\)/);
         assert.match(panelSource, /if \(!this\._webviewReady\) \{\s*return;\s*\}/);
@@ -1567,5 +1568,58 @@ suite('URI normalization', () => {
             normalizeUri('vscode-remote://ssh-remote+Host/home/User/Section.tex'),
             'vscode-remote://ssh-remote+Host/home/User/Section.tex'
         );
+    });
+});
+
+suite('Webview message contracts', () => {
+    test('accepts well-formed webview messages', () => {
+        assert.equal(isWebviewToExtensionMessage({ command: WebviewToExtensionCommand.WebviewLoaded }), true);
+        assert.equal(isWebviewToExtensionMessage({
+            command: WebviewToExtensionCommand.RevealLine,
+            index: 2,
+            ratio: 0.5,
+            anchor: 'word',
+            viewRatio: 0.4
+        }), true);
+        assert.equal(isWebviewToExtensionMessage({
+            command: WebviewToExtensionCommand.RequestBlockHtml,
+            id: 'block-1',
+            index: 3,
+            hash: 'abc'
+        }), true);
+        assert.equal(isWebviewToExtensionMessage({
+            command: WebviewToExtensionCommand.RequestPdf,
+            id: 'pdf-1',
+            path: 'figures/a.pdf'
+        }), true);
+    });
+
+    test('rejects malformed or unknown webview messages', () => {
+        assert.equal(isWebviewToExtensionMessage(null), false);
+        assert.equal(isWebviewToExtensionMessage({ command: 'unknown' }), false);
+        assert.equal(isWebviewToExtensionMessage({
+            command: WebviewToExtensionCommand.RevealLine,
+            index: '2',
+            ratio: 0.5
+        }), false);
+        assert.equal(isWebviewToExtensionMessage({
+            command: WebviewToExtensionCommand.RequestPdf,
+            id: 'pdf-1',
+            path: 42
+        }), false);
+    });
+
+    test('routes panel and webview code through shared command constants', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
+        const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
+
+        assert.match(panelSource, /isWebviewToExtensionMessage\(message\)/);
+        assert.match(panelSource, /assertNever\(message\)/);
+        assert.match(extensionSource, /ExtensionToWebviewCommand\.ScrollToBlock/);
+        assert.match(webviewSource, /WebviewToExtensionCommand\.WebviewLoaded/);
+        assert.match(webviewSource, /WebviewToExtensionCommand\.RequestPdf/);
+        assert.match(webviewSource, /ExtensionToWebviewCommand\.PdfUri/);
     });
 });
