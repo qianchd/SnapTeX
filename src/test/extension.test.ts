@@ -1110,6 +1110,11 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /await this\.ensureAnchorMounted\(anchorId\)/);
         assert.match(webviewSource, /async resolveTargetElement\(targetId\)/);
         assert.match(webviewSource, /controller\.ensureAnchorMounted\(targetId\)/);
+        assert.match(webviewSource, /async resolveContextBlocks\(container\)/);
+        assert.match(webviewSource, /controller\.getTooltipContextBlocks\(container\)/);
+        assert.match(webviewSource, /async getTooltipContextBlocks\(block\)/);
+        assert.match(webviewSource, /Promise\.all\(indices\.map\(index => this\.ensureBlockMountedByIndex\(index\)\)\)/);
+        assert.match(webviewSource, /return this\.contentRoot\.querySelector\('\.latex-block\[data-index="' \+ index \+ '"\]'\)/);
     });
 
     test('stabilizes virtualized forward sync before scrolling', () => {

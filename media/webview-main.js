@@ -776,24 +776,10 @@ var SnapTeXWebview = (() => {
       this.contentContainer.innerHTML = "";
       const frag = document.createDocumentFragment();
       if (container.classList.contains("latex-block")) {
-        const prev = container.previousElementSibling;
-        if (prev && prev.classList.contains("latex-block")) {
-          const clone = prev.cloneNode(true);
-          clone.classList.add("context-block");
-          this.cleanNode(clone);
-          frag.appendChild(clone);
-        }
-        const current = container.cloneNode(true);
-        current.classList.add("target-block");
-        this.cleanNode(current);
-        frag.appendChild(current);
-        const next = container.nextElementSibling;
-        if (next && next.classList.contains("latex-block")) {
-          const clone = next.cloneNode(true);
-          clone.classList.add("context-block");
-          this.cleanNode(clone);
-          frag.appendChild(clone);
-        }
+        const blocks = await this.resolveContextBlocks(container);
+        if (this.currentLink !== linkElement) return;
+        const targetIndex = container.getAttribute("data-index");
+        blocks.forEach((block) => this.appendBlockClone(frag, block, block.getAttribute("data-index") === targetIndex));
       } else {
         const clone = container.cloneNode(true);
         this.cleanNode(clone);
@@ -808,6 +794,19 @@ var SnapTeXWebview = (() => {
       requestAnimationFrame(() => {
         this.element.classList.add("visible");
       });
+    }
+    async resolveContextBlocks(container) {
+      const controller2 = window.snaptexPreviewController;
+      if (controller2 && typeof controller2.getTooltipContextBlocks === "function") {
+        return await controller2.getTooltipContextBlocks(container);
+      }
+      return [container.previousElementSibling, container, container.nextElementSibling].filter((block) => block && block.classList.contains("latex-block"));
+    }
+    appendBlockClone(fragment, block, isTarget) {
+      const clone = block.cloneNode(true);
+      clone.classList.add(isTarget ? "target-block" : "context-block");
+      this.cleanNode(clone);
+      fragment.appendChild(clone);
     }
     async resolveTargetElement(targetId) {
       const existing = document.getElementById(targetId);
@@ -1092,10 +1091,25 @@ var SnapTeXWebview = (() => {
       );
     }
     getBlockByIndex(index) {
-      return document.querySelector('.latex-block[data-index="' + index + '"]');
+      return this.contentRoot.querySelector('.latex-block[data-index="' + index + '"]');
     }
     getShellByIndex(index) {
-      return document.querySelector('.latex-block-shell[data-index="' + index + '"]');
+      return this.contentRoot.querySelector('.latex-block-shell[data-index="' + index + '"]');
+    }
+    getLatexBlockFromTarget(target) {
+      if (!target) return null;
+      if (target.classList?.contains("latex-block")) return target;
+      return target.querySelector?.(":scope > .latex-block") || null;
+    }
+    async getTooltipContextBlocks(block) {
+      const index = parseInt(block.getAttribute("data-index"));
+      if (Number.isNaN(index)) {
+        return [block.previousElementSibling, block, block.nextElementSibling].filter((candidate) => candidate && candidate.classList.contains("latex-block"));
+      }
+      const indices = [index - 1, index, index + 1].filter((value) => value >= 0);
+      const results = await Promise.all(indices.map((index2) => this.ensureBlockMountedByIndex(index2)));
+      const blocks = results.map((result) => this.getLatexBlockFromTarget(result.target)).filter(Boolean);
+      return Array.from(new Set(blocks));
     }
     getBlockOrShellByIndex(index) {
       let target = this.getBlockByIndex(index);
