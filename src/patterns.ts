@@ -35,7 +35,7 @@ export const CITATION_CMDS = [
 
 // Environments ignored by the splitter (internal content structure, allow split inside)
 export const SPLITTER_IGNORED_ENVS = [
-    'proof', 'itemize', 'enumerate', 'tikzpicture'
+    'proof', 'itemize', 'enumerate'
 ];
 
 // Major environments for splitter logic (usually don't split inside unless trapped)

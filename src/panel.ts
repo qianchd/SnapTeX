@@ -19,6 +19,54 @@ function uint8ToBase64(u8: Uint8Array): string {
     return btoa(chunks.join(''));
 }
 
+export function normalizePdfRequestPath(input: unknown): string | undefined {
+    if (typeof input !== 'string') {
+        return undefined;
+    }
+
+    let cleanPath = input.trim().replace(/\\/g, '/');
+    while (cleanPath.startsWith('./')) {
+        cleanPath = cleanPath.substring(2);
+    }
+
+    if (
+        !cleanPath ||
+        cleanPath.includes('\0') ||
+        !cleanPath.toLowerCase().endsWith('.pdf') ||
+        cleanPath.startsWith('/') ||
+        /^[a-zA-Z]:\//.test(cleanPath) ||
+        cleanPath.split('/').includes('..')
+    ) {
+        return undefined;
+    }
+
+    return cleanPath;
+}
+
+function normalizeUriPathForContainment(uri: vscode.Uri): string {
+    let path = uri.path.replace(/\/+/g, '/');
+    if (path.length > 1) {
+        path = path.replace(/\/+$/g, '');
+    }
+
+    const isWindowsFileUri = uri.scheme === 'file' && typeof process !== 'undefined' && process.platform === 'win32';
+    return isWindowsFileUri ? path.toLowerCase() : path;
+}
+
+export function isUriWithinAllowedRoots(uri: vscode.Uri, roots: vscode.Uri[]): boolean {
+    const childPath = normalizeUriPathForContainment(uri);
+
+    return roots.some(root => {
+        if (uri.scheme !== root.scheme || uri.authority !== root.authority) {
+            return false;
+        }
+
+        const rootPath = normalizeUriPathForContainment(root);
+        const rootPrefix = rootPath.endsWith('/') ? rootPath : `${rootPath}/`;
+        return childPath === rootPath || childPath.startsWith(rootPrefix);
+    });
+}
+
 export class TexPreviewPanel {
     public static currentPanel: TexPreviewPanel | undefined;
     public static readonly viewType = 'texPreview';
@@ -135,17 +183,30 @@ export class TexPreviewPanel {
 
     // Read PDF file and send back base64 data
     private async handlePdfRequest(message: any) {
-        if (!this._sourceUri || !message.path) {return;}
+        if (!this._sourceUri) {return;}
+
+        const requestId = typeof message.id === 'string' ? message.id : '';
+        const fail = (error: string) => {
+            if (requestId) {
+                this.postMessage({ command: 'pdfData', id: requestId, error });
+            }
+        };
+
+        const cleanPath = normalizePdfRequestPath(message.path);
+        if (!cleanPath) {
+            fail('Invalid PDF path');
+            return;
+        }
+
         try {
             const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
-            let cleanPath = message.path.trim().replace(/\\/g, '/');
-            if (cleanPath.startsWith('./')) { cleanPath = cleanPath.substring(2); }
-            let pdfUri = vscode.Uri.joinPath(docDir, cleanPath);
-            if (this._sourceUri.scheme === 'file') {
-                const newPathStr = docDir.path + '/' + cleanPath;
-                const normalizedPathStr = newPathStr.replace(/\/\//g, '/');
-                pdfUri = docDir.with({ path: normalizedPathStr });
+            const pdfUri = vscode.Uri.joinPath(docDir, ...cleanPath.split('/').filter(Boolean));
+            const workspaceRoots = vscode.workspace.workspaceFolders?.map(folder => folder.uri) ?? [];
+            if (!isUriWithinAllowedRoots(pdfUri, [docDir, ...workspaceRoots])) {
+                fail('PDF path is outside the allowed roots');
+                return;
             }
+
             // Check existence first
             if (await this._fileProvider.exists(pdfUri)) {
                 const fileData = await this._fileProvider.readBuffer(pdfUri);
@@ -157,14 +218,26 @@ export class TexPreviewPanel {
                 });
             } else {
                 console.warn(`[SnapTeX] PDF not found: ${pdfUri.toString()}`);
+                fail('PDF not found');
             }
         } catch (e) {
             console.error('[SnapTeX] Failed to read PDF:', e);
+            fail('Failed to read PDF');
         }
     }
 
     public postMessage(message: any) {
         this._panel.webview.postMessage(message);
+    }
+
+    private postWebviewConfig() {
+        const config = vscode.workspace.getConfiguration('snaptex');
+        this.postMessage({
+            command: 'config',
+            config: {
+                autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100))
+            }
+        });
     }
 
     /**
@@ -217,6 +290,7 @@ export class TexPreviewPanel {
             enableScripts: true,
             localResourceRoots: [this._extensionUri, mediaRoot, docDir]
         };
+        this.postWebviewConfig();
 
         if (this._currentDocument) {
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);

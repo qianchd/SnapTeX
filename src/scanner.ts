@@ -42,7 +42,7 @@ export class LatexCounterScanner {
 
         const secRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\s*\\{`, 'g');
         const eqRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.MATH_ENVS})\\}(\\*?)`, 'g');
-        const floatRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.FLOAT_ENVS})\\}`, 'g');
+        const floatRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.FLOAT_ENVS})(\\*)?\\}`, 'g');
         const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}`, 'g');
 
         blocks.forEach((text, index) => {
@@ -125,7 +125,7 @@ export class LatexCounterScanner {
 
     private tryExtractLabel(text: string, startIdx: number, val: string) {
         const sub = text.substring(startIdx, startIdx + 200);
-        const m = sub.match(/\\label\{([^}]+)\}/);
+        const m = sub.match(/\\label\s*\{([^}]+)\}/);
         if (m) {this.labelMap[m[1]] = val;}
     }
 
@@ -137,7 +137,7 @@ export class LatexCounterScanner {
         const limit = endMatch ? (endMatch.index! + endMatch[0].length) : sub.length;
         const block = sub.substring(0, limit);
 
-        const m = block.match(/\\label\{([^}]+)\}/);
+        const m = block.match(/\\label\s*\{([^}]+)\}/);
         if (m) {
             this.labelMap[m[1]] = val;
         }

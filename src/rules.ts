@@ -469,7 +469,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 // 5. Wrap and Protect
                 // We wrap the body (which may contain XSNAP tokens from TikZ or img tags) and caption
                 // into a container, and protect the WHOLE thing.
-                const finalHtml = `<div class="latex-block figure latex-figure" style="text-align: center; margin: 1em 0;">${body}${captionHtml}${hiddenHtml}</div>`;
+                const finalHtml = `<div class="latex-figure" style="text-align: center; margin: 1em 0;">${body}${captionHtml}${hiddenHtml}</div>`;
 
                 return `\n\n` + renderer.protect('fig', finalHtml) + `\n\n`;
             });
@@ -552,7 +552,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
                 const hiddenLabels = recoverPreservedTokens(ignoredContent);
 
-                return `\n\n` + renderer.protect('alg', `<div class="latex-block algorithm">${captionHtml}${bodyHtml}${hiddenLabels}<div class="alg-bottom-rule"></div></div>`) + `\n\n`;
+                return `\n\n` + renderer.protect('alg', `<div class="latex-algorithm">${captionHtml}${bodyHtml}${hiddenLabels}<div class="alg-bottom-rule"></div></div>`) + `\n\n`;
             });
         }
     },
@@ -659,7 +659,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 let ignoredContent = innerContent.substring(0, tabularRegion.start) + innerContent.substring(tabularRegion.end);
                 const hiddenLabels = recoverPreservedTokens(ignoredContent);
 
-                return `\n\n` + renderer.protect('tbl', `<div class="latex-block table">${captionHtml}<div class="table-body">${tableHtml}</div>${notesHtml}${hiddenLabels}</div>`) + `\n\n`;
+                return `\n\n` + renderer.protect('tbl', `<div class="latex-table">${captionHtml}<div class="table-body">${tableHtml}</div>${notesHtml}${hiddenLabels}</div>`) + `\n\n`;
             });
         }
     },

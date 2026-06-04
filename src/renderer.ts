@@ -78,6 +78,7 @@ export class SmartRenderer {
         } else {
             this._preprocessRules.push(rule);
         }
+        this._sortRules();
     }
 
     private _sortRules() {

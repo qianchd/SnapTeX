@@ -258,10 +258,12 @@ export class LatexBlockSplitter {
 
         // Handle remaining text
         const remaining = text.substring(lastIndex);
-        if (remaining.trim().length > 0) {
+        if (remaining.length > 0) {
              currentBuffer += remaining;
-             const count = currentBuffer.split('\n').length;
-             blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
+        }
+        if (currentBuffer.trim().length > 0) {
+            const count = currentBuffer.split('\n').length;
+            blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
         }
 
         return blocks;

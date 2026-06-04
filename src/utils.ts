@@ -101,7 +101,7 @@ export function resolveLatexStyles(text: string): string {
  */
 export function extractAndHideLabels(content: string) {
     const labels: string[] = [];
-    const cleanContent = content.replace(/\\label\{([^}]+)\}/g, (match, labelName) => {
+    const cleanContent = content.replace(/\\label\s*\{([^}]+)\}/g, (match, labelName) => {
         const safeLabel = labelName.replace(/"/g, '&quot;');
         // [FIX] Use visibility:hidden instead of display:none so the anchor exists in the layout tree
         // and can be targeted by scrollIntoView (or native hash navigation).
@@ -302,12 +302,17 @@ export function normalizeUri(input: vscode.Uri | string): string {
     } catch (e) {
     }
 
-    str = str.toLowerCase();
-
     str = str.replace(/\\/g, '/');
 
-    if (str.startsWith('file://')) {
+    const isFileUri = str.toLowerCase().startsWith('file://');
+    if (isFileUri) {
         str = str.substring(7);
+        const isWindowsFilePath = (typeof process !== 'undefined' && process.platform === 'win32') || /^\/?[a-zA-Z]:\//.test(str);
+        return isWindowsFilePath ? str.toLowerCase() : str;
+    }
+
+    if (/^[a-zA-Z]:\//.test(str)) {
+        return str.toLowerCase();
     }
 
     return str;

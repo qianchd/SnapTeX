@@ -28,6 +28,8 @@ const debounce = (func: Function, waitGetter: () => number) => {
     };
 };
 
+const getAutoScrollDelay = () => Math.max(0, vscode.workspace.getConfiguration('snaptex').get<number>('autoScrollDelay', 100));
+
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) {return "";}
     const lineText = doc.lineAt(line).text;
@@ -261,7 +263,7 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     // --- Listeners ---
-    vscode.window.onDidChangeTextEditorSelection(e => {
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(e => {
         if (e.textEditor !== vscode.window.activeTextEditor || isEditorScrolling) {return;}
 
         const sel = e.selections[0].active;
@@ -276,17 +278,17 @@ export function activate(context: vscode.ExtensionContext) {
         if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
 
         // Use a simpler debounce here (inline is fine for simple scroll events, but could be optimized similarly)
-        setTimeout(() => triggerSyncToPreview(e.textEditor, sel.line, true, activeCursorScreenRatio, sel.character), 200);
-    });
+        setTimeout(() => triggerSyncToPreview(e.textEditor, sel.line, true, activeCursorScreenRatio, sel.character), getAutoScrollDelay());
+    }));
 
-    vscode.window.onDidChangeTextEditorVisibleRanges(e => {
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
         if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
         const currentConfig = vscode.workspace.getConfiguration('snaptex');
         if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
 
         isEditorScrolling = true;
         if (scrollEndTimer) {clearTimeout(scrollEndTimer);}
-        scrollEndTimer = setTimeout(() => { isEditorScrolling = false; }, 200);
+        scrollEndTimer = setTimeout(() => { isEditorScrolling = false; }, getAutoScrollDelay());
 
         // Throttle
         setTimeout(() => {
@@ -295,15 +297,15 @@ export function activate(context: vscode.ExtensionContext) {
                 const targetLine = Math.floor(range.start.line + ((range.end.line - range.start.line) * activeCursorScreenRatio));
                 triggerSyncToPreview(e.textEditor, targetLine, true, activeCursorScreenRatio);
             }
-        }, 100);
-    });
+        }, getAutoScrollDelay());
+    }));
 
-    vscode.workspace.onDidSaveTextDocument(doc => {
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
         // [FIX] Always try to update. Smart logic inside updatePreview will decide whether to proceed or abort.
         if (vscode.window.activeTextEditor) {updatePreview(false);}
-    });
+    }));
 
-    vscode.workspace.onDidChangeTextDocument(e => {
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
             const currentConfig = vscode.workspace.getConfiguration('snaptex');
             if (currentConfig.get<boolean>('livePreview', true)) {
@@ -311,21 +313,21 @@ export function activate(context: vscode.ExtensionContext) {
                 debouncedUpdatePreview(false);
             }
         }
-    });
+    }));
 
-    vscode.window.onDidChangeActiveTextEditor(editor => {
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
         // [FIX] Only force an update if Render On Switch is ENABLED
         if (editor && vscode.workspace.getConfiguration('snaptex').get<boolean>('renderOnSwitch', true)) {
             updatePreview(true);
         }
-    });
+    }));
 
     if (vscode.window.registerWebviewPanelSerializer) {
-        vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
+        context.subscriptions.push(vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
             async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, _state: any) {
                 TexPreviewPanel.revive(webviewPanel, context.extensionUri, renderer);
             }
-        });
+        }));
     }
 }
 

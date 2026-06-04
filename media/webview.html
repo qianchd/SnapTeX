@@ -472,6 +472,9 @@
             this.lastTargetIndex = -1;
             this.lastTargetRatio = 0;
             this.lastScrollTime = 0;
+            this.config = {
+                autoScrollDelay: 100
+            };
 
             // Initialize Tooltip Manager
             this.tooltipManager = new TooltipManager();
@@ -526,6 +529,12 @@
 
                 case 'scrollToBlock':
                     this.handleScrollCommand(event.data);
+                    break;
+
+                case 'config':
+                    if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
+                        this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
+                    }
                     break;
             }
         }
@@ -590,7 +599,7 @@
         onScroll() {
             if (this.state !== 'IDLE') return;
             const now = Date.now();
-            if (now - this.lastScrollTime < 100) return;
+            if (now - this.lastScrollTime < this.config.autoScrollDelay) return;
             this.lastScrollTime = now;
             const blocks = document.querySelectorAll('.latex-block');
             const viewCenter = window.innerHeight / 2;
@@ -862,9 +871,27 @@
     window.addEventListener('message', event => {
         const msg = event.data;
         if (msg.command === 'pdfData') {
-            renderPdfFromData(msg.id, msg.data);
+            if (msg.error || !msg.data) {
+                renderPdfError(msg.id, msg.error || 'Error loading PDF');
+            } else {
+                renderPdfFromData(msg.id, msg.data);
+            }
         }
     });
+
+    function renderPdfError(canvasId, message) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        canvas.width = Math.max(canvas.width, 360);
+        canvas.height = Math.max(canvas.height, 90);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.font = '12px sans-serif';
+        ctx.fillText(message, 10, 50);
+        canvas.setAttribute('data-rendered', 'true');
+        canvas.removeAttribute('data-requested');
+    }
 
     async function renderPdfFromData(canvasId, base64Data) {
         const canvas = document.getElementById(canvasId);
