@@ -491,6 +491,27 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /href="javascript:alert/i);
     });
 
+    test('renders safe LaTeX href and url commands as protected external links', () => {
+        const html = renderBlocks([
+            'See \\href{https://example.com/path?q=1&lang=en}{SnapTeX \\textbf{site}} and \\url{https://snaptex.dev/docs?a=1&b=2}.'
+        ]);
+
+        assert.match(html, /<a href="https:\/\/example\.com\/path\?q=1&amp;lang=en" class="latex-link latex-href" target="_blank" rel="noopener noreferrer">SnapTeX <strong>site<\/strong><\/a>/);
+        assert.match(html, /<a href="https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2" class="latex-link latex-url" target="_blank" rel="noopener noreferrer">https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2<\/a>/);
+        assert.doesNotMatch(html, /\\href|\\url/);
+    });
+
+    test('drops unsafe LaTeX href and url targets while keeping escaped text', () => {
+        const html = renderBlocks([
+            '\\href{javascript:alert(1)}{bad <script>alert(1)</script>} \\url{javascript:alert(2)}'
+        ]);
+
+        assert.doesNotMatch(html, /href="javascript:alert/i);
+        assert.doesNotMatch(html, /\\href|\\url/);
+        assert.match(html, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.match(html, /javascript:alert\(2\)/);
+    });
+
     test('keeps numbered display math containers protected under raw-HTML-disabled Markdown', () => {
         const html = renderBlocks(['\\begin{equation}\\label{obj:inSample}x=1\\end{equation}']);
 

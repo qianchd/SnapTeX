@@ -1,10 +1,101 @@
-import { toRoman, capitalizeFirstLetter, createHiddenLabelAnchor, escapeHtml, escapeHtmlAttribute, extractAndHideLabels, resolveLatexStyles } from './utils';
+import {
+    toRoman,
+    capitalizeFirstLetter,
+    createHiddenLabelAnchor,
+    escapeHtml,
+    escapeHtmlAttribute,
+    extractAndHideLabels,
+    findBalancedClosingBrace,
+    resolveLatexStyles,
+    sanitizeHttpUrlForAttribute
+} from './utils';
 import { PreprocessRule, RenderContext } from './types';
 import { BibTexParser } from './bib';
 import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import { createRefLink, renderMath } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
+
+interface BraceArgument {
+    content: string;
+    end: number;
+}
+
+function readBraceArgument(text: string, start: number): BraceArgument | undefined {
+    const openMatch = /^\s*\{/.exec(text.slice(start));
+    if (!openMatch) {
+        return undefined;
+    }
+
+    const openIndex = start + openMatch[0].length - 1;
+    const closeIndex = findBalancedClosingBrace(text, openIndex);
+    if (closeIndex === -1) {
+        return undefined;
+    }
+
+    return {
+        content: text.slice(openIndex + 1, closeIndex),
+        end: closeIndex + 1
+    };
+}
+
+function renderExternalLink(rawUrl: string, safeContent: string, className: string, renderer: RenderContext): string {
+    const safeHref = sanitizeHttpUrlForAttribute(rawUrl);
+
+    if (!safeHref) {
+        return renderer.protectHtml('link-text', safeContent);
+    }
+
+    return renderer.protectHtml(
+        'link',
+        `<a href="${safeHref}" class="latex-link ${className}" target="_blank" rel="noopener noreferrer">${safeContent}</a>`
+    );
+}
+
+function renderHrefCommand(rawUrl: string, rawContent: string, renderer: RenderContext): string {
+    const styledContent = resolveLatexStyles(rawContent, html => renderer.protectHtml('style', html));
+    return renderExternalLink(rawUrl, escapeHtml(styledContent), 'latex-href', renderer);
+}
+
+function renderUrlCommand(rawUrl: string, renderer: RenderContext): string {
+    return renderExternalLink(rawUrl, escapeHtml(rawUrl.trim()), 'latex-url', renderer);
+}
+
+function replaceLatexLinkCommands(text: string, renderer: RenderContext): string {
+    const commandRegex = /\\(href|url)\s*\{/g;
+    let output = "";
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = commandRegex.exec(text)) !== null) {
+        const commandName = match[1];
+        const commandStart = match.index;
+        const urlArgument = readBraceArgument(text, commandRegex.lastIndex - 1);
+        if (!urlArgument) {
+            continue;
+        }
+
+        let replacement: string;
+        let commandEnd = urlArgument.end;
+        if (commandName === 'href') {
+            const contentArgument = readBraceArgument(text, urlArgument.end);
+            if (!contentArgument) {
+                continue;
+            }
+            replacement = renderHrefCommand(urlArgument.content, contentArgument.content, renderer);
+            commandEnd = contentArgument.end;
+        } else {
+            replacement = renderUrlCommand(urlArgument.content, renderer);
+        }
+
+        output += text.slice(cursor, commandStart);
+        output += replacement;
+        cursor = commandEnd;
+        commandRegex.lastIndex = cursor;
+    }
+
+    return output + text.slice(cursor);
+}
 
 /**
  * Ordered LaTeX-to-Markdown preprocessing pipeline.
@@ -297,6 +388,12 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         apply: (text, renderer: RenderContext) => {
             return text.replace(/~/g, () => renderer.protectHtml('space', '&nbsp;'));
         }
+    },
+
+    {
+        name: 'latex_links',
+        priority: 115,
+        apply: (text, renderer: RenderContext) => replaceLatexLinkCommands(text, renderer)
     },
 
     createFigureRule(),
