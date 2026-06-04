@@ -1,7 +1,8 @@
 import { REGEX_STR } from './patterns';
 
-export interface BlockResult {
-    text: string;
+export interface BlockSpan {
+    start: number;
+    end: number;
     line: number;
     lineCount: number;
 }
@@ -42,14 +43,27 @@ export class LatexBlockSplitter {
      * assume the protection is a typo/unclosed syntax and ALLOW splits at natural boundaries (\n\n, \begin).
      * 3. Proofs: Treat as plain text (ignoring protection), naturally split-able.
      */
-    public static split(text: string, maxLines: number = 40): BlockResult[] {
-        const blocks: BlockResult[] = [];
+    public static split(text: string, maxLines: number = 40): BlockSpan[] {
+        const blocks: BlockSpan[] = [];
         let currentBuffer = "";
         let envStack: string[] = [];
         let braceDepth = 0;
 
         let currentLine = 0;
         let bufferStartLine = 0;
+        let bufferStartIndex = 0;
+
+        const pushCurrentBlock = (endIndex: number) => {
+            if (currentBuffer.trim().length === 0) { return; }
+            const count = currentBuffer.split('\n').length;
+            blocks.push({
+                start: bufferStartIndex,
+                end: endIndex,
+                line: bufferStartLine,
+                lineCount: count
+            });
+            currentBuffer = "";
+        };
 
         // Regex explanation:
         // 1. Escaped chars (\$ \{ \})
@@ -114,13 +128,10 @@ export class LatexBlockSplitter {
 
                 // Split Condition: Root level OR forced reset
                 if (envStack.length === 0 && braceDepth === 0) {
-                    if (currentBuffer.trim().length > 0) {
-                        const count = currentBuffer.split('\n').length;
-                        blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-                        currentBuffer = "";
-                    }
+                    pushCurrentBlock(match.index);
                     currentLine += matchLines;
                     bufferStartLine = currentLine;
+                    bufferStartIndex = regex.lastIndex;
                 } else {
                     // Valid multi-paragraph group: Keep accumulating
                     currentBuffer += fullMatch;
@@ -140,10 +151,9 @@ export class LatexBlockSplitter {
 
                     if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped)) {
                          if (currentBuffer.trim().length > 0) {
-                            const count = currentBuffer.split('\n').length;
-                            blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-                            currentBuffer = "";
+                            pushCurrentBlock(match.index);
                             bufferStartLine = currentLine;
+                            bufferStartIndex = match.index;
                             // If we were trapped, the flush effectively resets our context for the new block
                             if (isTrapped) { envStack = []; braceDepth = 0; }
                         }
@@ -170,10 +180,9 @@ export class LatexBlockSplitter {
                 const isMathEnv = mathEnvRegex.test(endName);
                 if (isMathEnv && isTrapped) {
                     if (currentBuffer.trim().length > 0) {
-                        const count = currentBuffer.split('\n').length;
-                        blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-                        currentBuffer = "";
+                        pushCurrentBlock(regex.lastIndex);
                         bufferStartLine = currentLine;
+                        bufferStartIndex = regex.lastIndex;
                         // Recover state
                         envStack = [];
                         braceDepth = 0;
@@ -212,10 +221,9 @@ export class LatexBlockSplitter {
                         if ((hasClose && !isBrokenByNewline) || isTrapped) {
                              // Flush previous content before starting math block
                              if (!isTrapped && currentBuffer.trim().length > 0) {
-                                const count = currentBuffer.split('\n').length;
-                                blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-                                currentBuffer = "";
+                                pushCurrentBlock(match.index);
                                 bufferStartLine = currentLine;
+                                bufferStartIndex = match.index;
                             }
                             envStack.push('$$');
                             currentBuffer += fullMatch;
@@ -225,10 +233,9 @@ export class LatexBlockSplitter {
                             currentBuffer += fullMatch;
 
                             if (currentBuffer.trim().length > 0) {
-                                const count = currentBuffer.split('\n').length;
-                                blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-                                currentBuffer = "";
+                                pushCurrentBlock(regex.lastIndex);
                                 bufferStartLine = currentLine + matchLines;
+                                bufferStartIndex = regex.lastIndex;
                             }
                         }
                     } else {
@@ -238,10 +245,9 @@ export class LatexBlockSplitter {
                     // Logic similar to $$: Split before block math if possible
                     if ((envStack.length === 0 && braceDepth === 0) || isTrapped) {
                         if (!isTrapped && currentBuffer.trim().length > 0) {
-                            const count = currentBuffer.split('\n').length;
-                            blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-                            currentBuffer = "";
+                            pushCurrentBlock(match.index);
                             bufferStartLine = currentLine;
+                            bufferStartIndex = match.index;
                         }
                         envStack.push('\\]');
                     }
@@ -263,10 +269,7 @@ export class LatexBlockSplitter {
         if (remaining.length > 0) {
              currentBuffer += remaining;
         }
-        if (currentBuffer.trim().length > 0) {
-            const count = currentBuffer.split('\n').length;
-            blocks.push({ text: currentBuffer, line: bufferStartLine, lineCount: count });
-        }
+        pushCurrentBlock(text.length);
 
         return blocks;
     }

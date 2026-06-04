@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BibTexParser } from '../bib';
-import { LatexDocument } from '../document';
+import { DocumentParseResult, LatexDocument } from '../document';
 import { DiffEngine } from '../diff';
 import { IFileProvider } from '../file-provider';
 import { extractMetadata } from '../metadata';
@@ -13,7 +13,7 @@ import { isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { ProtectionManager } from '../protection';
 import { postProcessHtml } from '../rules';
 import { LatexCounterScanner } from '../scanner';
-import { LatexBlockSplitter } from '../splitter';
+import { BlockSpan, LatexBlockSplitter } from '../splitter';
 import { SmartRenderer } from '../renderer';
 import { cleanLatexCommands, extractAndHideLabels, findCommand, normalizeUri, resolveLatexStyles, stableHash } from '../utils';
 
@@ -60,19 +60,48 @@ function createDocument(
     } = {}
 ): LatexDocument {
     const doc = new LatexDocument(new MemoryFileProvider());
-    doc.blockTexts = blockTexts;
-    doc.blockLines = blockTexts.map((_, index) => index * 3);
-    doc.blockLineCounts = blockTexts.map(text => text.split(/\r?\n/).length);
-    doc.metadata = {
-        macros: options.macros ?? {},
-        tikzGlobal: options.tikzGlobal ?? '',
-        tikzMacroMap: new Map(),
-        title: options.title,
-        author: options.author,
-        date: options.date
-    };
-    doc.bibEntries = new Map();
-    doc.contentStartLineOffset = 0;
+    let bodyText = "";
+    let offset = 0;
+    let line = 0;
+    const blockSpans: BlockSpan[] = [];
+
+    for (let index = 0; index < blockTexts.length; index++) {
+        if (index > 0) {
+            bodyText += '\n\n';
+            offset += 2;
+            line += 2;
+        }
+
+        const text = blockTexts[index];
+        const start = offset;
+        const end = start + text.length;
+        const lineCount = text.split(/\r?\n/).length;
+        bodyText += text;
+        blockSpans.push({ start, end, line, lineCount });
+        offset = end;
+        line += lineCount;
+    }
+
+    doc.applyResult({
+        bodyText,
+        blockSpans,
+        blockHashes: blockTexts.map(text => stableHash(text)),
+        blockLines: blockSpans.map(span => span.line),
+        blockLineCounts: blockSpans.map(span => span.lineCount),
+        filePool: [],
+        sourceFileIndices: new Uint16Array(0),
+        sourceLines: new Int32Array(0),
+        metadata: {
+            macros: options.macros ?? {},
+            tikzGlobal: options.tikzGlobal ?? '',
+            tikzMacroMap: new Map(),
+            title: options.title,
+            author: options.author,
+            date: options.date
+        },
+        bibEntries: new Map(),
+        contentStartLineOffset: 0
+    });
     return doc;
 }
 
@@ -87,6 +116,14 @@ function renderBlocks(blockTexts: string[]): string {
 
 function readFixture(name: string): string {
     return fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', name), 'utf8');
+}
+
+function spanText(text: string, span: BlockSpan): string {
+    return text.slice(span.start, span.end);
+}
+
+function resultBlockTexts(result: DocumentParseResult): string[] {
+    return result.blockSpans.map(span => spanText(result.bodyText, span));
 }
 
 function readWebviewRuntimeSource(repoRoot: string): string {
@@ -145,11 +182,12 @@ suite('LatexBlockSplitter', () => {
         ].join('\n');
 
         const blocks = LatexBlockSplitter.split(text);
+        const block = spanText(text, blocks[0]);
 
         assert.equal(blocks.length, 1);
-        assert.match(blocks[0].text, /\\begin\{tikzpicture\}/);
-        assert.match(blocks[0].text, /\\node \{A\};/);
-        assert.match(blocks[0].text, /\\end\{tikzpicture\}/);
+        assert.match(block, /\\begin\{tikzpicture\}/);
+        assert.match(block, /\\node \{A\};/);
+        assert.match(block, /\\end\{tikzpicture\}/);
     });
 
     test('splits before major environments but keeps starred floats intact', () => {
@@ -166,13 +204,14 @@ suite('LatexBlockSplitter', () => {
         ].join('\n');
 
         const blocks = LatexBlockSplitter.split(text);
+        const texts = blocks.map(block => spanText(text, block));
 
         assert.equal(blocks.length, 3);
-        assert.equal(blocks[0].text.trim(), 'Before figure.');
-        assert.match(blocks[1].text, /\\begin\{figure\*\}/);
-        assert.match(blocks[1].text, /\\includegraphics\{wide\.pdf\}/);
-        assert.match(blocks[1].text, /\\end\{figure\*\}/);
-        assert.equal(blocks[2].text.trim(), 'After figure.');
+        assert.equal(texts[0].trim(), 'Before figure.');
+        assert.match(texts[1], /\\begin\{figure\*\}/);
+        assert.match(texts[1], /\\includegraphics\{wide\.pdf\}/);
+        assert.match(texts[1], /\\end\{figure\*\}/);
+        assert.equal(texts[2].trim(), 'After figure.');
     });
 
     test('does not emergency-split long closed TikZ figures with internal blank lines', () => {
@@ -198,14 +237,15 @@ suite('LatexBlockSplitter', () => {
         ].join('\n');
 
         const blocks = LatexBlockSplitter.split(text);
-        const tikzBlocks = blocks.filter(block => /tikzpicture/.test(block.text));
+        const texts = blocks.map(block => spanText(text, block));
+        const tikzBlocks = texts.filter(block => /tikzpicture/.test(block));
 
         assert.equal(tikzBlocks.length, 1);
-        assert.match(tikzBlocks[0].text, /\\begin\{figure\}/);
-        assert.match(tikzBlocks[0].text, /\\begin\{tikzpicture\}/);
-        assert.match(tikzBlocks[0].text, /\\end\{tikzpicture\}/);
-        assert.match(tikzBlocks[0].text, /\\end\{figure\}/);
-        assert.match(blocks.map(block => block.text).join('\n'), /After\./);
+        assert.match(tikzBlocks[0], /\\begin\{figure\}/);
+        assert.match(tikzBlocks[0], /\\begin\{tikzpicture\}/);
+        assert.match(tikzBlocks[0], /\\end\{tikzpicture\}/);
+        assert.match(tikzBlocks[0], /\\end\{figure\}/);
+        assert.match(texts.join('\n'), /After\./);
     });
 });
 
@@ -383,7 +423,7 @@ suite('LatexDocument source mapping', () => {
         assert.ok(result.bibEntries.has('smith2024'));
         assert.equal(result.bibEntries.get('smith2024')?.fields.title, 'Paper');
         assert.equal(result.contentStartLineOffset, 0);
-        assert.equal(result.blockTexts.length, 1);
+        assert.equal(result.blockSpans.length, 1);
     });
 
     test('exposes block text through an accessor for future span-backed storage', () => {
@@ -393,6 +433,36 @@ suite('LatexDocument source mapping', () => {
         assert.equal(doc.getBlockText(0), 'First block');
         assert.equal(doc.getBlockText(1), 'Second block');
         assert.equal(doc.getBlockText(2), undefined);
+        assert.equal(doc.getBlockHash(0), stableHash('First block'));
+
+        doc.releaseTextContent();
+        assert.equal(doc.getBlockCount(), 0);
+        assert.equal(doc.getBlockText(0), undefined);
+        assert.equal(doc.getBlockHash(0), undefined);
+    });
+
+    test('stores parsed blocks as body spans and hashes', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'First paragraph.',
+                '',
+                'Second paragraph with \\label{p:two}.',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+
+        const result = await doc.parse(mainUri);
+        doc.applyResult(result);
+
+        assert.deepStrictEqual(resultBlockTexts(result).map(block => block.trim()), [
+            'First paragraph.',
+            'Second paragraph with \\label{p:two}.'
+        ]);
+        assert.deepStrictEqual(result.blockHashes, resultBlockTexts(result).map(text => stableHash(text)));
+        assert.equal(doc.getBlockText(1)?.trim(), 'Second paragraph with \\label{p:two}.');
     });
 
     test('drops comment-only blocks without leaving preview gaps', async () => {
@@ -425,6 +495,7 @@ suite('LatexDocument source mapping', () => {
         const result = await doc.parse(mainUri);
         doc.applyResult(result);
         const html = new SmartRenderer(provider).render(doc).htmls?.join('') ?? '';
+        const blocks = resultBlockTexts(result);
         const withoutComments = (text: string) => text
             .split(/\r?\n/)
             .map(line => {
@@ -434,10 +505,10 @@ suite('LatexDocument source mapping', () => {
             .join('\n')
             .trim();
 
-        assert.ok(result.blockTexts.every(block => withoutComments(block).length > 0));
-        assert.ok(result.blockTexts.some(block => block.includes('Notice that this paragraph')));
-        assert.ok(result.blockTexts.some(block => block.includes('In Eq.~\\eqref{eq:real}')));
-        assert.doesNotMatch(result.blockTexts.join('\n'), /eq:commented/);
+        assert.ok(blocks.every(block => withoutComments(block).length > 0));
+        assert.ok(blocks.some(block => block.includes('Notice that this paragraph')));
+        assert.ok(blocks.some(block => block.includes('In Eq.~\\eqref{eq:real}')));
+        assert.doesNotMatch(blocks.join('\n'), /eq:commented/);
         assert.match(html, /Notice that this paragraph/);
         assert.match(html, /In Eq\./);
         assert.doesNotMatch(html, /eq:commented|%\\begin|<div class="latex-block"[^>]*>\s*<\/div>/);
@@ -466,12 +537,13 @@ suite('LatexDocument source mapping', () => {
         const result = await doc.parse(mainUri);
         doc.applyResult(result);
         const html = new SmartRenderer(provider).render(doc).htmls?.join('') ?? '';
+        const blocks = resultBlockTexts(result);
 
-        assert.ok(result.blockTexts.some(block => block.includes('First item')));
-        assert.ok(result.blockTexts.some(block => block.includes('Second item')));
-        assert.ok(result.blockTexts.some(block => block.includes('Third item')));
-        assert.ok(result.blockTexts.some(block => block.includes('The next paragraph')));
-        assert.ok(result.blockTexts.every(block => block.trim() !== '\\end{itemize}'));
+        assert.ok(blocks.some(block => block.includes('First item')));
+        assert.ok(blocks.some(block => block.includes('Second item')));
+        assert.ok(blocks.some(block => block.includes('Third item')));
+        assert.ok(blocks.some(block => block.includes('The next paragraph')));
+        assert.ok(blocks.every(block => block.trim() !== '\\end{itemize}'));
         assert.doesNotMatch(html, /<div class="latex-block"[^>]*>\s*<\/div>/);
         assert.match(html, /The next paragraph should follow the list/);
     });
@@ -500,7 +572,7 @@ suite('LatexDocument source mapping', () => {
 
         const result = await doc.parse(mainUri);
         doc.applyResult(result);
-        const joinedBlocks = result.blockTexts.join('\n');
+        const joinedBlocks = resultBlockTexts(result).join('\n');
         const html = new SmartRenderer(provider).render(doc).htmls?.join('') ?? '';
         const visibleHtml = html.replace(/<script type="text\/snaptex-tikz"[\s\S]*?<\/script>/g, '');
 

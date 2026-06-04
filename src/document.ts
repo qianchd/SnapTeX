@@ -4,11 +4,13 @@ import { extractMetadata } from './metadata';
 import { BibTexParser, BibEntry } from './bib';
 import { SourceLocation, PreambleData, MetadataResult } from './types';
 import { R_BIBLIOGRAPHY } from './patterns';
-import { LatexBlockSplitter } from './splitter';
-import { normalizeUri } from './utils';
+import { BlockSpan, LatexBlockSplitter } from './splitter';
+import { normalizeUri, stableHash } from './utils';
 
 export interface DocumentParseResult {
-    blockTexts: string[];
+    bodyText: string;
+    blockSpans: BlockSpan[];
+    blockHashes: string[];
     blockLines: number[];
     blockLineCounts: number[];
     // memory-efficient TypedArrays
@@ -32,7 +34,9 @@ interface IndexedLine {
 }
 
 export class LatexDocument {
-    public blockTexts: string[] = [];
+    private bodyText: string = "";
+    public blockSpans: BlockSpan[] = [];
+    public blockHashes: string[] = [];
     public blockLines: number[] = [];
     public blockLineCounts: number[] = [];
 
@@ -56,19 +60,31 @@ export class LatexDocument {
     constructor(private fileProvider: IFileProvider) {}
 
     public releaseTextContent() {
-        this.blockTexts = [];
+        this.bodyText = "";
+        this.blockSpans = [];
+        this.blockHashes = [];
+        this.blockLines = [];
+        this.blockLineCounts = [];
     }
 
     public getBlockCount(): number {
-        return this.blockTexts.length;
+        return this.blockSpans.length;
     }
 
     public getBlockText(index: number): string | undefined {
-        return this.blockTexts[index];
+        const span = this.blockSpans[index];
+        if (!span) { return undefined; }
+        return this.bodyText.slice(span.start, span.end);
+    }
+
+    public getBlockHash(index: number): string | undefined {
+        return this.blockHashes[index];
     }
 
     public applyResult(result: DocumentParseResult) {
-        this.blockTexts = result.blockTexts;
+        this.bodyText = result.bodyText;
+        this.blockSpans = result.blockSpans;
+        this.blockHashes = result.blockHashes;
         this.blockLines = result.blockLines;
         this.blockLineCounts = result.blockLineCounts;
 
@@ -125,7 +141,9 @@ export class LatexDocument {
         const rawBlockObjects = LatexBlockSplitter.split(bodyText);
 
         const res: DocumentParseResult = {
-            blockTexts: [],
+            bodyText,
+            blockSpans: [],
+            blockHashes: [],
             blockLines: [],
             blockLineCounts: [],
             // TypedArray to seal memory
@@ -138,9 +156,10 @@ export class LatexDocument {
         };
 
         for (const b of rawBlockObjects) {
-            if (this.hasRenderableContent(b.text)) {
-                const flattenedText = (' ' + b.text).slice(1);
-                res.blockTexts.push(flattenedText);
+            const blockText = bodyText.slice(b.start, b.end);
+            if (this.hasRenderableContent(blockText)) {
+                res.blockSpans.push(b);
+                res.blockHashes.push(stableHash(blockText));
                 res.blockLines.push(b.line);
                 res.blockLineCounts.push(b.lineCount);
             }
