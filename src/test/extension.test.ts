@@ -406,6 +406,39 @@ suite('LatexDocument source mapping', () => {
         assert.doesNotMatch(html, /eq:commented|%\\begin|<div class="latex-block"[^>]*>\s*<\/div>/);
     });
 
+    test('drops standalone list boundary blocks without leaving preview gaps', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                '\\begin{itemize}',
+                '    \\item First item with continuation text.',
+                '',
+                '\\item Second item after a paragraph break.',
+                '',
+                '    \\item Third item before the list closes.',
+                '',
+                '\\end{itemize}',
+                '',
+                'The next paragraph should follow the list without a blank preview block.',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+
+        const result = await doc.parse(mainUri);
+        doc.applyResult(result);
+        const html = new SmartRenderer(provider).render(doc).htmls?.join('') ?? '';
+
+        assert.ok(result.blockTexts.some(block => block.includes('First item')));
+        assert.ok(result.blockTexts.some(block => block.includes('Second item')));
+        assert.ok(result.blockTexts.some(block => block.includes('Third item')));
+        assert.ok(result.blockTexts.some(block => block.includes('The next paragraph')));
+        assert.ok(result.blockTexts.every(block => block.trim() !== '\\end{itemize}'));
+        assert.doesNotMatch(html, /<div class="latex-block"[^>]*>\s*<\/div>/);
+        assert.match(html, /The next paragraph should follow the list/);
+    });
+
     test('inlines standalone TikZ inputs without treating their document end as the root end', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const figureUri = vscode.Uri.file('/project/figures/fold_illus_reliever.tex');

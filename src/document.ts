@@ -150,7 +150,11 @@ export class LatexDocument {
             })
             .join('\n');
 
-        return withoutComments.trim().length > 0;
+        const withoutListStructure = withoutComments
+            .replace(/\\(?:begin|end)\{(?:itemize|enumerate)\}/g, '')
+            .replace(/\\item(?:\[[^\]]*\])?/g, '');
+
+        return withoutListStructure.trim().length > 0;
     }
 
     private async loadAndFlatten(

@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 56 tests after comment-only block cleanup and standalone comment-line rendering fixes.
+> Last verified: `npm test` passed with 57 tests after comment-only and standalone list-boundary block cleanup.
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -75,6 +75,8 @@
   - This prevents long commented-out LaTeX sections from becoming empty preview blocks that still reserve vertical space.
 - [x] Collapse standalone comment lines during preprocessing.
   - For example, `aaa.`, followed by `% ...` lines, followed by `eee.` renders as `aaa.` then `eee.` without the commented lines.
+- [x] Drop standalone list boundary blocks before rendering.
+  - This prevents isolated `\begin{itemize}`, `\end{itemize}`, `\begin{enumerate}`, or `\end{enumerate}` blocks from producing empty preview space when lists contain blank lines.
 
 ### Test Coverage Added
 
@@ -102,6 +104,7 @@
   - Multi-file `\input` mapping from flattened lines back to original files.
   - Bibliography loading relative to root document.
   - Comment-only blocks are dropped before rendering.
+  - Standalone list boundary blocks are dropped before rendering.
 - [x] `SmartRenderer`.
   - No nested `.latex-block` classes.
   - Standalone comment lines do not leave blank preview gaps.

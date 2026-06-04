@@ -7,6 +7,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Fixed**: Prevented standalone TikZ files included via `\input` inside figures from leaking their wrapper preamble/body delimiters, truncating the root document at the included `\end{document}`, or rendering macro definitions as source.
 - **Fixed**: Kept long `tikzpicture` blocks and their surrounding figure/resizebox wrapper from triggering the splitter emergency line-limit recovery, preventing large TikZ figures from being split and shown as raw source.
 - **Fixed**: Dropped comment-only blocks and standalone comment lines from preview rendering so long commented-out LaTeX sections no longer create large blank gaps.
+- **Fixed**: Dropped standalone list boundary blocks, such as an isolated `\end{itemize}`, so blank lines around list endings no longer create empty preview blocks.
 - **Security**: Hardened preview sync/PDF request handling and escaped `\maketitle` title, author, and date metadata before inserting it into webview HTML.
 - **Added**: Expanded the core test suite for diffing, splitting, counters, BibTeX parsing, metadata extraction, protection tokens, URI normalization, renderer behavior, PDF request validation, TikZ loading, and long-document smoke coverage.
 - **Added**: Memory instrumentation and update coalescing for extension-host rendering and webview DOM/PDF/TikZ stats.
