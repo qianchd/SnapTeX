@@ -16,7 +16,6 @@
     <link rel="stylesheet" href="{{styleUri}}">
 
     <link rel="stylesheet" href="{{tikzJaxCssUri}}">
-    <script src="{{tikzJaxJsUri}}" id="tikzjax-script" defer></script>
 
     <title>SnapTeX Preview</title>
 </head>
@@ -26,6 +25,114 @@
 
 <script>
     const vscode = acquireVsCodeApi();
+    window.tikzJaxJsUri = '{{tikzJaxJsUri}}';
+    window.tikzJaxLoadPromise = null;
+    window.tikzJaxFailed = false;
+    const TIKZ_ACTIVE_RENDER_TIMEOUT_MS = 120000;
+
+    window.ensureTikzJaxLoaded = function() {
+        if (window.TikzJax) {
+            return Promise.resolve();
+        }
+        if (window.tikzJaxFailed) {
+            return Promise.reject(new Error('TikZJax is disabled after a previous load failure.'));
+        }
+        if (window.tikzJaxLoadPromise) {
+            return window.tikzJaxLoadPromise;
+        }
+
+        window.tikzJaxLoadPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = window.tikzJaxJsUri;
+            script.id = 'tikzjax-script';
+            script.defer = true;
+            script.onload = () => resolve();
+            script.onerror = () => {
+                window.tikzJaxFailed = true;
+                window.tikzJaxLoadPromise = null;
+                reject(new Error('Failed to load TikZJax.'));
+            };
+            document.head.appendChild(script);
+        });
+
+        return window.tikzJaxLoadPromise;
+    };
+
+    window.addEventListener('unhandledrejection', event => {
+        const message = String(event.reason?.message || event.reason || '');
+        if (message.includes('Did not receive an init message') || message.includes('run-tex.js')) {
+            window.tikzJaxFailed = true;
+            window.failPendingTikzContainers('TikZ rendering failed.');
+            console.warn('[SnapTeX] TikZJax worker failed; disabling TikZ rendering for this webview session.', event.reason);
+        }
+    });
+
+    function getTikzContainerFromEvent(event) {
+        const target = event.target;
+        return target && target.closest ? target.closest('.tikz-container') : null;
+    }
+
+    function setTikzContainerState(container, state) {
+        container.setAttribute('data-tikz-state', state);
+    }
+
+    function clearTikzRenderTimer(container) {
+        if (container.__snaptexTikzRenderTimer) {
+            clearTimeout(container.__snaptexTikzRenderTimer);
+            container.__snaptexTikzRenderTimer = null;
+        }
+    }
+
+    function armTikzRenderTimer(container) {
+        clearTikzRenderTimer(container);
+        container.__snaptexTikzRenderTimer = setTimeout(() => {
+            if (!container.isConnected || container.querySelector('svg[role="img"]')) return;
+            window.failTikzContainer(container, 'TikZ rendering timed out.');
+        }, TIKZ_ACTIVE_RENDER_TIMEOUT_MS);
+    }
+
+    window.failTikzContainer = function(container, message) {
+        if (!container || !container.isConnected || container.querySelector('svg[role="img"]')) return;
+
+        clearTikzRenderTimer(container);
+        setTikzContainerState(container, 'failed');
+        const errorEl = document.createElement('div');
+        errorEl.className = 'tikz-error';
+        errorEl.style.cssText = 'padding: 12px; color: #8a1f11; background: #fff3f0; border: 1px solid #f0c6bd; font: 12px sans-serif;';
+        errorEl.textContent = message;
+        container.replaceChildren(errorEl);
+    };
+
+    window.failPendingTikzContainers = function(message) {
+        document.querySelectorAll('.tikz-container').forEach(container => {
+            window.failTikzContainer(container, message);
+        });
+    };
+
+    window.watchPendingTikzContainers = function(root = document) {
+        root.querySelectorAll('.tikz-container').forEach(container => {
+            if (container.querySelector('svg[role="img"]') || container.getAttribute('data-tikz-state') === 'failed') return;
+
+            setTikzContainerState(container, 'queued');
+            container.setAttribute('data-tikz-watchdog', 'true');
+        });
+    };
+
+    document.addEventListener('tikzjax-tex-input', event => {
+        const container = getTikzContainerFromEvent(event);
+        if (!container) return;
+
+        setTikzContainerState(container, 'rendering');
+        armTikzRenderTimer(container);
+    });
+
+    document.addEventListener('tikzjax-load-finished', event => {
+        const container = getTikzContainerFromEvent(event);
+        if (!container) return;
+
+        clearTikzRenderTimer(container);
+        setTikzContainerState(container, 'rendered');
+    });
 
     // --- Global PDF Helper ---
     window.pdfReqQueue = [];
@@ -420,7 +527,11 @@
 
         triggerTikzRendering() {
             if (this.contentContainer.querySelector('script[type="text/tikz"]')) {
-                 window.dispatchEvent(new Event('load'));
+                 window.watchPendingTikzContainers(this.contentContainer);
+                 window.ensureTikzJaxLoaded().catch(error => {
+                     window.failPendingTikzContainers('TikZ rendering failed.');
+                     console.warn('[SnapTeX] Failed to load TikZJax for tooltip content.', error);
+                 });
             }
         }
 
@@ -587,10 +698,13 @@
         triggerTikzRendering() {
             setTimeout(() => {
                 const unrendered = document.querySelector('script[type="text/tikz"]');
-                if (unrendered) {
-                    console.log('[SnapTeX] Triggering TikZ re-render...');
-                    // Dispatch 'load' event to force TikZJax scan
-                    window.dispatchEvent(new Event('load'));
+                if (unrendered && !window.tikzJaxFailed) {
+                    console.log('[SnapTeX] Loading TikZJax for TikZ content...');
+                    window.watchPendingTikzContainers(document);
+                    window.ensureTikzJaxLoaded().catch(error => {
+                        window.failPendingTikzContainers('TikZ rendering failed.');
+                        console.warn('[SnapTeX] Failed to load TikZJax for preview content.', error);
+                    });
                 }
             }, 100);
         }

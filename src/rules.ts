@@ -51,6 +51,13 @@ function recoverPreservedTokens(text: string): string {
     return found;
 }
 
+function unwrapResizeboxAroundProtectedContent(text: string): string {
+    return text.replace(
+        /\\resizebox\s*\{[^{}]*\}\s*\{[^{}]*\}\s*\{\s*((?:XSNAP:[a-zA-Z0-9_-]+:\d+Y\s*)+)\}/g,
+        (_match, protectedContent: string) => protectedContent.trim()
+    );
+}
+
 /**
  * Recursive Dependency Resolver
  * Scans the content for macro usages and pulls in their definitions from the map.
@@ -451,6 +458,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
                 // 3. Cleanup
                 body = body.trim().replace(/\\centering/g, '');
+                body = unwrapResizeboxAroundProtectedContent(body);
 
                 // In-place replacement for images to support PNG/JPG/PDF and multiple images
                 // Regex allows spaces (\s*) and uses global flag (g)

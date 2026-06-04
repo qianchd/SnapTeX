@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 31 tests after using a blob module worker for PDF.js in the webview sandbox.  
+> Last verified: `npm test` passed with 34 tests after unwrapping resizeboxed TikZ blocks and adding a TikZ render watchdog.  
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -180,6 +180,11 @@
   - Always render the latest pending update.
 - [x] Add `snaptex.retainContextWhenHidden`, default `false`.
 - [x] Avoid extra `cleanedHtmls` array in full update while the old full-string model still exists.
+- [x] Lazy-load TikZJax instead of starting its worker for every preview.
+  - Prevents `run-tex.js` worker timeouts from delaying PDF/image-heavy previews with no TikZ content.
+  - Stops repeated TikZJax retries after a worker-load failure in the same webview session.
+- [x] Unwrap `\resizebox{...}{...}{...}` when it only wraps protected TikZ output.
+- [x] Add a TikZ render watchdog so failed or stuck TikZJax jobs do not leave permanent loading indicators.
 - [ ] Reduce full-update frequency.
   - Keep current fixed `> 50` behavior until this is explicitly revisited.
   - Keep full update for macro/metadata-sensitive changes.

@@ -443,6 +443,27 @@ suite('SmartRenderer', () => {
         assert.match(html, /data-key="sec:intro"/);
         assert.equal(html.match(/class="latex-block/g)?.length ?? 0, 2);
     });
+
+    test('unwraps resizebox around protected tikz figures', () => {
+        const html = renderBlocks([
+            [
+                '\\begin{figure}[H]',
+                '\\centering',
+                '\\resizebox{\\textwidth}{!}{',
+                '\\begin{tikzpicture}',
+                '\\path coordinate (A) at (0, 0) coordinate (E) at (15, 0);',
+                '\\draw[line width=.5pt] (A) -- (E);',
+                '\\node[dot, label = {$\\htau_{a}$}] at (A) {};',
+                '\\node[dot, label = {$\\htau_{a+1}$}] at (E) {};',
+                '\\end{tikzpicture}}',
+                '\\end{figure}'
+            ].join('\n')
+        ]);
+
+        assert.match(html, /class="tikz-container"/);
+        assert.match(html, /<script type="text\/tikz"/);
+        assert.doesNotMatch(html, /\\resizebox/);
+    });
 });
 
 suite('PDF request validation', () => {
@@ -510,6 +531,64 @@ suite('PDF request validation', () => {
         assert.match(webviewSource, /new Worker\(workerBlobUrl,\s*\{\s*type:\s*'module'\s*\}\)/);
         assert.match(webviewSource, /pdfjsLib\.GlobalWorkerOptions\.workerPort = worker/);
         assert.match(webviewSource, /await pdfWorkerReady/);
+    });
+});
+
+suite('Webview resource loading', () => {
+    test('lazy-loads TikZJax only when TikZ scripts are present', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.doesNotMatch(webviewSource, /<script src="\{\{tikzJaxJsUri\}\}" id="tikzjax-script" defer><\/script>/);
+        assert.match(webviewSource, /window\.tikzJaxJsUri = '\{\{tikzJaxJsUri\}\}'/);
+        assert.match(webviewSource, /window\.ensureTikzJaxLoaded = function\(\)/);
+        assert.match(webviewSource, /script\.src = window\.tikzJaxJsUri/);
+        assert.match(webviewSource, /querySelector\('script\[type="text\/tikz"\]'\)/);
+    });
+
+    test('marks stuck TikZ renders as failed instead of leaving permanent loaders', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /window\.failPendingTikzContainers = function\(message\)/);
+        assert.match(webviewSource, /window\.watchPendingTikzContainers = function\(root = document\)/);
+        assert.match(webviewSource, /TikZ rendering timed out/);
+        assert.match(webviewSource, /svg\[role="img"\]/);
+    });
+
+    test('does not timeout TikZ containers while they are only waiting in the TikZJax queue', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+
+        assert.match(webviewSource, /document\.addEventListener\('tikzjax-tex-input'/);
+        assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-finished'/);
+        assert.match(webviewSource, /window\.failTikzContainer = function\(container, message\)/);
+        assert.match(webviewSource, /setTikzContainerState\(container, 'queued'\)/);
+        assert.match(webviewSource, /setTikzContainerState\(container, 'rendering'\)/);
+        assert.doesNotMatch(webviewSource, /setTimeout\(\(\) => \{[\s\S]*window\.failPendingTikzContainers\('TikZ rendering timed out\.'\)/);
+    });
+
+    test('bootstraps dynamic TikZJax with a self-contained blob worker in VS Code webviews', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
+        const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
+        const runTexSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'run-tex.js'), 'utf8');
+        const calcLibraryPath = path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tex_files', 'tikzlibrarycalc.code.tex.gz');
+
+        assert.match(buildSource, /patchTikzJaxWorkerBootstrap/);
+        assert.match(buildSource, /CORSWorkaround:!1/);
+        assert.ok(fs.existsSync(calcLibraryPath));
+        assert.match(tikzJaxSource, /fetch\(`\$\{e\}\/run-tex\.js`\)/);
+        assert.match(tikzJaxSource, /URL\.createObjectURL\(new Blob/);
+        assert.match(tikzJaxSource, /new o\([^,]+,\{CORSWorkaround:!1\}\)/);
+        assert.match(tikzJaxSource, /tex_files\/tikzlibrarycalc\.code\.tex\.gz/);
+        assert.match(tikzJaxSource, /snaptexAssets\[A\]=await c\(A\)/);
+        assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:snaptexAssets\}/);
+        assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`,\{CORSWorkaround:!1\}\)/);
+        assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`\)/);
+        assert.doesNotMatch(tikzJaxSource, /try\{await r\.load\(e\)\}catch\(e\)\{console\.log\(e\)\}return r/);
+        assert.match(runTexSource, /snaptexAssetUrls&&snaptexAssetUrls\[A\]/);
+        assert.match(runTexSource, /snaptexAssetUrls=A&&A\.assets\|\|null/);
     });
 });
 
