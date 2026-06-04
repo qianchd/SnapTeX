@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { SmartRenderer } from '../renderer';
+import { optimizeTikzPreviewSource, TIKZ_PREVIEW_LOWERINGS } from '../tikz-preview-optimizer';
 import { normalizeUri, stableHash } from '../utils';
 import {
     createDocument,
@@ -491,6 +492,27 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /href="javascript:alert/i);
     });
 
+    test('renders safe LaTeX href and url commands as protected external links', () => {
+        const html = renderBlocks([
+            'See \\href{https://example.com/path?q=1&lang=en}{SnapTeX \\textbf{site}} and \\url{https://snaptex.dev/docs?a=1&b=2}.'
+        ]);
+
+        assert.match(html, /<a href="https:\/\/example\.com\/path\?q=1&amp;lang=en" class="latex-link latex-href" target="_blank" rel="noopener noreferrer">SnapTeX <strong>site<\/strong><\/a>/);
+        assert.match(html, /<a href="https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2" class="latex-link latex-url" target="_blank" rel="noopener noreferrer">https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2<\/a>/);
+        assert.doesNotMatch(html, /\\href|\\url/);
+    });
+
+    test('drops unsafe LaTeX href and url targets while keeping escaped text', () => {
+        const html = renderBlocks([
+            '\\href{javascript:alert(1)}{bad <script>alert(1)</script>} \\url{javascript:alert(2)}'
+        ]);
+
+        assert.doesNotMatch(html, /href="javascript:alert/i);
+        assert.doesNotMatch(html, /\\href|\\url/);
+        assert.match(html, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.match(html, /javascript:alert\(2\)/);
+    });
+
     test('keeps numbered display math containers protected under raw-HTML-disabled Markdown', () => {
         const html = renderBlocks(['\\begin{equation}\\label{obj:inSample}x=1\\end{equation}']);
 
@@ -697,6 +719,80 @@ suite('SmartRenderer', () => {
         assert.match(html, /\\usetikzlibrary\{decorations\.pathreplacing\}/);
         assert.doesNotMatch(html, /positioning/);
         assert.doesNotMatch(html, /calc/);
+    });
+
+    test('exposes TikZ preview lowerings through a named optimizer pipeline', () => {
+        assert.deepStrictEqual(
+            TIKZ_PREVIEW_LOWERINGS.map(lowering => ({
+                name: lowering.name,
+                affectedLibraries: lowering.affectedLibraries
+            })),
+            [{ name: 'simple-arrows-meta-tips', affectedLibraries: ['arrows.meta'] }]
+        );
+
+        const optimized = optimizeTikzPreviewSource({
+            globalPreamble: '\\tikzset{arrow/.style={-Latex, thick}}',
+            options: 'arrow/.style={Stealth-Stealth}',
+            content: '\\draw[Latex-] (0,0) -- (1,0);',
+            macroDefinitions: '\\def\\fastArrow{Latex-Latex}'
+        });
+
+        assert.deepStrictEqual(optimized.appliedLowerings, ['simple-arrows-meta-tips']);
+        assert.equal(optimized.globalPreamble, '\\tikzset{arrow/.style={->, thick}}');
+        assert.equal(optimized.options, 'arrow/.style={<->}');
+        assert.equal(optimized.content, '\\draw[<-] (0,0) -- (1,0);');
+        assert.equal(optimized.macroDefinitions, '\\def\\fastArrow{<->}');
+
+        const exact = optimizeTikzPreviewSource({
+            globalPreamble: '',
+            options: '',
+            content: '\\draw[-{Latex[length=3mm]}] (0,0) -- (1,0);',
+            macroDefinitions: ''
+        });
+        assert.deepStrictEqual(exact.appliedLowerings, []);
+        assert.match(exact.content, /-\{Latex\[length=3mm\]\}/);
+    });
+
+    test('uses TikZ preview lowerings to avoid arrows.meta for simple preview arrows', () => {
+        const renderer = new SmartRenderer();
+        const doc = createDocument([
+            [
+                '\\begin{tikzpicture}[',
+                '  node distance=1.7cm,',
+                '  arrow/.style={-Latex, thick}',
+                ']',
+                '\\node (source) {source};',
+                '\\node[right=of source] (blocks) {blocks};',
+                '\\draw[arrow] (source) -- (blocks);',
+                '\\end{tikzpicture}'
+            ].join('\n')
+        ], {
+            tikzGlobal: '\\usetikzlibrary{arrows.meta, positioning}'
+        });
+        const html = renderer.render(doc).htmls?.join('') ?? '';
+
+        assert.match(html, /\\usetikzlibrary\{positioning\}/);
+        assert.match(html, /arrow\/\.style=\{->, thick\}/);
+        assert.doesNotMatch(html, /arrows\.meta/);
+        assert.doesNotMatch(html, /-Latex/);
+    });
+
+    test('keeps arrows.meta for exact parameterized TikZ arrow tips', () => {
+        const renderer = new SmartRenderer();
+        const doc = createDocument([
+            [
+                '\\begin{tikzpicture}',
+                '\\draw[-{Latex[length=3mm]}] (0,0) -- (1,0);',
+                '\\end{tikzpicture}'
+            ].join('\n')
+        ], {
+            tikzGlobal: '\\usetikzlibrary{arrows.meta, positioning}'
+        });
+        const html = renderer.render(doc).htmls?.join('') ?? '';
+
+        assert.match(html, /\\usetikzlibrary\{arrows\.meta\}/);
+        assert.match(html, /-\{Latex\[length=3mm\]\}/);
+        assert.doesNotMatch(html, /positioning/);
     });
 
     test('renders a fixture-backed long document and keeps localized edits as patches', async () => {

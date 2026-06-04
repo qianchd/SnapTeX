@@ -1,5 +1,6 @@
 import { PreprocessRule, RenderContext } from './types';
 import { escapeScriptRawText, extractAndHideLabels } from './utils';
+import { optimizeTikzPreviewSource } from './tikz-preview-optimizer';
 
 function resolveDependencies(content: string, macroMap: Map<string, string>): string {
     const usedMacros = new Set<string>();
@@ -164,21 +165,27 @@ export function createTikzPictureRule(): PreprocessRule {
 
             return text.replace(regex, (_match, options, content) => {
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
-                const opts = options ? `[${options}]` : '';
-                const globalPreamble = filterTikzGlobalForPicture(
-                    renderer.currentDocument?.metadata.tikzGlobal || "",
-                    `${opts}\n${cleanContent}`
-                );
                 const macroMap = renderer.currentDocument?.metadata.tikzMacroMap || new Map();
-                const neededMacros = resolveDependencies(opts + cleanContent, macroMap);
+                const neededMacros = resolveDependencies(`${options || ''}\n${cleanContent}`, macroMap);
+                const optimized = optimizeTikzPreviewSource({
+                    globalPreamble: renderer.currentDocument?.metadata.tikzGlobal || "",
+                    options: options || '',
+                    content: cleanContent,
+                    macroDefinitions: neededMacros
+                });
+                const opts = optimized.options ? `[${optimized.options}]` : '';
+                const globalPreamble = filterTikzGlobalForPicture(
+                    optimized.globalPreamble,
+                    `${opts}\n${optimized.content}\n${optimized.macroDefinitions}`
+                );
                 const fontConfig = `\\tikzset{every node/.append style={font=\\sffamily\\small}}\n`;
 
                 const fullCode = [
                     globalPreamble,
-                    neededMacros,
+                    optimized.macroDefinitions,
                     fontConfig,
                     `\\begin{tikzpicture}${opts}`,
-                    cleanContent,
+                    optimized.content,
                     `\\end{tikzpicture}`
                 ].join('\n');
 
