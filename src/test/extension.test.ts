@@ -89,6 +89,19 @@ function readFixture(name: string): string {
     return fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', name), 'utf8');
 }
 
+function readWebviewRuntimeSource(repoRoot: string): string {
+    const webviewSourceDir = path.join(repoRoot, 'src', 'webview');
+    const webviewSources = fs.readdirSync(webviewSourceDir)
+        .filter(file => file.endsWith('.ts'))
+        .sort()
+        .map(file => path.join(webviewSourceDir, file));
+
+    return [
+        path.join(repoRoot, 'media', 'webview.html'),
+        ...webviewSources
+    ].map(file => fs.readFileSync(file, 'utf8')).join('\n');
+}
+
 suite('DiffEngine', () => {
     test('computes unchanged, insert, delete, and replace spans', () => {
         assert.deepStrictEqual(DiffEngine.compute(['a', 'b'], ['a', 'b']), {
@@ -901,7 +914,7 @@ suite('PDF request validation', () => {
     test('keeps PDF loading on the URI-only transport path', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.doesNotMatch(panelSource, /\bpdfData\b/);
         assert.doesNotMatch(panelSource, /\bbase64\b/i);
@@ -913,7 +926,7 @@ suite('PDF request validation', () => {
 
     test('requests viewport-near PDF canvases without waiting for observer scroll events', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /isPdfCanvasNearViewport\(canvas\)/);
         assert.match(webviewSource, /this\.requestPdfCanvas\(canvas\);\s*return;/);
@@ -922,7 +935,7 @@ suite('PDF request validation', () => {
 
     test('uses non-streaming PDF.js URL loading for webview resource URIs', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /disableRange:\s*true/);
         assert.match(webviewSource, /disableStream:\s*true/);
@@ -931,19 +944,19 @@ suite('PDF request validation', () => {
 
     test('creates a blob module worker for PDF.js inside the webview sandbox', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /async function setupPdfWorker\(\)/);
         assert.match(webviewSource, /URL\.createObjectURL\(new Blob/);
         assert.match(webviewSource, /new Worker\(workerBlobUrl,\s*\{\s*type:\s*'module'\s*\}\)/);
         assert.match(webviewSource, /pdfjsLib\.GlobalWorkerOptions\.workerPort = worker/);
-        assert.match(webviewSource, /await pdfWorkerReady/);
+        assert.match(webviewSource, /await pdfRuntimeReady/);
     });
 
     test('sends full updates as block payloads without building a giant binary html buffer', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(panelSource, /if \(payload\.htmls\) \{\s*payload\.htmls = payload\.htmls\.map\(h => this\.fixHtmlPaths\(h\)\)/);
         assert.match(panelSource, /this\._renderer\.render\(this\._currentDocument, \{ deferFullHtml: virtualizeBlocks \}\)/);
@@ -968,7 +981,7 @@ suite('PDF request validation', () => {
 
     test('releases far-offscreen PDF canvas bitmaps while preserving layout for rerender', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /const PDF_RELEASE_MARGIN = 3600/);
         assert.match(webviewSource, /isPdfCanvasFarFromViewport\(canvas\)/);
@@ -983,12 +996,29 @@ suite('PDF request validation', () => {
 });
 
 suite('Webview resource loading', () => {
+    test('loads webview runtime from bundled scripts instead of inline HTML', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const htmlSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
+        const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
+
+        assert.match(htmlSource, /<script src="\{\{webviewMainUri\}\}"><\/script>/);
+        assert.match(htmlSource, /<script src="\{\{webviewPdfUri\}\}"><\/script>/);
+        assert.doesNotMatch(htmlSource, /class PreviewController/);
+        assert.doesNotMatch(htmlSource, /class BlockVirtualizationController/);
+        assert.match(panelSource, /const webviewMainUri = toUri\('media\/webview-main\.js'\)/);
+        assert.match(panelSource, /const webviewPdfUri = toUri\('media\/webview-pdf\.js'\)/);
+        assert.match(buildSource, /entryPoints: \['src\/webview\/main\.ts'\]/);
+        assert.match(buildSource, /entryPoints: \['src\/webview\/pdf\.ts'\]/);
+    });
+
     test('lazy-loads TikZJax only when TikZ scripts are present', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.doesNotMatch(webviewSource, /<script src="\{\{tikzJaxJsUri\}\}" id="tikzjax-script" defer><\/script>/);
-        assert.match(webviewSource, /window\.tikzJaxJsUri = '\{\{tikzJaxJsUri\}\}'/);
+        assert.match(webviewSource, /data-tikz-jax-js-uri="\{\{tikzJaxJsUri\}\}"/);
+        assert.match(webviewSource, /window\.tikzJaxJsUri = document\.body\.dataset\.tikzJaxJsUri \|\| ''/);
         assert.match(webviewSource, /window\.ensureTikzJaxLoaded = function\(\)/);
         assert.match(webviewSource, /script\.src = window\.tikzJaxJsUri/);
         assert.match(webviewSource, /TIKZ_PENDING_SCRIPT_TYPE = 'text\/snaptex-tikz'/);
@@ -998,7 +1028,7 @@ suite('Webview resource loading', () => {
 
     test('marks stuck TikZ renders as failed instead of leaving permanent loaders', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /window\.failPendingTikzContainers = function\(message\)/);
         assert.match(webviewSource, /window\.watchPendingTikzContainers = function\(root = document\)/);
@@ -1008,7 +1038,7 @@ suite('Webview resource loading', () => {
 
     test('does not timeout TikZ containers while they are only waiting in the TikZJax queue', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /document\.addEventListener\('tikzjax-tex-input'/);
         assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-finished'/);
@@ -1020,7 +1050,7 @@ suite('Webview resource loading', () => {
 
     test('coalesces TikZ activation so edits during a render only queue the latest run', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /const TIKZ_RENDER_DEBOUNCE_MS = 200/);
         assert.match(webviewSource, /class CoalescingTaskScheduler/);
@@ -1044,7 +1074,7 @@ suite('Webview resource loading', () => {
 
     test('keeps the previous TikZ SVG visible while a replacement render is pending', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
         const styleSource = fs.readFileSync(path.join(repoRoot, 'media', 'preview-style.css'), 'utf8');
 
         assert.match(webviewSource, /collectTikzPreviews\(block\)/);
@@ -1061,7 +1091,7 @@ suite('Webview resource loading', () => {
     test('uses block hashes instead of outerHTML to preserve unchanged full-update blocks', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const rendererSource = fs.readFileSync(path.join(repoRoot, 'src', 'renderer.ts'), 'utf8');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(rendererSource, /data-block-hash="\$\{stableHash\(text\)\}"/);
         assert.match(rendererSource, /preserveUnchangedBlocks:\s*!macrosChanged/);
@@ -1076,7 +1106,7 @@ suite('Webview resource loading', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const packageSource = fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8');
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
         const styleSource = fs.readFileSync(path.join(repoRoot, 'media', 'preview-style.css'), 'utf8');
 
         assert.match(packageSource, /"snaptex\.experimentalVirtualization"/);
@@ -1136,7 +1166,7 @@ suite('Webview resource loading', () => {
 
     test('routes virtualized refs and tooltips through anchor-aware shell mounting', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(webviewSource, /window\.snaptexPreviewController = this/);
         assert.match(webviewSource, /document\.addEventListener\('click', event => this\.onInternalLinkClick\(event\)\)/);
@@ -1153,7 +1183,7 @@ suite('Webview resource loading', () => {
     test('stabilizes virtualized forward sync before scrolling', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
 
         assert.match(extensionSource, /let autoSyncTimer: NodeJS\.Timeout \| undefined/);
         assert.match(extensionSource, /const clearPendingAutoSync = \(\) =>/);
@@ -1179,7 +1209,7 @@ suite('Webview resource loading', () => {
 
     test('routes TikZ compile failures through the webview error state', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const webviewSource = readWebviewRuntimeSource(repoRoot);
         const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
 
         assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-failed'/);

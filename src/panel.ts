@@ -404,6 +404,8 @@ export class TexPreviewPanel {
 
         const katexCssUri = toUri('media/vendor/katex/katex.min.css');
         const styleUri = toUri('media/preview-style.css');
+        const webviewMainUri = toUri('media/webview-main.js');
+        const webviewPdfUri = toUri('media/webview-pdf.js');
         const pdfJsUri = toUri('media/vendor/pdfjs/pdf.mjs');
         const pdfWorkerUri = toUri('media/vendor/pdfjs/pdf.worker.mjs');
 
@@ -424,6 +426,8 @@ export class TexPreviewPanel {
             .replace(/{{cspSource}}/g, this._panel.webview.cspSource)
             .replace(/{{katexCssUri}}/g, katexCssUri.toString())
             .replace(/{{styleUri}}/g, styleUri.toString())
+            .replace(/{{webviewMainUri}}/g, webviewMainUri.toString())
+            .replace(/{{webviewPdfUri}}/g, webviewPdfUri.toString())
             .replace(/{{pdfJsUri}}/g, pdfJsUri.toString())
             .replace(/{{pdfWorkerUri}}/g, pdfWorkerUri.toString())
             // Inject the TikZJax variables

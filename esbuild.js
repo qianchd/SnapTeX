@@ -314,7 +314,7 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-    const ctx = await esbuild.context({
+    const extensionCtx = await esbuild.context({
         entryPoints: [
             'src/extension.ts'
         ],
@@ -334,11 +334,43 @@ async function main() {
             esbuildProblemMatcherPlugin,
         ],
     });
+
+    const webviewMainCtx = await esbuild.context({
+        entryPoints: ['src/webview/main.ts'],
+        bundle: true,
+        format: 'iife',
+        globalName: 'SnapTeXWebview',
+        minify: production,
+        sourcemap: !production,
+        sourcesContent: false,
+        platform: 'browser',
+        target: 'es2022',
+        outfile: 'media/webview-main.js',
+        logLevel: 'silent',
+        plugins: [esbuildProblemMatcherPlugin],
+    });
+
+    const webviewPdfCtx = await esbuild.context({
+        entryPoints: ['src/webview/pdf.ts'],
+        bundle: true,
+        format: 'iife',
+        globalName: 'SnapTeXPdfRuntime',
+        minify: production,
+        sourcemap: !production,
+        sourcesContent: false,
+        platform: 'browser',
+        target: 'es2022',
+        outfile: 'media/webview-pdf.js',
+        logLevel: 'silent',
+        plugins: [esbuildProblemMatcherPlugin],
+    });
+
+    const contexts = [extensionCtx, webviewMainCtx, webviewPdfCtx];
     if (watch) {
-        await ctx.watch();
+        await Promise.all(contexts.map(ctx => ctx.watch()));
     } else {
-        await ctx.rebuild();
-        await ctx.dispose();
+        await Promise.all(contexts.map(ctx => ctx.rebuild()));
+        await Promise.all(contexts.map(ctx => ctx.dispose()));
     }
 }
 
