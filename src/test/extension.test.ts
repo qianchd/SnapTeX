@@ -808,6 +808,34 @@ suite('SmartRenderer', () => {
         assert.deepStrictEqual(reads, [1]);
     });
 
+    test('updates citation order from cached block metadata without rescanning all text', () => {
+        const renderer = new SmartRenderer(new MemoryFileProvider());
+        renderer.render(createDocument([
+            'See \\cite{smith2024}.',
+            'Middle text.',
+            '\\bibliography{refs}'
+        ]));
+
+        const nextDoc = createDocument([
+            'See \\cite{doe2025}.',
+            'Middle text.',
+            '\\bibliography{refs}'
+        ]);
+        const reads: number[] = [];
+        const getBlockText = nextDoc.getBlockText.bind(nextDoc);
+        nextDoc.getBlockText = (index: number) => {
+            reads.push(index);
+            return getBlockText(index);
+        };
+
+        const payload = renderer.render(nextDoc);
+
+        assert.equal(payload.type, 'patch');
+        assert.deepStrictEqual(reads, [0]);
+        assert.ok(payload.dirtyBlocks?.[2]);
+        assert.deepStrictEqual(renderer.citedKeys, ['doe2025']);
+    });
+
     test('adds block hashes from block text only and disables hash preservation on macro changes', () => {
         const renderer = new SmartRenderer(new MemoryFileProvider());
         const first = renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'x' } }));

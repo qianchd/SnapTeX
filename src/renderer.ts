@@ -166,16 +166,12 @@ export class SmartRenderer {
         return `<div class="latex-block" data-index="${index}" data-block-hash="${stableHash(text)}">${finalHtml}</div>`;
     }
 
-    private extractBlockAnchors(text: string): string[] {
+    private extractLocalBlockAnchors(text: string): string[] {
         const anchors = new Set<string>();
         const labelRegex = /\\label\s*\{([^}]+)\}/g;
         let match;
         while ((match = labelRegex.exec(text)) !== null) {
             anchors.add(match[1]);
-        }
-
-        if (R_BIBLIOGRAPHY.test(text)) {
-            this.citedKeys.forEach(key => anchors.add(`ref-${key}`));
         }
 
         return Array.from(anchors);
@@ -209,7 +205,7 @@ export class SmartRenderer {
             hash: stableHash(text),
             line: map?.start ?? 0,
             lineCount: map?.count ?? text.split(/\r?\n/).length,
-            anchors: this.extractBlockAnchors(text),
+            anchors: this.extractLocalBlockAnchors(text),
             hasBibliography: R_BIBLIOGRAPHY.test(text),
             citationKeys: this.extractCitationKeys(text)
         };
@@ -245,6 +241,38 @@ export class SmartRenderer {
         }
 
         return next;
+    }
+
+    private collectCitedKeys(blocks: BlockSnapshot[]): string[] {
+        const keys: string[] = [];
+        for (const block of blocks) {
+            for (const key of block.citationKeys) {
+                if (!keys.includes(key)) {
+                    keys.push(key);
+                }
+            }
+        }
+        return keys;
+    }
+
+    private applyBibliographyAnchors(blocks: BlockSnapshot[], citedKeys: string[]): BlockSnapshot[] {
+        return blocks.map(block => {
+            if (!block.hasBibliography) { return block; }
+            const anchors = new Set(block.anchors);
+            citedKeys.forEach(key => anchors.add(`ref-${key}`));
+            return {
+                ...block,
+                anchors: Array.from(anchors)
+            };
+        });
+    }
+
+    private haveSameCitedKeys(nextKeys: string[]): boolean {
+        if (nextKeys.length !== this.lastCitedKeys.length) { return false; }
+        for (let i = 0; i < nextKeys.length; i++) {
+            if (nextKeys[i] !== this.lastCitedKeys[i]) { return false; }
+        }
+        return true;
     }
 
     public renderBlockByIndex(index: number): string | undefined {
@@ -328,60 +356,15 @@ export class SmartRenderer {
         // 5. Diff
         const diff = DiffEngine.compute(this.lastBlocks, newHashBlocks);
 
-        // 6. Citations
-        const bibRegex = R_BIBLIOGRAPHY;
-        let bibChanged = false;
-
-        for (let i = 0; i < diff.insertCount; i++) {
-            if (bibRegex.test(getNewBlockText(diff.start + i))) { bibChanged = true; break; }
-        }
-        if (!bibChanged) {
-            for (let i = 0; i < diff.deleteCount; i++) {
-                if (this.lastBlocks[diff.start + i]?.hasBibliography) { bibChanged = true; break; }
-            }
-        }
-
-        let shouldFullScan = false;
-        if (bibChanged || this.lastBlocks.length === 0) {
-            shouldFullScan = true;
-        } else {
-            const deletedKeys = this.extractKeysFromSnapshots(this.lastBlocks, diff.start, diff.deleteCount);
-            const insertedKeys = this.extractKeysFromProvider(newBlockProvider, diff.start, diff.insertCount);
-
-            if (deletedKeys.size !== insertedKeys.size) {
-                shouldFullScan = true;
-            } else {
-                for (const key of deletedKeys) {
-                    if (!insertedKeys.has(key)) {
-                        shouldFullScan = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (shouldFullScan) {
-            this.citedKeys = [];
-            this.scanCitations(newBlockProvider);
-        } else {
-            this.citedKeys = [...this.lastCitedKeys];
-        }
-
-        let keysChanged = this.citedKeys.length !== this.lastCitedKeys.length;
-        if (!keysChanged) {
-            for (let i = 0; i < this.citedKeys.length; i++) {
-                if (this.citedKeys[i] !== this.lastCitedKeys[i]) {
-                    keysChanged = true;
-                    break;
-                }
-            }
-        }
-        this.lastCitedKeys = [...this.citedKeys];
-
-        // 7. Determine Update Strategy (Evaluate using diff.insertCount instead of insertedHtmls.length)
+        // 6. Determine Update Strategy (Evaluate using diff.insertCount instead of insertedHtmls.length)
         const isFullUpdate = this.lastBlocks.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
         let payload: PatchPayload;
-        const blockMeta = this.buildNextBlockSnapshots(blockCount, diff, getNewBlockText);
+        let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, getNewBlockText);
+        const nextCitedKeys = this.collectCitedKeys(blockMeta);
+        const keysChanged = !this.haveSameCitedKeys(nextCitedKeys);
+        this.citedKeys = nextCitedKeys;
+        this.lastCitedKeys = [...nextCitedKeys];
+        blockMeta = this.applyBibliographyAnchors(blockMeta, nextCitedKeys);
         const nextTextSnapshot = doc.createTextSnapshot();
 
         if (isFullUpdate) {
@@ -451,34 +434,6 @@ export class SmartRenderer {
     }
 
     // --- Helpers ---
-
-    private scanCitations(provider: BlockTextProvider) {
-        for (let index = 0; index < provider.getBlockCount(); index++) {
-            const text = provider.getBlockText(index) ?? '';
-            R_CITATION.lastIndex = 0;
-            let match;
-            while ((match = R_CITATION.exec(text)) !== null) {
-                const keys = match[4].split(',').map(k => k.trim());
-                keys.forEach(key => this.resolveCitation(key));
-            }
-        }
-    }
-
-    private extractKeysFromProvider(provider: BlockTextProvider, start: number, count: number): Set<string> {
-        const keys = new Set<string>();
-        for (let i = 0; i < count; i++) {
-            this.extractCitationKeys(provider.getBlockText(start + i) ?? '').forEach(key => keys.add(key));
-        }
-        return keys;
-    }
-
-    private extractKeysFromSnapshots(blocks: BlockSnapshot[], start: number, count: number): Set<string> {
-        const keys = new Set<string>();
-        for (let i = 0; i < count; i++) {
-            blocks[start + i]?.citationKeys.forEach(key => keys.add(key));
-        }
-        return keys;
-    }
 
     public getPreviewSyncData(filePath: string, line: number) {
         if (!this.currentDocument) {return null;}
