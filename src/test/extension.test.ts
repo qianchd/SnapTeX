@@ -1222,6 +1222,16 @@ suite('Webview resource loading', () => {
         assert.doesNotMatch(htmlSource, /connect-src[^;]*https:/);
     });
 
+    test('keeps renderOnSwitch fallbacks aligned with the contributed default', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+        const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
+
+        assert.equal(packageJson.contributes.configuration.properties['snaptex.renderOnSwitch'].default, false);
+        assert.doesNotMatch(extensionSource, /get<boolean>\('renderOnSwitch', true\)/);
+        assert.match(extensionSource, /get<boolean>\('renderOnSwitch', false\)/);
+    });
+
     test('lazy-loads TikZJax only when TikZ scripts are present', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const webviewSource = readWebviewRuntimeSource(repoRoot);

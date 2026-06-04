@@ -128,7 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Check Configuration
         const config = vscode.workspace.getConfiguration('snaptex');
-        const renderOnSwitch = config.get<boolean>('renderOnSwitch', true);
+        const renderOnSwitch = config.get<boolean>('renderOnSwitch', false);
 
         // [SMART ROOT DETECTION]
         if (currentRenderedUri) {
@@ -337,7 +337,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
         // [FIX] Only force an update if Render On Switch is ENABLED
-        if (editor && vscode.workspace.getConfiguration('snaptex').get<boolean>('renderOnSwitch', true)) {
+        if (editor && vscode.workspace.getConfiguration('snaptex').get<boolean>('renderOnSwitch', false)) {
             updatePreview(true);
         }
     }));
