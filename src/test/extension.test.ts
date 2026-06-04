@@ -653,6 +653,18 @@ suite('Webview resource loading', () => {
         assert.match(styleSource, /\.tikz-stale-preview/);
     });
 
+    test('routes TikZ compile failures through the webview error state', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
+
+        assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-failed'/);
+        assert.match(webviewSource, /window\.failTikzContainer\(container, message\)/);
+        assert.match(tikzJaxSource, /tikzjax-load-failed/);
+        assert.match(tikzJaxSource, /new CustomEvent\("tikzjax-load-failed"/);
+        assert.doesNotMatch(tikzJaxSource, /invalid\.site\/img-not-found\.png/);
+    });
+
     test('bootstraps dynamic TikZJax with a self-contained blob worker in VS Code webviews', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');

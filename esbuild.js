@@ -34,6 +34,8 @@ function patchTikzJaxWorkerBootstrap(tikzDest) {
     const patchedRunTexLoad = 'YA({async load(A){snaptexAssetUrls=A&&A.assets||null,zn=A&&A.base||A,Zn=await Xn("tex.wasm.gz"),Wn=new Uint8Array(await Xn("core.dump.gz"),0,65536*wn)},async texify';
     const originalRenderStart = 's=async e=>{const t=e.childNodes[0].nodeValue';
     const patchedRenderStart = 's=async e=>{if(!e.isConnected&&(!e.loader||!e.loader.isConnected))return;const t=e.childNodes[0].nodeValue';
+    const originalRenderError = 'catch(e){return console.log(e),void(r.outerHTML=\'<img src="//invalid.site/img-not-found.png">\')}';
+    const patchedRenderError = 'catch(e){console.log(e);const t=new CustomEvent("tikzjax-load-failed",{bubbles:!0,detail:{message:e&&e.message?e.message:"TikZ rendering failed."}});return void r.dispatchEvent(t)}';
     const originalRenderReplace = 'if(r.replaceWith(a),!e.dataset.disableCache)try{';
     const patchedRenderReplace = 'if(!r.isConnected)return;if(r.replaceWith(a),!e.dataset.disableCache)try{';
 
@@ -48,6 +50,7 @@ function patchTikzJaxWorkerBootstrap(tikzDest) {
         || !source.includes(patchedLoad)
         || !source.includes(patchedTerminate)
         || !source.includes(patchedRenderStart)
+        || !source.includes(patchedRenderError)
         || !source.includes(patchedRenderReplace)
     ) {
         if (
@@ -55,6 +58,7 @@ function patchTikzJaxWorkerBootstrap(tikzDest) {
             || !source.includes(originalLoad)
             || !source.includes(originalTerminate)
             || !source.includes(originalRenderStart)
+            || !source.includes(originalRenderError)
             || !source.includes(originalRenderReplace)
         ) {
             console.warn('[build] Warning: TikZJax worker bootstrap patch target not found.');
@@ -64,6 +68,7 @@ function patchTikzJaxWorkerBootstrap(tikzDest) {
                 .replace(originalLoad, patchedLoad)
                 .replace(originalTerminate, patchedTerminate)
                 .replace(originalRenderStart, patchedRenderStart)
+                .replace(originalRenderError, patchedRenderError)
                 .replace(originalRenderReplace, patchedRenderReplace);
             fs.writeFileSync(tikzJaxFile, source);
             patched = true;

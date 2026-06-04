@@ -162,6 +162,14 @@
         setTikzContainerState(container, 'rendered');
     });
 
+    document.addEventListener('tikzjax-load-failed', event => {
+        const container = getTikzContainerFromEvent(event);
+        if (!container) return;
+
+        const message = event.detail?.message || 'TikZ rendering failed.';
+        window.failTikzContainer(container, message);
+    });
+
     // --- Global PDF Helper ---
     window.pdfReqQueue = [];
     window.renderPdfToCanvas = function(path, canvasId) {
