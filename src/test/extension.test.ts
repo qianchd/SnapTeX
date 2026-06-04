@@ -5,152 +5,27 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BibTexParser } from '../bib';
-import { DocumentParseResult, LatexDocument } from '../document';
+import { LatexDocument } from '../document';
 import { DiffEngine } from '../diff';
-import { IFileProvider } from '../file-provider';
 import { extractMetadata } from '../metadata';
 import { isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { ProtectionManager } from '../protection';
 import { postProcessHtml } from '../rules';
-import { BlockTextProvider, LatexCounterScanner } from '../scanner';
-import { BlockSpan, LatexBlockSplitter } from '../splitter';
+import { LatexCounterScanner } from '../scanner';
+import { LatexBlockSplitter } from '../splitter';
 import { SmartRenderer } from '../renderer';
 import { cleanLatexCommands, extractAndHideLabels, findCommand, normalizeUri, resolveLatexStyles, stableHash } from '../utils';
-
-class MemoryFileProvider implements IFileProvider {
-    constructor(private readonly files: Map<string, string> = new Map()) {}
-
-    async read(uri: vscode.Uri): Promise<string> {
-        const content = this.files.get(normalizeUri(uri));
-        if (content === undefined) {
-            throw new Error(`Missing test file: ${uri.toString()}`);
-        }
-        return content;
-    }
-
-    async readBuffer(uri: vscode.Uri): Promise<Uint8Array> {
-        return new TextEncoder().encode(await this.read(uri));
-    }
-
-    async exists(uri: vscode.Uri): Promise<boolean> {
-        return this.files.has(normalizeUri(uri));
-    }
-
-    async stat(uri: vscode.Uri): Promise<{ mtime: number }> {
-        return { mtime: this.files.has(normalizeUri(uri)) ? 1 : 0 };
-    }
-
-    resolve(base: vscode.Uri, relative: string): vscode.Uri {
-        return vscode.Uri.joinPath(base, relative);
-    }
-
-    dir(uri: vscode.Uri): vscode.Uri {
-        return vscode.Uri.joinPath(uri, '..');
-    }
-}
-
-function createDocument(
-    blockTexts: string[],
-    options: {
-        macros?: Record<string, string>;
-        tikzGlobal?: string;
-        title?: string;
-        author?: string;
-        date?: string;
-    } = {}
-): LatexDocument {
-    const doc = new LatexDocument(new MemoryFileProvider());
-    let bodyText = "";
-    let offset = 0;
-    let line = 0;
-    const blockSpans: BlockSpan[] = [];
-
-    for (let index = 0; index < blockTexts.length; index++) {
-        if (index > 0) {
-            bodyText += '\n\n';
-            offset += 2;
-            line += 2;
-        }
-
-        const text = blockTexts[index];
-        const start = offset;
-        const end = start + text.length;
-        const lineCount = text.split(/\r?\n/).length;
-        bodyText += text;
-        blockSpans.push({ start, end, line, lineCount });
-        offset = end;
-        line += lineCount;
-    }
-
-    doc.applyResult({
-        bodyText,
-        blockSpans,
-        blockHashes: blockTexts.map(text => stableHash(text)),
-        metadataSensitiveBlocks: blockTexts.map(text => text.trim().includes('\\maketitle')),
-        filePool: [],
-        sourceFileIndices: new Uint16Array(0),
-        sourceLines: new Int32Array(0),
-        metadata: {
-            macros: options.macros ?? {},
-            tikzGlobal: options.tikzGlobal ?? '',
-            tikzMacroMap: new Map(),
-            title: options.title,
-            author: options.author,
-            date: options.date
-        },
-        bibEntries: new Map(),
-        contentStartLineOffset: 0
-    });
-    return doc;
-}
-
-function renderBlocks(blockTexts: string[]): string {
-    const renderer = new SmartRenderer();
-    const payload = renderer.render(createDocument(blockTexts));
-    assert.equal(payload.type, 'full');
-    assert.ok(payload.htmls);
-    return payload.htmls.join('');
-}
-
-function readFixture(name: string): string {
-    return fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', name), 'utf8');
-}
-
-function spanText(text: string, span: BlockSpan): string {
-    return text.slice(span.start, span.end);
-}
-
-function resultBlockTexts(result: DocumentParseResult): string[] {
-    return result.blockSpans.map(span => spanText(result.bodyText, span));
-}
-
-function createBlockTextProvider(blocks: string[], reads?: number[]): BlockTextProvider {
-    return {
-        getBlockCount: () => blocks.length,
-        getBlockText: (index: number) => {
-            reads?.push(index);
-            return blocks[index];
-        },
-        getBlockHash: (index: number) => blocks[index] === undefined ? undefined : stableHash(blocks[index])
-    };
-}
-
-function scanBlocks(blocks: string[], scanner = new LatexCounterScanner()) {
-    return scanner.scan(createBlockTextProvider(blocks));
-}
-
-function readWebviewRuntimeSource(repoRoot: string): string {
-    const webviewSourceDir = path.join(repoRoot, 'src', 'webview');
-    const webviewSources = fs.readdirSync(webviewSourceDir)
-        .filter(file => file.endsWith('.ts'))
-        .sort()
-        .map(file => path.join(webviewSourceDir, file));
-
-    return [
-        path.join(repoRoot, 'media', 'webview.html'),
-        ...webviewSources
-    ].map(file => fs.readFileSync(file, 'utf8')).join('\n');
-}
+import {
+    createBlockTextProvider,
+    createDocument,
+    MemoryFileProvider,
+    readFixture,
+    readWebviewRuntimeSource,
+    renderBlocks,
+    resultBlockTexts,
+    scanBlocks,
+    spanText
+} from './test-helpers';
 
 suite('DiffEngine', () => {
     test('computes unchanged, insert, delete, and replace spans', () => {
