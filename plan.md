@@ -197,17 +197,21 @@
   - Unclosed braces.
   - Unclosed environments.
   - Broken display math.
-- [ ] Harden HTML escaping for user-controlled fields.
+- [x] Harden HTML escaping for user-controlled fields.
   - [x] title, author, date.
-  - captions.
-  - labels and ids.
-  - citation keys.
-  - BibTeX fields.
-  - URLs.
-- [ ] Reduce MarkdownIt/KaTeX trust surface.
-  - Evaluate `MarkdownIt({ html: false })`.
-  - Use a KaTeX `trust` function instead of `trust: true`.
-- [ ] Tighten webview CSP.
+  - [x] captions.
+  - [x] labels and ids.
+  - [x] citation keys.
+  - [x] BibTeX fields.
+  - [x] URLs.
+  - [x] figure/PDF request attributes.
+  - [x] TikZ pending-script text.
+- [x] Reduce MarkdownIt/KaTeX trust surface.
+  - [x] Switch to `MarkdownIt({ html: false })`.
+  - [x] Set KaTeX `trust: false`.
+- [ ] Continue tightening webview CSP.
+  - [x] Remove remote `https://unpkg.com` script source.
+  - [x] Remove remote `https:` connect source.
   - Remove unnecessary `unsafe-eval` if possible.
   - Prefer local bundled resources.
   - Move toward nonce-based scripts when the webview script is externalized.
@@ -307,26 +311,28 @@
 - [x] Introduce a narrow `RenderContext` interface.
 - [x] Remove the `rules.ts -> SmartRenderer` import.
 - [x] Replace `PreprocessRule.apply(..., renderer: any)` with `RenderContext`.
-- [ ] Move `media/webview.html` inline script into bundled TypeScript modules.
+- [x] Move `media/webview.html` inline script into bundled TypeScript modules.
   - main.
+  - pdf.
+  - tikz.
+  - virtualization.
+- [ ] Continue splitting the large webview controller into focused modules.
   - controller.
   - dom-update.
   - scroll-sync.
   - tooltip.
-  - pdf.
-  - tikz.
   - types.
 - [ ] Define strict extension-to-webview and webview-to-extension message types.
 - [ ] Add exhaustiveness checks for message switches.
 
 ### H. Span/Hash Document Model
 
-- [ ] Change splitter output toward spans instead of copied block text.
-- [ ] Store body text once in `LatexDocument`.
-- [ ] Add `getBlockText(index)` on `LatexDocument`.
-- [ ] Replace long-lived `lastBlockTexts` with block metadata and hashes.
-- [ ] Update `DiffEngine` to diff by hash/meta.
-- [ ] Update scanner input to a `BlockTextProvider`.
+- [x] Change splitter output toward spans instead of copied block text.
+- [x] Store body text once in `LatexDocument`.
+- [x] Add `getBlockText(index)` on `LatexDocument`.
+- [x] Replace long-lived `lastBlockTexts` with block metadata and hashes.
+- [x] Update `DiffEngine` to diff by hash/meta.
+- [x] Update scanner input to a `BlockTextProvider`.
 - [ ] Add incremental scanner checkpoints later.
 - [ ] Very low priority: track a bibliography fingerprint and mark citation/bibliography blocks dirty when only `.bib` content changes.
   - Do not proactively schedule this work; revisit only if the user explicitly asks for live `.bib` refresh.
