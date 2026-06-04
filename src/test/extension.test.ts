@@ -572,13 +572,20 @@ suite('Webview resource loading', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
         const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
+        const runTexSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'run-tex.js'), 'utf8');
 
         assert.match(buildSource, /patchTikzJaxWorkerBootstrap/);
         assert.match(buildSource, /CORSWorkaround:!1/);
         assert.match(tikzJaxSource, /fetch\(`\$\{e\}\/run-tex\.js`\)/);
+        assert.match(tikzJaxSource, /tex\.wasm\.gz/);
+        assert.match(tikzJaxSource, /core\.dump\.gz/);
+        assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:/);
         assert.match(tikzJaxSource, /URL\.createObjectURL\(new Blob/);
         assert.match(tikzJaxSource, /new o\([^,]+,\{CORSWorkaround:!1\}\)/);
         assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`\)/);
+        assert.doesNotMatch(tikzJaxSource, /try\{await r\.load\(e\)\}catch\(e\)\{console\.log\(e\)\}return r/);
+        assert.match(runTexSource, /snaptexAssetUrls&&snaptexAssetUrls\[A\]/);
+        assert.match(runTexSource, /snaptexAssetUrls=A&&A\.assets\|\|null/);
     });
 });
 

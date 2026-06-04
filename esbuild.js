@@ -8,30 +8,53 @@ const watch = process.argv.includes('--watch');
 
 function patchTikzJaxWorkerBootstrap(tikzDest) {
     const tikzJaxFile = path.join(tikzDest, 'tikzjax.js');
+    const runTexFile = path.join(tikzDest, 'run-tex.js');
     const originalBootstrap = 'const e=N.href.replace(/\\/tikzjax\\.js(?:\\?.*)?$/,""),r=await t(new o(`${e}/run-tex.js`));';
-    const patchedBootstrap = 'const e=N.href.replace(/\\/tikzjax\\.js(?:\\?.*)?$/,"");let r,s;try{const i=await fetch(`${e}/run-tex.js`);if(!i.ok)throw new Error(`Failed to load run-tex.js: ${i.status}`);s=URL.createObjectURL(new Blob([await i.text()],{type:"text/javascript"})),r=await t(new o(s,{CORSWorkaround:!1}),{timeout:60000})}catch(e){throw s&&URL.revokeObjectURL(s),e}r.__snaptexRunTexBlobUrl=s;';
+    const patchedBootstrap = 'const e=N.href.replace(/\\/tikzjax\\.js(?:\\?.*)?$/,"");let r,s,i,a;try{const c=async A=>{const t=await fetch(`${e}/${A}`);if(!t.ok)throw new Error(`Failed to load ${A}: ${t.status}`);return URL.createObjectURL(await t.blob())};const u=await fetch(`${e}/run-tex.js`);if(!u.ok)throw new Error(`Failed to load run-tex.js: ${u.status}`);s=URL.createObjectURL(new Blob([await u.text()],{type:"text/javascript"})),i=await c("tex.wasm.gz"),a=await c("core.dump.gz"),r=await t(new o(s,{CORSWorkaround:!1}),{timeout:60000})}catch(e){throw s&&URL.revokeObjectURL(s),i&&URL.revokeObjectURL(i),a&&URL.revokeObjectURL(a),e}r.__snaptexRunTexBlobUrls=[s,i,a];';
+    const originalLoad = 'try{await r.load(e)}catch(e){console.log(e)}return r';
+    const patchedLoad = 'try{await r.load({base:e,assets:{"tex.wasm.gz":i,"core.dump.gz":a}})}catch(e){try{await n.terminate(r)}finally{r.__snaptexRunTexBlobUrls.forEach((e=>e&&URL.revokeObjectURL(e)))}throw e}return r';
     const originalTerminate = 'Z=async()=>{H&&H.disconnect(),await n.terminate(await V)};';
-    const patchedTerminate = 'Z=async()=>{H&&H.disconnect();const e=await V;await n.terminate(e),e.__snaptexRunTexBlobUrl&&URL.revokeObjectURL(e.__snaptexRunTexBlobUrl)};';
+    const patchedTerminate = 'Z=async()=>{H&&H.disconnect();const e=await V;await n.terminate(e),e.__snaptexRunTexBlobUrls&&e.__snaptexRunTexBlobUrls.forEach((e=>e&&URL.revokeObjectURL(e)))};';
+    const originalRunTexFetch = 'let Wn,Zn,zn;const Xn=async A=>{const t=await fetch(`${zn}/${A}`);';
+    const patchedRunTexFetch = 'let Wn,Zn,zn,snaptexAssetUrls=null;const Xn=async A=>{const t=await fetch(snaptexAssetUrls&&snaptexAssetUrls[A]||`${zn}/${A}`);';
+    const originalRunTexLoad = 'YA({async load(A){zn=A,Zn=await Xn("tex.wasm.gz"),Wn=new Uint8Array(await Xn("core.dump.gz"),0,65536*wn)},async texify';
+    const patchedRunTexLoad = 'YA({async load(A){snaptexAssetUrls=A&&A.assets||null,zn=A&&A.base||A,Zn=await Xn("tex.wasm.gz"),Wn=new Uint8Array(await Xn("core.dump.gz"),0,65536*wn)},async texify';
 
-    if (!fs.existsSync(tikzJaxFile)) {
+    if (!fs.existsSync(tikzJaxFile) || !fs.existsSync(runTexFile)) {
         return;
     }
 
+    let patched = false;
     let source = fs.readFileSync(tikzJaxFile, 'utf8');
-    if (source.includes(patchedBootstrap) && source.includes(patchedTerminate)) {
-        return;
+    if (!source.includes(patchedBootstrap) || !source.includes(patchedLoad) || !source.includes(patchedTerminate)) {
+        if (!source.includes(originalBootstrap) || !source.includes(originalLoad) || !source.includes(originalTerminate)) {
+            console.warn('[build] Warning: TikZJax worker bootstrap patch target not found.');
+        } else {
+            source = source
+                .replace(originalBootstrap, patchedBootstrap)
+                .replace(originalLoad, patchedLoad)
+                .replace(originalTerminate, patchedTerminate);
+            fs.writeFileSync(tikzJaxFile, source);
+            patched = true;
+        }
     }
 
-    if (!source.includes(originalBootstrap) || !source.includes(originalTerminate)) {
-        console.warn('[build] Warning: TikZJax worker bootstrap patch target not found.');
-        return;
+    let runTexSource = fs.readFileSync(runTexFile, 'utf8');
+    if (!runTexSource.includes(patchedRunTexFetch) || !runTexSource.includes(patchedRunTexLoad)) {
+        if (!runTexSource.includes(originalRunTexFetch) || !runTexSource.includes(originalRunTexLoad)) {
+            console.warn('[build] Warning: TikZJax run-tex asset loader patch target not found.');
+        } else {
+            runTexSource = runTexSource
+                .replace(originalRunTexFetch, patchedRunTexFetch)
+                .replace(originalRunTexLoad, patchedRunTexLoad);
+            fs.writeFileSync(runTexFile, runTexSource);
+            patched = true;
+        }
     }
 
-    source = source
-        .replace(originalBootstrap, patchedBootstrap)
-        .replace(originalTerminate, patchedTerminate);
-    fs.writeFileSync(tikzJaxFile, source);
-    console.log('[build] Patched TikZJax worker bootstrap.');
+    if (patched) {
+        console.log('[build] Patched TikZJax worker bootstrap.');
+    }
 }
 
 /**
