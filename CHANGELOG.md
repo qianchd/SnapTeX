@@ -2,6 +2,11 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.5.13] - 2026-05-14
+- **Added**: clean_layout_cmds rule to preprocess layout commands and no-indent markers
+- **Enhanced**: thm/defi/assu/prop/... environments handling with dynamic counter management
+- **Fixed**: texttt rendering and solving title meta info leakage
+
 ## [0.5.12] - 2026-04-29
 
 - **Fixed**: Match {figure*} and {algorithm*}
