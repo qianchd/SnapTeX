@@ -12,28 +12,32 @@ export interface DiffResult {
     insertCount: number;
 }
 
+export interface HashComparable {
+    hash: string;
+}
+
 /**
  * Engine responsible for calculating the difference between two states of blocks.
  * Pure logic, no side effects, zero array allocations.
  */
 export class DiffEngine {
-    public static compute(oldBlockTexts: string[], newBlockTexts: string[]): DiffResult {
+    public static compute(oldBlocks: readonly HashComparable[], newBlocks: readonly HashComparable[]): DiffResult {
         let start = 0;
-        const minLen = Math.min(newBlockTexts.length, oldBlockTexts.length);
+        const minLen = Math.min(newBlocks.length, oldBlocks.length);
 
         // 1. Scan from start (Prefix Match)
-        while (start < minLen && newBlockTexts[start] === oldBlockTexts[start]) {
+        while (start < minLen && newBlocks[start].hash === oldBlocks[start].hash) {
             start++;
         }
 
         // 2. Scan from end (Suffix Match)
         let end = 0;
-        const maxEnd = Math.min(oldBlockTexts.length - start, newBlockTexts.length - start);
+        const maxEnd = Math.min(oldBlocks.length - start, newBlocks.length - start);
 
         while (end < maxEnd) {
-            const oldTail = oldBlockTexts[oldBlockTexts.length - 1 - end];
-            const newTail = newBlockTexts[newBlockTexts.length - 1 - end];
-            if (oldTail !== newTail) {
+            const oldTail = oldBlocks[oldBlocks.length - 1 - end];
+            const newTail = newBlocks[newBlocks.length - 1 - end];
+            if (oldTail.hash !== newTail.hash) {
                 break;
             }
             end++;
@@ -42,9 +46,9 @@ export class DiffEngine {
         // 3. Return only indices, avoid array slicing
         return {
             start,
-            deleteCount: oldBlockTexts.length - start - end,
+            deleteCount: oldBlocks.length - start - end,
             end,
-            insertCount: newBlockTexts.length - start - end
+            insertCount: newBlocks.length - start - end
         };
     }
 }

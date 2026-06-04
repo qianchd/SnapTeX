@@ -22,6 +22,12 @@ export interface DocumentParseResult {
     contentStartLineOffset: number;
 }
 
+export interface BlockTextSnapshot {
+    bodyText: string;
+    blockSpans: BlockSpan[];
+    blockHashes: string[];
+}
+
 // Cache Entry Interface
 interface BibCacheEntry {
     mtime: number;
@@ -79,6 +85,18 @@ export class LatexDocument {
 
     public getBlockHash(index: number): string | undefined {
         return this.blockHashes[index];
+    }
+
+    public getBlockSpan(index: number): BlockSpan | undefined {
+        return this.blockSpans[index];
+    }
+
+    public createTextSnapshot(): BlockTextSnapshot {
+        return {
+            bodyText: this.bodyText,
+            blockSpans: [...this.blockSpans],
+            blockHashes: [...this.blockHashes]
+        };
     }
 
     public applyResult(result: DocumentParseResult) {
