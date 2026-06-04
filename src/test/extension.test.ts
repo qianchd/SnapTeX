@@ -1068,6 +1068,20 @@ suite('PDF request validation', () => {
         assert.match(panelSource, /if \(sourceChanged\) \{\s*this\._renderer\.resetState\(\);\s*\}/);
     });
 
+    test('waits for the webview ready handshake before sending the first preview update', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
+        const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
+
+        assert.match(panelSource, /private _webviewReady = false/);
+        assert.match(panelSource, /message\.command === 'webviewLoaded'[\s\S]*this\._webviewReady = true/);
+        assert.match(panelSource, /void this\.update\(this\._pendingRootUri\)/);
+        assert.match(panelSource, /const docUri = rootUri \?\? this\._pendingRootUri \?\? this\.resolveUpdateUri\(\)/);
+        assert.match(panelSource, /if \(!this\._webviewReady\) \{\s*return;\s*\}/);
+        assert.match(extensionSource, /const panel = TexPreviewPanel\.createOrShow\(context\.extensionUri, renderer\)/);
+        assert.match(extensionSource, /void panel\.update\(editor\.document\.uri\)/);
+    });
+
     test('prunes virtualized block html and height caches to active block keys', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const webviewSource = readWebviewRuntimeSource(repoRoot);

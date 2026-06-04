@@ -89,6 +89,7 @@ export class TexPreviewPanel {
     private _currentDocument: LatexDocument | undefined;
     private _updateRunning = false;
     private _pendingRootUri: vscode.Uri | undefined;
+    private _webviewReady = false;
 
     private readonly _onWebviewLoadedEmitter = new vscode.EventEmitter<void>();
     public readonly onWebviewLoaded = this._onWebviewLoadedEmitter.event;
@@ -145,14 +146,14 @@ export class TexPreviewPanel {
         this._currentDocument = new LatexDocument(this._fileProvider);
 
         this._renderer.resetState();
-        this._initWebviewHtml();
 
         this._panel.webview.onDidReceiveMessage(
             async message => {
                 if (message.command === 'webviewLoaded') {
                     console.log('[SnapTeX] Webview reloaded.');
+                    this._webviewReady = true;
                     this._renderer.resetState();
-                    this.update();
+                    void this.update(this._pendingRootUri);
                     this._onWebviewLoadedEmitter.fire();
                 } else if (message.command === 'revealLine') {
                     this.handleRevealLine(message);
@@ -168,11 +169,13 @@ export class TexPreviewPanel {
             this._disposables
         );
 
-        this.update();
+        void this._initWebviewHtml();
+        void this.update();
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
     }
 
     private async _initWebviewHtml() {
+        this._webviewReady = false;
         this._panel.webview.html = await this._getWebviewSkeleton();
     }
 
@@ -326,10 +329,14 @@ export class TexPreviewPanel {
      * ignoring the currently active editor file.
      */
     public async update(rootUri?: vscode.Uri) {
-        const docUri = this.resolveUpdateUri(rootUri);
+        const docUri = rootUri ?? this._pendingRootUri ?? this.resolveUpdateUri();
         if (!docUri) { return; }
 
         this._pendingRootUri = docUri;
+        if (!this._webviewReady) {
+            return;
+        }
+
         if (this._updateRunning) {
             return;
         }

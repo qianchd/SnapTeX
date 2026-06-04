@@ -176,8 +176,12 @@ export function activate(context: vscode.ExtensionContext) {
             updatePreview(true);
         }
         else {
-            TexPreviewPanel.createOrShow(context.extensionUri, renderer);
-            if (vscode.window.activeTextEditor) { currentRenderedUri = vscode.window.activeTextEditor.document.uri; }
+            const editor = vscode.window.activeTextEditor;
+            const panel = TexPreviewPanel.createOrShow(context.extensionUri, renderer);
+            if (editor) {
+                currentRenderedUri = editor.document.uri;
+                void panel.update(editor.document.uri);
+            }
         }
     }));
 
