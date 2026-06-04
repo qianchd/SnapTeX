@@ -26,6 +26,7 @@ export interface PatchPayload {
     deleteCount?: number;
     htmls?: string[];
     shift?: number;
+    preserveUnchangedBlocks?: boolean;
 
     // Numbering Data Update
     numbering?: {

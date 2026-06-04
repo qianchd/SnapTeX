@@ -35,6 +35,8 @@
     const TIKZ_ACTIVE_SCRIPT_TYPE = 'text/tikz';
     const TIKZ_PENDING_SCRIPT_SELECTOR = `script[type="${TIKZ_PENDING_SCRIPT_TYPE}"]`;
     const TIKZ_SCRIPT_SELECTOR = `${TIKZ_PENDING_SCRIPT_SELECTOR}, script[type="${TIKZ_ACTIVE_SCRIPT_TYPE}"]`;
+    const PDF_RENDER_MARGIN = 1200;
+    const PDF_RELEASE_MARGIN = 3600;
 
     function hasRenderedTikz(container) {
         return !!container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
@@ -760,7 +762,11 @@
                 this.setState('RENDERING');
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
-                this.smartFullUpdate(payload.html);
+                if (payload.htmls) {
+                    this.smartFullUpdateFromBlocks(payload.htmls, payload.preserveUnchangedBlocks !== false);
+                } else {
+                    this.smartFullUpdate(payload.html, payload.preserveUnchangedBlocks !== false);
+                }
                 this.logDomStats('after full update');
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
@@ -1034,10 +1040,37 @@
             }
         }
 
-        smartFullUpdate(newHtml) {
+        shouldReplaceBlock(oldBlock, newBlock, preserveUnchangedBlocks) {
+            if (!preserveUnchangedBlocks) return true;
+
+            const oldHash = oldBlock.getAttribute('data-block-hash');
+            const newHash = newBlock.getAttribute('data-block-hash');
+            if (!oldHash || !newHash) return true;
+
+            return oldHash !== newHash;
+        }
+
+        smartFullUpdate(newHtml, preserveUnchangedBlocks = true) {
             const parser = new DOMParser();
             const newDoc = parser.parseFromString(newHtml, 'text/html');
             const newElements = Array.from(newDoc.body.children);
+            this.smartFullUpdateElements(newElements, preserveUnchangedBlocks);
+        }
+
+        parseBlockHtml(html) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = html;
+            return tempDiv.firstElementChild;
+        }
+
+        smartFullUpdateFromBlocks(htmls, preserveUnchangedBlocks = true) {
+            const newElements = htmls
+                .map(html => this.parseBlockHtml(html))
+                .filter(Boolean);
+            this.smartFullUpdateElements(newElements, preserveUnchangedBlocks);
+        }
+
+        smartFullUpdateElements(newElements, preserveUnchangedBlocks = true) {
             const oldElements = Array.from(this.contentRoot.children);
             const maxLen = Math.max(newElements.length, oldElements.length);
             for (let i = 0; i < maxLen; i++) {
@@ -1045,7 +1078,7 @@
                 const oldEl = oldElements[i];
                 if (!newEl) { if (oldEl) oldEl.remove(); continue; }
                 if (!oldEl) { this.contentRoot.appendChild(newEl); continue; }
-                if (oldEl.outerHTML !== newEl.outerHTML) {
+                if (this.shouldReplaceBlock(oldEl, newEl, preserveUnchangedBlocks)) {
                     this.replaceBlockPreservingTikz(oldEl, newEl);
                 }
             }
@@ -1158,8 +1191,26 @@
 
         isPdfCanvasNearViewport(canvas) {
             const rect = canvas.getBoundingClientRect();
-            const margin = 1200;
-            return rect.bottom >= -margin && rect.top <= window.innerHeight + margin;
+            return rect.bottom >= -PDF_RENDER_MARGIN && rect.top <= window.innerHeight + PDF_RENDER_MARGIN;
+        }
+
+        isPdfCanvasFarFromViewport(canvas) {
+            const rect = canvas.getBoundingClientRect();
+            return rect.bottom < -PDF_RELEASE_MARGIN || rect.top > window.innerHeight + PDF_RELEASE_MARGIN;
+        }
+
+        releasePdfCanvasBitmap(canvas) {
+            if (canvas.getAttribute('data-rendered') !== 'true' || canvas.getAttribute('data-pdf-released') === 'true') return;
+
+            const rect = canvas.getBoundingClientRect();
+            if (rect.height > 0) {
+                canvas.style.height = `${Math.ceil(rect.height)}px`;
+            }
+            canvas.width = 0;
+            canvas.height = 0;
+            canvas.removeAttribute('data-rendered');
+            canvas.removeAttribute('data-requested');
+            canvas.setAttribute('data-pdf-released', 'true');
         }
 
         schedulePendingPdfRender() {
@@ -1183,6 +1234,9 @@
         renderPendingPdfs() {
             const pdfCanvases = document.querySelectorAll('canvas[data-req-path]');
             pdfCanvases.forEach(canvas => {
+                if (this.isPdfCanvasFarFromViewport(canvas)) {
+                    this.releasePdfCanvasBitmap(canvas);
+                }
                 if (canvas.getAttribute('data-rendered') || canvas.getAttribute('data-requested')) return;
                 if (this.isPdfCanvasNearViewport(canvas)) {
                     this.requestPdfCanvas(canvas);
@@ -1316,6 +1370,8 @@
         ctx.fillText(message, 10, 50);
         canvas.setAttribute('data-rendered', 'true');
         canvas.removeAttribute('data-requested');
+        canvas.removeAttribute('data-pdf-released');
+        canvas.style.height = '';
     }
 
     async function renderPdfDocument(canvas, loadingTask) {
@@ -1336,6 +1392,8 @@
 
             canvas.setAttribute('data-rendered', 'true');
             canvas.removeAttribute('data-requested');
+            canvas.removeAttribute('data-pdf-released');
+            canvas.style.height = '';
 
             page.cleanup();
         } finally {

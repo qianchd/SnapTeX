@@ -351,28 +351,9 @@ export class TexPreviewPanel {
             };
 
             if (payload.type === 'full' && payload.htmls) {
-
-                let fullHtml = '';
-                for (const html of payload.htmls) {
-                    fullHtml += fixPaths(html);
-                }
-                logHostMemory('after fixPaths/fullHtml');
-
-                let binaryHtml: Uint8Array;
-                if (typeof Buffer !== 'undefined') {
-                    binaryHtml = Buffer.from(fullHtml);
-                } else {
-                    const encoder = new TextEncoder();
-                    binaryHtml = encoder.encode(fullHtml);
-                }
-                logHostMemory('after Buffer');
-                const { htmls, ...payloadWithoutHtmls } = payload;
-
-                this._panel.webview.postMessage({
-                    command: 'update_binary',
-                    payload: payloadWithoutHtmls,
-                    binaryData: binaryHtml
-                });
+                payload.htmls = payload.htmls.map(h => fixPaths(h));
+                logHostMemory('after fixPaths/fullBlocks');
+                this._panel.webview.postMessage({ command: 'update', payload });
                 logHostMemory('after postMessage');
             } else {
                 if (payload.type === 'patch' && payload.htmls) {

@@ -9,7 +9,7 @@ import { LatexCounterScanner } from './scanner';
 import { BibEntry } from './bib';
 import { R_CITATION, R_BIBLIOGRAPHY } from './patterns';
 import { IFileProvider } from './file-provider';
-import { normalizeUri } from './utils';
+import { normalizeUri, stableHash } from './utils';
 import { ProtectionManager } from './protection'; // [NEW]
 
 /**
@@ -148,7 +148,7 @@ export class SmartRenderer {
 
         this.protector.reset();
 
-        return `<div class="latex-block" data-index="${index}">${finalHtml}</div>`;
+        return `<div class="latex-block" data-index="${index}" data-block-hash="${stableHash(text)}">${finalHtml}</div>`;
     }
 
     public render(doc: LatexDocument): PatchPayload {
@@ -159,7 +159,8 @@ export class SmartRenderer {
 
         // 1. Macros
         const currentMacrosJson = JSON.stringify(doc.metadata.macros);
-        if (currentMacrosJson !== this.lastMacrosJson) {
+        const macrosChanged = currentMacrosJson !== this.lastMacrosJson;
+        if (macrosChanged) {
             this.rebuildMarkdownEngine(doc.metadata.macros);
             this.lastBlockTexts = [];
             this.lastMacrosJson = currentMacrosJson;
@@ -264,6 +265,7 @@ export class SmartRenderer {
                 start: undefined,
                 deleteCount: undefined,
                 shift: undefined,
+                preserveUnchangedBlocks: !macrosChanged,
                 numbering: numberingData,
                 dirtyBlocks: undefined
             };
