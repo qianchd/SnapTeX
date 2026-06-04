@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 47 tests after adding fixture-backed long-document smoke coverage.
+> Last verified: `npm test` passed with 49 tests after escaping `\maketitle` metadata and hashing the metadata rerender fingerprint.
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -111,6 +111,13 @@
 - [x] `d899239 Refine TikZ rendering maintenance code`
 - [x] `976e6ea Coalesce TikZ preview render requests`
 - [x] `bc013c6 Harden TikZ render batching`
+- [x] `617a57c Update optimization plan after TikZ work`
+- [x] `b9649a5 Bump version and tune TikZ timeouts`
+- [x] `56072ae Use block hashes for full update diffing`
+- [x] `6bff34e Release far-offscreen PDF canvases`
+- [x] `e76c37e Send full updates as block payloads`
+- [x] `57dd397 Prepare disabled block virtualization plumbing`
+- [x] `aeb0767 Add long document fixture smoke test`
 
 ## Pending: Next Correctness and Architecture Work
 
@@ -124,7 +131,10 @@
 - [x] 4. Start the full-update payload transition with a low-risk block payload path.
 - [x] 5. Prepare shell-based block virtualization without turning it on globally.
 - [x] 6. Split or strengthen tests where the current monolithic suite is making changes risky.
-- [ ] 7. Apply low-risk security and architecture cleanup only where tests can pin behavior.
+- [x] 7. Apply low-risk security and architecture cleanup only where tests can pin behavior.
+  - Escaped `\maketitle` title/author/date metadata before inserting it into protected HTML.
+  - Kept LaTeX metadata formatting and inline math rendering covered by tests.
+  - Replaced raw metadata rerender fingerprints with stable hash fingerprints.
 
 ### A. Remaining Correctness and Security
 
@@ -153,7 +163,7 @@
   - Unclosed environments.
   - Broken display math.
 - [ ] Harden HTML escaping for user-controlled fields.
-  - title, author, date.
+  - [x] title, author, date.
   - captions.
   - labels and ids.
   - citation keys.

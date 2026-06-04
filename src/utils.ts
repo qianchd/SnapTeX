@@ -51,6 +51,19 @@ export function decodeLatexAccents(text: string): string {
     return text;
 }
 
+export function escapeHtml(text: string): string {
+    return text.replace(/[&<>"']/g, char => {
+        switch (char) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '"': return '&quot;';
+            case "'": return '&#39;';
+            default: return char;
+        }
+    });
+}
+
 /**
  * Helper: Apply LaTeX text styles (bold, italic, underline, color, etc.) to HTML tags.
  * This encapsulates logic originally in 'text_styles' rule for reuse.

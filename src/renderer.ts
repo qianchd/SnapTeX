@@ -170,7 +170,7 @@ export class SmartRenderer {
         const safeTitle = (this.currentTitle || '').replace(/[\r\n]/g, ' ');
         const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
         const safeDate = (this.currentDate || '').replace(/[\r\n]/g, ' ');
-        const metaFingerprint = ` [meta:${safeTitle}|${safeAuthor}|${safeDate}]`;
+        const metaFingerprint = ` [meta:${stableHash(`${safeTitle}\u0000${safeAuthor}\u0000${safeDate}`)}]`;
 
         const newBlockTexts = doc.blockTexts.map(rawText => {
             const trimmed = rawText.trim();

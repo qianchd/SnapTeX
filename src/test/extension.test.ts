@@ -409,6 +409,38 @@ suite('SmartRenderer', () => {
         assert.equal(next.preserveUnchangedBlocks, false);
     });
 
+    test('escapes maketitle metadata while preserving LaTeX formatting', () => {
+        const renderer = new SmartRenderer(new MemoryFileProvider());
+        const payload = renderer.render(createDocument(['\\maketitle'], {
+            title: '<img src=x onerror=alert(1)> \\textbf{Safe} $x<y$',
+            author: 'Ada & Bob',
+            date: '2026 <script>alert(1)</script>'
+        }));
+        const html = payload.htmls?.join('') ?? '';
+
+        assert.doesNotMatch(html, /<img/i);
+        assert.doesNotMatch(html, /<script/i);
+        assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+        assert.match(html, /Ada &amp; Bob/);
+        assert.match(html, /2026 &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.match(html, /<strong>Safe<\/strong>/);
+        assert.match(html, /class="katex"/);
+    });
+
+    test('updates maketitle metadata without exposing raw metadata in block hashes', () => {
+        const renderer = new SmartRenderer(new MemoryFileProvider());
+        renderer.render(createDocument(['\\maketitle'], { title: 'First' }));
+
+        const payload = renderer.render(createDocument(['\\maketitle'], { title: 'Second <tag>' }));
+        const html = payload.htmls?.join('') ?? '';
+
+        assert.equal(payload.type, 'patch');
+        assert.equal(payload.start, 0);
+        assert.match(html, /Second &lt;tag&gt;/);
+        assert.doesNotMatch(html, /Second <tag>/);
+        assert.doesNotMatch(html, /data-block-hash="[^"]*Second/);
+    });
+
     test('uses full render when a replacement edit exceeds the fixed threshold', () => {
         const renderer = new SmartRenderer(new MemoryFileProvider());
         const oldBlocks = Array.from({ length: 300 }, (_, index) => `Block ${index}`);

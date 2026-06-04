@@ -1,4 +1,4 @@
-import { toRoman, capitalizeFirstLetter, extractAndHideLabels, findBalancedClosingBrace, resolveLatexStyles, findCommand } from './utils';
+import { toRoman, capitalizeFirstLetter, escapeHtml, extractAndHideLabels, findBalancedClosingBrace, resolveLatexStyles, findCommand } from './utils';
 import { PreprocessRule } from './types';
 import { SmartRenderer } from './renderer';
 import { BibTexParser } from './bib';
@@ -859,8 +859,11 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
                 const processMeta = (val: string | undefined) => {
                     if (!val) {return '';}
-                    let res = val.replace(/\\\\/g, '<br/>');
+                    const lineBreakToken = renderer.protect('meta-br', '<br/>');
+                    let res = val.replace(/<br\s*\/?>/gi, lineBreakToken);
+                    res = res.replace(/\\\\/g, lineBreakToken);
                     res = res.replace(/\$((?:\\.|[^\\$])+?)\$/g, (m: string, c: string) => renderMath(c.trim(), false, renderer));
+                    res = escapeHtml(res);
                     res = resolveLatexStyles(res);
                     return res;
                 };
