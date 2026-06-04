@@ -87,7 +87,8 @@ export class LatexBlockSplitter {
 
             // Logic: If buffer is too huge, we assume we are trapped in an unclosed environment.
             // We treat 'isTrapped' as a signal to behave as if depth is 0.
-            const isTrapped = currentBufferLineCount >= maxLines;
+            const isInsideTikzPicture = envStack.includes('tikzpicture');
+            const isTrapped = currentBufferLineCount >= maxLines && !isInsideTikzPicture;
 
             // === A. Handle Paragraph Breaks (\n\n) ===
             if (isDoubleNewline) {

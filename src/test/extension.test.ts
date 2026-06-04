@@ -160,6 +160,39 @@ suite('LatexBlockSplitter', () => {
         assert.match(blocks[1].text, /\\end\{figure\*\}/);
         assert.equal(blocks[2].text.trim(), 'After figure.');
     });
+
+    test('does not emergency-split long closed TikZ figures with internal blank lines', () => {
+        const tikzBody = Array.from({ length: 65 }, (_, index) => (
+            index % 8 === 0
+                ? ''
+                : `\\node at (${index}, 0) {Point ${index}};`
+        ));
+        const text = [
+            'Before.',
+            '',
+            '\\begin{figure}[t]',
+            '\\centering',
+            '\\resizebox{\\linewidth}{!}{%',
+            '\\begin{tikzpicture}[>=Latex]',
+            ...tikzBody,
+            '\\end{tikzpicture}',
+            '}',
+            '\\label{fig:long-tikz}',
+            '\\end{figure}',
+            '',
+            'After.'
+        ].join('\n');
+
+        const blocks = LatexBlockSplitter.split(text);
+        const tikzBlocks = blocks.filter(block => /tikzpicture/.test(block.text));
+
+        assert.equal(tikzBlocks.length, 1);
+        assert.match(tikzBlocks[0].text, /\\begin\{figure\}/);
+        assert.match(tikzBlocks[0].text, /\\begin\{tikzpicture\}/);
+        assert.match(tikzBlocks[0].text, /\\end\{tikzpicture\}/);
+        assert.match(tikzBlocks[0].text, /\\end\{figure\}/);
+        assert.match(blocks.map(block => block.text).join('\n'), /After\./);
+    });
 });
 
 suite('LatexCounterScanner', () => {
@@ -328,6 +361,11 @@ suite('LatexDocument source mapping', () => {
     test('inlines standalone TikZ inputs without treating their document end as the root end', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const figureUri = vscode.Uri.file('/project/figures/fold_illus_reliever.tex');
+        const longTikzBody = Array.from({ length: 65 }, (_, index) => (
+            index % 8 === 0
+                ? ''
+                : `\\node at (${index}, 0) {\\legendBox{draw=red} body ${index}};`
+        ));
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\documentclass{article}',
@@ -352,7 +390,7 @@ suite('LatexDocument source mapping', () => {
                 '}',
                 '\\begin{document}',
                 '\\begin{tikzpicture}[>=Latex]',
-                '\\node {\\legendBox{draw=red} body};',
+                ...longTikzBody,
                 '\\end{tikzpicture}',
                 '\\end{document}'
             ].join('\n')]
@@ -363,6 +401,7 @@ suite('LatexDocument source mapping', () => {
         doc.applyResult(result);
         const joinedBlocks = result.blockTexts.join('\n');
         const html = new SmartRenderer(provider).render(doc).htmls?.join('') ?? '';
+        const visibleHtml = html.replace(/<script type="text\/snaptex-tikz"[\s\S]*?<\/script>/g, '');
 
         assert.match(joinedBlocks, /After figure should remain/);
         assert.doesNotMatch(joinedBlocks, /\\documentclass\[tikz/);
@@ -372,6 +411,8 @@ suite('LatexDocument source mapping', () => {
         assert.match(html, /type="text\/snaptex-tikz"/);
         assert.match(html, /After figure should remain/);
         assert.doesNotMatch(html, /\\newcommand\{\\legendBox\}/);
+        assert.doesNotMatch(visibleHtml, /\\begin\{tikzpicture\}/);
+        assert.doesNotMatch(visibleHtml, /\\node at/);
     });
 });
 
