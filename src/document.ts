@@ -12,7 +12,6 @@ export interface DocumentParseResult {
     blockSpans: BlockSpan[];
     blockHashes: string[];
     metadataSensitiveBlocks: boolean[];
-    // memory-efficient TypedArrays
     filePool: string[];
     sourceFileIndices: Uint16Array;
     sourceLines: Int32Array;
@@ -26,7 +25,6 @@ export interface BlockTextSnapshot {
     blockSpans: BlockSpan[];
 }
 
-// Cache Entry Interface
 interface BibCacheEntry {
     mtime: number;
     entries: Map<string, BibEntry>;
@@ -37,6 +35,13 @@ interface IndexedLine {
     line: number;
 }
 
+/**
+ * Parsed LaTeX document state used by the renderer.
+ *
+ * LatexDocument flattens the root document and supported subfiles into one body
+ * string, stores block spans instead of duplicated block strings, and keeps
+ * compact source maps for editor-preview synchronization.
+ */
 export class LatexDocument {
     private bodyText: string = "";
     public blockSpans: BlockSpan[] = [];
@@ -57,11 +62,13 @@ export class LatexDocument {
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: vscode.Uri | undefined;
 
-    // Cache for BibTeX files
     private bibCache: Map<string, BibCacheEntry> = new Map();
 
     constructor(private fileProvider: IFileProvider) {}
 
+    /**
+     * Releases the transient body text after the renderer has taken a snapshot.
+     */
     public releaseTextContent() {
         this.bodyText = "";
         this.blockSpans = [];
@@ -100,7 +107,6 @@ export class LatexDocument {
         this.blockHashes = result.blockHashes;
         this.metadataSensitiveBlocks = result.metadataSensitiveBlocks;
 
-        // Apply optimized arrays
         this.filePool = result.filePool;
         this.sourceFileIndices = result.sourceFileIndices;
         this.sourceLines = result.sourceLines;
@@ -110,26 +116,23 @@ export class LatexDocument {
         this.contentStartLineOffset = result.contentStartLineOffset;
     }
 
+    /**
+     * Parses a root .tex document into metadata, bibliography entries, source
+     * mappings, and block spans.
+     */
     public async parse(entryUri: vscode.Uri, contentOverride?: string): Promise<DocumentParseResult> {
-        // Using filePool directly for string interning
         const filePool: string[] = [];
 
         const rootDir = this.fileProvider.dir(entryUri);
         this.rootDir = rootDir;
 
-        // 1. Load (Now returns parallel raw arrays)
         const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, 0, contentOverride);
-        // const rawText = textLines.join('\n');
         const normalizedText = textLines.join('\n');
 
-        // 2. Metadata
-        // const normalizedText = rawText.replace(/\r\n/g, '\n');
         const metaRes: MetadataResult = extractMetadata(normalizedText);
 
-        // 3. Bib (With Caching)
         const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
 
-        // 4. Offset
         let contentStartLineOffset = 0;
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
         if (rawDocMatch && rawDocMatch.index !== undefined) {
@@ -137,7 +140,6 @@ export class LatexDocument {
             contentStartLineOffset = preContent.split('\n').length - 1;
         }
 
-        // 5. Split
         let bodyText = metaRes.cleanedText;
         if (rawDocMatch && rawDocMatch.index !== undefined) {
              const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
@@ -157,7 +159,6 @@ export class LatexDocument {
             blockSpans: [],
             blockHashes: [],
             metadataSensitiveBlocks: [],
-            // TypedArray to seal memory
             filePool: filePool,
             sourceFileIndices: new Uint16Array(fileIndices),
             sourceLines: new Int32Array(lines),
@@ -206,7 +207,6 @@ export class LatexDocument {
         let content = "";
         const filePathStr = fileUri.toString();
 
-        // Find or add the current file to the String Pool
         let currentFileIndex = filePool.indexOf(filePathStr);
         if (currentFileIndex === -1) {
             currentFileIndex = filePool.length;
@@ -216,7 +216,6 @@ export class LatexDocument {
         if (contentOverride !== undefined) {
             content = contentOverride;
         } else {
-            // Check existence before reading to avoid error throwing overhead
             if (!(await this.fileProvider.exists(fileUri))) {
                 return {
                     textLines: [`% [SnapTeX] File not found: ${filePathStr}`],
@@ -238,7 +237,6 @@ export class LatexDocument {
         const sourceLines = content.split(/\r?\n/).map((text, line) => ({ text, line }));
         const rawLines = depth > 0 ? this.stripStandaloneWrapper(sourceLines) : sourceLines;
         const flattenedLines: string[] = [];
-        // Collect primitive numbers instead of Objects
         const outIndices: number[] = [];
         const outLines: number[] = [];
         const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
@@ -364,7 +362,6 @@ export class LatexDocument {
     }
 
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {
-        // Reconstruct SourceLocation on demand from TypedArrays
         if (flatLine >= 0 && flatLine < this.sourceLines.length) {
             return {
                 file: this.filePool[this.sourceFileIndices[flatLine]],
@@ -374,14 +371,15 @@ export class LatexDocument {
         return undefined;
     }
 
+    /**
+     * Maps an original source file/line pair into the flattened document line.
+     */
     public getFlattenedLine(targetUriString: string, originalLine: number): number {
         const normTarget = normalizeUri(targetUriString);
 
         let bestLine = -1;
         let minDiff = Infinity;
 
-        // Fast-path: Pre-calculate matching file indices.
-        // This avoids executing heavy string normalization 50,000+ times inside the main loop.
         const matchingIndices = new Set<number>();
         for (let i = 0; i < this.filePool.length; i++) {
             const normLoc = normalizeUri(this.filePool[i]);
@@ -395,7 +393,6 @@ export class LatexDocument {
             return bestLine;
         }
 
-        // Iterate over flat primitive arrays (extremely fast and cache-friendly)
         const len = this.sourceLines.length;
         for (let i = 0; i < len; i++) {
             if (matchingIndices.has(this.sourceFileIndices[i])) {

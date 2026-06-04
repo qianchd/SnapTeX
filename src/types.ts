@@ -6,11 +6,9 @@ export interface SourceLocation {
 }
 
 export interface PreambleData {
-    macros: Record<string, string>; // For KaTeX (existing)
-
-    // [CHANGE] Split TikZ data into global settings and individual macros
-    tikzGlobal: string; // \\usetikzlibrary, \\tikzset, \\definecolor (Always inject)
-    tikzMacroMap: Map<string, string>; // Key: "\\macroName", Value: "\\def\\macroName{...}" (Inject on demand)
+    macros: Record<string, string>;
+    tikzGlobal: string;
+    tikzMacroMap: Map<string, string>;
 
     title?: string;
     author?: string;
@@ -39,18 +37,13 @@ export interface PatchPayload {
     shift?: number;
     preserveUnchangedBlocks?: boolean;
 
-    // Numbering Data Update
     numbering?: {
-        blocks: { [index: number]: any }; // Sparse map of blockIndex -> counts
-        labels: Record<string, string>;   // Global label map
+        blocks: { [index: number]: any };
+        labels: Record<string, string>;
     };
 
     /**
-     * [NEW] Dirty Blocks Map
-     * Key: The block index (in the FINAL document state).
-     * Value: The new HTML content for that block.
-     * Purpose: Update specific blocks (like Bibliography) that are impacted by changes
-     * elsewhere, without triggering a full document re-render.
+     * Blocks that must be refreshed even though their source hash did not change.
      */
     dirtyBlocks?: { [index: number]: string };
 }
@@ -61,9 +54,7 @@ export interface RenderContext {
     globalLabelMap: Record<string, string>;
     citedKeys: string[];
     bibEntries: Map<string, BibEntry>;
-    // Low-level placeholder primitive for non-HTML tokens that need to survive preprocessing.
     protect(namespace: string, content: string): string;
-    // Preserve renderer-generated HTML through the raw-HTML-disabled Markdown pass.
     protectHtml(namespace: string, html: string): string;
     renderInline(text: string): string;
     resolveCitation(key: string): number;

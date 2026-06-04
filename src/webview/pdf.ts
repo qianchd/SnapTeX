@@ -7,6 +7,13 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
     const pdfJsUri = document.body.dataset.pdfJsUri || '';
     const pdfWorkerUri = document.body.dataset.pdfWorkerUri || '';
     let pdfjsLib = null;
+
+    /**
+     * Handles PDF.js loading and canvas rendering inside the webview.
+     *
+     * The extension host validates paths and returns webview-safe URIs; this
+     * module only consumes those URIs and paints the first page into canvases.
+     */
     const pdfRuntimeReady = import(pdfJsUri).then(module => {
         pdfjsLib = module;
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUri;

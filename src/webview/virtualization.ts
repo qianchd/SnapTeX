@@ -6,6 +6,13 @@ export const BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN = 5200;
 export const BLOCK_VIRTUALIZATION_RETAIN_MARGIN = 14000;
 export const BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS = 700;
 export const BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT = 180;
+
+/**
+ * Maintains lightweight shells for offscreen LaTeX blocks.
+ *
+ * The controller caches block HTML and measured heights so large previews keep
+ * stable scroll geometry while only nearby blocks stay mounted in the DOM.
+ */
 export class BlockVirtualizationController {
         constructor(contentRoot) {
             this.contentRoot = contentRoot;

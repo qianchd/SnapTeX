@@ -6,9 +6,14 @@ import { createRefLink, renderMath } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
 
+/**
+ * Ordered LaTeX-to-Markdown preprocessing pipeline.
+ *
+ * Rules consume small LaTeX constructs before Markdown-it runs. Any generated
+ * HTML must go through RenderContext.protectHtml so Markdown-it cannot escape
+ * or expose it as user-visible text.
+ */
 export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
-    // Removes the % marker left by metadata.ts without turning long comment blocks into giant blank gaps.
-    // This mimics LaTeX behavior for inline comments while collapsing standalone comment-only lines.
     {
         name: 'clean_comments',
         priority: 5,
@@ -21,7 +26,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
     createTikzPictureRule(),
 
-    // --- Step 0: Handle escape characters (Highest priority, prevents interference with subsequent regex) ---
     {
         name: 'escaped_char_dollar',
         priority: 10,
@@ -42,8 +46,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
             text = text.replace(/\\(vspace|hspace)\*?\{[^}]+\}\s*/g, '');
             text = text.replace(/\\(setlength|addtolength)\{[^}]+\}\{[^}]+\}\s*/g, '');
 
-            // text = text.replace(/\\linespread\{[^}]+\}\s*/g, '');
-
             text = text.replace(/\\noindent\s*/g, () => renderer.protectHtml('raw', '<span class="no-indent-marker"></span>'));
 
             return text;
@@ -58,7 +60,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 1: Roman numerals ---
     {
         name: 'romannumeral',
         priority: 30,
@@ -70,7 +71,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 2: Block-level math formulas ---
     {
         name: 'display_math',
         priority: 40,
@@ -85,7 +85,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
                 let content = c1 || c4 || c8 || match;
 
-                // Placeholder
                 let eqNumHTML = "";
                 if (envName && star !== '*') {
                     eqNumHTML = `(<span class="sn-cnt" data-type="eq"></span>)`;
@@ -94,7 +93,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
                 let finalMath = cleanContent.trim();
 
-                // Handle nested refs inside math
                 finalMath = finalMath.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (m, reftype, key) => createRefLink(key, renderer, reftype as any));
 
                 if (envName) {
@@ -126,7 +124,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 6: Inline formula ---
     {
         name: 'inline_math',
         priority: 50,
@@ -146,18 +143,14 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 13: Refs ---
     {
         name: 'refs_and_labels',
         priority: 60,
         apply: (text, renderer: RenderContext) => {
-            // 1. Labels
             text = text.replace(new RegExp(R_LABEL, 'g'), (match, labelName) => {
-                // Protect raw HTML anchors so they survive inside Figure/Table blocks
                 return renderer.protectHtml('raw', createHiddenLabelAnchor(labelName));
             });
 
-            // 2. References (Numbering)
             text = text.replace(R_REF, (match, type, labels) => {
                 const labelArray = labels.split(',').map((l: string) => l.trim());
                 const htmlLinks = labelArray.map((label: string) => {
@@ -172,7 +165,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 10: Citations ---
     {
         name: 'citations',
         priority: 70,
@@ -236,7 +228,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // Step 11: Bibliography ---
     {
         name: 'bibliography',
         priority: 71,
@@ -312,7 +303,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
     createAlgorithmRule(),
     createTableRule(),
 
-    // --- Step 7: Theorem and proof environments ---
     {
         name: 'theorems_and_proofs',
         priority: 150,
@@ -362,12 +352,10 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-// --- Step 8: Metadata \maketitle and abstract ---
     {
         name: 'maketitle_and_abstract',
         priority: 160,
         apply: (text, renderer: RenderContext) => {
-            // 1. Handle \maketitle
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
                 const meta = renderer.currentDocument?.metadata;
@@ -395,12 +383,10 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 text = text.replace(/ \[meta:.*?\]/g, '');
             }
 
-            // 2. Enhanced Abstract recognition
             text = text.replace(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/gi, (match, content) => {
                 return `\n\nOOABSTRACT_STARTOO\n\n${content.trim()}\n\nOOABSTRACT_ENDOO\n\n`;
             });
 
-            // 3. Keywords
             const keywordsRegex = /(?:\\begin\{keywords?\}([\s\S]*?)\\end\{keywords?\}|\\noindent\{\\bf Keywords\}:\s*(.*))/gi;
             text = text.replace(keywordsRegex, (match, contentA, contentB) => {
                 const content = (contentA || contentB || '').trim();
@@ -411,7 +397,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 9: Section titles ---
     {
         name: 'sections',
         priority: 170,
@@ -443,7 +428,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 12: List processing ---
     {
         name: 'lists',
         priority: 180,
@@ -468,7 +452,6 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     },
 
-    // --- Step 13: Text Styles ---
     {
         name: 'text_styles',
         priority: 190,

@@ -2,7 +2,7 @@ import { MetadataResult } from './types';
 import { findBalancedClosingBrace, findCommand } from './utils';
 
 /**
- * Helper to transpile \newcommand to \def for TikZJax.
+ * Converts simple \newcommand definitions to \def syntax accepted by TikZJax.
  */
 function transpileToDef(fullDef: string): string {
     const match = /^\\(?:re|provide)?newcommand\*?\s*(?:\{(\\[a-zA-Z0-9@]+)\}|(\\[a-zA-Z0-9@]+))(?:\s*\[(\d+)\])?/.exec(fullDef);
@@ -17,7 +17,7 @@ function transpileToDef(fullDef: string): string {
     if (bodyStart === -1) {return fullDef;}
 
     const preBody = remainder.substring(0, bodyStart).trim();
-    if (preBody.startsWith('[')) {return fullDef;} // Skip complex definitions
+    if (preBody.startsWith('[')) {return fullDef;}
 
     const body = remainder.substring(bodyStart);
     let args = "";
@@ -27,11 +27,9 @@ function transpileToDef(fullDef: string): string {
 }
 
 /**
- * Helper to extract command name from a definition string.
- * e.g. "\def\foo{...}" -> "\foo"
+ * Extracts the command name from a macro definition string.
  */
 function extractMacroName(def: string): string | null {
-    // Matches \def\name or \newcommand{\name}
     const match = /\\(?:def\s*(\\[a-zA-Z0-9@]+)|(?:re|provide)?newcommand\*?\s*(?:\{(\\[a-zA-Z0-9@]+)\}|(\\[a-zA-Z0-9@]+)))/.exec(def);
     if (match) {
         return match[1] || match[2] || match[3];
@@ -176,14 +174,15 @@ function extractKatexMacro(fullDef: string): { name: string; definition: string 
     return { name, definition };
 }
 
+/**
+ * Extracts preamble metadata, macro definitions, and TikZ globals.
+ *
+ * The returned cleanedText preserves line structure for source mapping while
+ * blanking definitions that should not render as document body content.
+ */
 export function extractMetadata(text: string): MetadataResult {
-    // 1. Pre-cleaning: Remove comment content but KEEP the % marker.
-    // Why? If we remove the whole line, we might create double newlines (\n\n) which split blocks incorrectly.
-    // We also keep the % to preserve line counts for sync, but remove content to ensure braces don't break matching.
     let cleanedText = text.replace(/(?<!\\)%.*/gm, '%');
 
-    // =======================================================
-    // clean $$$$
     cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
 
     const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -193,26 +192,21 @@ export function extractMetadata(text: string): MetadataResult {
     let author: string | undefined;
     let date: string | undefined;
 
-    // 2. Extract Title and remove it from the body
     const titleRes = findCommand(cleanedText, 'title');
     if (titleRes) {
         title = titleRes.content.replace(/\\\\/g, '<br/>');
-        // Physical deletion: Keep content before start and after end
         cleanedText = cleanedText.substring(0, titleRes.start) + cleanedText.substring(titleRes.end + 1);
     }
 
-    // 3. Extract Author and remove it from the body
     const authorRes = findCommand(cleanedText, 'author');
     if (authorRes) {
-        author = authorRes.content; // Keep the original extracted content here, leave rendering to rules.ts
-        // Physical deletion: Ensure the entire \author{...} block disappears from the body
+        author = authorRes.content;
         cleanedText = cleanedText.substring(0, authorRes.start) + cleanedText.substring(authorRes.end + 1);
     }
 
-    // 4. Extract date and remove it from the body
     const dateRes = findCommand(cleanedText, 'date');
     if (dateRes) {
-        date = dateRes.content; // Keep the original extracted content here, leave rendering to rules.ts
+        date = dateRes.content;
         cleanedText = cleanedText.substring(0, dateRes.start) + cleanedText.substring(dateRes.end + 1);
     }
 

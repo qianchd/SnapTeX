@@ -149,6 +149,12 @@ function filterTikzGlobalForPicture(globalPreamble: string, pictureSource: strin
     return [...selectedLibraryPreamble, ...retainedGlobals].join('\n');
 }
 
+/**
+ * Renders tikzpicture environments as inert TikZJax scripts.
+ *
+ * The rule prunes global TikZ library/style input to the current picture and
+ * resolves only macro definitions reachable from the picture source.
+ */
 export function createTikzPictureRule(): PreprocessRule {
     return {
         name: 'tikzpicture',

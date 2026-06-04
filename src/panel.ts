@@ -38,6 +38,35 @@ function logHostMemory(label: string) {
     });
 }
 
+function hasExplicitBooleanSetting(inspectResult: ReturnType<vscode.WorkspaceConfiguration['inspect']>): boolean {
+    if (!inspectResult) {
+        return false;
+    }
+
+    return [
+        inspectResult.globalValue,
+        inspectResult.workspaceValue,
+        inspectResult.workspaceFolderValue,
+        inspectResult.globalLanguageValue,
+        inspectResult.workspaceLanguageValue,
+        inspectResult.workspaceFolderLanguageValue
+    ].some(value => typeof value === 'boolean');
+}
+
+export function getVirtualMode(config = vscode.workspace.getConfiguration('snaptex')): boolean {
+    const virtualMode = config.inspect<boolean>('virtualMode');
+    if (hasExplicitBooleanSetting(virtualMode)) {
+        return config.get<boolean>('virtualMode', true);
+    }
+
+    const legacyVirtualization = config.inspect<boolean>('experimentalVirtualization');
+    if (hasExplicitBooleanSetting(legacyVirtualization)) {
+        return config.get<boolean>('experimentalVirtualization', true);
+    }
+
+    return true;
+}
+
 function decodeHtmlAttribute(value: string): string {
     return value
         .replace(/&quot;/g, '"')
@@ -95,6 +124,11 @@ export function isUriWithinAllowedRoots(uri: vscode.Uri, roots: vscode.Uri[]): b
     });
 }
 
+/**
+ * Owns the VS Code webview panel and bridges renderer payloads to webview
+ * messages. File system access, resource URI conversion, and request validation
+ * live here; LaTeX parsing and HTML rendering stay in document.ts/renderer.ts.
+ */
 export class TexPreviewPanel {
     public static currentPanel: TexPreviewPanel | undefined;
     public static readonly viewType = 'texPreview';
@@ -113,7 +147,6 @@ export class TexPreviewPanel {
     private readonly _onWebviewLoadedEmitter = new vscode.EventEmitter<void>();
     public readonly onWebviewLoaded = this._onWebviewLoadedEmitter.event;
 
-    // Constructor accepts Uri instead of string path
     public static createOrShow(extensionUri: vscode.Uri, renderer: SmartRenderer): TexPreviewPanel {
         const editor = vscode.window.activeTextEditor;
         const column = editor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One;
@@ -122,7 +155,6 @@ export class TexPreviewPanel {
             return TexPreviewPanel.currentPanel;
         }
 
-        // Use vscode.Uri.joinPath for resource roots
         const mediaRoot = vscode.Uri.joinPath(extensionUri, 'media');
         const retainContextWhenHidden = vscode.workspace
             .getConfiguration('snaptex')
@@ -212,14 +244,10 @@ export class TexPreviewPanel {
     }
 
     /**
-     * [FIXED] Handles the double-click event from Webview.
-     * Directly forwards the block index and ratio to the extension command.
-     * Does NOT attempt to calculate the line number here.
+     * Forwards a webview block/ratio reveal request to the extension command.
      */
     private handleRevealLine(message: RevealLineMessage) {
         if (this._sourceUri) {
-            // Simply pass the URI (as context) and the raw message data
-            // The extension command 'snaptex.internal.revealLine' expects (uri, index, ratio, anchor)
             vscode.commands.executeCommand(
                 'snaptex.internal.revealLine',
                 this._sourceUri,
@@ -231,7 +259,9 @@ export class TexPreviewPanel {
         }
     }
 
-    // PDF resources are loaded through webview URIs only; rendering failures should surface directly.
+    /**
+     * Resolves a validated relative PDF path to a webview URI.
+     */
     private async handlePdfRequest(message: RequestPdfMessage) {
         if (!this._sourceUri) {return;}
 
@@ -257,7 +287,6 @@ export class TexPreviewPanel {
                 return;
             }
 
-            // Check existence first
             if (await this._fileProvider.exists(pdfUri)) {
                 const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
@@ -337,7 +366,7 @@ export class TexPreviewPanel {
             config: {
                 autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
                 debugMemory: config.get<boolean>('debugMemory', false),
-                experimentalVirtualization: config.get<boolean>('experimentalVirtualization', false)
+                virtualMode: getVirtualMode(config)
             }
         });
     }
@@ -356,9 +385,8 @@ export class TexPreviewPanel {
     }
 
     /**
-     * [UPDATED] Update logic to support subfiles.
-     * @param rootUri If provided, forces rendering this specific file (the Root),
-     * ignoring the currently active editor file.
+     * Queues and serializes preview updates. The webview must send WebviewLoaded
+     * before parsing begins, which avoids blank previews during VS Code startup.
      */
     public async update(rootUri?: vscode.Uri) {
         const docUri = rootUri ?? this._pendingRootUri ?? this.resolveUpdateUri();
@@ -386,7 +414,6 @@ export class TexPreviewPanel {
     }
 
     private async updateOnce(docUri: vscode.Uri) {
-        // Fetch text content (from open editor buffer if available, else from disk)
         let text = "";
         try {
             logHostMemory('before getText');
@@ -404,7 +431,6 @@ export class TexPreviewPanel {
         const previousSourceUri = this._sourceUri;
         const sourceChanged = previousSourceUri !== undefined && normalizeUri(previousSourceUri) !== normalizeUri(docUri);
 
-        // Update the panel's source of truth to the Root file
         this._sourceUri = docUri;
         if (sourceChanged) {
             this._renderer.resetState();
@@ -412,9 +438,6 @@ export class TexPreviewPanel {
 
         const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
 
-        // [FIX] CRITICAL: Grant Webview access to the document's folder.
-        // Without this, the Webview CANNOT load local images (PNG/JPG) due to security policies.
-        // We update the options dynamically for the current document.
         const mediaRoot = vscode.Uri.joinPath(this._extensionUri, 'media');
         this._panel.webview.options = {
             enableScripts: true,
@@ -423,9 +446,7 @@ export class TexPreviewPanel {
         this.postWebviewConfig();
 
         if (this._currentDocument) {
-            const virtualizeBlocks = vscode.workspace
-                .getConfiguration('snaptex')
-                .get<boolean>('experimentalVirtualization', false);
+            const virtualizeBlocks = getVirtualMode();
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);
             logHostMemory('after parse');
 
@@ -444,7 +465,6 @@ export class TexPreviewPanel {
     }
 
     private async _getWebviewSkeleton(): Promise<string> {
-        // Use joinPath instead of path.join
         const toUri = (p: string) => this._panel.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, p));
 
         const katexCssUri = toUri('media/vendor/katex/katex.min.css');
@@ -454,7 +474,6 @@ export class TexPreviewPanel {
         const pdfJsUri = toUri('media/vendor/pdfjs/pdf.mjs');
         const pdfWorkerUri = toUri('media/vendor/pdfjs/pdf.worker.mjs');
 
-        // Added TikZJax URIs
         const tikzJaxJsUri = toUri('media/vendor/tikzjax/tikzjax.js');
         const tikzJaxCssUri = toUri('media/vendor/tikzjax/fonts.css');
 
@@ -475,7 +494,6 @@ export class TexPreviewPanel {
             .replace(/{{webviewPdfUri}}/g, webviewPdfUri.toString())
             .replace(/{{pdfJsUri}}/g, pdfJsUri.toString())
             .replace(/{{pdfWorkerUri}}/g, pdfWorkerUri.toString())
-            // Inject the TikZJax variables
             .replace(/{{tikzJaxJsUri}}/g, tikzJaxJsUri.toString())
             .replace(/{{tikzJaxCssUri}}/g, tikzJaxCssUri.toString());
     }

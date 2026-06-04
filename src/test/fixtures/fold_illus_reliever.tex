@@ -2,8 +2,8 @@
 \usepackage{tikz}
 \usepackage{amssymb}
 \usetikzlibrary{calc, shapes.geometric, positioning, decorations.pathreplacing, patterns, arrows.meta, backgrounds}
-\newcommand{\legendBox}[1]{%
-    \mbox{\tikz[baseline=-0.5ex] \node[minimum size=0.35cm, inner sep=0pt, anchor=center, #1] {};}%
+\newcommand{\legendBox}[1]{
+    \mbox{\tikz[baseline=-0.5ex] \node[minimum size=0.35cm, inner sep=0pt, anchor=center, #1] {};}
 }
 
 \begin{document}
@@ -40,49 +40,41 @@
     }
 ]
 
-    \definecolor{col1}{RGB}{102, 194, 165} % Green (Now F2 - Train)
-    \definecolor{col2}{RGB}{217, 95, 2}    % Orange (Now F1 - Test, Emphasized)
-    \definecolor{col3}{RGB}{141, 160, 203} % Purple (F3 - Train)
+    \definecolor{col1}{RGB}{102, 194, 165}
+    \definecolor{col2}{RGB}{217, 95, 2}
+    \definecolor{col3}{RGB}{141, 160, 203}
 
 
-    \def\totalwidth{14}  % 总宽度
-    \def\proxystart{4}   % l
-    \def\proxyend{10}    % r
-    \def\sep{0.5}        % 间距
+    \def\totalwidth{14}
+    \def\proxystart{4}
+    \def\proxyend{10}
+    \def\sep{0.5}
 
-    % ==================================================
-    % 1. Order-Preserved Split
-    % ==================================================
+
+
     \def\yop{0}
     \node[label_text] at (-0.4, \yop + 0.5) {1. Order-Preserved};
 
     \draw[axis_style] (-0.2, \yop) -- (\totalwidth + 0.6, \yop);
     \node[circle, fill=black, inner sep=1.5pt] at (0, \yop) {};
     \node[circle, fill=black, inner sep=1.5pt] at (\totalwidth, \yop) {};
-    % \node[circle, fill=black, inner sep=1.5pt, label=below:{$l_{end}$}] at (0, \yop) {};
-    % \node[circle, fill=black, inner sep=1.5pt, label=below:{$r_{end}$}] at (\totalwidth, \yop) {};
 
-    % 区间标注
+
     \draw[dim_line, black!70] (0, \yop + 1.6) -- (\totalwidth, \yop + 1.6)
         node[midway, fill=white, inner sep=2pt, font=\small\bfseries] {Original Interval $I$};
     \draw[dim_line, blue] (\proxystart, \yop + 1.1) -- (\proxyend, \yop + 1.1)
         node[midway, fill=white, inner sep=2pt, font=\small\bfseries, text=blue] {Relief Interval $R$};
     \draw[proxy_marker] (\proxystart, \yop - 0.8) -- (\proxystart, \yop + 1.1);
     \draw[proxy_marker] (\proxyend, \yop - 0.8) -- (\proxyend, \yop + 1.1);
-    % \node[blue, font=\bfseries, anchor=south east] at (\proxystart, \yop - 0.5) {$l$};
-    % \node[blue, font=\bfseries, anchor=south west] at (\proxyend, \yop - 0.5) {$r$};
+
 
     \foreach \i in {0, ..., 28} {
         \pgfmathsetmacro{\xpos}{\i * \sep}
         \pgfmathparse{int(mod(\i, 3) + 1)} \let\foldid\pgfmathresult
         \pgfmathsetmacro{\inproxy}{\xpos >= \proxystart - 0.1 && \xpos <= \proxyend + 0.1 ? 1 : 0}
-
-        % [Color Swap] F1 is Test (Orange/col2), F2 is Train (Green/col1)
         \ifnum\foldid=1
-            % Test (F1) - Orange (col2)
             \node[data_point, fill=col2!100, draw=col2!100] at (\xpos, \yop + 0.4) {};
         \else
-            % Train (F2, F3) depends on Proxy
             \ifnum\inproxy=1
                 \ifnum\foldid=2 \node[data_point, fill=col1!70, draw=col1!100] at (\xpos, \yop + 0.4) {}; \fi
                 \ifnum\foldid=3 \node[data_point, fill=col3!70, draw=col3!100] at (\xpos, \yop + 0.4) {}; \fi
@@ -93,25 +85,21 @@
         \fi
     }
 
-    % % [修正] Part 1 图例 (Updated Colors)
-    % \node[anchor=west, align=left, font=\scriptsize, inner sep=0pt] at (\totalwidth + 1.5, \yop + 0.5) {
-    %     \legendBox{fill=col2!100, draw=col2!100} \textbf{Test (F1)}: in Full $I$\\
-    %     \legendBox{fill=col1!70, draw=col1!100} \textbf{Train (F2/3)}: In Proxy $R$\\
-    %     \legendBox{draw=col1!100, fill=white, dashed, thick} \textbf{Train}: Excluded \\
-    %     \legendBox{draw=red!60, thick, pattern=north west lines, pattern color=red!60} \textbf{Buffer}: Removed neighbors
-    % };
 
-    % ==================================================
-    % 2. Blockwise Split
-    % ==================================================
+
+
+
+
+
+
+
     \def\yblk{-2}
     \node[label_text] at (-0.4, \yblk + 0.5) {2. Interval-adaptive\\Blockwise Split};
 
     \draw[axis_style] (-0.2, \yblk) -- (\totalwidth + 0.6, \yblk);
     \node[circle, fill=black, inner sep=1.5pt] at (0, \yblk) {};
     \node[circle, fill=black, inner sep=1.5pt] at (\totalwidth, \yblk) {};
-    % \node[circle, fill=black, inner sep=1.5pt, label=below:{$l_{end}$}] at (0, \yblk) {};
-    % \node[circle, fill=black, inner sep=1.5pt, label=below:{$r_{end}$}] at (\totalwidth, \yblk) {};
+
 
     \draw[proxy_marker] (\proxystart, \yblk - 0.8) -- (\proxystart, \yblk + 0.8);
     \draw[proxy_marker] (\proxyend, \yblk - 0.8) -- (\proxyend, \yblk + 0.8);
@@ -129,8 +117,6 @@
         \ifdim \drawstart pt < \drawend pt
             \pgfmathsetmacro{\bcenter}{(\drawstart + \drawend) / 2}
             \pgfmathsetmacro{\inproxy}{\bcenter >= \proxystart && \bcenter <= \proxyend ? 1 : 0}
-
-            % [Color Swap] F1 is Test (Orange)
             \ifnum\foldid=1
                 \filldraw[fill=col2!50, draw=col2!100, thick] (\drawstart, \yblk + 0.1) rectangle (\drawend, \yblk + 0.7);
                 \node[font=\tiny\bfseries] at (\bcenter, \yblk + 0.4) {F1};
@@ -148,17 +134,14 @@
         \fi
     }
 
-    % ==================================================
-    % 3. Buffer Lag
-    % ==================================================
+
     \def\ybuf{-4}
     \node[label_text] at (-0.4, \ybuf + 0.5) {3. Buffer Lag};
 
     \draw[axis_style] (-0.2, \ybuf) -- (\totalwidth + 0.6, \ybuf);
     \node[circle, fill=black, inner sep=1.5pt] at (0, \ybuf) {};
     \node[circle, fill=black, inner sep=1.5pt] at (\totalwidth, \ybuf) {};
-    % \node[circle, fill=black, inner sep=1.5pt, label=below:{$l_{end}$}] at (0, \ybuf) {};
-    % \node[circle, fill=black, inner sep=1.5pt, label=below:{$r_{end}$}] at (\totalwidth, \ybuf) {};
+
 
     \draw[proxy_marker] (\proxystart, \ybuf - 0.3) -- (\proxystart, \ybuf + 0.8);
     \draw[proxy_marker] (\proxyend, \ybuf - 0.3) -- (\proxyend, \ybuf + 0.8);
@@ -174,25 +157,18 @@
         \ifdim \drawstart pt < \drawend pt
              \pgfmathsetmacro{\bcenter}{(\drawstart + \drawend) / 2}
              \pgfmathsetmacro{\inproxy}{\bcenter >= \proxystart && \bcenter <= \proxyend ? 1 : 0}
-
-            % [Color Swap] F1 is Test (Orange)
             \ifnum\foldid=1
                 \filldraw[fill=col2!50, draw=col2!100, thick] (\drawstart, \ybuf + 0.1) rectangle (\drawend, \ybuf + 0.7);
                 \node[font=\tiny\bfseries] at (\bcenter, \ybuf + 0.4) {F1};
             \else
                 \ifnum\inproxy=1
-                    % Base blocks
                     \ifnum\foldid=2 \filldraw[fill=col1!40, draw=col1!80] (\drawstart, \ybuf + 0.1) rectangle (\drawend, \ybuf + 0.7); \fi
                     \ifnum\foldid=3 \filldraw[fill=col3!40, draw=col3!80] (\drawstart, \ybuf + 0.1) rectangle (\drawend, \ybuf + 0.7); \fi
 
-                    % Buffer Logic (Neighbors of F1)
-                    % F3 is LEFT neighbor of F1.
                     \ifnum\foldid=3
                         \fill[pattern=north west lines, pattern color=red!60] (\bend - \bufwidth, \ybuf + 0.1) rectangle (\bend, \ybuf + 0.7);
                         \draw[red!60, thick] (\bend - \bufwidth, \ybuf + 0.1) -- (\bend - \bufwidth, \ybuf + 0.7);
                     \fi
-
-                    % F2 is RIGHT neighbor of F1.
                     \ifnum\foldid=2
                         \fill[pattern=north west lines, pattern color=red!60] (\bstart, \ybuf + 0.1) rectangle (\bstart + \bufwidth, \ybuf + 0.7);
                         \draw[red!60, thick] (\bstart + \bufwidth, \ybuf + 0.1) -- (\bstart + \bufwidth, \ybuf + 0.7);
@@ -206,16 +182,13 @@
             \fi
         \fi
     }
-    % ==================================================
-    % 4. 底部图例 (Global Legend) - [新增]
-    % ==================================================
-    % 位置计算：放在总宽度的一半处 (\totalwidth/2)，高度在最底部的图 (\ybuf) 下方
+
+
+
     \node[anchor=north, align=center, font=\scriptsize, inner sep=0pt] at (\totalwidth/2, \ybuf - 0.5) {
-        % 第一行
         \legendBox{fill=col2!100, draw=col2!100} \textbf{Test (F1)}: in Full $I$
-        \hspace{1.5em} % 控制两个图例之间的间距
+        \hspace{1.5em}
         \legendBox{fill=col1!70, draw=col1!100} \legendBox{fill=col3!70, draw=col3!100} \textbf{Train (F2/3)}: In Proxy $R$ \hspace{1.5em}
-        % 第二行
         \legendBox{draw=col1!100, fill=white, dashed, thick} \textbf{Train}: Excluded
         \hspace{1.5em}
         \legendBox{draw=red!60, thick, pattern=north west lines, pattern color=red!60} \textbf{Buffer}: Removed neighbors

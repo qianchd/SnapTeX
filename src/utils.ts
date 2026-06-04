@@ -1,21 +1,16 @@
 /**
- * Basic utility function library for string manipulation, parsing, and style conversion.
+ * Shared text, URI, and lightweight LaTeX parsing utilities.
  */
 
 import * as vscode from 'vscode';
 import type { RenderContext } from './types';
 
-/**
- * Capitalizes the first letter of a string.
- */
 export function capitalizeFirstLetter(string: string): string {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
 
 /**
- * [NEW] Decode LaTeX accents to Unicode characters.
- * Handles cases like \"{u} -> ü, \'{e} -> é, \ss -> ß.
- * Crucial for correctly displaying European names in citations.
+ * Decodes common LaTeX accents to Unicode for citation and bibliography text.
  */
 export function decodeLatexAccents(text: string): string {
     const accents: Record<string, string> = {
@@ -33,19 +28,16 @@ export function decodeLatexAccents(text: string): string {
         "\\ss": 'ß', "\\aa": 'å', "\\AA": 'Å', "\\ae": 'æ', "\\AE": 'Æ', "\\o": 'ø', "\\O": 'Ø'
     };
 
-    // 1. Handle standard brace format: \"{u} -> ü
     text = text.replace(/\\(["'`^~v])\s*\{([a-zA-Z])\}/g, (match, cmd, char) => {
         const key = `\\${cmd}${char}`;
         return accents[key] || match;
     });
 
-    // 2. Handle simple non-brace format: \"u -> ü
     text = text.replace(/\\(["'`^~])([a-zA-Z])/g, (match, cmd, char) => {
         const key = `\\${cmd}${char}`;
         return accents[key] || match;
     });
 
-    // 3. Handle special commands: \ss, \aa, \c{c}
     text = text.replace(/\\c\s*\{([a-zA-Z])\}/g, (m, c) => accents[`\\c{${c}}`] || m);
     text = text.replace(/\\(ss|aa|AA|ae|AE|o|O)\b/g, (m, c) => accents[`\\${c}`] || m);
 
@@ -94,11 +86,9 @@ export function createHiddenLabelAnchor(labelName: string): string {
 }
 
 /**
- * Helper: Apply LaTeX text styles (bold, italic, underline, color, etc.) to HTML tags.
- * This encapsulates logic originally in 'text_styles' rule for reuse.
+ * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
 export function resolveLatexStyles(text: string, protectHtml?: (html: string) => string): string {
-    // 1. Standard styles: \textbf{...}, \textit{...}, etc.
     text = text.replace(/\\(textbf|textit|emph|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
         let startTag = '', endTag = '';
         switch (cmd) {
@@ -114,7 +104,6 @@ export function resolveLatexStyles(text: string, protectHtml?: (html: string) =>
         return applyStyleToTexList(startTag, endTag, content, protectHtml);
     });
 
-    // 2. Old LaTeX styles: {\bf ...}, {\it ...}, etc.
     text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (match, cmd, content) => {
         let startTag = '', endTag = '';
         switch (cmd) {
@@ -127,12 +116,9 @@ export function resolveLatexStyles(text: string, protectHtml?: (html: string) =>
         return applyStyleToTexList(startTag, endTag, content, protectHtml);
     });
 
-    // 3. Color: {\color{red} ...} or \color{red}{...}
-    // Handle {\color{name} content}
     text = text.replace(/\{\\color\{([a-zA-Z0-9]+)\}\s*((?:[^{}]|{[^{}]*})*)\}/g, (match, color, content) => {
         return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content, protectHtml);
     });
-    // Handle \color{name}{content}
     text = text.replace(/\\color\{([a-zA-Z]+)\}\{([^}]*)\}/g, (match, color, content) => {
         return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content, protectHtml);
     });
@@ -156,15 +142,13 @@ export function extractAndHideLabels(content: string) {
 }
 
 /**
- * [New Helper] Find the index of the matching closing brace for the brace at startIndex.
- * Handles nested braces and escaped braces (\{, \}) correctly.
+ * Finds the matching closing brace for a balanced LaTeX-style group.
  */
 export function findBalancedClosingBrace(text: string, startIndex: number): number {
     let depth = 0;
     for (let i = startIndex; i < text.length; i++) {
         const char = text[i];
 
-        // Skip escaped characters
         if (char === '\\') {
             i++;
             continue;
@@ -183,11 +167,9 @@ export function findBalancedClosingBrace(text: string, startIndex: number): numb
 }
 
 /**
- * Enhanced LaTeX command search tool.
- * Supports: \command{...}, \command[...]{...}, and multi-line nesting.
+ * Finds a LaTeX command with an optional bracket argument and balanced body.
  */
 export function findCommand(text: string, tagName: string) {
-    // Improved regex: Supports optional parameters [\s\S]*? and spaces between command and left brace
     const regex = new RegExp(`\\\\${tagName}(?:\\s*\\[[\\s\\S]*?\\])?\\s*\\{`, 'g');
     const match = regex.exec(text);
 
@@ -195,8 +177,6 @@ export function findCommand(text: string, tagName: string) {
         const startIdx = match.index;
         const contentStart = startIdx + match[0].length;
 
-        // Use the new helper to find the closing brace
-        // match[0] ends with '{', so the opening brace is at match.index + match[0].length - 1
         const openBraceIdx = startIdx + match[0].length - 1;
         const endIdx = findBalancedClosingBrace(text, openBraceIdx);
 
@@ -213,8 +193,6 @@ export function findCommand(text: string, tagName: string) {
 
 /**
  * Convert numbers to Roman numerals.
- * @param num Arabic number to convert
- * @param uppercase Whether to return uppercase
  */
 export function toRoman(num: number, uppercase: boolean = false): string {
     const lookup: [string, number][] = [
@@ -257,23 +235,18 @@ function applyStyleToTexList(startTag: string, endTag: string, content: string, 
 }
 
 /**
- * Helper: Simple cleanup of LaTeX commands for preview purposes.
- * Keeps text content but removes common formatting commands.
- * This is essential for rendering clean text inside Algorithms, Figures, and Tables.
+ * Removes common LaTeX markup while preserving readable text for compact
+ * previews such as captions, tables, algorithms, and bibliography entries.
  */
 export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, 'protect'>): string {
     if (!text) {return '';}
 
-    // 0. Decode Accents First (Fixes European names)
-    // \"{u} -> ü, \'{a} -> á
     let processed = decodeLatexAccents(text);
 
-    // 1. First, handle inline math inside the text to prevent it from being stripped
     processed = processed.replace(/\$((?:\\.|[^\\$])*)\$/g, (match) => {
         return renderer.protect('math', match);
     });
 
-    // 2. Clean common formatting but keep content
     processed = processed
         .replace(/\\textbf\{([^}]+)\}/g, (_match, content) => renderer.protect('bib-style', `<b>${escapeHtml(content)}</b>`))
         .replace(/\\textit\{([^}]+)\}/g, (_match, content) => renderer.protect('bib-style', `<i>${escapeHtml(content)}</i>`))
@@ -284,28 +257,19 @@ export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, '
         .replace(/\\small\s*/g, '')
         .replace(/\\large\s*/g, '');
 
-    // 3. Strip remaining generic commands but keep their {content}
-    // e.g. \mycommand{Content} -> Content
     processed = processed.replace(/\\(?:[a-zA-Z]+)(?:\[.*?\])?(?:\{([^}]*)\})?/g, (match, content) => {
-        // If it looks like a protection placeholder, don't strip it
         if (match.includes('XSNAP:')) {
             return match;
         }
         return content || '';
     });
 
-    // 4. Final Cleanup: Remove residual BibTeX protection braces
-    // We only remove braces that are NOT part of our protection tokens (tokens don't have braces anyway)
     processed = processed.replace(/([{}])/g, () => '');
 
     return escapeHtml(processed);
 }
 
 
-/**
- * Replacement for path.basename(uri.fsPath)
- * Works with VS Code URIs which always use '/' as separator.
- */
 export function getBasename(uri: vscode.Uri): string {
     const pathStr = uri.path;
     const idx = pathStr.lastIndexOf('/');

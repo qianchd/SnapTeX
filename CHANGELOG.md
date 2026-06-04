@@ -2,7 +2,9 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
-## [0.5.14] - 2026-06-04
+## [0.6.0] - 2026-06-04
+- **Highlights**: Added default low-memory virtual mode for long documents, on-demand block HTML loading, smoother editor/preview sync, more reliable TikZ rendering, lazy PDF canvas rendering/release, stronger HTML protection, and a much broader automated test suite.
+- **Highlights**: Split the webview runtime into bundled modules and moved the renderer toward span/hash-backed block snapshots, reducing duplicated source text, full HTML payloads, and unnecessary DOM replacement.
 - **Fixed**: Corrected renderer block structure issues, including nested `.latex-block` output in floats, TikZ block splitting at blank lines, protected final environment flushing, starred float numbering, preprocess rule priority ordering, spaced `\label {key}` parsing, and URI normalization for remote paths.
 - **Fixed**: Prevented standalone TikZ files included via `\input` inside figures from leaking their wrapper preamble/body delimiters, truncating the root document at the included `\end{document}`, or rendering macro definitions as source.
 - **Fixed**: Kept long `tikzpicture` blocks and their surrounding figure/resizebox wrapper from triggering the splitter emergency line-limit recovery, preventing large TikZ figures from being split and shown as raw source.
@@ -15,10 +17,11 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Changed**: Switched PDF rendering to a URI-only pipeline with PDF.js URL loading, non-streaming webview resource requests, a real blob module worker, viewport-near lazy rendering, and far-offscreen canvas bitmap release.
 - **Changed**: Reworked TikZ rendering to lazy-load TikZJax, bootstrap worker assets through blob URLs, cache runtime resources for the webview session, prune unused TikZ libraries per picture, preserve stale SVGs while rerendering, surface compile failures cleanly, add watchdogs, and coalesce edit-triggered render batches.
 - **Changed**: Improved full-update behavior with block text hashes, block-list full payloads, per-block path fixing, and DOM preservation for unchanged blocks while keeping the existing fixed full-update threshold.
-- **Added**: Implemented experimental shell-based block virtualization behind `snaptex.experimentalVirtualization`, including shell placeholders, measured/estimated block heights, viewport-near mounting, far-offscreen unmounting, and editor-to-preview sync through shells.
-- **Fixed**: Restored `\ref`/citation anchor jumps and hover tooltips under experimental block virtualization by indexing anchors on block shells and mounting the target block on demand.
-- **Fixed**: Stabilized forward sync under experimental block virtualization by mounting the target block before scrolling and cancelling stale auto-sync timers.
-- **Changed**: Replaced fragile manual `scrollY` compensation in experimental block virtualization with a larger directional preload window and delayed cleanup of far-offscreen mounted blocks, making upward scrolling smoother while preserving most memory savings.
+- **Added**: Implemented shell-based virtual mode behind `snaptex.virtualMode`, including shell placeholders, measured/estimated block heights, viewport-near mounting, far-offscreen unmounting, and editor-to-preview sync through shells.
+- **Changed**: Made virtual mode the default low-memory preview path while retaining compatibility with explicit legacy `snaptex.experimentalVirtualization` settings.
+- **Fixed**: Restored `\ref`/citation anchor jumps and hover tooltips under virtual mode by indexing anchors on block shells and mounting the target block on demand.
+- **Fixed**: Stabilized forward sync under virtual mode by mounting the target block before scrolling and cancelling stale auto-sync timers.
+- **Changed**: Replaced fragile manual `scrollY` compensation in virtual mode with a larger directional preload window and delayed cleanup of far-offscreen mounted blocks, making upward scrolling smoother while preserving most memory savings.
 - **Changed**: Kept only above-viewport virtualized shells height-locked during hydration, while visible mounted shells release estimated heights so real DOM controls spacing between visible blocks.
 - **Changed**: Smoothed editor-to-preview auto-scroll by skipping layout waits for already mounted targets and reducing the small-distance skip threshold.
 - **Changed**: Simplified virtual shell mounting by removing an obsolete height-update option and added webview-side hash checks before caching on-demand block HTML.
@@ -27,6 +30,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Changed**: Disabled `content-visibility:auto` inside virtualized block shells so mounted blocks report real heights while non-virtualized previews keep the existing browser lazy-layout optimization.
 - **Changed**: Introduced a narrow `RenderContext` for preprocess rules so rule code no longer depends on the concrete `SmartRenderer` class.
 - **Changed**: Moved the webview runtime out of `media/webview.html` into bundled webview scripts, leaving the HTML file as a small shell.
+- **Changed**: Cleaned up source comments so the main classes and modules now document their architectural roles rather than development history.
 
 ## [0.5.13] - 2026-05-14
 - **Added**: clean_layout_cmds rule to preprocess layout commands and no-indent markers

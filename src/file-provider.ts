@@ -1,13 +1,15 @@
 import * as vscode from 'vscode';
-import { normalizeUri } from './utils'; // [ADD] Import normalizeUri
+import { normalizeUri } from './utils';
 
 /**
- * Interface for file system operations.
- * Adapted for Async operations to support VS Code Web (Virtual File Systems).
+ * Async file-system adapter used by the parser.
+ *
+ * Keeping this boundary narrow lets document.ts work with local, remote, and
+ * virtual VS Code file systems without direct workspace.fs calls.
  */
 export interface IFileProvider {
     read(uri: vscode.Uri): Promise<string>;
-    readBuffer(uri: vscode.Uri): Promise<Uint8Array>; // [NEW] Support binary reading
+    readBuffer(uri: vscode.Uri): Promise<Uint8Array>;
     exists(uri: vscode.Uri): Promise<boolean>;
     stat(uri: vscode.Uri): Promise<{ mtime: number }>;
     resolve(base: vscode.Uri, relative: string): vscode.Uri;
@@ -15,14 +17,10 @@ export interface IFileProvider {
 }
 
 /**
- * Universal implementation using vscode.workspace.fs.
- * Works in Desktop, Remote (SSH/WSL), and Web (vscode.dev).
+ * VS Code implementation that prefers dirty open editors before disk reads.
  */
 export class VscodeFileProvider implements IFileProvider {
     async read(uri: vscode.Uri): Promise<string> {
-        // [FIX] Prioritize reading from open text documents (dirty buffers).
-        // This is CRITICAL for Live Preview of subfiles (\input).
-        // Without this, the parser reads the old file from disk until you manually save.
         const targetNorm = normalizeUri(uri);
         const openDoc = vscode.workspace.textDocuments.find(d => normalizeUri(d.uri) === targetNorm);
 
@@ -39,9 +37,6 @@ export class VscodeFileProvider implements IFileProvider {
         }
     }
 
-    /**
-     * [NEW] Read file as binary buffer (essential for PDF)
-     */
     async readBuffer(uri: vscode.Uri): Promise<Uint8Array> {
         try {
             return await vscode.workspace.fs.readFile(uri);

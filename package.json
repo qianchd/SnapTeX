@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.5.14",
+  "version": "0.6.0",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -129,10 +129,10 @@
           "default": false,
           "description": "Keep the preview webview DOM alive while hidden. Disable for lower memory usage on long documents."
         },
-        "snaptex.experimentalVirtualization": {
+        "snaptex.virtualMode": {
           "type": "boolean",
-          "default": false,
-          "description": "Enable experimental block shell virtualization for lower memory usage on long previews. Reload or reopen the SnapTeX preview after changing this setting."
+          "default": true,
+          "description": "Enable block shell virtualization for lower memory usage on long previews. Reload or reopen the SnapTeX preview after changing this setting."
         }
       }
     }

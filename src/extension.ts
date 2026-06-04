@@ -4,14 +4,12 @@ import { TexPreviewPanel } from './panel';
 import { normalizeUri } from './utils';
 import { ExtensionToWebviewCommand } from './webview-messages';
 
-// --- Flash Animation Decoration Types ---
 const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({ backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), isWholeLine: true });
 const flashDecorationType80 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 80%, transparent)', isWholeLine: true });
 const flashDecorationType60 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 60%, transparent)', isWholeLine: true });
 const flashDecorationType40 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 40%, transparent)', isWholeLine: true });
 const flashDecorationType10 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 10%, transparent)', isWholeLine: true });
 
-// --- Global State ---
 let isSyncingFromPreview = false;
 let syncLockTimer: NodeJS.Timeout | undefined;
 let isEditorScrolling = false;
@@ -20,7 +18,6 @@ let autoSyncTimer: NodeJS.Timeout | undefined;
 let currentRenderedUri: vscode.Uri | undefined = undefined;
 let activeCursorScreenRatio: number = 0.5;
 
-// --- Helpers ---
 const debounce = (func: Function, waitGetter: () => number) => {
     let timeout: NodeJS.Timeout | undefined;
     return (...args: any[]) => {
@@ -59,13 +56,19 @@ async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Ra
 }
 
 /**
- * [CRITICAL FIX] Robust URI comparison using normalizeUri
- * This handles 'file://' prefix differences and encoding differences uniformly.
+ * Compares URIs through the same normalized form used by the document mapper.
  */
 function areUrisEqual(uri1: vscode.Uri, uri2: vscode.Uri): boolean {
     return normalizeUri(uri1) === normalizeUri(uri2);
 }
 
+/**
+ * VS Code extension entry point.
+ *
+ * The extension owns command registration, editor-preview synchronization, and
+ * preview panel lifecycle. Rendering and parsing are delegated to SmartRenderer
+ * and TexPreviewPanel so this file stays focused on VS Code events.
+ */
 export function activate(context: vscode.ExtensionContext) {
     console.log('[SnapTeX] Activated!');
 
@@ -73,13 +76,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     renderer.reloadAllRules();
 
-    // --- Core Sync Logic (Forward: Tex -> Preview) ---
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
         if (!TexPreviewPanel.currentPanel) {return;}
-        // if (currentRenderedUri && !areUrisEqual(editor.document.uri, currentRenderedUri)) { return; }
-
-        // [DEBUG] Forward Sync
-        // console.log(`[SnapTeX Forward] Triggered for: ${editor.document.uri.toString()} line ${targetLine}`);
 
         const syncData = renderer.getPreviewSyncData(editor.document.uri.toString(), targetLine);
         if (!syncData) {
@@ -116,51 +114,37 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     /**
-     * [FIXED] Smart Update Preview Logic
-     * Handles file switching policies and subfile detection.
-     * @param force If true, forces a context switch (used by manual commands or explicit tab switch events).
+     * Updates the preview target according to the active editor, subfile mapping,
+     * and the renderOnSwitch policy.
      */
     const updatePreview = (force: boolean = false) => {
         const editor = vscode.window.activeTextEditor;
         if (!editor || !TexPreviewPanel.currentPanel) {return;}
 
         const activeUri = editor.document.uri;
-        let targetRoot = activeUri; // Default: Assume the active file is the root
+        let targetRoot = activeUri;
 
-        // Check Configuration
         const config = vscode.workspace.getConfiguration('snaptex');
         const renderOnSwitch = config.get<boolean>('renderOnSwitch', false);
 
-        // [SMART ROOT DETECTION]
         if (currentRenderedUri) {
-            // 1. Is it the root itself? -> Keep Root
             if (areUrisEqual(activeUri, currentRenderedUri)) {
                 targetRoot = currentRenderedUri;
-            }
-            // 2. Is it a known subfile of the current project? -> Keep Root
-            else if (renderer.isKnownFile(activeUri.toString())) {
+            } else if (renderer.isKnownFile(activeUri.toString())) {
                 targetRoot = currentRenderedUri;
-            }
-            // 3. Otherwise, it's a completely new/unrelated file.
-            else {
-                // [NEW LOGIC] Check "Render On Switch" policy.
-                // If the user disabled 'renderOnSwitch', and this was NOT a forced update (e.g. manual command),
-                // then we should ignore this unrelated file and keep showing the old project.
+            } else {
                 if (!renderOnSwitch && !force) {
-                    return; // ABORT: Do not render, do not switch.
+                    return;
                 }
 
-                // If policy allows, switch context to the new file.
                 targetRoot = activeUri;
             }
         }
 
-        // Apply our decision
         currentRenderedUri = targetRoot;
 
         renderer.reloadAllRules();
 
-        // Tell the Panel explicitly which file is the Root.
         TexPreviewPanel.currentPanel.update(targetRoot);
     };
 
@@ -169,11 +153,8 @@ export function activate(context: vscode.ExtensionContext) {
         () => vscode.workspace.getConfiguration('snaptex').get<number>('delay', 200)
     );
 
-    // --- Commands ---
-
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {
         if (TexPreviewPanel.currentPanel) {
-            // Manual start always forces an update
             updatePreview(true);
         }
         else {
@@ -190,7 +171,6 @@ export function activate(context: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('snaptex');
         const currentValue = config.get<boolean>('autoScrollSync', true);
 
-        // Update setting globally (User Settings)
         await config.update('autoScrollSync', !currentValue, vscode.ConfigurationTarget.Global);
 
         const status = !currentValue ? 'Enabled' : 'Disabled';
@@ -203,25 +183,18 @@ export function activate(context: vscode.ExtensionContext) {
         if (editor) { triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character); }
     }));
 
-    // Command: Reveal Line (Reverse: Preview -> Editor)
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (uri: vscode.Uri, index: number, ratio: number, anchor: string, viewRatio: number = 0.5) => {
             isSyncingFromPreview = true;
             if (syncLockTimer) { clearTimeout(syncLockTimer); }
             syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
 
-            // 1. Get Source Location
             const sourceLoc = renderer.getSourceSyncData(index, ratio);
             if (!sourceLoc) {return;}
 
-            // [DEBUG] Reverse Sync
-            // console.log(`[SnapTeX Reverse] Target: ${sourceLoc.file} Line: ${sourceLoc.line}`);
-
-            // [FIX] Use parse + normalize for lookup
             const targetUri = vscode.Uri.parse(sourceLoc.file);
             let targetLine = sourceLoc.line;
 
-            // Robust search for visible editors
             let targetEditor = vscode.window.visibleTextEditors.find(e => areUrisEqual(e.document.uri, targetUri));
 
             if (!targetEditor) {
@@ -236,7 +209,6 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.window.showTextDocument(targetEditor.document, { viewColumn: targetEditor.viewColumn });
             }
 
-            // Anchor refinement logic
             if (anchor && anchor.length > 3) {
                 const range = new vscode.Range(Math.max(0, targetLine - 5), 0, Math.min(targetEditor.document.lineCount, targetLine + 10), 0);
                 const text = targetEditor.document.getText(range);
@@ -246,17 +218,14 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
-            // Calculate reveal range
             const range = targetEditor.document.lineAt(Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1))).range;
 
-            // Smart Relative Sync
             const visible = targetEditor.visibleRanges[0];
             if (visible) {
                 const height = visible.end.line - visible.start.line;
                 const startLine = Math.max(0, Math.floor(targetLine - height * viewRatio));
                 targetEditor.revealRange(new vscode.Range(startLine, 0, startLine, 0), vscode.TextEditorRevealType.AtTop);
             } else {
-                // Fallback
                 targetEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
             }
 
@@ -278,7 +247,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         const targetUri = vscode.Uri.parse(sourceLoc.file);
 
-        // [FIX] Use robust areUrisEqual
         const editor = vscode.window.visibleTextEditors.find(e => areUrisEqual(e.document.uri, targetUri));
 
         if (editor) {
@@ -287,7 +255,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
-    // --- Listeners ---
     context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(e => {
         if (e.textEditor !== vscode.window.activeTextEditor || isEditorScrolling) {return;}
 
@@ -322,7 +289,6 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
-        // [FIX] Always try to update. Smart logic inside updatePreview will decide whether to proceed or abort.
         if (vscode.window.activeTextEditor) {updatePreview(false);}
     }));
 
@@ -330,14 +296,12 @@ export function activate(context: vscode.ExtensionContext) {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
             const currentConfig = vscode.workspace.getConfiguration('snaptex');
             if (currentConfig.get<boolean>('livePreview', true)) {
-                // Live preview is considered an "implicit" update, so force=false
                 debouncedUpdatePreview(false);
             }
         }
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
-        // [FIX] Only force an update if Render On Switch is ENABLED
         if (editor && vscode.workspace.getConfiguration('snaptex').get<boolean>('renderOnSwitch', false)) {
             updatePreview(true);
         }

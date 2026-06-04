@@ -1,9 +1,9 @@
 /**
- * src/patterns.ts
- * Centralized location for LaTeX regex patterns and environment lists.
+ * Shared LaTeX environment lists and regex fragments.
+ *
+ * Splitter, scanner, and render rules all consume these constants so supported
+ * environments remain aligned across parsing and rendering.
  */
-
-// --- Lists of Environment Names ---
 
 export const MATH_ENVS = [
     'equation', 'align', 'gather', 'multline', 'flalign', 'alignat'
@@ -24,7 +24,6 @@ export const THEOREM_ENVS = [
     'corollary', 'cor', 'coro',
     'example', 'ex'
 ];
-// Note: Section levels usually map to specific logic, but good to have listed.
 export const SECTION_LEVELS = [
     'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'
 ];
@@ -33,23 +32,18 @@ export const CITATION_CMDS = [
     'cite', 'citep', 'citet', 'citeyear'
 ];
 
-// Environments ignored by the splitter (internal content structure, allow split inside)
 export const SPLITTER_IGNORED_ENVS = [
     'proof', 'itemize', 'enumerate'
 ];
 
-// Major environments for splitter logic (usually don't split inside unless trapped)
-// Note: This list in splitter.ts was slightly different (included short names like 'thm', 'prop').
-// We preserve the original logic's coverage.
 export const SPLITTER_MAJOR_ENVS = [
     ...MATH_ENVS,
     ...FLOAT_ENVS,
     ...THEOREM_ENVS,
-    'thm', 'prop', // Short aliases sometimes used
+    'thm', 'prop',
     'tikzpicture'
 ];
 
-// --- Helper for Regex Construction ---
 const join = (arr: string[]) => arr.join('|');
 
 export const REGEX_STR = {
@@ -62,18 +56,10 @@ export const REGEX_STR = {
     SPLITTER_MAJOR: join(SPLITTER_MAJOR_ENVS)
 };
 
-// --- Common Regexes ---
-
-// Matches: \label{key} or \label {key}
-// [FIX] Added \s* to allow spaces
 export const R_LABEL = /\\label\s*\{([^}]+)\}/;
 
-// Matches: \ref{key} or \eqref{key}
 export const R_REF = /\\(ref|eqref)\*?\{([^}]+)\}/g;
 
-// Matches: \bibliography{file}
 export const R_BIBLIOGRAPHY = /\\bibliography\{([^}]+)\}/;
 
-// Matches: \cite[opt]{key} etc.
-// Captures: 1=cmd, 2=opt1, 3=opt2, 4=keys
 export const R_CITATION = new RegExp(`\\\\(${REGEX_STR.CITATION_CMDS})(?:\\*?)(?:\\s*\\[([^\\]]*)\\])?(?:\\s*\\[([^\\]]*)\\])?\\s*\\{([^}]+)\\}`, 'g');

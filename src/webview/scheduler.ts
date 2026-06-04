@@ -8,6 +8,10 @@ interface CoalescingTaskSchedulerOptions {
     onError?: (error: unknown) => void;
 }
 
+/**
+ * Debounces task requests while guaranteeing that changes requested during an
+ * active run execute once more after the current run finishes.
+ */
 export class CoalescingTaskScheduler {
     declare private readonly debounceMs: number;
     declare private readonly run: () => MaybePromise<void>;

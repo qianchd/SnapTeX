@@ -1,5 +1,4 @@
 import MarkdownIt from 'markdown-it';
-// [REMOVED] import katex (Moved to rules.ts)
 
 import { BlockTextSnapshot, LatexDocument } from './document';
 import { DiffEngine, DiffResult } from './diff';
@@ -23,8 +22,12 @@ interface BlockSnapshot extends RenderedBlockMeta {
 }
 
 /**
- * Renderer Service.
- * Coordinates the Document Model, Diff Engine, and Markdown Rendering.
+ * Converts a parsed LatexDocument into either a full render payload or a patch.
+ *
+ * SmartRenderer owns the preview-side document model snapshot: block hashes,
+ * source-line mapping, label numbering, citation state, and the Markdown
+ * protection pass. It is deliberately stateless with respect to VS Code APIs;
+ * panel.ts handles I/O and webview transport.
  */
 export class SmartRenderer {
     private lastBlocks: BlockSnapshot[] = [];
@@ -33,18 +36,9 @@ export class SmartRenderer {
     private lastMacrosJson: string = "";
     private lastCitedKeys: string[] = [];
 
-    // Markdown Engine
     private md: MarkdownIt | null = null;
-
-    // [NEW] Protection Manager
     public protector = new ProtectionManager();
-
-    // [REMOVED] All specific protected arrays (protectedRenderedBlocks, etc.)
-
-    // Configuration
     private _preprocessRules: PreprocessRule[] = [];
-
-    // [CHANGED] Made public so rules can access it for KaTeX rendering
     public currentMacros: Record<string, string> = {};
 
     private blockMap: { start: number; count: number }[] = [];
@@ -66,8 +60,9 @@ export class SmartRenderer {
     public get currentAuthor(): string | undefined { return this.currentDocument?.metadata.author; }
     public get currentDate(): string | undefined { return this.currentDocument?.metadata.date; }
 
-    // --- Initialization & Config ---
-
+    /**
+     * Rebuilds Markdown-it and applies the current macro table used by math rules.
+     */
     public rebuildMarkdownEngine(macros: Record<string, string>) {
         this.currentMacros = {
             "\\mathparagraph": "\\P",
@@ -78,11 +73,17 @@ export class SmartRenderer {
         this.md.disable('code');
     }
 
+    /**
+     * Restores the default LaTeX preprocessing rule pipeline.
+     */
     public reloadAllRules() {
         this._preprocessRules = [...DEFAULT_PREPROCESS_RULES];
         this._sortRules();
     }
 
+    /**
+     * Replaces or appends a preprocessing rule, preserving priority ordering.
+     */
     public registerPreprocessRule(rule: PreprocessRule) {
         const index = this._preprocessRules.findIndex(r => r.name === rule.name);
         if (index !== -1) {
@@ -108,8 +109,9 @@ export class SmartRenderer {
         this.currentDocument = undefined;
     }
 
-    // --- Helper Methods for Rules ---
-
+    /**
+     * Renders inline Markdown from rule helpers without running the full block pipeline.
+     */
     public renderInline(text: string): string {
         return this.md ? this.md.renderInline(text) : text;
     }
@@ -123,11 +125,6 @@ export class SmartRenderer {
         return index + 1;
     }
 
-    /**
-     * [NEW] Generic protection method used by Rules.
-     * @param namespace e.g. 'math', 'raw', 'ref'
-     * @param content The HTML content to protect
-     */
     public protect(namespace: string, content: string): string {
         return this.protector.protect(namespace, content);
     }
@@ -145,19 +142,13 @@ export class SmartRenderer {
         return this.currentDocument.filePool.some(file => normalizeUri(file) === target);
     }
 
-    // --- Core Rendering Logic ---
-
     private renderBlockToHtml(text: string, index: number): string {
         let processed = text;
 
-        // 1. Apply Rules (Rules now call renderer.protect() directly)
         this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
 
-        // 2. Render Markdown (Tokens like XSNAP:math:0Y are treated as plain text)
         let finalHtml = this.md!.render(processed);
 
-        // 3. Universal Recursive Resolution
-        // Replaces all tokens, including nested ones (e.g. Ref inside Math)
         finalHtml = this.protector.resolve(finalHtml);
 
         if (finalHtml.includes('OOABSTRACT') || finalHtml.includes('OOKEYWORDS')) {
@@ -288,13 +279,18 @@ export class SmartRenderer {
         return this.lastBlocks[index];
     }
 
+    /**
+     * Renders a parsed document and returns the minimal webview update payload.
+     *
+     * The full-update threshold intentionally remains a fixed 50 changed blocks.
+     * Virtual mode may request metadata-only full payloads; individual block HTML
+     * is then rendered lazily by index from lastTextSnapshot.
+     */
     public render(doc: LatexDocument, options: RenderOptions = {}): PatchPayload {
         this.currentDocument = doc;
 
-        // Reset protector state
         this.protector.reset();
 
-        // 1. Macros
         const currentMacrosJson = JSON.stringify(doc.metadata.macros);
         const macrosChanged = currentMacrosJson !== this.lastMacrosJson;
         if (macrosChanged) {
@@ -305,7 +301,6 @@ export class SmartRenderer {
             this.lastMacrosJson = currentMacrosJson;
         }
 
-        // 2. Prepare text blocks
         const safeTitle = (this.currentTitle || '').replace(/[\r\n]/g, ' ');
         const safeAuthor = (this.currentAuthor || '').replace(/[\r\n]/g, ' ');
         const safeDate = (this.currentDate || '').replace(/[\r\n]/g, ' ');
@@ -338,13 +333,11 @@ export class SmartRenderer {
         };
         const newHashBlocks = Array.from({ length: blockCount }, (_unused, index) => ({ hash: getNewBlockHash(index) }));
 
-        // 3. Block Map
         this.blockMap = doc.blockSpans.map(span => ({
             start: doc.contentStartLineOffset + span.line,
             count: span.lineCount
         }));
 
-        // 4. Scanner
         const scanResult = this.scanner.scan(newBlockProvider);
         this.globalLabelMap = scanResult.labelMap;
 
@@ -356,10 +349,8 @@ export class SmartRenderer {
         });
         const numberingData = { blocks: numberingMap, labels: scanResult.labelMap };
 
-        // 5. Diff
         const diff = DiffEngine.compute(this.lastBlocks, newHashBlocks);
 
-        // 6. Determine Update Strategy (Evaluate using diff.insertCount instead of insertedHtmls.length)
         const isFullUpdate = this.lastBlocks.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
         let payload: PatchPayload;
         let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, getNewBlockText);
@@ -371,7 +362,6 @@ export class SmartRenderer {
         const nextTextSnapshot = doc.createTextSnapshot();
 
         if (isFullUpdate) {
-            // [Full Render] Branch
             this.lastBlocks = blockMeta;
             this.lastTextSnapshot = nextTextSnapshot;
             this.lastMetaFingerprint = metaFingerprint;
@@ -390,8 +380,6 @@ export class SmartRenderer {
                 dirtyBlocks: undefined
             };
         } else {
-            // [Partial/Patch Render] Branch
-            // Only consume CPU to render changed blocks if we are sure a full update is not needed
             const insertedHtmls: string[] = [];
             for (let i = 0; i < diff.insertCount; i++) {
                 const absoluteIndex = diff.start + i;
@@ -430,13 +418,10 @@ export class SmartRenderer {
             };
         }
 
-        // [Deep GC] Clear protection storage
         this.protector.reset();
 
         return payload;
     }
-
-    // --- Helpers ---
 
     public getPreviewSyncData(filePath: string, line: number) {
         if (!this.currentDocument) {return null;}

@@ -11,6 +11,14 @@ export const TIKZ_PENDING_SCRIPT_TYPE = 'text/snaptex-tikz';
 export const TIKZ_ACTIVE_SCRIPT_TYPE = 'text/tikz';
 export const TIKZ_PENDING_SCRIPT_SELECTOR = `script[type="${TIKZ_PENDING_SCRIPT_TYPE}"]`;
 export const TIKZ_SCRIPT_SELECTOR = `${TIKZ_PENDING_SCRIPT_SELECTOR}, script[type="${TIKZ_ACTIVE_SCRIPT_TYPE}"]`;
+
+/**
+ * Webview-side TikZ integration.
+ *
+ * TikZ blocks are inserted as inert scripts first, then activated after the
+ * shared TikZJax runtime has loaded. Container state is tracked separately so
+ * stale previews can remain visible until replacement rendering settles.
+ */
 function restoreTikzScriptText(text) {
         return String(text || '').replace(/<\\\/script/gi, '</script');
     }

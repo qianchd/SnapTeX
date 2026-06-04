@@ -2,6 +2,9 @@ import katex from 'katex';
 import { RenderContext } from './types';
 import { escapeHtmlAttribute, resolveLatexStyles } from './utils';
 
+/**
+ * Renders TeX math through KaTeX and protects the generated HTML from Markdown.
+ */
 export function renderMath(tex: string, displayMode: boolean, renderer: RenderContext): string {
     try {
         const html = katex.renderToString(tex, {
@@ -18,6 +21,9 @@ export function renderMath(tex: string, displayMode: boolean, renderer: RenderCo
     }
 }
 
+/**
+ * Creates a protected reference placeholder that scanner numbering fills later.
+ */
 export function createRefLink(key: string, renderer: RenderContext, type: 'ref' | 'eqref' = 'ref'): string {
     const safeKey = escapeHtmlAttribute(key);
     const html = `<a href="#${safeKey}" class="sn-ref" data-key="${safeKey}" style="color:inherit; text-decoration:none;">?</a>`;
@@ -28,6 +34,9 @@ export function createRefLink(key: string, renderer: RenderContext, type: 'ref' 
     return `\\text{${token}}`;
 }
 
+/**
+ * Recovers protection tokens that were embedded in ignored float regions.
+ */
 export function recoverPreservedTokens(text: string): string {
     const tokenRegex = /XSNAP:[a-zA-Z0-9_-]+:\d+Y/g;
     let found = "";

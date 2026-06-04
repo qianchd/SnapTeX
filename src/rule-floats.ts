@@ -2,6 +2,10 @@ import { PreprocessRule, RenderContext } from './types';
 import { escapeHtmlAttribute, extractAndHideLabels, findBalancedClosingBrace, findCommand, resolveLatexStyles } from './utils';
 import { recoverPreservedTokens, renderCaptionContent, renderMath, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 
+/**
+ * Converts LaTeX figure environments to protected HTML, preserving captions,
+ * labels, local images, PDF canvases, and nested protected TikZ content.
+ */
 export function createFigureRule(): PreprocessRule {
     return {
         name: 'figure',
@@ -41,6 +45,10 @@ export function createFigureRule(): PreprocessRule {
     };
 }
 
+/**
+ * Converts algorithm/algorithmic environments into compact ordered or unordered
+ * HTML lists while preserving captions and labels.
+ */
 export function createAlgorithmRule(): PreprocessRule {
     return {
         name: 'algorithm',
@@ -112,6 +120,9 @@ export function createAlgorithmRule(): PreprocessRule {
     };
 }
 
+/**
+ * Converts common table/tabular forms into preview HTML tables.
+ */
 export function createTableRule(): PreprocessRule {
     return {
         name: 'table',
