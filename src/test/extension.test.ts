@@ -634,8 +634,23 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /const TIKZ_RENDER_DEBOUNCE_MS = 1500/);
         assert.match(webviewSource, /this\.tikzRenderTimer = null/);
         assert.match(webviewSource, /clearTimeout\(this\.tikzRenderTimer\)/);
+        assert.match(webviewSource, /const loadPromise = window\.ensureTikzJaxLoaded\(\)/);
         assert.match(webviewSource, /window\.activatePendingTikzScripts\(document\)/);
         assert.match(webviewSource, /script\.replaceWith\(activeScript\)/);
+    });
+
+    test('keeps the previous TikZ SVG visible while a replacement render is pending', () => {
+        const repoRoot = path.resolve(__dirname, '..', '..');
+        const webviewSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
+        const styleSource = fs.readFileSync(path.join(repoRoot, 'media', 'preview-style.css'), 'utf8');
+
+        assert.match(webviewSource, /collectTikzPreviews\(block\)/);
+        assert.match(webviewSource, /attachStaleTikzPreviews\(block, previews\)/);
+        assert.match(webviewSource, /preview\.classList\.add\('tikz-stale-preview'\)/);
+        assert.match(webviewSource, /container\.querySelectorAll\('\.tikz-stale-preview'\)\.forEach\(preview => preview\.remove\(\)\)/);
+        assert.match(webviewSource, /svg\[role="img"\]:not\(\.tikz-stale-preview\)/);
+        assert.match(styleSource, /\.tikz-container\[data-tikz-state="queued"\] > svg:not\(\.tikz-stale-preview\)/);
+        assert.match(styleSource, /\.tikz-stale-preview/);
     });
 
     test('bootstraps dynamic TikZJax with a self-contained blob worker in VS Code webviews', () => {
@@ -657,6 +672,8 @@ suite('Webview resource loading', () => {
         assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:snaptexAssets\}/);
         assert.match(tikzJaxSource, /!e\.isConnected&&\(!e\.loader\|\|!e\.loader\.isConnected\)/);
         assert.match(tikzJaxSource, /if\(!r\.isConnected\)return/);
+        assert.match(tikzJaxSource, /window\.addEventListener\("unload",Z\)/);
+        assert.doesNotMatch(tikzJaxSource, /revokeObjectURL[\s\S]*tikzjax-load-finished/);
         assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`,\{CORSWorkaround:!1\}\)/);
         assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`\)/);
         assert.doesNotMatch(tikzJaxSource, /try\{await r\.load\(e\)\}catch\(e\)\{console\.log\(e\)\}return r/);
