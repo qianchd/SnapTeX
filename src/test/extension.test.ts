@@ -413,6 +413,10 @@ suite('LaTeX style utilities', () => {
         assert.equal(labels.cleanContent, 'Figure body  text ');
         assert.match(labels.hiddenHtml, /id="fig:spaced"/);
         assert.match(labels.hiddenHtml, /id="fig:tight"/);
+
+        const unsafe = extractAndHideLabels('Figure body \\label{fig:a&"b}');
+        assert.match(unsafe.hiddenHtml, /id="fig:a&amp;&quot;b"/);
+        assert.match(unsafe.hiddenHtml, /data-label="fig:a&amp;&quot;b"/);
     });
 
     test('cleans common BibTeX LaTeX commands without stripping protected tokens', () => {
@@ -953,7 +957,8 @@ suite('SmartRenderer', () => {
         const doc = createDocument([
             [
                 '\\section{Intro}\\label{sec:intro}',
-                'See \\ref{sec:intro,fig:missing}, Eq.~\\eqref{eq:one}, \\citep[see][p. 2]{smith2024,doe2025}, \\citet{smith2024}, and \\citeyear{doe2025}.'
+                'See \\ref{sec:intro,fig:missing}, Eq.~\\eqref{eq:one}, \\ref{sec:a&b}, \\citep[see][p. 2]{smith2024,doe2025}, \\citet{smith2024}, and \\citeyear{doe2025}.',
+                '\\label{sec:a&b}'
             ].join('\n'),
             '\\begin{equation}\\label{eq:one}x=1\\end{equation}'
         ]);
@@ -968,6 +973,8 @@ suite('SmartRenderer', () => {
         assert.match(html, /href="#sec:intro"[^>]*data-key="sec:intro"[^>]*>\?<\/a>/);
         assert.match(html, /href="#fig:missing"[^>]*data-key="fig:missing"[^>]*>\?<\/a>/);
         assert.match(html, /Eq\.&nbsp;\(<a href="#eq:one"[^>]*data-key="eq:one"[^>]*>\?<\/a>\)/);
+        assert.match(html, /id="sec:a&amp;b"/);
+        assert.match(html, /href="#sec:a&amp;b"[^>]*data-key="sec:a&amp;b"[^>]*>\?<\/a>/);
         assert.match(html, /\(see <a href="#ref-smith2024"[^>]*>Smith, 2024<\/a>; <a href="#ref-doe2025"[^>]*>Doe, 2025<\/a>, p\. 2\)/);
         assert.match(html, /Smith \(<a href="#ref-smith2024"[^>]*>2024<\/a>\)/);
         assert.match(html, /and <a href="#ref-doe2025"[^>]*>2025<\/a>/);

@@ -64,6 +64,15 @@ export function escapeHtml(text: string): string {
     });
 }
 
+export function escapeHtmlAttribute(text: string): string {
+    return escapeHtml(text);
+}
+
+export function createHiddenLabelAnchor(labelName: string): string {
+    const safeLabel = escapeHtmlAttribute(labelName);
+    return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`;
+}
+
 /**
  * Helper: Apply LaTeX text styles (bold, italic, underline, color, etc.) to HTML tags.
  * This encapsulates logic originally in 'text_styles' rule for reuse.
@@ -120,10 +129,7 @@ export function resolveLatexStyles(text: string): string {
 export function extractAndHideLabels(content: string) {
     const labels: string[] = [];
     const cleanContent = content.replace(/\\label\s*\{([^}]+)\}/g, (match, labelName) => {
-        const safeLabel = labelName.replace(/"/g, '&quot;');
-        // [FIX] Use visibility:hidden instead of display:none so the anchor exists in the layout tree
-        // and can be targeted by scrollIntoView (or native hash navigation).
-        labels.push(`<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`);
+        labels.push(createHiddenLabelAnchor(labelName));
         return '';
     });
     return { cleanContent, hiddenHtml: labels.join('') };

@@ -1,4 +1,4 @@
-import { toRoman, capitalizeFirstLetter, escapeHtml, extractAndHideLabels, findBalancedClosingBrace, resolveLatexStyles, findCommand } from './utils';
+import { toRoman, capitalizeFirstLetter, createHiddenLabelAnchor, escapeHtml, escapeHtmlAttribute, extractAndHideLabels, findBalancedClosingBrace, resolveLatexStyles, findCommand } from './utils';
 import { PreprocessRule, RenderContext } from './types';
 import { BibTexParser } from './bib';
 import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY } from './patterns';
@@ -27,7 +27,8 @@ function renderMath(tex: string, displayMode: boolean, renderer: RenderContext):
  * Helper to create a protected reference link
  */
 function createRefLink(key: string, renderer: RenderContext, type: 'ref' | 'eqref' = 'ref'): string {
-    const html = `<a href="#${key}" class="sn-ref" data-key="${key}" style="color:inherit; text-decoration:none;">?</a>`;
+    const safeKey = escapeHtmlAttribute(key);
+    const html = `<a href="#${safeKey}" class="sn-ref" data-key="${safeKey}" style="color:inherit; text-decoration:none;">?</a>`;
     const token = renderer.protect('ref', html);
     if (type === 'eqref') {
         return `(\\text{${token}})`;
@@ -406,16 +407,16 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         apply: (text, renderer: RenderContext) => {
             // 1. Labels
             text = text.replace(new RegExp(R_LABEL, 'g'), (match, labelName) => {
-                const safeLabel = labelName.replace(/"/g, '&quot;');
                 // Protect raw HTML anchors so they survive inside Figure/Table blocks
-                return renderer.protect('raw', `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="position:relative; top:-50px; visibility:hidden;"></span>`);
+                return renderer.protect('raw', createHiddenLabelAnchor(labelName));
             });
 
             // 2. References (Numbering)
             text = text.replace(R_REF, (match, type, labels) => {
                 const labelArray = labels.split(',').map((l: string) => l.trim());
                 const htmlLinks = labelArray.map((label: string) => {
-                    return `<a href="#${label}" class="latex-link latex-ref sn-ref" data-key="${label}">?</a>`;
+                    const safeLabel = escapeHtmlAttribute(label);
+                    return `<a href="#${safeLabel}" class="latex-link latex-ref sn-ref" data-key="${safeLabel}">?</a>`;
                 });
                 const joinedLinks = htmlLinks.join(', ');
                 const result = (type === 'eqref') ? `(${joinedLinks})` : joinedLinks;
@@ -446,8 +447,10 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     return { error: false, key, author, year };
                 });
 
-                const mkLink = (text: string, key: string) =>
-                    `<a href="#ref-${key}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
+                const mkLink = (text: string, key: string) => {
+                    const safeKey = escapeHtmlAttribute(key);
+                    return `<a href="#ref-${safeKey}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
+                };
 
                 let finalHtml = "";
                 if (cmd === 'citet') {
@@ -508,8 +511,9 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     const entry = renderer.bibEntries.get(key);
                     const content = entry
                         ? BibTexParser.formatEntry(entry, renderer)
-                        : `<span style="color:red">Bib entry '${key}' not found.</span>`;
-                    html += `<div class="bib-item" id="ref-${key}" style="margin-bottom: 0.8em; padding-left: 2em; text-indent: -2em;">${content}</div>`;
+                        : `<span style="color:red">Bib entry '${escapeHtml(key)}' not found.</span>`;
+                    const safeKey = escapeHtmlAttribute(key);
+                    html += `<div class="bib-item" id="ref-${safeKey}" style="margin-bottom: 0.8em; padding-left: 2em; text-indent: -2em;">${content}</div>`;
                 });
                 html += `</div>`;
                 return renderer.protect('bib', html);
@@ -908,7 +912,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 let anchor = "";
                 if (label) {
                     const labelName = label.match(/\{([^}]+)\}/)?.[1] || "";
-                    anchor = `<span id="${labelName}" class="latex-label-anchor"></span>`;
+                    anchor = createHiddenLabelAnchor(labelName);
                 }
                 if(anchor) {anchor = renderer.protect('anchor', anchor);}
                 if(numHtml) {numHtml = renderer.protect('secnum', numHtml);}
