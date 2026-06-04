@@ -881,7 +881,7 @@ var SnapTeXWebview = (() => {
       this.config = {
         autoScrollDelay: 100,
         debugMemory: false,
-        experimentalVirtualization: false
+        virtualMode: true
       };
       this.currentNumbering = null;
       this.blockHtmlRequestSeq = 0;
@@ -960,8 +960,8 @@ var SnapTeXWebview = (() => {
           if (event.data.config && typeof event.data.config.debugMemory === "boolean") {
             this.config.debugMemory = event.data.config.debugMemory;
           }
-          this.config.experimentalVirtualization = event.data.config.experimentalVirtualization === true;
-          this.virtualization.setEnabled(event.data.config.experimentalVirtualization === true);
+          this.config.virtualMode = event.data.config.virtualMode !== false;
+          this.virtualization.setEnabled(event.data.config.virtualMode !== false);
           this.updateVirtualizedBlocks({ allowUnmount: true });
           break;
       }

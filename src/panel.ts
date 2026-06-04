@@ -38,6 +38,35 @@ function logHostMemory(label: string) {
     });
 }
 
+function hasExplicitBooleanSetting(inspectResult: ReturnType<vscode.WorkspaceConfiguration['inspect']>): boolean {
+    if (!inspectResult) {
+        return false;
+    }
+
+    return [
+        inspectResult.globalValue,
+        inspectResult.workspaceValue,
+        inspectResult.workspaceFolderValue,
+        inspectResult.globalLanguageValue,
+        inspectResult.workspaceLanguageValue,
+        inspectResult.workspaceFolderLanguageValue
+    ].some(value => typeof value === 'boolean');
+}
+
+export function getVirtualMode(config = vscode.workspace.getConfiguration('snaptex')): boolean {
+    const virtualMode = config.inspect<boolean>('virtualMode');
+    if (hasExplicitBooleanSetting(virtualMode)) {
+        return config.get<boolean>('virtualMode', true);
+    }
+
+    const legacyVirtualization = config.inspect<boolean>('experimentalVirtualization');
+    if (hasExplicitBooleanSetting(legacyVirtualization)) {
+        return config.get<boolean>('experimentalVirtualization', true);
+    }
+
+    return true;
+}
+
 function decodeHtmlAttribute(value: string): string {
     return value
         .replace(/&quot;/g, '"')
@@ -337,7 +366,7 @@ export class TexPreviewPanel {
             config: {
                 autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
                 debugMemory: config.get<boolean>('debugMemory', false),
-                experimentalVirtualization: config.get<boolean>('experimentalVirtualization', false)
+                virtualMode: getVirtualMode(config)
             }
         });
     }
@@ -423,9 +452,7 @@ export class TexPreviewPanel {
         this.postWebviewConfig();
 
         if (this._currentDocument) {
-            const virtualizeBlocks = vscode.workspace
-                .getConfiguration('snaptex')
-                .get<boolean>('experimentalVirtualization', false);
+            const virtualizeBlocks = getVirtualMode();
             const parseResult = await this._currentDocument.parse(this._sourceUri, text);
             logHostMemory('after parse');
 

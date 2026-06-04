@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
-import { isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
+import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { SmartRenderer } from '../renderer';
 import { normalizeUri, stableHash } from '../utils';
 import {
@@ -835,6 +835,27 @@ suite('PDF request validation', () => {
         assert.match(panelSource, /if \(sourceChanged\) \{\s*this\._renderer\.resetState\(\);\s*\}/);
     });
 
+    test('uses virtual mode by default while honoring explicit legacy settings', () => {
+        const makeConfig = (
+            values: Record<string, boolean | undefined>,
+            explicit: Record<string, boolean | undefined> = values
+        ) => ({
+            get: (key: string, fallback: boolean) => values[key] ?? fallback,
+            inspect: (key: string) => explicit[key] === undefined ? undefined : { globalValue: explicit[key] }
+        }) as unknown as vscode.WorkspaceConfiguration;
+
+        assert.equal(getVirtualMode(makeConfig({})), true);
+        assert.equal(getVirtualMode(makeConfig({ virtualMode: false })), false);
+        assert.equal(getVirtualMode(makeConfig(
+            { experimentalVirtualization: false },
+            { experimentalVirtualization: false }
+        )), false);
+        assert.equal(getVirtualMode(makeConfig(
+            { virtualMode: true, experimentalVirtualization: false },
+            { virtualMode: true, experimentalVirtualization: false }
+        )), true);
+    });
+
     test('waits for the webview ready handshake before sending the first preview update', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
@@ -1009,16 +1030,19 @@ suite('Webview resource loading', () => {
         assert.doesNotMatch(webviewSource, /outerHTML !==/);
     });
 
-    test('keeps shell virtualization prepared behind a disabled experimental setting', () => {
+    test('keeps shell virtualization enabled behind virtual mode by default', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const packageSource = fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8');
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
         const webviewSource = readWebviewRuntimeSource(repoRoot);
         const styleSource = fs.readFileSync(path.join(repoRoot, 'media', 'preview-style.css'), 'utf8');
 
-        assert.match(packageSource, /"snaptex\.experimentalVirtualization"/);
-        assert.match(packageSource, /"default": false/);
-        assert.match(panelSource, /experimentalVirtualization: config\.get<boolean>\('experimentalVirtualization', false\)/);
+        assert.match(packageSource, /"snaptex\.virtualMode"/);
+        assert.match(packageSource, /"default": true/);
+        assert.doesNotMatch(packageSource, /"snaptex\.experimentalVirtualization"/);
+        assert.match(panelSource, /virtualMode: getVirtualMode\(config\)/);
+        assert.match(panelSource, /const virtualizeBlocks = getVirtualMode\(\)/);
+        assert.match(panelSource, /config\.inspect<boolean>\('experimentalVirtualization'\)/);
         assert.match(webviewSource, /class BlockVirtualizationController/);
         assert.match(webviewSource, /this\.enabled = false/);
         assert.match(webviewSource, /this\.heightCache = new Map\(\)/);
@@ -1061,7 +1085,8 @@ suite('Webview resource loading', () => {
         assert.match(webviewSource, /replaceContentWithShells\(blocks, onMount\)/);
         assert.match(webviewSource, /replaceContentWithBlockMetadata\(blocks, onMount, onMissingHtml\)/);
         assert.match(webviewSource, /storeBlockHtml\(index, hash, html\)/);
-        assert.match(webviewSource, /this\.virtualization\.setEnabled\(event\.data\.config\.experimentalVirtualization === true\)/);
+        assert.match(webviewSource, /this\.config\.virtualMode = event\.data\.config\.virtualMode !== false/);
+        assert.match(webviewSource, /this\.virtualization\.setEnabled\(event\.data\.config\.virtualMode !== false\)/);
         assert.match(webviewSource, /this\.virtualization\.replaceContentWithShells\(newElements/);
         assert.match(webviewSource, /applyVirtualPatch\(payload\)/);
         assert.match(webviewSource, /getBlockByIndex\(index\)/);

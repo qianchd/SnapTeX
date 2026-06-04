@@ -97,7 +97,7 @@ export interface ConfigMessage {
     config: {
         autoScrollDelay: number;
         debugMemory: boolean;
-        experimentalVirtualization: boolean;
+        virtualMode: boolean;
     };
 }
 

@@ -27,7 +27,7 @@
 
 ### Block Virtualization and On-Demand HTML
 
-- [x] Keep `snaptex.experimentalVirtualization` disabled by default while exposing the full Phase 1/2 pipeline behind the setting.
+- [x] Make `snaptex.virtualMode` the default low-memory preview path while retaining legacy `experimentalVirtualization` reads for migration.
 - [x] Build `.latex-block-shell` placeholders for every block in virtualized full updates.
 - [x] Preserve scrollbar length with cached/measured block heights and line-count-based estimates.
 - [x] Mount real block DOM only near the viewport, then unmount far-offscreen blocks while preserving height.
@@ -178,7 +178,7 @@
   - Keep numbering/reference updates on the existing `payload.numbering -> applyNumbering()` path.
 - [x] 3. Release far-offscreen PDF canvas bitmaps and rerender them when they return near the viewport.
 - [x] 4. Start the full-update payload transition with a low-risk block payload path.
-- [x] 5. Prepare shell-based block virtualization without turning it on globally.
+- [x] 5. Promote shell-based block virtualization to the default virtual mode.
 - [x] 6. Split or strengthen tests where the current monolithic suite is making changes risky.
 - [x] 7. Apply low-risk security and architecture cleanup only where tests can pin behavior.
   - Escaped `\maketitle` title/author/date metadata before inserting it into protected HTML.
@@ -361,7 +361,7 @@
 
 ### I. Shell-Based Webview Virtualization
 
-- [x] Add a disabled `snaptex.experimentalVirtualization` setting and webview controller plumbing.
+- [x] Add `snaptex.virtualMode` setting and webview controller plumbing.
 - [x] Add a block height cache populated before DOM replacement/removal.
 - [x] Create `.latex-block-shell` elements for every block.
 - [x] Mount real block HTML only near the viewport.
