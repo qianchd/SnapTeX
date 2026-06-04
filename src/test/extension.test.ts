@@ -1275,9 +1275,12 @@ suite('Webview resource loading', () => {
     test('coalesces TikZ activation so edits during a render only queue the latest run', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const webviewSource = readWebviewRuntimeSource(repoRoot);
+        const schedulerSource = fs.readFileSync(path.join(repoRoot, 'src', 'webview', 'scheduler.ts'), 'utf8');
 
         assert.match(webviewSource, /const TIKZ_RENDER_DEBOUNCE_MS = 200/);
         assert.match(webviewSource, /class CoalescingTaskScheduler/);
+        assert.match(schedulerSource, /interface CoalescingTaskSchedulerOptions/);
+        assert.doesNotMatch(schedulerSource, /@ts-nocheck/);
         assert.match(webviewSource, /this\.running = false/);
         assert.match(webviewSource, /this\.pending = true/);
         assert.match(webviewSource, /if \(this\.running\) return/);
