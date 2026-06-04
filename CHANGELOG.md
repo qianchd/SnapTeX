@@ -12,7 +12,8 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Changed**: Switched PDF rendering to a URI-only pipeline with PDF.js URL loading, non-streaming webview resource requests, a real blob module worker, viewport-near lazy rendering, and far-offscreen canvas bitmap release.
 - **Changed**: Reworked TikZ rendering to lazy-load TikZJax, bootstrap worker assets through blob URLs, cache runtime resources for the webview session, prune unused TikZ libraries per picture, preserve stale SVGs while rerendering, surface compile failures cleanly, add watchdogs, and coalesce edit-triggered render batches.
 - **Changed**: Improved full-update behavior with block text hashes, block-list full payloads, per-block path fixing, and DOM preservation for unchanged blocks while keeping the existing fixed full-update threshold.
-- **Added**: Prepared disabled block virtualization plumbing behind `snaptex.experimentalVirtualization`, including a webview controller and block height cache for future shell-based mounting.
+- **Added**: Implemented experimental shell-based block virtualization behind `snaptex.experimentalVirtualization`, including shell placeholders, measured/estimated block heights, viewport-near mounting, far-offscreen unmounting, and editor-to-preview sync through shells.
+- **Changed**: Virtualized full updates can now send block metadata first and request block HTML on demand only when a shell needs to mount, reducing initial DOM/HTML/PDF/TikZ memory for long previews while keeping the existing non-virtualized payload paths as fallbacks.
 
 ## [0.5.13] - 2026-05-14
 - **Added**: clean_layout_cmds rule to preprocess layout commands and no-indent markers

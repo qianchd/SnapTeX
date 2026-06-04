@@ -1,7 +1,7 @@
 # SnapTeX Optimization TODO
 
 > Current branch: `dev`  
-> Last verified: `npm test` passed with 49 tests after escaping `\maketitle` metadata and hashing the metadata rerender fingerprint.
+> Last verified: `npm test` passed with 52 tests after Phase 1 shell virtualization and Phase 2 on-demand block HTML loading.
 > Rule for future work: keep each change block small, add or update tests before behavior changes, then run `npm test` and commit only the files for that block.
 
 ## Overall Goal
@@ -23,6 +23,19 @@
 - [x] Add active-render and batch-render watchdogs so stuck TikZ jobs do not permanently block subsequent renders.
 - [x] Coalesce TikZ render requests so edits during a running batch only schedule the latest pending batch.
 - [x] Keep main-preview TikZ scanning scoped to `#content-root`; tooltip TikZ stays on its own immediate path.
+
+### Block Virtualization and On-Demand HTML
+
+- [x] Keep `snaptex.experimentalVirtualization` disabled by default while exposing the full Phase 1/2 pipeline behind the setting.
+- [x] Build `.latex-block-shell` placeholders for every block in virtualized full updates.
+- [x] Preserve scrollbar length with cached/measured block heights and line-count-based estimates.
+- [x] Mount real block DOM only near the viewport, then unmount far-offscreen blocks while preserving height.
+- [x] Release DOM-held PDF/TikZ/image resources when virtual blocks unmount.
+- [x] Support editor-to-preview sync by targeting shells first and refining after mount.
+- [x] Send only block metadata for virtualized full updates.
+- [x] Request block HTML from the extension host only when a shell needs to mount.
+- [x] Validate requested block index/hash before returning block HTML to the webview.
+- [x] Keep existing full block payload and `update_binary` paths as fallbacks while the experimental path is off.
 
 ### Correctness and Safety Quick Wins
 
@@ -85,6 +98,7 @@
   - Patch payload for localized edits.
   - Full render when macros change.
   - Figure PDF placeholders and reference data.
+  - Deferred full HTML payloads and on-demand block rendering.
 - [x] PDF request validation helpers.
 - [x] `extractMetadata()`.
   - Title, author, date, KaTeX macros, TikZ globals, and TikZ macro map.
@@ -118,6 +132,8 @@
 - [x] `e76c37e Send full updates as block payloads`
 - [x] `57dd397 Prepare disabled block virtualization plumbing`
 - [x] `aeb0767 Add long document fixture smoke test`
+- [x] `9edd2ec Implement block shell virtualization`
+- [x] `6e0acbc Implement on-demand block HTML loading`
 
 ## Pending: Next Correctness and Architecture Work
 
@@ -252,12 +268,12 @@
 
 ### E. Full Update Payload and DOM Update Model
 
-- [ ] Define `RenderedBlockPayload` and `FullBlocksPayload`.
+- [x] Define block metadata for virtualized full updates.
 - [x] Change default full render payload from one giant HTML string to block payloads.
 - [x] Apply `fixPaths()` per block without `htmls.join('')`.
 - [x] Stop creating `Buffer.from(fullHtml)` for full updates by default.
 - [x] Add a block-list full update path in the webview.
-- [ ] Batch append block DOM in the webview.
+- [x] Add a shell-list full update path in the webview.
 - [x] Stop using `DOMParser.parseFromString(wholeHtml)` on the default full update path.
 - [x] Keep `update_binary` as fallback until the new path is stable.
 
@@ -314,14 +330,14 @@
 
 - [x] Add a disabled `snaptex.experimentalVirtualization` setting and webview controller plumbing.
 - [x] Add a block height cache populated before DOM replacement/removal.
-- [ ] Create `.latex-block-shell` elements for every block.
-- [ ] Mount real block HTML only near the viewport.
-- [ ] Unmount far-offscreen blocks while keeping measured height.
-- [ ] Render PDF/TikZ/images only inside mounted blocks.
-- [ ] Release resources on unmount.
-- [ ] Make editor-to-preview sync target shells first, then refine after mount.
+- [x] Create `.latex-block-shell` elements for every block.
+- [x] Mount real block HTML only near the viewport.
+- [x] Unmount far-offscreen blocks while keeping measured height.
+- [x] Render PDF/TikZ/images only inside mounted blocks.
+- [x] Release resources on unmount.
+- [x] Make editor-to-preview sync target shells first, then refine after mount.
 - [ ] Make preview-to-editor double-click use shell/block index safely.
-- [ ] Add height estimation and hash-based height cache.
+- [x] Add height estimation and hash-based height cache.
 - [ ] Reevaluate `content-visibility` with shell virtualization.
 
 ## Definition of Done for Future Blocks
