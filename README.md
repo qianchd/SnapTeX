@@ -15,6 +15,20 @@ SnapTeX also runs in the browser via [vscode.dev](https://www.vscode.dev) or Git
 
 It is a demo based on the early conceptual proof, [mume.parser](https://github.com/qianchd/mume.parser) for [MPE](https://github.com/shd101wyy/vscode-markdown-preview-enhanced).
 
+## Demo
+
+<p align="center">
+  <img src="media/demo/001.openPreview.gif" alt="Open a SnapTeX preview from a LaTeX document">
+</p>
+
+| Bi-directional sync | Auto scroll sync |
+| --- | --- |
+| <img src="media/demo/002.BiSync.gif" alt="Jump between LaTeX source and SnapTeX preview"> | <img src="media/demo/003.BiAutoScroll.gif" alt="Keep the LaTeX editor and SnapTeX preview scrolling together"> |
+
+| References, figures, tables, algorithms, and tooltips | Fast local updates |
+| --- | --- |
+| <img src="media/demo/004.EqFigTableAlgoRefTooltips.gif" alt="Preview equations, figures, tables, algorithms, references, and tooltips"> | <img src="media/demo/005.FastLocalRendering.gif" alt="Fast local rendering updates in SnapTeX"> |
+
 ---
 
 ## What's New in 0.6.0

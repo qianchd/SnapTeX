@@ -2,6 +2,9 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.6.1] - 2026-06-04
+- **Added**: Rendered `\href{url}{text}` and `\url{url}` as protected external links, with unsafe protocols downgraded to escaped plain text.
+
 ## [0.6.0] - 2026-06-04
 - **Highlights**: Added default low-memory virtual mode for long documents, on-demand block HTML loading, smoother editor/preview sync, more reliable TikZ rendering, lazy PDF canvas rendering/release, stronger HTML protection, and a much broader automated test suite.
 - **Highlights**: Split the webview runtime into bundled modules and moved the renderer toward span/hash-backed block snapshots, reducing duplicated source text, full HTML payloads, and unnecessary DOM replacement.
