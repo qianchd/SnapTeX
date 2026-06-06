@@ -2,6 +2,13 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.6.2] - 2026-06-06
+- **Added**: Generalized LaTeX table rendering with richer `tabular`, `tabular*`, and `tabularx` parsing, including nested tabular cells, `\multicolumn`, `\multirow`, `\makecell`, `\tnote`, `tablenotes`, booktabs-style rules, and literal escaped braces such as `\{22, 9\}`.
+- **Fixed**: Prevented protected space tokens from leaking into nested table math by letting table rendering handle text-mode `~` spacing before global protection runs.
+- **Fixed**: Hid `\bibliographystyle{...}` control commands from the preview while preserving `\bibliography{...}` rendering.
+- **Added**: Added a richer `demo/main.tex` showcase with figures, references, algorithms, TikZ, bibliography, and a complex table exercising the table-preview features.
+- **Changed**: Excluded README demo GIFs from VSIX packages while keeping them available for GitHub README rendering.
+
 ## [0.6.1] - 2026-06-04
 - **Added**: Rendered `\href{url}{text}` and `\url{url}` as protected external links, with unsafe protocols downgraded to escaped plain text.
 
