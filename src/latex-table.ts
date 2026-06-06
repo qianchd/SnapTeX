@@ -382,7 +382,8 @@ function renderLatexTableInlineContent(content: string, renderer: RenderContext)
     const withMath = withNestedTables.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, tex: string) => {
         return renderMath(tex.trim(), false, renderer);
     });
-    const styledContent = resolveLatexStyles(withMath, html => renderer.protectHtml('style', html));
+    const withSpaces = withMath.replace(/~/g, () => renderer.protectHtml('space', '&nbsp;'));
+    const styledContent = resolveLatexStyles(withSpaces, html => renderer.protectHtml('style', html));
     return renderer.renderInline(stripLatexGroupingBraces(styledContent));
 }
 

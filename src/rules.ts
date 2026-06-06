@@ -384,7 +384,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
 
     {
         name: 'latex_special_spaces',
-        priority: 110,
+        priority: 119,
         apply: (text, renderer: RenderContext) => {
             return text.replace(/~/g, () => renderer.protectHtml('space', '&nbsp;'));
         }

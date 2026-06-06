@@ -313,7 +313,7 @@ suite('SmartRenderer', () => {
                 '\\hline',
                 '\\textbf{Name} & \\textbf{Value} \\\\',
                 '\\hline',
-                'Alpha & 10 \\\\',
+                'Alpha~One & 10 \\\\',
                 'Beta & 20 \\\\',
                 '\\hline',
                 '\\end{tabular}',
@@ -323,7 +323,7 @@ suite('SmartRenderer', () => {
 
         assert.match(html, /<table class="latex-tabular-preview latex-tabular-ruled">/);
         assert.match(html, /<thead><tr><th scope="col"><strong>Name<\/strong><\/th><th scope="col"><strong>Value<\/strong><\/th><\/tr><\/thead>/);
-        assert.match(html, /<tbody><tr><td>Alpha<\/td><td>10<\/td><\/tr>/);
+        assert.match(html, /<tbody><tr><td>Alpha&nbsp;One<\/td><td>10<\/td><\/tr>/);
         assert.doesNotMatch(html, /border: 1px solid/);
     });
 
@@ -364,6 +364,7 @@ suite('SmartRenderer', () => {
         assert.equal(tbodyHtml.match(/<tr/g)?.length, 3);
         assert.doesNotMatch(html, /\\begin\{threeparttable\}|\\begin\{tabular\*\}|\\setlength\\tabcolsep/);
         assert.doesNotMatch(html, /<tr><td>\s*<\/td><\/tr>/);
+        assert.doesNotMatch(html, /XSNAP/);
     });
 
     test('renders multicolumn and multirow table cells', () => {

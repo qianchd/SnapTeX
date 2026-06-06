@@ -127,7 +127,7 @@ export function createAlgorithmRule(): PreprocessRule {
 export function createTableRule(): PreprocessRule {
     return {
         name: 'table',
-        priority: 140,
+        priority: 118,
         apply: (text: string, renderer: RenderContext) => {
             return text.replace(/\\begin\{table(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{table\1\}/gi, (_match, star, content) => {
                 const captionRes = findCommand(content, 'caption');
