@@ -11,7 +11,7 @@ import {
 } from './utils';
 import { PreprocessRule, RenderContext } from './types';
 import { BibTexParser } from './bib';
-import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY } from './patterns';
+import { REGEX_STR, R_LABEL, R_REF, R_CITATION, R_BIBLIOGRAPHY, R_BIBLIOGRAPHY_STYLE } from './patterns';
 import { createRefLink, renderMath } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
@@ -323,6 +323,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'bibliography',
         priority: 71,
         apply: (text, renderer: RenderContext) => {
+            text = text.replace(R_BIBLIOGRAPHY_STYLE, '');
             return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), (match, file) => {
                 if (renderer.citedKeys.length === 0) {
                     return renderer.protectHtml('bib', `<div class="latex-bibliography error">No citations found.</div>`);

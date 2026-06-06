@@ -748,6 +748,19 @@ suite('SmartRenderer', () => {
         assert.match(html, /and <a href="#ref-doe2025"[^>]*>2025<\/a>/);
     });
 
+    test('hides bibliography style control commands', () => {
+        const html = renderBlocks([
+            [
+                'Text before references.',
+                '\\bibliographystyle{alpha}',
+                '\\bibliography{sample}'
+            ].join('\n')
+        ]);
+
+        assert.match(html, /Text before references\./);
+        assert.doesNotMatch(html, /\\bibliographystyle|alpha/);
+    });
+
     test('unwraps resizebox around protected tikz figures', () => {
         const html = renderBlocks([
             [

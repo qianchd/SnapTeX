@@ -62,4 +62,6 @@ export const R_REF = /\\(ref|eqref)\*?\{([^}]+)\}/g;
 
 export const R_BIBLIOGRAPHY = /\\bibliography\{([^}]+)\}/;
 
+export const R_BIBLIOGRAPHY_STYLE = /\\bibliographystyle\{[^}]+\}/g;
+
 export const R_CITATION = new RegExp(`\\\\(${REGEX_STR.CITATION_CMDS})(?:\\*?)(?:\\s*\\[([^\\]]*)\\])?(?:\\s*\\[([^\\]]*)\\])?\\s*\\{([^}]+)\\}`, 'g');
