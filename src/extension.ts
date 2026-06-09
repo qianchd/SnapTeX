@@ -18,6 +18,8 @@ let autoSyncTimer: NodeJS.Timeout | undefined;
 let currentRenderedUri: vscode.Uri | undefined = undefined;
 let activeCursorScreenRatio: number = 0.5;
 
+const isAutoScrollSyncEnabled = () => vscode.workspace.getConfiguration('snaptex').get<boolean>('autoScrollSync', true);
+
 const debounce = <Args extends unknown[]>(func: (...args: Args) => void, waitGetter: () => number) => {
     let timeout: NodeJS.Timeout | undefined;
     return (...args: Args) => {
@@ -27,6 +29,12 @@ const debounce = <Args extends unknown[]>(func: (...args: Args) => void, waitGet
 };
 
 const getAutoScrollDelay = () => Math.max(0, vscode.workspace.getConfiguration('snaptex').get<number>('autoScrollDelay', 100));
+
+function startPreviewSyncLock() {
+    isSyncingFromPreview = true;
+    if (syncLockTimer) { clearTimeout(syncLockTimer); }
+    syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
+}
 
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) {return "";}
@@ -181,9 +189,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchor: string, viewRatio: number = 0.5) => {
-            isSyncingFromPreview = true;
-            if (syncLockTimer) { clearTimeout(syncLockTimer); }
-            syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
+            startPreviewSyncLock();
 
             const sourceLoc = renderer.getSourceSyncData(index, ratio);
             if (!sourceLoc) {return;}
@@ -231,12 +237,9 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.syncScroll', (index: number, ratio: number) => {
-        const currentConfig = vscode.workspace.getConfiguration('snaptex');
-        if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
+        if (!isAutoScrollSyncEnabled()) { return; }
 
-        isSyncingFromPreview = true;
-        if (syncLockTimer) {clearTimeout(syncLockTimer);}
-        syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
+        startPreviewSyncLock();
 
         const sourceLoc = renderer.getSourceSyncData(index, ratio);
         if (!sourceLoc) {return;}
@@ -262,16 +265,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (!TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
-        const currentConfig = vscode.workspace.getConfiguration('snaptex');
-        if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
+        if (!isAutoScrollSyncEnabled()) { return; }
 
         scheduleAutoSyncToPreview(e.textEditor, sel.line, activeCursorScreenRatio, sel.character);
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
         if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
-        const currentConfig = vscode.workspace.getConfiguration('snaptex');
-        if (!currentConfig.get<boolean>('autoScrollSync', true)) { return; }
+        if (!isAutoScrollSyncEnabled()) { return; }
 
         isEditorScrolling = true;
         if (scrollEndTimer) {clearTimeout(scrollEndTimer);}

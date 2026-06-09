@@ -9,6 +9,11 @@ interface FloatCaptionConfig {
     counterType: 'fig' | 'alg' | 'tbl';
 }
 
+function replaceFloatEnvironment(text: string, envName: 'figure' | 'algorithm' | 'table', render: (content: string) => string): string {
+    const pattern = new RegExp(`\\\\begin\\{${envName}(\\*?)\\}(?:\\[.*?\\])?([\\s\\S]*?)\\\\end\\{${envName}\\1\\}`, 'gi');
+    return text.replace(pattern, (_match, _star, content) => render(content));
+}
+
 function extractRenderedCaption(content: string, renderer: RenderContext, config: FloatCaptionConfig): { content: string; captionHtml: string } {
     const captionRes = findCommand(content, 'caption');
     if (!captionRes) {
@@ -31,7 +36,7 @@ export function createFigureRule(): PreprocessRule {
         name: 'figure',
         priority: 120,
         apply: (text: string, renderer: RenderContext) => {
-            return text.replace(/\\begin\{figure(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{figure\1\}/gi, (_match, _star, content) => {
+            return replaceFloatEnvironment(text, 'figure', content => {
                 const extracted = extractRenderedCaption(content, renderer, { className: 'figure-caption', label: 'Figure', counterType: 'fig' });
                 let body = extracted.content;
                 const captionHtml = extracted.captionHtml;
@@ -69,7 +74,7 @@ export function createAlgorithmRule(): PreprocessRule {
         name: 'algorithm',
         priority: 130,
         apply: (text: string, renderer: RenderContext) => {
-            return text.replace(/\\begin\{algorithm(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{algorithm\1\}/gi, (_match, _star, content) => {
+            return replaceFloatEnvironment(text, 'algorithm', content => {
                 const extracted = extractRenderedCaption(content, renderer, { className: 'alg-caption', label: 'Algorithm', counterType: 'alg' });
                 content = extracted.content;
                 const captionHtml = extracted.captionHtml;
@@ -140,7 +145,7 @@ export function createTableRule(): PreprocessRule {
         name: 'table',
         priority: 118,
         apply: (text: string, renderer: RenderContext) => {
-            return text.replace(/\\begin\{table(\*?)\}(?:\[.*?\])?([\s\S]*?)\\end\{table\1\}/gi, (_match, _star, content) => {
+            return replaceFloatEnvironment(text, 'table', content => {
                 const extracted = extractRenderedCaption(content, renderer, { className: 'table-caption', label: 'Table', counterType: 'tbl' });
                 content = extracted.content;
                 const captionHtml = extracted.captionHtml;

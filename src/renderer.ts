@@ -1,33 +1,23 @@
 import MarkdownIt from 'markdown-it';
 
-import { BlockTextSnapshot, LatexDocument } from './document';
 import { DiffEngine, DiffResult } from './diff';
-import { BibEntry, BlockNumberingCounts, NumberingPayload, PreprocessRule, PatchPayload, RenderedBlockMeta, SourceLocation } from './types';
+import { BlockNumberingCounts, BlockTextSnapshot, NumberingPayload, PatchPayload, RenderContext, RenderedBlockMeta, RenderDocumentView, RenderOptions, SourceLocation } from './types';
 import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
-import { BlockTextProvider, LatexCounterScanner } from './scanner';
+import { LatexCounterScanner } from './scanner';
 import { R_BIBLIOGRAPHY } from './patterns';
 import { extractLatexCitationKeys, extractLatexLabelNames, normalizeUri, stableHash } from './utils';
 import { ProtectionManager } from './protection';
 
-interface RenderOptions {
-    deferFullHtml?: boolean;
-}
-
 const EMPTY_TEXT_SNAPSHOT: BlockTextSnapshot = { bodyText: "", blockSpans: [] };
+const PREPROCESS_RULES = [...DEFAULT_PREPROCESS_RULES].sort((a, b) => a.priority - b.priority);
 
 interface BlockSnapshot extends RenderedBlockMeta {
     hasBibliography: boolean;
     citationKeys: string[];
 }
 
-interface RenderBlockAccess {
-    provider: BlockTextProvider;
-    hashBlocks: { hash: string }[];
-    getText(index: number): string;
-}
-
 /**
- * Converts a parsed LatexDocument into either a full render payload or a patch.
+ * Converts a render document view into either a full render payload or a patch.
  *
  * SmartRenderer owns the preview-side document model snapshot: block hashes,
  * source-line mapping, label numbering, citation state, and the Markdown
@@ -42,27 +32,33 @@ export class SmartRenderer {
     private lastCitedKeys: string[] = [];
 
     private md: MarkdownIt | null = null;
-    public protector = new ProtectionManager();
-    private _preprocessRules: PreprocessRule[] = [...DEFAULT_PREPROCESS_RULES].sort((a, b) => a.priority - b.priority);
-    public currentMacros: Record<string, string> = {};
+    private protector = new ProtectionManager();
+    private currentMacros: Record<string, string> = {};
 
     private blockMap: { start: number; count: number }[] = [];
     private scanner = new LatexCounterScanner();
-    public citedKeys: string[] = [];
-    public currentDocument: LatexDocument | undefined;
+    private _citedKeys: string[] = [];
+    private documentView: RenderDocumentView | undefined;
+    private readonly renderContext: RenderContext;
 
     constructor() {
+        const renderer = this;
+        this.renderContext = {
+            get currentMacros() { return renderer.currentMacros; },
+            get document() { return renderer.documentView; },
+            get citedKeys() { return renderer._citedKeys; },
+            get bibEntries() { return renderer.documentView ? renderer.documentView.bibEntries : new Map(); },
+            protectHtml: (namespace, html) => this.protector.protect(namespace, html),
+            renderInline: text => this.renderInline(text),
+            resolveCitation: key => this.resolveCitation(key)
+        };
         this.rebuildMarkdownEngine({});
-    }
-
-    public get bibEntries(): Map<string, BibEntry> {
-        return this.currentDocument ? this.currentDocument.bibEntries : new Map();
     }
 
     /**
      * Rebuilds Markdown-it and applies the current macro table used by math rules.
      */
-    public rebuildMarkdownEngine(macros: Record<string, string>) {
+    private rebuildMarkdownEngine(macros: Record<string, string>) {
         this.currentMacros = {
             "\\mathparagraph": "\\P",
             "\\mathsection": "\\S",
@@ -79,47 +75,39 @@ export class SmartRenderer {
         this.lastMacrosJson = "";
         this.lastCitedKeys = [];
         this.blockMap = [];
-        this.citedKeys = [];
-        this.currentDocument = undefined;
+        this._citedKeys = [];
+        this.documentView = undefined;
     }
 
     /**
      * Renders inline Markdown from rule helpers without running the full block pipeline.
      */
-    public renderInline(text: string): string {
+    private renderInline(text: string): string {
         return this.md ? this.md.renderInline(text) : text;
     }
 
-    public resolveCitation(key: string): number {
-        let index = this.citedKeys.indexOf(key);
+    private resolveCitation(key: string): number {
+        let index = this._citedKeys.indexOf(key);
         if (index === -1) {
-            this.citedKeys.push(key);
-            index = this.citedKeys.length - 1;
+            this._citedKeys.push(key);
+            index = this._citedKeys.length - 1;
         }
         return index + 1;
     }
 
-    public protect(namespace: string, content: string): string {
-        return this.protector.protect(namespace, content);
-    }
-
-    public protectHtml(namespace: string, html: string): string {
-        return this.protect(namespace, html);
-    }
-
     public isKnownFile(uriStr: string): boolean {
-        if (!this.currentDocument) { return false; }
+        if (!this.documentView) { return false; }
         const target = normalizeUri(uriStr);
-        if (this.currentDocument.rootDir && normalizeUri(this.currentDocument.rootDir) === target) {
+        if (this.documentView.rootDir && normalizeUri(this.documentView.rootDir) === target) {
              return true;
         }
-        return this.currentDocument.filePool.some(file => normalizeUri(file) === target);
+        return this.documentView.filePool.some(file => normalizeUri(file) === target);
     }
 
     private renderBlockToHtml(text: string, index: number): string {
         let processed = text;
 
-        this._preprocessRules.forEach(rule => { processed = rule.apply(processed, this); });
+        PREPROCESS_RULES.forEach(rule => { processed = rule.apply(processed, this.renderContext); });
 
         let finalHtml = this.md!.render(processed);
 
@@ -144,7 +132,7 @@ export class SmartRenderer {
         return this.applyMetadataFingerprint(snapshot.bodyText.slice(span.start, span.end), metaFingerprint);
     }
 
-    private createRenderBlockAccess(doc: LatexDocument, blockCount: number, metaFingerprint: string): RenderBlockAccess {
+    private createRenderBlockAccess(doc: RenderDocumentView, blockCount: number, metaFingerprint: string) {
         const textCache = new Map<number, string>();
         const hashCache = new Map<number, string>();
         const getText = (index: number): string => {
@@ -200,25 +188,14 @@ export class SmartRenderer {
     }
 
     private buildNextBlockSnapshots(blockCount: number, diff: DiffResult, getBlockText: (index: number) => string): BlockSnapshot[] {
-        const next: BlockSnapshot[] = new Array(blockCount);
-        const changedEnd = diff.start + diff.insertCount;
-        const suffixOffset = diff.deleteCount - diff.insertCount;
-
-        for (let index = 0; index < diff.start; index++) {
-            const oldBlock = this.lastBlocks[index];
-            next[index] = oldBlock ? this.repositionBlockSnapshot(oldBlock, index) : this.buildBlockMeta(getBlockText(index), index);
-        }
-
-        for (let index = diff.start; index < changedEnd; index++) {
-            next[index] = this.buildBlockMeta(getBlockText(index), index);
-        }
-
-        for (let index = changedEnd; index < blockCount; index++) {
-            const oldBlock = this.lastBlocks[index + suffixOffset];
-            next[index] = oldBlock ? this.repositionBlockSnapshot(oldBlock, index) : this.buildBlockMeta(getBlockText(index), index);
-        }
-
-        return next;
+        const createBlockMeta = (index: number) => this.buildBlockMeta(getBlockText(index), index);
+        return DiffEngine.rebuildArray(
+            this.lastBlocks,
+            blockCount,
+            diff,
+            createBlockMeta,
+            (oldBlock, index) => this.repositionBlockSnapshot(oldBlock, index)
+        );
     }
 
     private collectCitedKeys(blocks: BlockSnapshot[]): string[] {
@@ -261,14 +238,15 @@ export class SmartRenderer {
         return { blocks, labels: scanResult.labelMap };
     }
 
-    public renderBlockByIndex(index: number): string | undefined {
-        const text = this.getSnapshotBlockText(this.lastTextSnapshot, index, this.lastMetaFingerprint);
-        if (text === undefined) { return undefined; }
-        return this.renderBlockToHtml(text, index);
-    }
+    public renderBlockByIndex(index: number): { hash: string; html?: string } | undefined {
+        const block = this.lastBlocks[index];
+        if (!block) { return undefined; }
 
-    public getBlockMeta(index: number): RenderedBlockMeta | undefined {
-        return this.lastBlocks[index];
+        const text = this.getSnapshotBlockText(this.lastTextSnapshot, index, this.lastMetaFingerprint);
+        return {
+            hash: block.hash,
+            html: text === undefined ? undefined : this.renderBlockToHtml(text, index)
+        };
     }
 
     /**
@@ -278,8 +256,8 @@ export class SmartRenderer {
      * Virtual mode may request metadata-only full payloads; individual block HTML
      * is then rendered lazily by index from lastTextSnapshot.
      */
-    public render(doc: LatexDocument, options: RenderOptions = {}): PatchPayload {
-        this.currentDocument = doc;
+    public render(doc: RenderDocumentView, options: RenderOptions = {}): PatchPayload {
+        this.documentView = doc;
 
         this.protector.reset();
 
@@ -317,7 +295,7 @@ export class SmartRenderer {
         let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, blockAccess.getText);
         const nextCitedKeys = this.collectCitedKeys(blockMeta);
         const keysChanged = !this.haveSameCitedKeys(nextCitedKeys);
-        this.citedKeys = nextCitedKeys;
+        this._citedKeys = nextCitedKeys;
         this.lastCitedKeys = [...nextCitedKeys];
         blockMeta = this.applyBibliographyAnchors(blockMeta, nextCitedKeys);
         const nextTextSnapshot = doc.createTextSnapshot();
@@ -385,18 +363,18 @@ export class SmartRenderer {
     }
 
     public getPreviewSyncData(filePath: string, line: number) {
-        if (!this.currentDocument) {return null;}
-        const flatLine = this.currentDocument.getFlattenedLine(filePath, line);
+        if (!this.documentView) {return null;}
+        const flatLine = this.documentView.getFlattenedLine(filePath, line);
         return flatLine !== -1 ? this.getBlockIndexByLine(flatLine) : null;
     }
 
     public getSourceSyncData(blockIndex: number, ratio: number): SourceLocation | null {
-        if (!this.currentDocument) {return null;}
+        if (!this.documentView) {return null;}
         const flatLine = this.getLineByBlockIndex(blockIndex, ratio);
-        return this.currentDocument.getOriginalPosition(flatLine) || null;
+        return this.documentView.getOriginalPosition(flatLine) || null;
     }
 
-    public getBlockIndexByLine(line: number): { index: number; ratio: number } {
+    private getBlockIndexByLine(line: number): { index: number; ratio: number } {
         if (this.blockMap.length === 0) { return { index: 0, ratio: 0 }; }
         if (line < this.blockMap[0].start) { return { index: 0, ratio: 0 }; }
         for (let i = 0; i < this.blockMap.length; i++) {
@@ -410,7 +388,7 @@ export class SmartRenderer {
         return { index: this.blockMap.length - 1, ratio: 0 };
     }
 
-    public getLineByBlockIndex(index: number, ratio: number): number {
+    private getLineByBlockIndex(index: number, ratio: number): number {
         if (index >= 0 && index < this.blockMap.length) {
             const b = this.blockMap[index];
             return b.start + Math.floor(b.count * ratio);

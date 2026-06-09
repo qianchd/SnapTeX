@@ -1,7 +1,7 @@
 // @ts-nocheck
 /* eslint-disable curly */
 import { CoalescingTaskScheduler } from './scheduler';
-import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, parseFirstElementFromHtml } from './virtualization';
+import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml } from './virtualization';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
 const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
@@ -1258,16 +1258,6 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             }
         }
 
-        isPdfCanvasNearViewport(canvas) {
-            const rect = canvas.getBoundingClientRect();
-            return rect.bottom >= -PDF_RENDER_MARGIN && rect.top <= window.innerHeight + PDF_RENDER_MARGIN;
-        }
-
-        isPdfCanvasFarFromViewport(canvas) {
-            const rect = canvas.getBoundingClientRect();
-            return rect.bottom < -PDF_RELEASE_MARGIN || rect.top > window.innerHeight + PDF_RELEASE_MARGIN;
-        }
-
         releasePdfCanvasBitmap(canvas) {
             if (canvas.getAttribute('data-rendered') !== 'true' || canvas.getAttribute('data-pdf-released') === 'true') return;
 
@@ -1285,7 +1275,13 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         schedulePendingPdfRender() {
             if (this.pdfRenderTimer) clearTimeout(this.pdfRenderTimer);
 
+            let timeout;
             const run = () => {
+                if (this.pdfRenderTimer !== timeout) return;
+                if (this.pdfRenderTimer) {
+                    clearTimeout(this.pdfRenderTimer);
+                    this.pdfRenderTimer = null;
+                }
                 this.renderPendingPdfs();
                 this.logDomStats('after renderPendingPdfs');
             };
@@ -1294,20 +1290,18 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 requestAnimationFrame(run);
             });
 
-            this.pdfRenderTimer = setTimeout(() => {
-                this.pdfRenderTimer = null;
-                run();
-            }, 250);
+            timeout = setTimeout(run, 250);
+            this.pdfRenderTimer = timeout;
         }
 
         renderPendingPdfs() {
             const pdfCanvases = document.querySelectorAll('canvas[data-req-path]');
             pdfCanvases.forEach(canvas => {
-                if (this.isPdfCanvasFarFromViewport(canvas)) {
+                if (!isElementWithinViewportMargins(canvas, PDF_RELEASE_MARGIN)) {
                     this.releasePdfCanvasBitmap(canvas);
                 }
                 if (canvas.getAttribute('data-rendered') || canvas.getAttribute('data-requested')) return;
-                if (this.isPdfCanvasNearViewport(canvas)) {
+                if (isElementWithinViewportMargins(canvas, PDF_RENDER_MARGIN)) {
                     this.requestPdfCanvas(canvas);
                     return;
                 }
@@ -1367,6 +1361,5 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
     }
 
     new PreviewController();
-
 
 

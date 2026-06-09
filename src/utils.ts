@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 import { R_CITATION } from './patterns';
-import type { RenderContext } from './types';
+import type { RenderContext, UriLike } from './types';
 
 /**
  * Decodes common LaTeX accents to Unicode for citation and bibliography text.
@@ -172,8 +172,6 @@ export interface LatexGroup {
     content: string;
     start: number;
     end: number;
-    contentStart: number;
-    contentEnd: number;
     open: '{' | '[';
     close: '}' | ']';
 }
@@ -228,7 +226,7 @@ export function skipLatexWhitespace(text: string, index: number): number {
 }
 
 /**
- * Reads one balanced LaTeX group, returning offsets for both delimiters and content.
+ * Reads one balanced LaTeX group and returns delimiter offsets plus content.
  */
 export function readLatexGroup(text: string, startIndex: number, options: LatexGroupReadOptions = {}): LatexGroup | undefined {
     const delimiter = options.delimiter ?? 'brace';
@@ -254,8 +252,6 @@ export function readLatexGroup(text: string, startIndex: number, options: LatexG
                     content: text.substring(start + 1, i),
                     start,
                     end: i + 1,
-                    contentStart: start + 1,
-                    contentEnd: i,
                     open,
                     close
                 };
@@ -479,20 +475,20 @@ function applyStyleToTexList(startTag: string, endTag: string, content: string, 
  * Removes common LaTeX markup while preserving readable text for compact
  * previews such as captions, tables, algorithms, and bibliography entries.
  */
-export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, 'protect'>): string {
+export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, 'protectHtml'>): string {
     if (!text) {return '';}
 
     let processed = decodeLatexAccents(text);
 
     processed = processed.replace(/\$((?:\\.|[^\\$])*)\$/g, (match) => {
-        return renderer.protect('math', match);
+        return renderer.protectHtml('math', match);
     });
 
     processed = processed
-        .replace(/\\textbf\{([^}]+)\}/g, (_match, content) => renderer.protect('bib-style', `<b>${escapeHtml(content)}</b>`))
-        .replace(/\\textit\{([^}]+)\}/g, (_match, content) => renderer.protect('bib-style', `<i>${escapeHtml(content)}</i>`))
-        .replace(/\\texttt\{([^}]+)\}/g, (_match, content) => renderer.protect('bib-style', `<code>${escapeHtml(content)}</code>`))
-        .replace(/\\emph\{([^}]+)\}/g, (_match, content) => renderer.protect('bib-style', `<em>${escapeHtml(content)}</em>`))
+        .replace(/\\textbf\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<b>${escapeHtml(content)}</b>`))
+        .replace(/\\textit\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<i>${escapeHtml(content)}</i>`))
+        .replace(/\\texttt\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<code>${escapeHtml(content)}</code>`))
+        .replace(/\\emph\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<em>${escapeHtml(content)}</em>`))
         .replace(/\\cite\{[^}]+\}/g, '[cite]')
         .replace(/\\ref\{[^}]+\}/g, '[ref]')
         .replace(/\\small\s*/g, '')
@@ -526,7 +522,7 @@ export function stableHash(input: string): string {
     return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function normalizeUri(input: vscode.Uri | string): string {
+export function normalizeUri(input: vscode.Uri | string | UriLike): string {
     let str = typeof input === 'string' ? input : input.toString();
     try {
         str = decodeURIComponent(str);

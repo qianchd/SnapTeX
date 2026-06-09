@@ -51,6 +51,12 @@ var SnapTeXWebview = (() => {
     tempDiv.innerHTML = html;
     return tempDiv.firstElementChild;
   }
+  function isElementWithinViewportMargins(element, margins) {
+    const rect = element.getBoundingClientRect();
+    const above = typeof margins === "number" ? margins : margins.above;
+    const below = typeof margins === "number" ? margins : margins.below;
+    return rect.bottom >= -above && rect.top <= window.innerHeight + below;
+  }
   var BlockVirtualizationController = class {
     constructor(contentRoot) {
       this.contentRoot = contentRoot;
@@ -236,13 +242,10 @@ var SnapTeXWebview = (() => {
       return { above, below };
     }
     isShellInMountRange(shell, direction = "none") {
-      const rect = shell.getBoundingClientRect();
-      const margins = this.getMountMargins(direction);
-      return rect.bottom >= -margins.above && rect.top <= window.innerHeight + margins.below;
+      return isElementWithinViewportMargins(shell, this.getMountMargins(direction));
     }
     isShellInRetainRange(shell) {
-      const rect = shell.getBoundingClientRect();
-      return rect.bottom >= -BLOCK_VIRTUALIZATION_RETAIN_MARGIN && rect.top <= window.innerHeight + BLOCK_VIRTUALIZATION_RETAIN_MARGIN;
+      return isElementWithinViewportMargins(shell, BLOCK_VIRTUALIZATION_RETAIN_MARGIN);
     }
     mountShell(shell, onMissingHtml) {
       if (!this.enabled || this.getShellBlock(shell)) return null;
@@ -1609,14 +1612,6 @@ var SnapTeXWebview = (() => {
         window.renderPdfToCanvas(path, id);
       }
     }
-    isPdfCanvasNearViewport(canvas) {
-      const rect = canvas.getBoundingClientRect();
-      return rect.bottom >= -PDF_RENDER_MARGIN && rect.top <= window.innerHeight + PDF_RENDER_MARGIN;
-    }
-    isPdfCanvasFarFromViewport(canvas) {
-      const rect = canvas.getBoundingClientRect();
-      return rect.bottom < -PDF_RELEASE_MARGIN || rect.top > window.innerHeight + PDF_RELEASE_MARGIN;
-    }
     releasePdfCanvasBitmap(canvas) {
       if (canvas.getAttribute("data-rendered") !== "true" || canvas.getAttribute("data-pdf-released") === "true") return;
       const rect = canvas.getBoundingClientRect();
@@ -1631,26 +1626,30 @@ var SnapTeXWebview = (() => {
     }
     schedulePendingPdfRender() {
       if (this.pdfRenderTimer) clearTimeout(this.pdfRenderTimer);
+      let timeout;
       const run = () => {
+        if (this.pdfRenderTimer !== timeout) return;
+        if (this.pdfRenderTimer) {
+          clearTimeout(this.pdfRenderTimer);
+          this.pdfRenderTimer = null;
+        }
         this.renderPendingPdfs();
         this.logDomStats("after renderPendingPdfs");
       };
       requestAnimationFrame(() => {
         requestAnimationFrame(run);
       });
-      this.pdfRenderTimer = setTimeout(() => {
-        this.pdfRenderTimer = null;
-        run();
-      }, 250);
+      timeout = setTimeout(run, 250);
+      this.pdfRenderTimer = timeout;
     }
     renderPendingPdfs() {
       const pdfCanvases = document.querySelectorAll("canvas[data-req-path]");
       pdfCanvases.forEach((canvas) => {
-        if (this.isPdfCanvasFarFromViewport(canvas)) {
+        if (!isElementWithinViewportMargins(canvas, PDF_RELEASE_MARGIN)) {
           this.releasePdfCanvasBitmap(canvas);
         }
         if (canvas.getAttribute("data-rendered") || canvas.getAttribute("data-requested")) return;
-        if (this.isPdfCanvasNearViewport(canvas)) {
+        if (isElementWithinViewportMargins(canvas, PDF_RENDER_MARGIN)) {
           this.requestPdfCanvas(canvas);
           return;
         }

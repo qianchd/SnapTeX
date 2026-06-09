@@ -321,20 +321,19 @@ export class TexPreviewPanel {
             return;
         }
 
-        const meta = this._renderer.getBlockMeta(index);
-        if (!meta) {
+        const block = this._renderer.renderBlockByIndex(index);
+        if (!block) {
             this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, error: 'Block not found' });
             return;
         }
 
-        if (requestedHash && meta.hash !== requestedHash) {
-            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: meta.hash, error: 'Block hash changed' });
+        if (requestedHash && block.hash !== requestedHash) {
+            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: block.hash, error: 'Block hash changed' });
             return;
         }
 
-        const html = this._renderer.renderBlockByIndex(index);
-        if (!html) {
-            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: meta.hash, error: 'Block not found' });
+        if (block.html === undefined) {
+            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: block.hash, error: 'Block not found' });
             return;
         }
 
@@ -342,8 +341,8 @@ export class TexPreviewPanel {
             command: ExtensionToWebviewCommand.BlockHtml,
             id,
             index,
-            hash: meta.hash,
-            html: this.fixHtmlPaths(html)
+            hash: block.hash,
+            html: this.fixHtmlPaths(block.html)
         });
     }
 

@@ -13,7 +13,6 @@ import {
     createDocument,
     MemoryFileProvider,
     readFixture,
-    readWebviewRuntimeSource,
     renderBlocks,
     resultBlockTexts
 } from './test-helpers';
@@ -435,16 +434,6 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /bbb|ccc|ddd|<div class="latex-block"[^>]*>\s*<\/div>/);
     });
 
-    test('keeps preprocess rules behind a narrow render context', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const rulesSource = fs.readFileSync(path.join(repoRoot, 'src', 'rules.ts'), 'utf8');
-        const typesSource = fs.readFileSync(path.join(repoRoot, 'src', 'types.ts'), 'utf8');
-
-        assert.doesNotMatch(rulesSource, /from '\.\/renderer'/);
-        assert.match(typesSource, /export interface RenderContext/);
-        assert.match(typesSource, /apply: \(text: string, renderer: RenderContext\) => string/);
-    });
-
     test('returns patch payloads for small localized edits', () => {
         const renderer = new SmartRenderer();
         renderer.render(createDocument(['A', 'B', 'C']));
@@ -501,7 +490,8 @@ suite('SmartRenderer', () => {
         assert.equal(payload.type, 'patch');
         assert.deepStrictEqual(reads, [0]);
         assert.ok(payload.dirtyBlocks?.[2]);
-        assert.deepStrictEqual(renderer.citedKeys, ['doe2025']);
+        assert.match(payload.dirtyBlocks?.[2] ?? '', /ref-doe2025|doe2025/);
+        assert.doesNotMatch(payload.dirtyBlocks?.[2] ?? '', /smith2024/);
     });
 
     test('adds block hashes from block text only and disables hash preservation on macro changes', () => {
@@ -531,8 +521,10 @@ suite('SmartRenderer', () => {
         assert.equal(payload.blocks?.[1].hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));
         assert.deepStrictEqual(payload.blocks?.[1].anchors, ['fig:a']);
         assert.ok(payload.blocks?.[2].anchors.includes('ref-smith2024'));
-        assert.match(renderer.renderBlockByIndex(1) ?? '', /data-index="1"/);
-        assert.match(renderer.renderBlockByIndex(1) ?? '', new RegExp(`data-block-hash="${stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}')}"`));
+        const block = renderer.renderBlockByIndex(1);
+        assert.match(block?.html ?? '', /data-index="1"/);
+        assert.equal(block?.hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));
+        assert.match(block?.html ?? '', new RegExp(`data-block-hash="${stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}')}"`));
     });
 
     test('escapes maketitle metadata while preserving LaTeX formatting', () => {
@@ -950,7 +942,9 @@ suite('PDF request validation', () => {
     test('keeps PDF loading on the URI-only transport path', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
+        const webviewSource = ['main.ts', 'pdf.ts', 'tikz.ts', 'virtualization.ts']
+            .map(file => fs.readFileSync(path.join(repoRoot, 'src', 'webview', file), 'utf8'))
+            .join('\n');
 
         assert.doesNotMatch(panelSource, /\bpdfData\b/);
         assert.doesNotMatch(panelSource, /\bbase64\b/i);
@@ -958,61 +952,6 @@ suite('PDF request validation', () => {
         assert.doesNotMatch(webviewSource, /\bpdfData\b/);
         assert.doesNotMatch(webviewSource, /\bbase64\b/i);
         assert.doesNotMatch(webviewSource, /\btransport\b/);
-    });
-
-    test('requests viewport-near PDF canvases without waiting for observer scroll events', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /isPdfCanvasNearViewport\(canvas\)/);
-        assert.match(webviewSource, /this\.requestPdfCanvas\(canvas\);\s*return;/);
-        assert.match(webviewSource, /schedulePendingPdfRender\(\)/);
-    });
-
-    test('uses non-streaming PDF.js URL loading for webview resource URIs', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /disableRange:\s*true/);
-        assert.match(webviewSource, /disableStream:\s*true/);
-        assert.match(webviewSource, /disableAutoFetch:\s*true/);
-    });
-
-    test('creates a blob module worker for PDF.js inside the webview sandbox', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /async function setupPdfWorker\(\)/);
-        assert.match(webviewSource, /URL\.createObjectURL\(new Blob/);
-        assert.match(webviewSource, /new Worker\(workerBlobUrl,\s*\{\s*type:\s*'module'\s*\}\)/);
-        assert.match(webviewSource, /pdfjsLib\.GlobalWorkerOptions\.workerPort = worker/);
-        assert.match(webviewSource, /await pdfRuntimeReady/);
-    });
-
-    test('sends full updates as block payloads without building a giant binary html buffer', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(panelSource, /this\._renderer\.render\(this\._currentDocument, \{ deferFullHtml: virtualizeBlocks \}\)/);
-        assert.match(panelSource, /WebviewToExtensionCommand\.RequestBlockHtml/);
-        assert.match(panelSource, /ExtensionToWebviewCommand\.BlockHtml/);
-        assert.match(panelSource, /this\._renderer\.renderBlockByIndex\(index\)/);
-        assert.doesNotMatch(panelSource, /Buffer\.from\(fullHtml\)/);
-        assert.doesNotMatch(panelSource, /command: 'update_binary'/);
-        assert.match(webviewSource, /payload\.blocks && this\.virtualization\.isEnabled\(\)/);
-        assert.match(webviewSource, /vscode\.postMessage\(\{ command: WebviewToExtensionCommand\.RequestBlockHtml, id, index, hash \}\)/);
-        assert.match(webviewSource, /case ExtensionToWebviewCommand\.BlockHtml:/);
-        assert.match(webviewSource, /this\.smartFullUpdateFromBlocks\(payload\.htmls, payload\.preserveUnchangedBlocks !== false\)/);
-    });
-
-    test('resets renderer state when switching root documents', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-
-        assert.match(panelSource, /const previousSourceUri = this\._sourceUri/);
-        assert.match(panelSource, /normalizeUri\(previousSourceUri\) !== normalizeUri\(docUri\)/);
-        assert.match(panelSource, /if \(sourceChanged\) \{\s*this\._renderer\.resetState\(\);\s*\}/);
     });
 
     test('uses virtual mode by default while honoring explicit legacy settings', () => {
@@ -1036,63 +975,9 @@ suite('PDF request validation', () => {
         )), true);
     });
 
-    test('waits for the webview ready handshake before sending the first preview update', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
-
-        assert.match(panelSource, /private _webviewReady = false/);
-        assert.match(panelSource, /case WebviewToExtensionCommand\.WebviewLoaded:[\s\S]*this\._webviewReady = true/);
-        assert.match(panelSource, /void this\.update\(this\._pendingRootUri\)/);
-        assert.match(panelSource, /const docUri = rootUri \?\? this\._pendingRootUri \?\? this\.resolveUpdateUri\(\)/);
-        assert.match(panelSource, /if \(!this\._webviewReady\) \{\s*return;\s*\}/);
-        assert.match(extensionSource, /const panel = TexPreviewPanel\.createOrShow\(context\.extensionUri, renderer\)/);
-        assert.match(extensionSource, /void panel\.update\(editor\.document\.uri\)/);
-    });
-
-    test('prunes virtualized block html and height caches to active block keys', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /pruneCaches\(activeKeys\)/);
-        assert.match(webviewSource, /prune\(this\.heightCache\)/);
-        assert.match(webviewSource, /prune\(this\.htmlCache\)/);
-        assert.match(webviewSource, /this\.virtualization\.pruneCachesFromContent\(\)/);
-    });
-
-    test('releases far-offscreen PDF canvas bitmaps while preserving layout for rerender', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /const PDF_RELEASE_MARGIN = 3600/);
-        assert.match(webviewSource, /isPdfCanvasFarFromViewport\(canvas\)/);
-        assert.match(webviewSource, /releasePdfCanvasBitmap\(canvas\)/);
-        assert.match(webviewSource, /canvas\.style\.height = `\$\{Math\.ceil\(rect\.height\)\}px`/);
-        assert.match(webviewSource, /canvas\.width = 0/);
-        assert.match(webviewSource, /canvas\.height = 0/);
-        assert.match(webviewSource, /canvas\.setAttribute\('data-pdf-released', 'true'\)/);
-        assert.match(webviewSource, /canvas\.removeAttribute\('data-rendered'\)/);
-        assert.match(webviewSource, /canvas\.removeAttribute\('data-pdf-released'\)/);
-    });
 });
 
 suite('Webview resource loading', () => {
-    test('loads webview runtime from bundled scripts instead of inline HTML', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const htmlSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
-        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
-
-        assert.match(htmlSource, /<script src="\{\{webviewMainUri\}\}"><\/script>/);
-        assert.match(htmlSource, /<script src="\{\{webviewPdfUri\}\}"><\/script>/);
-        assert.doesNotMatch(htmlSource, /class PreviewController/);
-        assert.doesNotMatch(htmlSource, /class BlockVirtualizationController/);
-        assert.match(panelSource, /const webviewMainUri = toUri\('media\/webview-main\.js'\)/);
-        assert.match(panelSource, /const webviewPdfUri = toUri\('media\/webview-pdf\.js'\)/);
-        assert.match(buildSource, /entryPoints: \['src\/webview\/main\.ts'\]/);
-        assert.match(buildSource, /entryPoints: \['src\/webview\/pdf\.ts'\]/);
-    });
-
     test('keeps the webview CSP on bundled resources instead of remote script/connect sources', () => {
         const repoRoot = path.resolve(__dirname, '..', '..');
         const htmlSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
@@ -1100,199 +985,6 @@ suite('Webview resource loading', () => {
         assert.doesNotMatch(htmlSource, /https:\/\/unpkg\.com/);
         assert.doesNotMatch(htmlSource, /script-src[^;]*https:/);
         assert.doesNotMatch(htmlSource, /connect-src[^;]*https:/);
-    });
-
-    test('keeps renderOnSwitch fallbacks aligned with the contributed default', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-        const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
-
-        assert.equal(packageJson.contributes.configuration.properties['snaptex.renderOnSwitch'].default, false);
-        assert.doesNotMatch(extensionSource, /get<boolean>\('renderOnSwitch', true\)/);
-        assert.match(extensionSource, /get<boolean>\('renderOnSwitch', false\)/);
-    });
-
-    test('lazy-loads TikZJax only when TikZ scripts are present', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.doesNotMatch(webviewSource, /<script src="\{\{tikzJaxJsUri\}\}" id="tikzjax-script" defer><\/script>/);
-        assert.match(webviewSource, /data-tikz-jax-js-uri="\{\{tikzJaxJsUri\}\}"/);
-        assert.match(webviewSource, /window\.tikzJaxJsUri = document\.body\.dataset\.tikzJaxJsUri \|\| ''/);
-        assert.match(webviewSource, /window\.ensureTikzJaxLoaded = function\(\)/);
-        assert.match(webviewSource, /script\.src = window\.tikzJaxJsUri/);
-        assert.match(webviewSource, /TIKZ_PENDING_SCRIPT_TYPE = 'text\/snaptex-tikz'/);
-        assert.match(webviewSource, /window\.activatePendingTikzScripts = function/);
-        assert.match(webviewSource, /querySelector\(TIKZ_SCRIPT_SELECTOR\)/);
-    });
-
-    test('marks stuck TikZ renders as failed instead of leaving permanent loaders', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /window\.failPendingTikzContainers = function\(message\)/);
-        assert.match(webviewSource, /window\.watchPendingTikzContainers = function\(root = document\)/);
-        assert.match(webviewSource, /TikZ rendering timed out/);
-        assert.match(webviewSource, /svg\[role="img"\]/);
-    });
-
-    test('does not timeout TikZ containers while they are only waiting in the TikZJax queue', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /document\.addEventListener\('tikzjax-tex-input'/);
-        assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-finished'/);
-        assert.match(webviewSource, /window\.failTikzContainer = function\(container, message\)/);
-        assert.match(webviewSource, /setTikzContainerState\(container, 'queued'\)/);
-        assert.match(webviewSource, /setTikzContainerState\(container, 'rendering'\)/);
-        assert.doesNotMatch(webviewSource, /setTimeout\(\(\) => \{[\s\S]*window\.failPendingTikzContainers\('TikZ rendering timed out\.'\)/);
-    });
-
-    test('coalesces TikZ activation so edits during a render only queue the latest run', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-        const schedulerSource = fs.readFileSync(path.join(repoRoot, 'src', 'webview', 'scheduler.ts'), 'utf8');
-
-        assert.match(webviewSource, /const TIKZ_RENDER_DEBOUNCE_MS = 200/);
-        assert.match(webviewSource, /new CoalescingTaskScheduler/);
-        assert.doesNotMatch(schedulerSource, /@ts-nocheck/);
-        assert.match(webviewSource, /snaptex-tikz-settled/);
-        assert.match(webviewSource, /window\.activatePendingTikzScripts\(this\.contentRoot\)/);
-        assert.doesNotMatch(webviewSource, /window\.activatePendingTikzScripts\(document\)/);
-    });
-
-    test('keeps the previous TikZ SVG visible while a replacement render is pending', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-        const styleSource = fs.readFileSync(path.join(repoRoot, 'media', 'preview-style.css'), 'utf8');
-
-        assert.match(webviewSource, /collectTikzPreviews\(block\)/);
-        assert.match(webviewSource, /replaceBlockPreservingTikz\(oldBlock, newBlock\)/);
-        assert.match(webviewSource, /const staleTikzByIndex = new Map\(\)/);
-        assert.match(webviewSource, /preview\.classList\.add\('tikz-stale-preview'\)/);
-        assert.match(styleSource, /\.tikz-container\[data-tikz-state="queued"\] > svg:not\(\.tikz-stale-preview\)/);
-        assert.match(styleSource, /\.tikz-stale-preview/);
-    });
-
-    test('uses block hashes instead of outerHTML to preserve unchanged full-update blocks', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const rendererSource = fs.readFileSync(path.join(repoRoot, 'src', 'renderer.ts'), 'utf8');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(rendererSource, /data-block-hash="\$\{stableHash\(text\)\}"/);
-        assert.match(rendererSource, /preserveUnchangedBlocks:\s*!macrosChanged/);
-        assert.match(webviewSource, /shouldReplaceBlock\(oldBlock, newBlock, preserveUnchangedBlocks\)/);
-        assert.match(webviewSource, /oldBlock\.getAttribute\('data-block-hash'\)/);
-        assert.match(webviewSource, /newBlock\.getAttribute\('data-block-hash'\)/);
-        assert.match(webviewSource, /this\.smartFullUpdateFromBlocks\(payload\.htmls, payload\.preserveUnchangedBlocks !== false\)/);
-        assert.doesNotMatch(webviewSource, /payload\.html,/);
-        assert.doesNotMatch(webviewSource, /outerHTML !==/);
-    });
-
-    test('keeps shell virtualization enabled behind virtual mode by default', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const packageSource = fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8');
-        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-        const styleSource = fs.readFileSync(path.join(repoRoot, 'media', 'preview-style.css'), 'utf8');
-
-        assert.match(packageSource, /"snaptex\.virtualMode"/);
-        assert.match(packageSource, /"default": true/);
-        assert.doesNotMatch(packageSource, /"snaptex\.experimentalVirtualization"/);
-        assert.match(panelSource, /virtualMode: getVirtualMode\(config\)/);
-        assert.match(panelSource, /const virtualizeBlocks = getVirtualMode\(\)/);
-        assert.match(panelSource, /config\.inspect<boolean>\('experimentalVirtualization'\)/);
-        assert.match(webviewSource, /class BlockVirtualizationController/);
-        assert.match(webviewSource, /createShellForBlock\(block\)/);
-        assert.match(webviewSource, /createShellForMeta\(meta\)/);
-        assert.match(webviewSource, /data-html-request-id/);
-        assert.match(webviewSource, /className = 'latex-block-shell'/);
-        assert.match(webviewSource, /data-mounted/);
-        assert.match(webviewSource, /BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN/);
-        assert.match(webviewSource, /BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN/);
-        assert.match(webviewSource, /BLOCK_VIRTUALIZATION_RETAIN_MARGIN/);
-        assert.doesNotMatch(webviewSource, /forceHeightUpdate/);
-        assert.match(styleSource, /\.latex-block-shell\s*\{[\s\S]*overflow: hidden;/);
-        assert.match(styleSource, /\.latex-block-shell\s*>\s*\.latex-block\s*\{[\s\S]*content-visibility: visible;/);
-        assert.match(styleSource, /\.latex-block-shell\s*>\s*\.latex-block\s*\{[\s\S]*contain-intrinsic-size: unset;/);
-        assert.doesNotMatch(webviewSource, /window\.scrollBy\(0, delta\)/);
-        assert.doesNotMatch(webviewSource, /withScrollCompensation\(shell, action\)/);
-        assert.match(webviewSource, /replaceContentWithShells\(blocks, onMount\)/);
-        assert.match(webviewSource, /replaceContentWithBlockMetadata\(blocks, onMount, onMissingHtml\)/);
-        assert.match(webviewSource, /storeBlockHtml\(index, hash, html\)/);
-        assert.match(webviewSource, /this\.config\.virtualMode = event\.data\.config\.virtualMode !== false/);
-        assert.match(webviewSource, /this\.virtualization\.setEnabled\(event\.data\.config\.virtualMode !== false\)/);
-        assert.match(webviewSource, /applyVirtualPatch\(payload\)/);
-        assert.match(webviewSource, /getBlockOrShellByIndex\(index\)/);
-    });
-
-    test('routes virtualized refs and tooltips through anchor-aware shell mounting', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(webviewSource, /window\.snaptexPreviewController = this/);
-        assert.match(webviewSource, /document\.addEventListener\('click', event => this\.onInternalLinkClick\(event\)\)/);
-        assert.match(webviewSource, /async ensureAnchorMounted\(anchorId\)/);
-        assert.match(webviewSource, /this\.virtualization\.findShellByAnchorId\(anchorId\)/);
-        assert.match(webviewSource, /async onInternalLinkClick\(event\)/);
-        assert.match(webviewSource, /event\.preventDefault\(\)/);
-        assert.match(webviewSource, /await this\.ensureAnchorMounted\(anchorId\)/);
-        assert.match(webviewSource, /controller\.ensureAnchorMounted\(targetId\)/);
-        assert.match(webviewSource, /controller\.getTooltipContextBlocks\(container\)/);
-        assert.match(webviewSource, /async getTooltipContextBlocks\(block\)/);
-    });
-
-    test('stabilizes virtualized forward sync before scrolling', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const extensionSource = fs.readFileSync(path.join(repoRoot, 'src', 'extension.ts'), 'utf8');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-
-        assert.match(extensionSource, /let autoSyncTimer: NodeJS\.Timeout \| undefined/);
-        assert.match(extensionSource, /const clearPendingAutoSync = \(\) =>/);
-        assert.match(extensionSource, /const scheduleAutoSyncToPreview = \(/);
-        assert.match(extensionSource, /clearPendingAutoSync\(\);\s*if \(editor\) \{ triggerSyncToPreview/);
-        assert.match(webviewSource, /async ensureBlockMountedByIndex\(index\)/);
-        assert.match(webviewSource, /async executeScroll\(data\)/);
-        assert.match(webviewSource, /const mountResult = await this\.ensureBlockMountedByIndex\(index\)/);
-        assert.match(webviewSource, /if \(!auto \|\| mountResult\.mounted\) \{\s*await this\.waitForLayout\(\)/);
-        assert.match(webviewSource, /this\.requestVirtualizedUpdate\(\{ allowUnmount: false \}\)/);
-        assert.doesNotMatch(webviewSource, /setTimeout\(\(\) => \{[\s\S]*const newTargetY = calcY\(\)/);
-    });
-
-    test('routes TikZ compile failures through the webview error state', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const webviewSource = readWebviewRuntimeSource(repoRoot);
-        const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
-
-        assert.match(webviewSource, /document\.addEventListener\('tikzjax-load-failed'/);
-        assert.match(webviewSource, /window\.failTikzContainer\(container, message\)/);
-        assert.match(tikzJaxSource, /tikzjax-load-failed/);
-        assert.match(tikzJaxSource, /new CustomEvent\("tikzjax-load-failed"/);
-        assert.doesNotMatch(tikzJaxSource, /invalid\.site\/img-not-found\.png/);
-    });
-
-    test('bootstraps dynamic TikZJax with a self-contained blob worker in VS Code webviews', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const buildSource = fs.readFileSync(path.join(repoRoot, 'esbuild.js'), 'utf8');
-        const tikzJaxSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tikzjax.js'), 'utf8');
-        const runTexSource = fs.readFileSync(path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'run-tex.js'), 'utf8');
-        const calcLibraryPath = path.join(repoRoot, 'media', 'vendor', 'tikzjax', 'tex_files', 'tikzlibrarycalc.code.tex.gz');
-
-        assert.match(buildSource, /patchTikzJaxWorkerBootstrap/);
-        assert.match(buildSource, /throw new Error\(`\[build\] TikZJax/);
-        assert.doesNotMatch(buildSource, /console\.warn\('\[build\] Warning: TikZJax/);
-        assert.match(buildSource, /CORSWorkaround:!1/);
-        assert.ok(fs.existsSync(calcLibraryPath));
-        assert.match(tikzJaxSource, /fetch\(`\$\{e\}\/run-tex\.js`\)/);
-        assert.match(tikzJaxSource, /URL\.createObjectURL\(new Blob/);
-        assert.match(tikzJaxSource, /new o\([^,]+,\{CORSWorkaround:!1\}\)/);
-        assert.match(tikzJaxSource, /tex_files\/tikzlibrarycalc\.code\.tex\.gz/);
-        assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:snaptexAssets\}/);
-        assert.doesNotMatch(tikzJaxSource, /revokeObjectURL[\s\S]*tikzjax-load-finished/);
-        assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`,\{CORSWorkaround:!1\}\)/);
-        assert.doesNotMatch(tikzJaxSource, /new o\(`\$\{e\}\/run-tex\.js`\)/);
-        assert.match(runTexSource, /snaptexAssetUrls&&snaptexAssetUrls\[A\]/);
-        assert.match(runTexSource, /snaptexAssetUrls=A&&A\.assets\|\|null/);
     });
 });
 

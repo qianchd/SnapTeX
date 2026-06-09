@@ -81,23 +81,13 @@ function readMacroDefinitionHeader(fullDef: string): MacroDefinitionHeader | und
 /**
  * Converts simple \newcommand definitions to \def syntax accepted by TikZJax.
  */
-function transpileToDef(fullDef: string): string {
-    const header = readMacroDefinitionHeader(fullDef);
-    if (!header || !header.command.endsWith('newcommand') || header.hasDefaultArgument) {return fullDef;}
+function transpileToDef(header: MacroDefinitionHeader, fullDef: string): string {
+    if (!header.command.endsWith('newcommand') || header.hasDefaultArgument) {return fullDef;}
 
     let args = "";
     for(let i=1; i<=header.argCount; i++) {args += `#${i}`;}
 
     return `\\def${header.name}${args}${fullDef.substring(header.body.start)}`;
-}
-
-/**
- * Extracts the command name from a macro definition string.
- */
-function extractMacroName(def: string): string | null {
-    const header = readMacroDefinitionHeader(def);
-    if (!header || header.command === 'DeclareMathOperator') { return null; }
-    return header.name;
 }
 
 interface TextRange {
@@ -192,9 +182,8 @@ function collectDefinitions(text: string): DefinitionRecord[] {
     return records;
 }
 
-function extractKatexMacro(fullDef: string): { name: string; definition: string } | undefined {
-    const header = readMacroDefinitionHeader(fullDef);
-    if (!header || header.command === 'providenewcommand') { return undefined; }
+function extractKatexMacro(header: MacroDefinitionHeader): { name: string; definition: string } | undefined {
+    if (header.command === 'providenewcommand') { return undefined; }
 
     const rawDefinition = header.body.content.trim();
     const definition = header.command === 'DeclareMathOperator'
@@ -255,17 +244,16 @@ export function extractMetadata(text: string): MetadataResult {
             continue;
         }
 
-        let finalDef = fullDef;
-        if (/\\(provide|re)?newcommand/.test(fullDef)) {
-            finalDef = transpileToDef(fullDef);
-        }
+        const header = readMacroDefinitionHeader(fullDef);
+        if (!header) { continue; }
 
-        const tikzName = extractMacroName(finalDef);
+        const finalDef = transpileToDef(header, fullDef);
+        const tikzName = header.command === 'DeclareMathOperator' ? null : header.name;
         if (tikzName && !tikzMacroMap.has(tikzName)) {
             tikzMacroMap.set(tikzName, finalDef);
         }
 
-        const katexMacro = extractKatexMacro(fullDef);
+        const katexMacro = extractKatexMacro(header);
         if (katexMacro) {
             macros[katexMacro.name] = katexMacro.definition;
         }

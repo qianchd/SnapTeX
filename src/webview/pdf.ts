@@ -71,6 +71,10 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.font = '12px sans-serif';
         ctx.fillText(message, 10, 50);
+        markPdfRendered(canvas);
+    }
+
+    function markPdfRendered(canvas) {
         canvas.setAttribute('data-rendered', 'true');
         canvas.removeAttribute('data-requested');
         canvas.removeAttribute('data-pdf-released');
@@ -93,10 +97,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             if (!context) return;
             await page.render({ canvasContext: context, viewport: viewport }).promise;
 
-            canvas.setAttribute('data-rendered', 'true');
-            canvas.removeAttribute('data-requested');
-            canvas.removeAttribute('data-pdf-released');
-            canvas.style.height = '';
+            markPdfRendered(canvas);
 
             page.cleanup();
         } finally {

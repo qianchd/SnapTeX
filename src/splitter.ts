@@ -1,12 +1,6 @@
 import { REGEX_STR } from './patterns';
+import { BlockTextSpan } from './types';
 import { scanLatexBraceBalance } from './utils';
-
-export interface BlockSpan {
-    start: number;
-    end: number;
-    line: number;
-    lineCount: number;
-}
 
 /**
  * Splits cleaned LaTeX body text into preview blocks.
@@ -17,23 +11,8 @@ export interface BlockSpan {
  * emergency splitting because they are compiled as one unit.
  */
 export class LatexBlockSplitter {
-    /**
-     * Checks whether the current brace depth is likely to close soon enough to
-     * treat a paragraph break as part of the same group.
-     */
-    private static findClosingBrace(text: string, startIndex: number, currentDepth: number, limitChars: number = 2000): boolean {
-        const result = scanLatexBraceBalance(text, {
-            start: startIndex,
-            initialDepth: currentDepth,
-            limitChars,
-            stopWhenClosed: true,
-            commentMode: 'skip-line'
-        });
-        return result.closedAt !== undefined;
-    }
-
-    public static split(text: string, maxLines: number = 40): BlockSpan[] {
-        const blocks: BlockSpan[] = [];
+    public static split(text: string, maxLines: number = 40): BlockTextSpan[] {
+        const blocks: BlockTextSpan[] = [];
         let currentBuffer = "";
         let envStack: string[] = [];
         let braceDepth = 0;
@@ -92,7 +71,13 @@ export class LatexBlockSplitter {
                 let shouldReset = false;
 
                 if (envStack.length === 0 && braceDepth > 0) {
-                    const canCloseSoon = LatexBlockSplitter.findClosingBrace(text, regex.lastIndex, braceDepth, 2000);
+                    const canCloseSoon = scanLatexBraceBalance(text, {
+                        start: regex.lastIndex,
+                        initialDepth: braceDepth,
+                        limitChars: 2000,
+                        stopWhenClosed: true,
+                        commentMode: 'skip-line'
+                    }).closedAt !== undefined;
                     if (!canCloseSoon) { shouldReset = true; }
                 }
 

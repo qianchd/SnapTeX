@@ -165,10 +165,10 @@ export function createTikzPictureRule(): PreprocessRule {
 
             return text.replace(regex, (_match, options, content) => {
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
-                const macroMap = renderer.currentDocument?.metadata.tikzMacroMap || new Map();
+                const macroMap = renderer.document?.metadata.tikzMacroMap || new Map();
                 const neededMacros = resolveDependencies(`${options || ''}\n${cleanContent}`, macroMap);
                 const optimized = optimizeTikzPreviewSource({
-                    globalPreamble: renderer.currentDocument?.metadata.tikzGlobal || "",
+                    globalPreamble: renderer.document?.metadata.tikzGlobal || "",
                     options: options || '',
                     content: cleanContent,
                     macroDefinitions: neededMacros

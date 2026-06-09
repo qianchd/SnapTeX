@@ -146,7 +146,7 @@ suite('LaTeX style utilities', () => {
         const protector = new ProtectionManager();
         const token = protector.protect('math', '<span>math</span>');
         const cleaned = cleanLatexCommands(`M\\"uller \\textbf{Bold} ${token}`, {
-            protect: (namespace: string, content: string) => protector.protect(namespace, content)
+            protectHtml: (namespace: string, content: string) => protector.protect(namespace, content)
         });
 
         assert.match(cleaned, /M.ller/);
@@ -155,7 +155,7 @@ suite('LaTeX style utilities', () => {
         assert.match(protector.resolve(cleaned), /<span>math<\/span>/);
 
         const unsafe = cleanLatexCommands('\\textbf{<script>alert(1)</script>} <img src=x>', {
-            protect: (namespace: string, content: string) => protector.protect(namespace, content)
+            protectHtml: (namespace: string, content: string) => protector.protect(namespace, content)
         });
         assert.doesNotMatch(protector.resolve(unsafe), /<script|<img/i);
         assert.match(protector.resolve(unsafe), /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);

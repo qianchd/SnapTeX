@@ -50,4 +50,19 @@ suite('DiffEngine', () => {
             }
         );
     });
+
+    test('rebuilds arrays by reusing unchanged prefix and suffix items', () => {
+        const oldItems = ['old-a', 'old-b', 'old-c'];
+        const diff = { start: 1, deleteCount: 1, end: 1, insertCount: 2 };
+
+        const rebuilt = DiffEngine.rebuildArray(
+            oldItems,
+            4,
+            diff,
+            index => `new-${index}`,
+            (item, index) => `${item}@${index}`
+        );
+
+        assert.deepStrictEqual(rebuilt, ['old-a@0', 'new-1', 'new-2', 'old-c@3']);
+    });
 });

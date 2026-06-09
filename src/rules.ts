@@ -66,6 +66,12 @@ function normalizeRefType(type: string): 'ref' | 'eqref' {
     return type === 'eqref' ? 'eqref' : 'ref';
 }
 
+function replaceMathRefs(content: string, renderer: RenderContext): string {
+    return content.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (_match, reftype, key) => {
+        return createRefLink(key, renderer, normalizeRefType(reftype));
+    });
+}
+
 /**
  * Ordered LaTeX-to-Markdown preprocessing pipeline.
  *
@@ -150,7 +156,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
                 let finalMath = cleanContent.trim();
 
-                finalMath = finalMath.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (_m, reftype, key) => createRefLink(key, renderer, normalizeRefType(reftype)));
+                finalMath = replaceMathRefs(finalMath, renderer);
 
                 if (envName) {
                     const name = envName.toLowerCase();
@@ -186,9 +192,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         priority: 50,
         apply: (text, renderer: RenderContext) => {
             const processInline = (content: string) => {
-                let safeContent = content.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (_m, reftype, key) => {
-                    return createRefLink(key, renderer, normalizeRefType(reftype));
-                });
+                const safeContent = replaceMathRefs(content, renderer);
                 return renderMath(safeContent, false, renderer);
             };
 
@@ -332,18 +336,12 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         name: 'latex_quotes',
         priority: 100,
         apply: (text, renderer: RenderContext) => {
-            let processed = text.replace(/``([\s\S]*?)''/g, (_match, content) => {
-                const open = renderer.protectHtml('quote', '&ldquo;');
-                const close = renderer.protectHtml('quote', '&rdquo;');
-                return `${open}${content}${close}`;
-            });
-            processed = processed.replace(/`([\s\S]*?)'/g, (_match, content) => {
-                const open = renderer.protectHtml('quote', '&lsquo;');
-                const close = renderer.protectHtml('quote', '&rsquo;');
-                return `${open}${content}${close}`;
-            });
-            processed = processed.replace(/``/g, () => renderer.protectHtml('quote', '&ldquo;'));
-            processed = processed.replace(/`/g, () => renderer.protectHtml('quote', '&lsquo;'));
+            const quote = (html: string) => renderer.protectHtml('quote', html);
+            const wrap = (content: string, open: string, close: string) => `${quote(open)}${content}${quote(close)}`;
+            let processed = text.replace(/``([\s\S]*?)''/g, (_match, content) => wrap(content, '&ldquo;', '&rdquo;'));
+            processed = processed.replace(/`([\s\S]*?)'/g, (_match, content) => wrap(content, '&lsquo;', '&rsquo;'));
+            processed = processed.replace(/``/g, () => quote('&ldquo;'));
+            processed = processed.replace(/`/g, () => quote('&lsquo;'));
             return processed;
         }
     },
@@ -402,7 +400,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         apply: (text, renderer: RenderContext) => {
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                const meta = renderer.currentDocument?.metadata;
+                const meta = renderer.document?.metadata;
 
                 const processMeta = (val: string | undefined) => {
                     if (!val) {return '';}

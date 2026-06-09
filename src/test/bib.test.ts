@@ -2,7 +2,7 @@
 
 import * as assert from 'assert';
 import { BibTexParser } from '../bib';
-import { SmartRenderer } from '../renderer';
+import { ProtectionManager } from '../protection';
 
 suite('BibTexParser', () => {
     test('parses simple entries with nested brace fields', () => {
@@ -39,7 +39,8 @@ suite('BibTexParser', () => {
     });
 
     test('escapes formatted bibliography fields and rejects unsafe URLs', () => {
-        const renderer = new SmartRenderer();
+        const protector = new ProtectionManager();
+        const renderer = { protectHtml: protector.protect.bind(protector) };
         const entry = {
             key: 'unsafe',
             type: 'article',
@@ -52,7 +53,7 @@ suite('BibTexParser', () => {
             }
         };
 
-        const html = renderer.protector.resolve(BibTexParser.formatEntry(entry, renderer));
+        const html = protector.resolve(BibTexParser.formatEntry(entry, renderer));
 
         assert.doesNotMatch(html, /<script|<img|onclick="/i);
         assert.match(html, /Eve &lt;img src=x onerror=alert\(1\)&gt;/);

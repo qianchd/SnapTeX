@@ -6,7 +6,7 @@ import { DocumentParseResult, LatexDocument } from '../document';
 import { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
 import { BlockTextProvider, LatexCounterScanner } from '../scanner';
-import { BlockSpan } from '../splitter';
+import { BlockTextSpan } from '../types';
 import { normalizeUri, stableHash } from '../utils';
 
 export class MemoryFileProvider implements IFileProvider {
@@ -51,7 +51,7 @@ export function createDocument(
     let bodyText = "";
     let offset = 0;
     let line = 0;
-    const blockSpans: BlockSpan[] = [];
+    const blockSpans: BlockTextSpan[] = [];
 
     for (let index = 0; index < blockTexts.length; index++) {
         if (index > 0) {
@@ -104,7 +104,7 @@ export function readFixture(name: string): string {
     return fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', name), 'utf8');
 }
 
-export function spanText(text: string, span: BlockSpan): string {
+export function spanText(text: string, span: BlockTextSpan): string {
     return text.slice(span.start, span.end);
 }
 
@@ -127,15 +127,3 @@ export function scanBlocks(blocks: string[], scanner = new LatexCounterScanner()
     return scanner.scan(createBlockTextProvider(blocks));
 }
 
-export function readWebviewRuntimeSource(repoRoot: string): string {
-    const webviewSourceDir = path.join(repoRoot, 'src', 'webview');
-    const webviewSources = fs.readdirSync(webviewSourceDir)
-        .filter(file => file.endsWith('.ts'))
-        .sort()
-        .map(file => path.join(webviewSourceDir, file));
-
-    return [
-        path.join(repoRoot, 'media', 'webview.html'),
-        ...webviewSources
-    ].map(file => fs.readFileSync(file, 'utf8')).join('\n');
-}

@@ -13,6 +13,13 @@ export function parseFirstElementFromHtml(html) {
     return tempDiv.firstElementChild;
 }
 
+export function isElementWithinViewportMargins(element, margins) {
+    const rect = element.getBoundingClientRect();
+    const above = typeof margins === 'number' ? margins : margins.above;
+    const below = typeof margins === 'number' ? margins : margins.below;
+    return rect.bottom >= -above && rect.top <= window.innerHeight + below;
+}
+
 /**
  * Maintains lightweight shells for offscreen LaTeX blocks.
  *
@@ -236,15 +243,11 @@ export class BlockVirtualizationController {
         }
 
         isShellInMountRange(shell, direction = 'none') {
-            const rect = shell.getBoundingClientRect();
-            const margins = this.getMountMargins(direction);
-            return rect.bottom >= -margins.above && rect.top <= window.innerHeight + margins.below;
+            return isElementWithinViewportMargins(shell, this.getMountMargins(direction));
         }
 
         isShellInRetainRange(shell) {
-            const rect = shell.getBoundingClientRect();
-            return rect.bottom >= -BLOCK_VIRTUALIZATION_RETAIN_MARGIN
-                && rect.top <= window.innerHeight + BLOCK_VIRTUALIZATION_RETAIN_MARGIN;
+            return isElementWithinViewportMargins(shell, BLOCK_VIRTUALIZATION_RETAIN_MARGIN);
         }
 
         mountShell(shell, onMissingHtml) {

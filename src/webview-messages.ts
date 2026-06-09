@@ -111,12 +111,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
-function isOptionalString(value: unknown): boolean {
-    return value === undefined || typeof value === 'string';
-}
-
-function isOptionalNumber(value: unknown): boolean {
-    return value === undefined || typeof value === 'number';
+function isOptionalType(value: unknown, type: 'string' | 'number'): boolean {
+    return value === undefined || typeof value === type;
 }
 
 export function isWebviewToExtensionMessage(value: unknown): value is WebviewToExtensionMessage {
@@ -130,8 +126,8 @@ export function isWebviewToExtensionMessage(value: unknown): value is WebviewToE
         case WebviewToExtensionCommand.RevealLine:
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number'
-                && isOptionalString(value.anchor)
-                && isOptionalNumber(value.viewRatio);
+                && isOptionalType(value.anchor, 'string')
+                && isOptionalType(value.viewRatio, 'number');
         case WebviewToExtensionCommand.SyncScroll:
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number';

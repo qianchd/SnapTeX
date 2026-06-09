@@ -2,14 +2,14 @@ import * as vscode from 'vscode';
 import { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
-import { BibEntry, SourceLocation, PreambleData, MetadataResult } from './types';
+import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView } from './types';
 import { R_BIBLIOGRAPHY } from './patterns';
-import { BlockSpan, LatexBlockSplitter } from './splitter';
+import { LatexBlockSplitter } from './splitter';
 import { normalizeUri, scanLatexBraceBalance, stableHash } from './utils';
 
 export interface DocumentParseResult {
     bodyText: string;
-    blockSpans: BlockSpan[];
+    blockSpans: BlockTextSpan[];
     blockHashes: string[];
     metadataSensitiveBlocks: boolean[];
     filePool: string[];
@@ -18,11 +18,6 @@ export interface DocumentParseResult {
     metadata: PreambleData;
     bibEntries: Map<string, BibEntry>;
     contentStartLineOffset: number;
-}
-
-export interface BlockTextSnapshot {
-    bodyText: string;
-    blockSpans: BlockSpan[];
 }
 
 interface BibCacheEntry {
@@ -42,9 +37,9 @@ interface IndexedLine {
  * string, stores block spans instead of duplicated block strings, and keeps
  * compact source maps for editor-preview synchronization.
  */
-export class LatexDocument {
+export class LatexDocument implements RenderDocumentView {
     private bodyText: string = "";
-    public blockSpans: BlockSpan[] = [];
+    public blockSpans: BlockTextSpan[] = [];
     public blockHashes: string[] = [];
     public metadataSensitiveBlocks: boolean[] = [];
 

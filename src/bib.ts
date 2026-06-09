@@ -140,7 +140,7 @@ export class BibTexParser {
         return fields;
     }
 
-    public static formatEntry(entry: BibEntry, renderer: Pick<RenderContext, 'protect'>): string {
+    public static formatEntry(entry: BibEntry, renderer: Pick<RenderContext, 'protectHtml'>): string {
         const f = entry.fields;
 
         let author = f.author ? cleanLatexCommands(f.author, renderer) : 'Unknown';

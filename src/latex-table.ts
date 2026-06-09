@@ -16,12 +16,10 @@ interface LatexTableModel {
 }
 
 interface TabularEnvironment {
-    envName: string;
     beginStart: number;
     bodyStart: number;
     bodyEnd: number;
     end: number;
-    args: string[];
     columnSpec: string;
 }
 
@@ -29,7 +27,6 @@ interface RenderedLatexTableCell {
     html: string;
     colspan: number;
     rowspan: number;
-    isEmpty: boolean;
 }
 
 interface TableBoundary {
@@ -104,12 +101,10 @@ function readTabularEnvironmentAt(text: string, beginStart: number): TabularEnvi
     if (!endMatch) { return undefined; }
 
     return {
-        envName,
         beginStart,
         bodyStart: index,
         bodyEnd: endMatch.start,
         end: endMatch.end,
-        args,
         columnSpec: args[args.length - 1] ?? ''
     };
 }
@@ -190,25 +185,29 @@ function readTableScanStep(text: string, index: number, depth: number): TableSca
     };
 }
 
-function splitLatexTableCells(rowText: string): string[] {
-    const cells: string[] = [];
-    let cell = '';
+function splitLatexTopLevel(content: string, separator: string): string[] {
+    const parts: string[] = [];
+    let current = '';
     let depth = 0;
 
-    for (let i = 0; i < rowText.length;) {
-        const step = readTableScanStep(rowText, i, depth);
-        if (step.text === '&' && step.depthBefore === 0) {
-            cells.push(cell.trim());
-            cell = '';
+    for (let i = 0; i < content.length;) {
+        const step = readTableScanStep(content, i, depth);
+        if (step.text === separator && step.depthBefore === 0) {
+            parts.push(current.trim());
+            current = '';
         } else {
-            cell += step.text;
+            current += step.text;
         }
         depth = step.depthAfter;
         i = step.end;
     }
 
-    cells.push(cell.trim());
-    return cells;
+    parts.push(current.trim());
+    return parts;
+}
+
+function splitLatexTableCells(rowText: string): string[] {
+    return splitLatexTopLevel(rowText, '&');
 }
 
 function parseLatexTableRows(rawContent: string): LatexTableModel {
@@ -331,24 +330,7 @@ function tabularColumnSpecUsesMathMode(columnSpec: string): boolean {
 }
 
 function splitLatexLineBreaks(content: string): string[] {
-    const lines: string[] = [];
-    let current = '';
-    let depth = 0;
-
-    for (let i = 0; i < content.length;) {
-        const step = readTableScanStep(content, i, depth);
-        if (step.text === '\\\\' && step.depthBefore === 0) {
-            lines.push(current.trim());
-            current = '';
-        } else {
-            current += step.text;
-        }
-        depth = step.depthAfter;
-        i = step.end;
-    }
-
-    lines.push(current.trim());
-    return lines.filter(line => line.length > 0);
+    return splitLatexTopLevel(content, '\\\\').filter(line => line.length > 0);
 }
 
 function renderTableInlineCommands(content: string, renderer: RenderContext): string {
@@ -479,8 +461,7 @@ function renderLatexTableCell(cellText: string, renderer: RenderContext, tagName
     return {
         html: `<${tagName}${attrText}>${htmlContent}</${tagName}>`,
         colspan,
-        rowspan,
-        isEmpty: cleanLatexTableCell(content).length === 0
+        rowspan
     };
 }
 
