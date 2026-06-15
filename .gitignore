@@ -2,6 +2,8 @@ out
 dist
 node_modules
 media/vendor/
+media/webview-main.js
+media/webview-pdf.js
 media/webview-*.js.map
 .vscode-test/
 *.vsix
