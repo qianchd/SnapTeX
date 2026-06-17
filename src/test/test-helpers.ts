@@ -45,6 +45,7 @@ export function createDocument(
         title?: string;
         author?: string;
         date?: string;
+        fields?: Record<string, string>;
     } = {}
 ): LatexDocument {
     const doc = new LatexDocument(new MemoryFileProvider());
@@ -74,7 +75,6 @@ export function createDocument(
         bodyText,
         blockSpans,
         blockHashes: blockTexts.map(text => stableHash(text)),
-        metadataSensitiveBlocks: blockTexts.map(text => text.trim().includes('\\maketitle')),
         filePool: [],
         sourceFileIndices: new Uint16Array(0),
         sourceLines: new Int32Array(0),
@@ -82,9 +82,12 @@ export function createDocument(
             macros: options.macros ?? {},
             tikzGlobal: options.tikzGlobal ?? '',
             tikzMacroMap: new Map(),
-            title: options.title,
-            author: options.author,
-            date: options.date
+            fields: {
+                ...(options.fields ?? {}),
+                ...(options.title !== undefined ? { title: options.title } : {}),
+                ...(options.author !== undefined ? { author: options.author } : {}),
+                ...(options.date !== undefined ? { date: options.date } : {})
+            }
         },
         bibEntries: new Map(),
         contentStartLineOffset: 0

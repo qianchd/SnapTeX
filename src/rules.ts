@@ -9,7 +9,7 @@ import {
     resolveLatexStyles,
     sanitizeHttpUrlForAttribute
 } from './utils';
-import { PreprocessRule, RenderContext } from './types';
+import { BlockDependencyRule, PreprocessRule, RenderContext, RuleRegistry } from './types';
 import { BibTexParser } from './bib';
 import {
     REGEX_STR,
@@ -79,7 +79,17 @@ function replaceMathRefs(content: string, renderer: RenderContext): string {
  * HTML must go through RenderContext.protectHtml so Markdown-it cannot escape
  * or expose it as user-visible text.
  */
-export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
+export function defineBlockDependencyRule(rule: BlockDependencyRule): BlockDependencyRule {
+    return rule;
+}
+
+export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
+    return registry;
+}
+
+const DEFAULT_MAKETITLE_METADATA_FIELDS = ['title', 'author', 'date'];
+
+export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
         name: 'clean_comments',
         priority: 5,
@@ -400,7 +410,7 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         apply: (text, renderer: RenderContext) => {
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                const meta = renderer.document?.metadata;
+                const fields = renderer.document?.metadata.fields ?? {};
 
                 const processMeta = (val: string | undefined) => {
                     if (!val) {return '';}
@@ -413,9 +423,9 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
                     return res;
                 };
 
-                const safeTitle = processMeta(meta?.title);
-                const safeAuthor = processMeta(meta?.author);
-                const safeDate = processMeta(meta?.date);
+                const safeTitle = processMeta(fields.title);
+                const safeAuthor = processMeta(fields.author);
+                const safeDate = processMeta(fields.date);
 
                 if (safeTitle) { titleBlock += `<h1 class="latex-title">${safeTitle}</h1>`; }
                 if (safeAuthor) { titleBlock += `<div class="latex-author">${safeAuthor}</div>`; }
@@ -502,6 +512,29 @@ export const DEFAULT_PREPROCESS_RULES: PreprocessRule[] = [
         }
     }
 ];
+
+export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
+    defineBlockDependencyRule({
+        name: 'maketitle',
+        collect: ({ text, deps }) => {
+            if (!text.includes('\\maketitle')) { return []; }
+            return DEFAULT_MAKETITLE_METADATA_FIELDS.map(field => deps.metadata(field));
+        }
+    }),
+    defineBlockDependencyRule({
+        name: 'bibliography',
+        collect: ({ text, deps }) => {
+            if (!R_BIBLIOGRAPHY.test(text)) { return []; }
+            return [deps.citedKeys()];
+        }
+    })
+];
+
+export const SNAP_TEX_RULES = defineRuleRegistry({
+    metadataFields: [...DEFAULT_MAKETITLE_METADATA_FIELDS],
+    renderRules: DEFAULT_RENDER_RULES,
+    blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES
+});
 
 export function postProcessHtml(html: string): string {
     html = html.replace(/<p>\s*OOABSTRACT_STARTOO\s*<\/p>/g, '<div class="latex-abstract"><span class="latex-abstract-title">Abstract</span>');

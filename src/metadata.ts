@@ -199,7 +199,7 @@ function extractKatexMacro(header: MacroDefinitionHeader): { name: string; defin
  * The returned cleanedText preserves line structure for source mapping while
  * blanking definitions that should not render as document body content.
  */
-export function extractMetadata(text: string): MetadataResult {
+export function extractMetadata(text: string, metadataFields: readonly string[]): MetadataResult {
     let cleanedText = text.replace(/(?<!\\)%.*/gm, '%');
 
     cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
@@ -207,26 +207,13 @@ export function extractMetadata(text: string): MetadataResult {
     const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     cleanedText = cleanedText.replace(/\\today\b/g, todayStr);
 
-    let title: string | undefined;
-    let author: string | undefined;
-    let date: string | undefined;
-
-    const titleRes = findCommand(cleanedText, 'title');
-    if (titleRes) {
-        title = titleRes.content.replace(/\\\\/g, '<br/>');
-        cleanedText = cleanedText.substring(0, titleRes.start) + cleanedText.substring(titleRes.end);
-    }
-
-    const authorRes = findCommand(cleanedText, 'author');
-    if (authorRes) {
-        author = authorRes.content;
-        cleanedText = cleanedText.substring(0, authorRes.start) + cleanedText.substring(authorRes.end);
-    }
-
-    const dateRes = findCommand(cleanedText, 'date');
-    if (dateRes) {
-        date = dateRes.content;
-        cleanedText = cleanedText.substring(0, dateRes.start) + cleanedText.substring(dateRes.end);
+    const fields: Record<string, string> = {};
+    for (const field of metadataFields) {
+        const result = findCommand(cleanedText, field);
+        if (result) {
+            fields[field] = result.content;
+            cleanedText = cleanedText.substring(0, result.start) + cleanedText.substring(result.end);
+        }
     }
 
     const tikzGlobalParts: string[] = [];
@@ -261,5 +248,5 @@ export function extractMetadata(text: string): MetadataResult {
 
     const tikzGlobal = tikzGlobalParts.join('\n');
     cleanedText = blankOutRanges(cleanedText, definitionRecords);
-    return { data: { macros, tikzGlobal, tikzMacroMap, title, author, date }, cleanedText };
+    return { data: { macros, tikzGlobal, tikzMacroMap, fields }, cleanedText };
 }

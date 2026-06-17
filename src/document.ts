@@ -4,6 +4,7 @@ import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
 import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView } from './types';
 import { R_BIBLIOGRAPHY } from './patterns';
+import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
 import { normalizeUri, scanLatexBraceBalance, stableHash } from './utils';
 
@@ -11,7 +12,6 @@ export interface DocumentParseResult {
     bodyText: string;
     blockSpans: BlockTextSpan[];
     blockHashes: string[];
-    metadataSensitiveBlocks: boolean[];
     filePool: string[];
     sourceFileIndices: Uint16Array;
     sourceLines: Int32Array;
@@ -41,7 +41,6 @@ export class LatexDocument implements RenderDocumentView {
     private bodyText: string = "";
     public blockSpans: BlockTextSpan[] = [];
     public blockHashes: string[] = [];
-    public metadataSensitiveBlocks: boolean[] = [];
 
     public filePool: string[] = [];
     public sourceFileIndices: Uint16Array = new Uint16Array(0);
@@ -52,14 +51,15 @@ export class LatexDocument implements RenderDocumentView {
     public metadata: PreambleData = {
         macros: {},
         tikzGlobal: "",
-        tikzMacroMap: new Map()
+        tikzMacroMap: new Map(),
+        fields: {}
     };
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: vscode.Uri | undefined;
 
     private bibCache: Map<string, BibCacheEntry> = new Map();
 
-    constructor(private fileProvider: IFileProvider) {}
+    constructor(private fileProvider: IFileProvider, private registry = SNAP_TEX_RULES) {}
 
     /**
      * Releases the transient body text after the renderer has taken a snapshot.
@@ -68,7 +68,6 @@ export class LatexDocument implements RenderDocumentView {
         this.bodyText = "";
         this.blockSpans = [];
         this.blockHashes = [];
-        this.metadataSensitiveBlocks = [];
     }
 
     public getBlockCount(): number {
@@ -85,10 +84,6 @@ export class LatexDocument implements RenderDocumentView {
         return this.blockHashes[index];
     }
 
-    public isMetadataSensitiveBlock(index: number): boolean {
-        return this.metadataSensitiveBlocks[index] === true;
-    }
-
     public createTextSnapshot(): BlockTextSnapshot {
         return {
             bodyText: this.bodyText,
@@ -100,7 +95,6 @@ export class LatexDocument implements RenderDocumentView {
         this.bodyText = result.bodyText;
         this.blockSpans = result.blockSpans;
         this.blockHashes = result.blockHashes;
-        this.metadataSensitiveBlocks = result.metadataSensitiveBlocks;
 
         this.filePool = result.filePool;
         this.sourceFileIndices = result.sourceFileIndices;
@@ -124,7 +118,7 @@ export class LatexDocument implements RenderDocumentView {
         const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, 0, contentOverride);
         const normalizedText = textLines.join('\n');
 
-        const metaRes: MetadataResult = extractMetadata(normalizedText);
+        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataFields);
 
         const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
 
@@ -153,7 +147,6 @@ export class LatexDocument implements RenderDocumentView {
             bodyText,
             blockSpans: [],
             blockHashes: [],
-            metadataSensitiveBlocks: [],
             filePool,
             sourceFileIndices: new Uint16Array(fileIndices),
             sourceLines: new Int32Array(lines),
@@ -167,7 +160,6 @@ export class LatexDocument implements RenderDocumentView {
             if (this.hasRenderableContent(blockText)) {
                 res.blockSpans.push(b);
                 res.blockHashes.push(stableHash(blockText));
-                res.metadataSensitiveBlocks.push(blockText.trim().includes('\\maketitle'));
             }
         }
 

@@ -1,19 +1,23 @@
 import MarkdownIt from 'markdown-it';
 
 import { DiffEngine, DiffResult } from './diff';
-import { BlockNumberingCounts, BlockTextSnapshot, NumberingPayload, PatchPayload, RenderContext, RenderedBlockMeta, RenderDocumentView, RenderOptions, SourceLocation } from './types';
-import { DEFAULT_PREPROCESS_RULES, postProcessHtml } from './rules';
+import { BlockNumberingCounts, BlockTextSnapshot, DependencyHelpers, DependencyState, NumberingPayload, PatchPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RuleRegistry, SourceLocation } from './types';
+import { SNAP_TEX_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner } from './scanner';
 import { R_BIBLIOGRAPHY } from './patterns';
 import { extractLatexCitationKeys, extractLatexLabelNames, normalizeUri, stableHash } from './utils';
 import { ProtectionManager } from './protection';
 
 const EMPTY_TEXT_SNAPSHOT: BlockTextSnapshot = { bodyText: "", blockSpans: [] };
-const PREPROCESS_RULES = [...DEFAULT_PREPROCESS_RULES].sort((a, b) => a.priority - b.priority);
 
 interface BlockSnapshot extends RenderedBlockMeta {
     hasBibliography: boolean;
     citationKeys: string[];
+    dependencyFingerprint?: string;
+}
+
+interface BlockDependencySummary {
+    dependencies: RenderDependency[];
 }
 
 /**
@@ -27,21 +31,35 @@ interface BlockSnapshot extends RenderedBlockMeta {
 export class SmartRenderer {
     private lastBlocks: BlockSnapshot[] = [];
     private lastTextSnapshot: BlockTextSnapshot = EMPTY_TEXT_SNAPSHOT;
-    private lastMetaFingerprint: string = "";
     private lastMacrosJson: string = "";
-    private lastCitedKeys: string[] = [];
+    private dependencySummaries: Array<BlockDependencySummary | undefined> = [];
 
     private md: MarkdownIt | null = null;
     private protector = new ProtectionManager();
     private currentMacros: Record<string, string> = {};
+    private registry: RuleRegistry;
 
     private blockMap: { start: number; count: number }[] = [];
     private scanner = new LatexCounterScanner();
     private _citedKeys: string[] = [];
     private documentView: RenderDocumentView | undefined;
     private readonly renderContext: RenderContext;
+    private readonly dependencyHelpers: DependencyHelpers = {
+        metadata: field => ({
+            id: `metadata:${field}`,
+            read: state => state.metadata.fields[field] ?? ''
+        }),
+        citedKeys: () => ({
+            id: 'citations:list',
+            read: state => state.citedKeysFingerprint
+        })
+    };
 
-    constructor() {
+    constructor(registry: RuleRegistry = SNAP_TEX_RULES) {
+        this.registry = {
+            ...registry,
+            renderRules: [...registry.renderRules].sort((a, b) => a.priority - b.priority)
+        };
         const renderer = this;
         this.renderContext = {
             get currentMacros() { return renderer.currentMacros; },
@@ -71,9 +89,8 @@ export class SmartRenderer {
     public resetState() {
         this.lastBlocks = [];
         this.lastTextSnapshot = EMPTY_TEXT_SNAPSHOT;
-        this.lastMetaFingerprint = "";
         this.lastMacrosJson = "";
-        this.lastCitedKeys = [];
+        this.dependencySummaries = [];
         this.blockMap = [];
         this._citedKeys = [];
         this.documentView = undefined;
@@ -107,7 +124,7 @@ export class SmartRenderer {
     private renderBlockToHtml(text: string, index: number): string {
         let processed = text;
 
-        PREPROCESS_RULES.forEach(rule => { processed = rule.apply(processed, this.renderContext); });
+        this.registry.renderRules.forEach(rule => { processed = rule.apply(processed, this.renderContext); });
 
         let finalHtml = this.md!.render(processed);
 
@@ -122,35 +139,24 @@ export class SmartRenderer {
         return `<div class="latex-block" data-index="${index}" data-block-hash="${stableHash(text)}">${finalHtml}</div>`;
     }
 
-    private applyMetadataFingerprint(text: string, metaFingerprint: string): string {
-        return text.includes('\\maketitle') ? text.replace('\\maketitle', `\\maketitle${metaFingerprint}`) : text;
-    }
-
-    private getSnapshotBlockText(snapshot: BlockTextSnapshot, index: number, metaFingerprint: string): string | undefined {
+    private getSnapshotBlockText(snapshot: BlockTextSnapshot, index: number): string | undefined {
         const span = snapshot.blockSpans[index];
         if (!span) { return undefined; }
-        return this.applyMetadataFingerprint(snapshot.bodyText.slice(span.start, span.end), metaFingerprint);
+        return snapshot.bodyText.slice(span.start, span.end);
     }
 
-    private createRenderBlockAccess(doc: RenderDocumentView, blockCount: number, metaFingerprint: string) {
+    private createRenderBlockAccess(doc: RenderDocumentView, blockCount: number) {
         const textCache = new Map<number, string>();
-        const hashCache = new Map<number, string>();
         const getText = (index: number): string => {
             if (!textCache.has(index)) {
                 const rawText = doc.getBlockText(index) ?? '';
-                textCache.set(index, this.applyMetadataFingerprint(rawText, metaFingerprint));
+                textCache.set(index, rawText);
             }
             return textCache.get(index) ?? '';
         };
         const getHash = (index: number): string => {
             const rawHash = doc.getBlockHash(index);
-            if (!doc.isMetadataSensitiveBlock(index)) {
-                return rawHash ?? stableHash(getText(index));
-            }
-            if (!hashCache.has(index)) {
-                hashCache.set(index, stableHash(getText(index)));
-            }
-            return hashCache.get(index) ?? '';
+            return rawHash ?? stableHash(getText(index));
         };
 
         return {
@@ -208,6 +214,10 @@ export class SmartRenderer {
         return Array.from(keys);
     }
 
+    private fingerprintCitedKeySet(citedKeys: readonly string[]): string {
+        return stableHash(Array.from(new Set(citedKeys)).sort().join('\0'));
+    }
+
     private applyBibliographyAnchors(blocks: BlockSnapshot[], citedKeys: string[]): BlockSnapshot[] {
         return blocks.map(block => {
             if (!block.hasBibliography) { return block; }
@@ -218,11 +228,6 @@ export class SmartRenderer {
                 anchors: Array.from(anchors)
             };
         });
-    }
-
-    private haveSameCitedKeys(nextKeys: string[]): boolean {
-        return nextKeys.length === this.lastCitedKeys.length
-            && nextKeys.every((key, index) => key === this.lastCitedKeys[index]);
     }
 
     private buildNumberingPayload(scanResult: {
@@ -242,11 +247,79 @@ export class SmartRenderer {
         const block = this.lastBlocks[index];
         if (!block) { return undefined; }
 
-        const text = this.getSnapshotBlockText(this.lastTextSnapshot, index, this.lastMetaFingerprint);
+        const text = this.getSnapshotBlockText(this.lastTextSnapshot, index);
         return {
             hash: block.hash,
             html: text === undefined ? undefined : this.renderBlockToHtml(text, index)
         };
+    }
+
+    private collectBlockDependencies(text: string, index: number): RenderDependency[] {
+        return this.registry.blockDependencyRules.flatMap(rule => {
+            return rule.collect({ text, index, deps: this.dependencyHelpers });
+        });
+    }
+
+    private updateDependencySummaries(
+        blockCount: number,
+        diff: DiffResult,
+        getBlockText: (index: number) => string
+    ): Array<BlockDependencySummary | undefined> {
+        this.dependencySummaries = DiffEngine.rebuildArray(
+            this.dependencySummaries,
+            blockCount,
+            diff,
+            index => {
+                const dependencies = this.collectBlockDependencies(getBlockText(index), index);
+                return dependencies.length > 0 ? { dependencies } : undefined;
+            },
+            summary => summary
+        );
+        return this.dependencySummaries;
+    }
+
+    private fingerprintDependencies(dependencies: RenderDependency[], state: DependencyState): string {
+        const parts = dependencies
+            .map(dependency => `${dependency.id}\u0000${dependency.read(state)}`)
+            .sort();
+        return stableHash(parts.join('\u0001'));
+    }
+
+    private applyDependencyFingerprints(
+        blocks: BlockSnapshot[],
+        summaries: readonly (BlockDependencySummary | undefined)[],
+        state: DependencyState
+    ): BlockSnapshot[] {
+        return blocks.map((block, index) => {
+            const dependencies = summaries[index]?.dependencies ?? [];
+            if (dependencies.length === 0) {
+                return { ...block, dependencyFingerprint: undefined };
+            }
+            return {
+                ...block,
+                dependencyFingerprint: this.fingerprintDependencies(dependencies, state)
+            };
+        });
+    }
+
+    private collectDependencyDirtyBlockIndices(previousAlignedBlocks: BlockSnapshot[], nextBlocks: BlockSnapshot[], diff: DiffResult): number[] {
+        const dirty: number[] = [];
+        const patchStart = diff.start;
+        const patchEnd = diff.start + diff.insertCount;
+
+        for (let index = 0; index < nextBlocks.length; index++) {
+            if (index >= patchStart && index < patchEnd) { continue; }
+
+            const next = nextBlocks[index];
+            const previous = previousAlignedBlocks[index];
+            if (!next.dependencyFingerprint || !previous) { continue; }
+            if (next.hash !== previous.hash) { continue; }
+            if (next.dependencyFingerprint !== previous.dependencyFingerprint) {
+                dirty.push(index);
+            }
+        }
+
+        return dirty;
     }
 
     /**
@@ -267,17 +340,12 @@ export class SmartRenderer {
             this.rebuildMarkdownEngine(doc.metadata.macros);
             this.lastBlocks = [];
             this.lastTextSnapshot = EMPTY_TEXT_SNAPSHOT;
-            this.lastMetaFingerprint = "";
+            this.dependencySummaries = [];
             this.lastMacrosJson = currentMacrosJson;
         }
 
-        const safeTitle = (doc.metadata.title || '').replace(/[\r\n]/g, ' ');
-        const safeAuthor = (doc.metadata.author || '').replace(/[\r\n]/g, ' ');
-        const safeDate = (doc.metadata.date || '').replace(/[\r\n]/g, ' ');
-        const metaFingerprint = ` [meta:${stableHash(`${safeTitle}\u0000${safeAuthor}\u0000${safeDate}`)}]`;
-
         const blockCount = doc.getBlockCount();
-        const blockAccess = this.createRenderBlockAccess(doc, blockCount, metaFingerprint);
+        const blockAccess = this.createRenderBlockAccess(doc, blockCount);
 
         this.blockMap = doc.blockSpans.map(span => ({
             start: doc.contentStartLineOffset + span.line,
@@ -294,16 +362,20 @@ export class SmartRenderer {
         let payload: PatchPayload;
         let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, blockAccess.getText);
         const nextCitedKeys = this.collectCitedKeys(blockMeta);
-        const keysChanged = !this.haveSameCitedKeys(nextCitedKeys);
         this._citedKeys = nextCitedKeys;
-        this.lastCitedKeys = [...nextCitedKeys];
         blockMeta = this.applyBibliographyAnchors(blockMeta, nextCitedKeys);
+        const previousAlignedBlocks = blockMeta;
+        const dependencySummaries = this.updateDependencySummaries(blockCount, diff, blockAccess.getText);
+        blockMeta = this.applyDependencyFingerprints(blockMeta, dependencySummaries, {
+            metadata: doc.metadata,
+            citedKeysFingerprint: this.fingerprintCitedKeySet(nextCitedKeys)
+        });
+        const dirtyBlockIndices = this.collectDependencyDirtyBlockIndices(previousAlignedBlocks, blockMeta, diff);
         const nextTextSnapshot = doc.createTextSnapshot();
 
         if (isFullUpdate) {
             this.lastBlocks = blockMeta;
             this.lastTextSnapshot = nextTextSnapshot;
-            this.lastMetaFingerprint = metaFingerprint;
 
             payload = {
                 type: 'full',
@@ -332,17 +404,12 @@ export class SmartRenderer {
 
             this.lastBlocks = blockMeta;
             this.lastTextSnapshot = nextTextSnapshot;
-            this.lastMetaFingerprint = metaFingerprint;
 
             const dirtyBlocksMap: { [index: number]: string } = {};
-            if (keysChanged) {
-                const bibBlockIndex = this.lastBlocks.findIndex(block => block.hasBibliography);
-                const isInsideMainPatch = bibBlockIndex >= diff.start && bibBlockIndex < (diff.start + diff.insertCount);
-                if (bibBlockIndex !== -1 && !isInsideMainPatch) {
-                    const text = this.getSnapshotBlockText(this.lastTextSnapshot, bibBlockIndex, this.lastMetaFingerprint);
-                    if (text !== undefined) {
-                        dirtyBlocksMap[bibBlockIndex] = this.renderBlockToHtml(text, bibBlockIndex);
-                    }
+            for (const index of dirtyBlockIndices) {
+                const text = this.getSnapshotBlockText(this.lastTextSnapshot, index);
+                if (text !== undefined) {
+                    dirtyBlocksMap[index] = this.renderBlockToHtml(text, index);
                 }
             }
 

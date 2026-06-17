@@ -7,7 +7,9 @@ import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { SmartRenderer } from '../renderer';
+import { defineBlockDependencyRule, SNAP_TEX_RULES } from '../rules';
 import { optimizeTikzPreviewSource } from '../tikz-preview-optimizer';
+import type { RuleRegistry } from '../types';
 import { normalizeUri, stableHash } from '../utils';
 import {
     createDocument,
@@ -494,6 +496,25 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(payload.dirtyBlocks?.[2] ?? '', /smith2024/);
     });
 
+    test('does not refresh bibliography when citation key order changes without set changes', () => {
+        const renderer = new SmartRenderer();
+        renderer.render(createDocument([
+            'See \\cite{smith2024,doe2025}.',
+            '\\bibliography{refs}'
+        ]));
+
+        const payload = renderer.render(createDocument([
+            'See \\cite{doe2025,smith2024}.',
+            '\\bibliography{refs}'
+        ]));
+
+        assert.equal(payload.type, 'patch');
+        assert.equal(payload.start, 0);
+        assert.equal(payload.deleteCount, 1);
+        assert.equal(payload.htmls?.length, 1);
+        assert.equal(payload.dirtyBlocks?.[1], undefined);
+    });
+
     test('adds block hashes from block text only and disables hash preservation on macro changes', () => {
         const renderer = new SmartRenderer();
         const first = renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'x' } }));
@@ -610,13 +631,61 @@ suite('SmartRenderer', () => {
         renderer.render(createDocument(['\\maketitle'], { title: 'First' }));
 
         const payload = renderer.render(createDocument(['\\maketitle'], { title: 'Second <tag>' }));
-        const html = payload.htmls?.join('') ?? '';
+        const html = payload.dirtyBlocks?.[0] ?? '';
 
         assert.equal(payload.type, 'patch');
-        assert.equal(payload.start, 0);
+        assert.equal(payload.start, 1);
+        assert.equal(payload.htmls?.length, 0);
         assert.match(html, /Second &lt;tag&gt;/);
         assert.doesNotMatch(html, /Second <tag>/);
         assert.doesNotMatch(html, /data-block-hash="[^"]*Second/);
+    });
+
+    test('supports custom metadata-dependent blocks without recollecting unchanged dependencies', () => {
+        let collectCount = 0;
+        const registry: RuleRegistry = {
+            ...SNAP_TEX_RULES,
+            metadataFields: [...SNAP_TEX_RULES.metadataFields, 'institute'],
+            blockDependencyRules: [
+                ...SNAP_TEX_RULES.blockDependencyRules,
+                defineBlockDependencyRule({
+                    name: 'makecover',
+                    collect: ({ text, deps }) => {
+                        collectCount++;
+                        if (!text.includes('\\makecover')) { return []; }
+                        return [
+                            deps.metadata('title'),
+                            deps.metadata('institute')
+                        ];
+                    }
+                })
+            ],
+            renderRules: [
+                ...SNAP_TEX_RULES.renderRules,
+                {
+                    name: 'makecover',
+                    priority: 161,
+                    apply: (text, renderer) => {
+                        const fields = renderer.document?.metadata.fields ?? {};
+                        return text.replace(/\\makecover/g, () => renderer.protectHtml(
+                            'meta',
+                            `<div class="cover">${fields.title ?? ''} - ${fields.institute ?? ''}</div>`
+                        ));
+                    }
+                }
+            ]
+        };
+        const renderer = new SmartRenderer(registry);
+
+        renderer.render(createDocument(['\\makecover', 'Plain'], { fields: { title: 'A', institute: 'Old' } }));
+        assert.equal(collectCount, 2);
+
+        const payload = renderer.render(createDocument(['\\makecover', 'Plain'], { fields: { title: 'A', institute: 'New' } }));
+
+        assert.equal(collectCount, 2);
+        assert.equal(payload.type, 'patch');
+        assert.equal(payload.htmls?.length, 0);
+        assert.match(payload.dirtyBlocks?.[0] ?? '', /A - New/);
     });
 
     test('uses full render when a replacement edit exceeds the fixed threshold', () => {

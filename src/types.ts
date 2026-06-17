@@ -13,10 +13,7 @@ export interface PreambleData {
     macros: Record<string, string>;
     tikzGlobal: string;
     tikzMacroMap: Map<string, string>;
-
-    title?: string;
-    author?: string;
-    date?: string;
+    fields: Record<string, string>;
 }
 
 export interface MetadataResult {
@@ -66,7 +63,6 @@ export interface RenderDocumentView {
     getBlockCount(): number;
     getBlockText(index: number): string | undefined;
     getBlockHash(index: number): string | undefined;
-    isMetadataSensitiveBlock(index: number): boolean;
     createTextSnapshot(): BlockTextSnapshot;
     getFlattenedLine(targetUriString: string, originalLine: number): number;
     getOriginalPosition(flatLine: number): SourceLocation | undefined;
@@ -129,4 +125,36 @@ export interface PreprocessRule {
     name: string;
     priority: number;
     apply: (text: string, renderer: RenderContext) => string;
+}
+
+export interface DependencyState {
+    metadata: PreambleData;
+    citedKeysFingerprint: string;
+}
+
+export interface RenderDependency {
+    id: string;
+    read(state: DependencyState): string;
+}
+
+export interface DependencyHelpers {
+    metadata(field: string): RenderDependency;
+    citedKeys(): RenderDependency;
+}
+
+export interface BlockDependencyInput {
+    text: string;
+    index: number;
+    deps: DependencyHelpers;
+}
+
+export interface BlockDependencyRule {
+    name: string;
+    collect(input: BlockDependencyInput): RenderDependency[];
+}
+
+export interface RuleRegistry {
+    metadataFields: string[];
+    renderRules: PreprocessRule[];
+    blockDependencyRules: BlockDependencyRule[];
 }
