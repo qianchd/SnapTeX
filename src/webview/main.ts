@@ -334,7 +334,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         async resolveContextBlocks(container) {
             const controller = window.snaptexPreviewController;
             if (controller && typeof controller.getTooltipContextBlocks === 'function') {
-                return await controller.getTooltipContextBlocks(container);
+                return controller.getTooltipContextBlocks(container);
             }
             return [container.previousElementSibling, container, container.nextElementSibling]
                 .filter(block => block && block.classList.contains('latex-block'));
@@ -353,7 +353,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
             const controller = window.snaptexPreviewController;
             if (controller && typeof controller.ensureAnchorMounted === 'function') {
-                return await controller.ensureAnchorMounted(targetId);
+                return controller.ensureAnchorMounted(targetId);
             }
             return null;
         }
@@ -653,6 +653,18 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
         getShellByIndex(index) {
             return this.contentRoot.querySelector('.latex-block-shell[data-index="' + index + '"]');
+        }
+
+        forEachDirtyBlock(payload, callback) {
+            if (!payload.dirtyBlocks) return;
+            Object.entries(payload.dirtyBlocks).forEach(([indexStr, html]) => callback(Number(indexStr), html));
+        }
+
+        insertElementsBefore(elements, referenceNode) {
+            if (elements.length === 0) return;
+            const fragment = document.createDocumentFragment();
+            elements.forEach(element => fragment.appendChild(element));
+            this.contentRoot.insertBefore(fragment, referenceNode);
         }
 
         getLatexBlockFromTarget(target) {
@@ -1116,25 +1128,15 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 this.rememberStaleTikzPreviews(block, staleTikzByIndex);
             }
 
-            const insertedBlocks = [];
             for (let i = 0; i < deleteCount; i++) {
                 if (this.contentRoot.children[start]) this.contentRoot.removeChild(this.contentRoot.children[start]);
             }
-            if (htmls.length > 0) {
-                const fragment = document.createDocumentFragment();
-                htmls.forEach(html => {
-                    const node = parseFirstElementFromHtml(html);
-                    if (node) {
-                        insertedBlocks.push(node);
-                        fragment.appendChild(node);
-                    }
-                });
-                this.contentRoot.insertBefore(fragment, referenceNode);
-                insertedBlocks.forEach(block => {
-                    const index = block.getAttribute('data-index');
-                    this.attachStaleTikzPreviews(block, staleTikzByIndex.get(index));
-                });
-            }
+            const insertedBlocks = htmls.map(html => parseFirstElementFromHtml(html)).filter(Boolean);
+            this.insertElementsBefore(insertedBlocks, referenceNode);
+            insertedBlocks.forEach(block => {
+                const index = block.getAttribute('data-index');
+                this.attachStaleTikzPreviews(block, staleTikzByIndex.get(index));
+            });
             if (shift !== 0) {
                 let node = this.contentRoot.children[start + htmls.length];
                 while (node) {
@@ -1143,18 +1145,11 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                     node = node.nextElementSibling;
                 }
             }
-            if (payload.dirtyBlocks) {
-                Object.keys(payload.dirtyBlocks).forEach(indexStr => {
-                    const idx = parseInt(indexStr);
-                    const targetBlock = this.getBlockByIndex(idx);
-                    if (targetBlock) {
-                        const replacement = parseFirstElementFromHtml(payload.dirtyBlocks[idx]);
-                        if (replacement) {
-                            this.replaceBlockPreservingTikz(targetBlock, replacement);
-                        }
-                    }
-                });
-            }
+            this.forEachDirtyBlock(payload, (idx, html) => {
+                const targetBlock = this.getBlockByIndex(idx);
+                const replacement = targetBlock ? parseFirstElementFromHtml(html) : null;
+                if (replacement) this.replaceBlockPreservingTikz(targetBlock, replacement);
+            });
             this.virtualization.pruneCachesFromContent();
         }
 
@@ -1182,32 +1177,23 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 insertedShells.push(shell);
             });
 
-            if (insertedShells.length > 0) {
-                const fragment = document.createDocumentFragment();
-                insertedShells.forEach(shell => fragment.appendChild(shell));
-                this.contentRoot.insertBefore(fragment, referenceNode);
-            }
+            this.insertElementsBefore(insertedShells, referenceNode);
 
             if (shift !== 0) {
                 this.virtualization.remapShellIndices(start + insertedShells.length, shift);
             }
 
-            if (payload.dirtyBlocks) {
-                Object.keys(payload.dirtyBlocks).forEach(indexStr => {
-                    const idx = parseInt(indexStr);
-                    const shell = this.getShellByIndex(idx);
-                    if (!shell) return;
+            this.forEachDirtyBlock(payload, (idx, html) => {
+                const shell = this.getShellByIndex(idx);
+                const replacement = shell ? parseFirstElementFromHtml(html) : null;
+                if (!replacement) return;
 
-                    const replacement = parseFirstElementFromHtml(payload.dirtyBlocks[idx]);
-                    if (!replacement) return;
-
-                    const previews = this.collectTikzPreviews(shell);
-                    const newShell = this.virtualization.createShellForBlock(replacement);
-                    this.stashStaleTikzPreviewsOnShell(newShell, previews);
-                    this.virtualization.unobserveShell(shell);
-                    shell.replaceWith(newShell);
-                });
-            }
+                const previews = this.collectTikzPreviews(shell);
+                const newShell = this.virtualization.createShellForBlock(replacement);
+                this.stashStaleTikzPreviewsOnShell(newShell, previews);
+                this.virtualization.unobserveShell(shell);
+                shell.replaceWith(newShell);
+            });
 
             this.updateVirtualizedBlocks();
             this.virtualization.pruneCachesFromContent();

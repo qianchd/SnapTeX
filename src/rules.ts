@@ -1,4 +1,8 @@
 import {
+    BUILTIN_METADATA_EXTRACTOR,
+    readMetadataCommand
+} from './metadata';
+import {
     toRoman,
     createHiddenLabelAnchor,
     escapeHtml,
@@ -9,7 +13,7 @@ import {
     resolveLatexStyles,
     sanitizeHttpUrlForAttribute
 } from './utils';
-import { BlockDependencyRule, PreprocessRule, RenderContext, RuleRegistry } from './types';
+import { AffiliationMetadata, AuthorMetadata, BlockDependencyRule, MetadataExtractor, PreprocessRule, RenderContext, RuleRegistry } from './types';
 import { BibTexParser } from './bib';
 import {
     REGEX_STR,
@@ -62,14 +66,8 @@ interface CitationPart {
     year: string;
 }
 
-function normalizeRefType(type: string): 'ref' | 'eqref' {
-    return type === 'eqref' ? 'eqref' : 'ref';
-}
-
 function replaceMathRefs(content: string, renderer: RenderContext): string {
-    return content.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (_match, reftype, key) => {
-        return createRefLink(key, renderer, normalizeRefType(reftype));
-    });
+    return content.replace(/\\(ref|eqref)\*?\{([^}]+)\}/g, (_match, reftype, key) => createRefLink(key, renderer, reftype));
 }
 
 /**
@@ -83,11 +81,73 @@ export function defineBlockDependencyRule(rule: BlockDependencyRule): BlockDepen
     return rule;
 }
 
-export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
-    return registry;
+export function defineMetadataExtractor(extractor: MetadataExtractor): MetadataExtractor {
+    return extractor;
 }
 
-const DEFAULT_MAKETITLE_METADATA_FIELDS = ['title', 'author', 'date'];
+export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
+    return {
+        metadataExtractors: [...registry.metadataExtractors],
+        renderRules: [...registry.renderRules].sort((a, b) => a.priority - b.priority),
+        blockDependencyRules: [...registry.blockDependencyRules]
+    };
+}
+
+function renderMetadataValue(value: string | undefined, renderer: RenderContext): string {
+    if (!value) { return ''; }
+    const lineBreakToken = renderer.protectHtml('meta-br', '<br/>');
+    let rendered = value.replace(/<br\s*\/?>/gi, lineBreakToken);
+    rendered = rendered.replace(/\\(?:and|And)\b/g, lineBreakToken);
+    rendered = rendered.replace(/\\\\/g, lineBreakToken);
+    rendered = rendered.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => renderMath(content.trim(), false, renderer));
+    rendered = resolveLatexStyles(rendered, html => renderer.protectHtml('style', html));
+    return escapeHtml(rendered);
+}
+
+/**
+ * Complete custom metadata example.
+ *
+ * It stores \editor{...} as metadata.custom.editor. The default \maketitle
+ * rule reads this custom field and refreshes when it changes.
+ */
+export const EDITOR_METADATA_EXTRACTOR = defineMetadataExtractor({
+    name: 'editor-example',
+    extract: source => {
+        const editor = readMetadataCommand(source, 'editor');
+        return editor
+            ? { custom: { editor: editor.content }, ranges: [editor.range] }
+            : {};
+    }
+});
+
+function renderMaketitleAuthors(
+    authors: readonly AuthorMetadata[],
+    affiliations: readonly AffiliationMetadata[],
+    processMeta: (value: string | undefined) => string
+): string {
+    if (authors.length === 0) { return ''; }
+
+    const isPlainAuthorBlock = authors.length === 1
+        && authors[0].emails.length === 0
+        && authors[0].affiliationIds.length === 0
+        && affiliations.length === 0;
+    if (isPlainAuthorBlock) {
+        return `<div class="latex-author">${processMeta(authors[0].name)}</div>`;
+    }
+
+    const labelById = new Map(affiliations.map((affiliation, index) => [affiliation.id, String(index + 1)]));
+    const authorItems = authors.map(author => {
+        const labels = author.affiliationIds.map(id => labelById.get(id) ?? id).filter(Boolean);
+        const marker = labels.length > 0 ? `<sup>${escapeHtml(labels.join(','))}</sup>` : '';
+        const emailHtml = author.emails.length > 0
+            ? `<span class="latex-author-email">${author.emails.map(email => processMeta(email)).join(', ')}</span>`
+            : '';
+        return `<span class="latex-author-item">${processMeta(author.name)}${marker}${emailHtml}</span>`;
+    }).join('');
+    return `<div class="latex-author">${authorItems}</div>` + (affiliations.length > 0
+        ? `<div class="latex-affiliations">${affiliations.map((affiliation, index) => `<div><sup>${index + 1}</sup> ${processMeta(affiliation.text)}</div>`).join('')}</div>`
+        : '');
+}
 
 export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
@@ -137,10 +197,9 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         name: 'romannumeral',
         priority: 30,
         apply: (text) => {
-            text = text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (_match, cmd, numStr) => {
+            return text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (_match, cmd, numStr) => {
                 return toRoman(parseInt(numStr), cmd === 'Rmnum');
             });
-            return text;
         }
     },
 
@@ -223,8 +282,8 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             });
 
             text = text.replace(R_REF, (_match, type, labels) => {
-                const labelArray = labels.split(',').map((l: string) => l.trim());
-                const htmlLinks = labelArray.map((label: string) => {
+                const htmlLinks = labels.split(',').map((label: string) => {
+                    label = label.trim();
                     const safeLabel = escapeHtmlAttribute(label);
                     return `<a href="#${safeLabel}" class="latex-link latex-ref sn-ref" data-key="${safeLabel}">?</a>`;
                 });
@@ -277,9 +336,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                     }).join(', ');
                     finalHtml = safePre + formatted;
                 } else if (cmd === 'citeyear') {
-                    const formatted = parts.map((part, i) => {
-                        return renderYearText(part, i === parts.length - 1);
-                    }).join(', ');
+                    const formatted = parts.map((part, i) => renderYearText(part, i === parts.length - 1)).join(', ');
                     finalHtml = safePre + formatted;
                 } else {
                     const inner = parts.map((part) => {
@@ -304,11 +361,11 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         apply: (text, renderer: RenderContext) => {
             text = text.replace(R_BIBLIOGRAPHY_STYLE, '');
             return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), () => {
-                if (renderer.citedKeys.length === 0) {
+                const citedKeys = renderer.getCitedKeys();
+                if (citedKeys.length === 0) {
                     return renderer.protectHtml('bib', `<div class="latex-bibliography error">No citations found.</div>`);
                 }
-                const uniqueKeys = Array.from(new Set(renderer.citedKeys));
-                const sortedKeys = uniqueKeys.sort((a, b) => {
+                const sortedKeys = Array.from(new Set(citedKeys)).sort((a, b) => {
                     const entryA = renderer.bibEntries.get(a);
                     const entryB = renderer.bibEntries.get(b);
                     const authA = entryA ? (entryA.fields.author || '') : '';
@@ -410,25 +467,21 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         apply: (text, renderer: RenderContext) => {
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
-                const fields = renderer.document?.metadata.fields ?? {};
+                const metadata = renderer.metadata;
+                const processMeta = (value: string | undefined) => renderMetadataValue(value, renderer);
 
-                const processMeta = (val: string | undefined) => {
-                    if (!val) {return '';}
-                    const lineBreakToken = renderer.protectHtml('meta-br', '<br/>');
-                    let res = val.replace(/<br\s*\/?>/gi, lineBreakToken);
-                    res = res.replace(/\\\\/g, lineBreakToken);
-                    res = res.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_m: string, c: string) => renderMath(c.trim(), false, renderer));
-                    res = resolveLatexStyles(res, html => renderer.protectHtml('style', html));
-                    res = escapeHtml(res);
-                    return res;
-                };
-
-                const safeTitle = processMeta(fields.title);
-                const safeAuthor = processMeta(fields.author);
-                const safeDate = processMeta(fields.date);
+                const safeTitle = processMeta(metadata?.title);
+                const safeAuthors = renderMaketitleAuthors(
+                    metadata?.authors ?? [],
+                    metadata?.affiliations ?? [],
+                    processMeta
+                );
+                const safeDate = processMeta(metadata?.date);
+                const safeEditor = processMeta(metadata?.custom.editor);
 
                 if (safeTitle) { titleBlock += `<h1 class="latex-title">${safeTitle}</h1>`; }
-                if (safeAuthor) { titleBlock += `<div class="latex-author">${safeAuthor}</div>`; }
+                if (safeAuthors) { titleBlock += safeAuthors; }
+                if (safeEditor) { titleBlock += `<div class="latex-editor"><strong>Editor:</strong> ${safeEditor}</div>`; }
                 if (safeDate) { titleBlock += `<div class="latex-date">${safeDate}</div>`; }
 
                 text = text.replace(/\\maketitle.*/g, `\n\n` + renderer.protectHtml('meta', titleBlock) + `\n\n`);
@@ -518,7 +571,13 @@ export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
         name: 'maketitle',
         collect: ({ text, deps }) => {
             if (!text.includes('\\maketitle')) { return []; }
-            return DEFAULT_MAKETITLE_METADATA_FIELDS.map(field => deps.metadata(field));
+            return [
+                deps.metadata('title'),
+                deps.metadata('date'),
+                deps.metadata('authors'),
+                deps.metadata('affiliations'),
+                deps.metadata('custom.editor')
+            ];
         }
     }),
     defineBlockDependencyRule({
@@ -531,7 +590,10 @@ export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
 ];
 
 export const SNAP_TEX_RULES = defineRuleRegistry({
-    metadataFields: [...DEFAULT_MAKETITLE_METADATA_FIELDS],
+    metadataExtractors: [
+        BUILTIN_METADATA_EXTRACTOR,
+        EDITOR_METADATA_EXTRACTOR
+    ],
     renderRules: DEFAULT_RENDER_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES
 });

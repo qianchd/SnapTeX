@@ -6,7 +6,7 @@ import { DocumentParseResult, LatexDocument } from '../document';
 import { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
 import { BlockTextProvider, LatexCounterScanner } from '../scanner';
-import { BlockTextSpan } from '../types';
+import { AffiliationMetadata, AuthorMetadata, BlockTextSpan } from '../types';
 import { normalizeUri, stableHash } from '../utils';
 
 export class MemoryFileProvider implements IFileProvider {
@@ -43,9 +43,11 @@ export function createDocument(
         macros?: Record<string, string>;
         tikzGlobal?: string;
         title?: string;
-        author?: string;
         date?: string;
-        fields?: Record<string, string>;
+        authors?: AuthorMetadata[];
+        affiliations?: AffiliationMetadata[];
+        keywords?: string[];
+        custom?: Record<string, string>;
     } = {}
 ): LatexDocument {
     const doc = new LatexDocument(new MemoryFileProvider());
@@ -82,12 +84,12 @@ export function createDocument(
             macros: options.macros ?? {},
             tikzGlobal: options.tikzGlobal ?? '',
             tikzMacroMap: new Map(),
-            fields: {
-                ...(options.fields ?? {}),
-                ...(options.title !== undefined ? { title: options.title } : {}),
-                ...(options.author !== undefined ? { author: options.author } : {}),
-                ...(options.date !== undefined ? { date: options.date } : {})
-            }
+            title: options.title,
+            date: options.date,
+            authors: options.authors ?? [],
+            affiliations: options.affiliations ?? [],
+            keywords: options.keywords ?? [],
+            custom: options.custom ?? {}
         },
         bibEntries: new Map(),
         contentStartLineOffset: 0

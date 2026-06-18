@@ -37,9 +37,8 @@ export function createFigureRule(): PreprocessRule {
         priority: 120,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'figure', content => {
-                const extracted = extractRenderedCaption(content, renderer, { className: 'figure-caption', label: 'Figure', counterType: 'fig' });
-                let body = extracted.content;
-                const captionHtml = extracted.captionHtml;
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, { className: 'figure-caption', label: 'Figure', counterType: 'fig' });
+                let body = extractedContent;
 
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(body);
                 body = cleanContent;
@@ -75,9 +74,8 @@ export function createAlgorithmRule(): PreprocessRule {
         priority: 130,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'algorithm', content => {
-                const extracted = extractRenderedCaption(content, renderer, { className: 'alg-caption', label: 'Algorithm', counterType: 'alg' });
-                content = extracted.content;
-                const captionHtml = extracted.captionHtml;
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, { className: 'alg-caption', label: 'Algorithm', counterType: 'alg' });
+                content = extractedContent;
 
                 const algRegex = /\\begin\{algorithmic\}(?:\[(.*?)\])?([\s\S]*?)\\end\{algorithmic\}/g;
                 let bodyHtml = '';
@@ -146,9 +144,8 @@ export function createTableRule(): PreprocessRule {
         priority: 118,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'table', content => {
-                const extracted = extractRenderedCaption(content, renderer, { className: 'table-caption', label: 'Table', counterType: 'tbl' });
-                content = extracted.content;
-                const captionHtml = extracted.captionHtml;
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, { className: 'table-caption', label: 'Table', counterType: 'tbl' });
+                content = extractedContent;
 
                 let innerContent = content.replace(/\\begin\{threeparttable\}/g, '').replace(/\\end\{threeparttable\}/g, '');
                 let notesHtml = '';

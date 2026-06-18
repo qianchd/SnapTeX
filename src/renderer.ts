@@ -1,7 +1,7 @@
 import MarkdownIt from 'markdown-it';
 
 import { DiffEngine, DiffResult } from './diff';
-import { BlockNumberingCounts, BlockTextSnapshot, DependencyHelpers, DependencyState, NumberingPayload, PatchPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RuleRegistry, SourceLocation } from './types';
+import { BlockNumberingCounts, BlockTextSnapshot, DependencyHelpers, DependencyState, NumberingPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RenderPayload, RuleRegistry, SourceLocation } from './types';
 import { SNAP_TEX_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner } from './scanner';
 import { R_BIBLIOGRAPHY } from './patterns';
@@ -16,10 +16,6 @@ interface BlockSnapshot extends RenderedBlockMeta {
     dependencyFingerprint?: string;
 }
 
-interface BlockDependencySummary {
-    dependencies: RenderDependency[];
-}
-
 /**
  * Converts a render document view into either a full render payload or a patch.
  *
@@ -32,12 +28,12 @@ export class SmartRenderer {
     private lastBlocks: BlockSnapshot[] = [];
     private lastTextSnapshot: BlockTextSnapshot = EMPTY_TEXT_SNAPSHOT;
     private lastMacrosJson: string = "";
-    private dependencySummaries: Array<BlockDependencySummary | undefined> = [];
+    private dependencySummaries: Array<RenderDependency[] | undefined> = [];
 
     private md: MarkdownIt | null = null;
     private protector = new ProtectionManager();
     private currentMacros: Record<string, string> = {};
-    private registry: RuleRegistry;
+    private readonly registry: RuleRegistry;
 
     private blockMap: { start: number; count: number }[] = [];
     private scanner = new LatexCounterScanner();
@@ -45,9 +41,9 @@ export class SmartRenderer {
     private documentView: RenderDocumentView | undefined;
     private readonly renderContext: RenderContext;
     private readonly dependencyHelpers: DependencyHelpers = {
-        metadata: field => ({
-            id: `metadata:${field}`,
-            read: state => state.metadata.fields[field] ?? ''
+        metadata: path => ({
+            id: `metadata:${path}`,
+            read: state => this.readMetadataDependency(state.metadata, path)
         }),
         citedKeys: () => ({
             id: 'citations:list',
@@ -56,21 +52,27 @@ export class SmartRenderer {
     };
 
     constructor(registry: RuleRegistry = SNAP_TEX_RULES) {
-        this.registry = {
-            ...registry,
-            renderRules: [...registry.renderRules].sort((a, b) => a.priority - b.priority)
-        };
+        this.registry = registry;
         const renderer = this;
         this.renderContext = {
             get currentMacros() { return renderer.currentMacros; },
-            get document() { return renderer.documentView; },
-            get citedKeys() { return renderer._citedKeys; },
+            get metadata() { return renderer.documentView?.metadata; },
             get bibEntries() { return renderer.documentView ? renderer.documentView.bibEntries : new Map(); },
             protectHtml: (namespace, html) => this.protector.protect(namespace, html),
             renderInline: text => this.renderInline(text),
-            resolveCitation: key => this.resolveCitation(key)
+            resolveCitation: key => this.resolveCitation(key),
+            getCitedKeys: () => renderer._citedKeys
         };
         this.rebuildMarkdownEngine({});
+    }
+
+    private readMetadataDependency(metadata: RenderDocumentView['metadata'], path: string): string {
+        const value = path.split('.').reduce<unknown>((current, part) => {
+            if (current === undefined || current === null || typeof current !== 'object') { return undefined; }
+            return (current as Record<string, unknown>)[part];
+        }, metadata);
+        if (value === undefined || value === null) { return ''; }
+        return typeof value === 'string' ? value : JSON.stringify(value);
     }
 
     /**
@@ -205,13 +207,7 @@ export class SmartRenderer {
     }
 
     private collectCitedKeys(blocks: BlockSnapshot[]): string[] {
-        const keys = new Set<string>();
-        for (const block of blocks) {
-            for (const key of block.citationKeys) {
-                keys.add(key);
-            }
-        }
-        return Array.from(keys);
+        return Array.from(new Set(blocks.flatMap(block => block.citationKeys)));
     }
 
     private fingerprintCitedKeySet(citedKeys: readonly string[]): string {
@@ -255,30 +251,28 @@ export class SmartRenderer {
     }
 
     private collectBlockDependencies(text: string, index: number): RenderDependency[] {
-        return this.registry.blockDependencyRules.flatMap(rule => {
-            return rule.collect({ text, index, deps: this.dependencyHelpers });
-        });
+        return this.registry.blockDependencyRules.flatMap(rule => rule.collect({ text, index, deps: this.dependencyHelpers }));
     }
 
     private updateDependencySummaries(
         blockCount: number,
         diff: DiffResult,
         getBlockText: (index: number) => string
-    ): Array<BlockDependencySummary | undefined> {
+    ): Array<RenderDependency[] | undefined> {
         this.dependencySummaries = DiffEngine.rebuildArray(
             this.dependencySummaries,
             blockCount,
             diff,
             index => {
                 const dependencies = this.collectBlockDependencies(getBlockText(index), index);
-                return dependencies.length > 0 ? { dependencies } : undefined;
+                return dependencies.length > 0 ? dependencies : undefined;
             },
             summary => summary
         );
         return this.dependencySummaries;
     }
 
-    private fingerprintDependencies(dependencies: RenderDependency[], state: DependencyState): string {
+    private fingerprintDependencies(dependencies: readonly RenderDependency[], state: DependencyState): string {
         const parts = dependencies
             .map(dependency => `${dependency.id}\u0000${dependency.read(state)}`)
             .sort();
@@ -287,11 +281,11 @@ export class SmartRenderer {
 
     private applyDependencyFingerprints(
         blocks: BlockSnapshot[],
-        summaries: readonly (BlockDependencySummary | undefined)[],
+        summaries: readonly (readonly RenderDependency[] | undefined)[],
         state: DependencyState
     ): BlockSnapshot[] {
         return blocks.map((block, index) => {
-            const dependencies = summaries[index]?.dependencies ?? [];
+            const dependencies = summaries[index] ?? [];
             if (dependencies.length === 0) {
                 return { ...block, dependencyFingerprint: undefined };
             }
@@ -329,7 +323,7 @@ export class SmartRenderer {
      * Virtual mode may request metadata-only full payloads; individual block HTML
      * is then rendered lazily by index from lastTextSnapshot.
      */
-    public render(doc: RenderDocumentView, options: RenderOptions = {}): PatchPayload {
+    public render(doc: RenderDocumentView, options: RenderOptions = {}): RenderPayload {
         this.documentView = doc;
 
         this.protector.reset();
@@ -359,7 +353,7 @@ export class SmartRenderer {
         const diff = DiffEngine.compute(this.lastBlocks, blockAccess.hashBlocks);
 
         const isFullUpdate = this.lastBlocks.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
-        let payload: PatchPayload;
+        let payload: RenderPayload;
         let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, blockAccess.getText);
         const nextCitedKeys = this.collectCitedKeys(blockMeta);
         this._citedKeys = nextCitedKeys;
@@ -377,19 +371,18 @@ export class SmartRenderer {
             this.lastBlocks = blockMeta;
             this.lastTextSnapshot = nextTextSnapshot;
 
-            payload = {
-                type: 'full',
-                htmls: options.deferFullHtml
-                    ? undefined
-                    : Array.from({ length: blockCount }, (_unused, index) => this.renderBlockToHtml(blockAccess.getText(index), index)),
-                blocks: options.deferFullHtml ? blockMeta : undefined,
-                start: undefined,
-                deleteCount: undefined,
-                shift: undefined,
-                preserveUnchangedBlocks: !macrosChanged,
-                numbering: numberingData,
-                dirtyBlocks: undefined
-            };
+            payload = options.deferFullHtml
+                ? {
+                    type: 'full',
+                    blocks: blockMeta,
+                    numbering: numberingData
+                }
+                : {
+                    type: 'full',
+                    htmls: Array.from({ length: blockCount }, (_unused, index) => this.renderBlockToHtml(blockAccess.getText(index), index)),
+                    preserveUnchangedBlocks: !macrosChanged,
+                    numbering: numberingData
+                };
         } else {
             const insertedHtmls: string[] = [];
             for (let i = 0; i < diff.insertCount; i++) {
@@ -405,11 +398,12 @@ export class SmartRenderer {
             this.lastBlocks = blockMeta;
             this.lastTextSnapshot = nextTextSnapshot;
 
-            const dirtyBlocksMap: { [index: number]: string } = {};
+            let dirtyBlocks: { [index: number]: string } | undefined;
             for (const index of dirtyBlockIndices) {
                 const text = this.getSnapshotBlockText(this.lastTextSnapshot, index);
                 if (text !== undefined) {
-                    dirtyBlocksMap[index] = this.renderBlockToHtml(text, index);
+                    dirtyBlocks ??= {};
+                    dirtyBlocks[index] = this.renderBlockToHtml(text, index);
                 }
             }
 
@@ -418,9 +412,9 @@ export class SmartRenderer {
                 start: diff.start,
                 deleteCount: diff.deleteCount,
                 htmls: insertedHtmls,
-                shift: shift,
+                shift,
                 numbering: numberingData,
-                dirtyBlocks: dirtyBlocksMap
+                dirtyBlocks
             };
         }
 

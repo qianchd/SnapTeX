@@ -9,7 +9,7 @@ export class ProtectionManager {
     private storage: Map<string, string> = new Map();
     private counter: number = 0;
 
-    private readonly tokenPattern = /XSNAP:([a-zA-Z0-9_-]+):(\d+)Y/g;
+    private readonly tokenPattern = /XSNAP:([a-zA-Z0-9_-]+):(\d+)Y/;
 
     /**
      * Registers content to be protected and returns a token.
@@ -32,7 +32,6 @@ export class ProtectionManager {
         const resolvePattern = /<p>\s*(XSNAP:[a-zA-Z0-9_-]+:\d+Y)\s*<\/p>|(XSNAP:[a-zA-Z0-9_-]+:\d+Y)/g;
 
         while (this.tokenPattern.test(currentText) && depth < maxDepth) {
-            this.tokenPattern.lastIndex = 0;
             currentText = currentText.replace(resolvePattern, (fullMatch, pWrappedToken, bareToken) => {
                 const token = pWrappedToken || bareToken;
                 const val = this.storage.get(token);

@@ -9,12 +9,35 @@ export interface SourceLocation {
     line: number;
 }
 
+export interface TextRange {
+    start: number;
+    end: number;
+}
+
+export interface AuthorMetadata {
+    name: string;
+    emails: string[];
+    affiliationIds: string[];
+}
+
+export interface AffiliationMetadata {
+    id: string;
+    text: string;
+}
+
 export interface PreambleData {
     macros: Record<string, string>;
     tikzGlobal: string;
     tikzMacroMap: Map<string, string>;
-    fields: Record<string, string>;
+    title?: string;
+    date?: string;
+    authors: AuthorMetadata[];
+    affiliations: AffiliationMetadata[];
+    keywords: string[];
+    custom: Record<string, string>;
 }
+
+export type PreambleMetadata = Omit<PreambleData, 'macros' | 'tikzGlobal' | 'tikzMacroMap'>;
 
 export interface MetadataResult {
     data: PreambleData;
@@ -46,7 +69,7 @@ export interface BlockTextSnapshot {
 }
 
 /**
- * Stable document port consumed by SmartRenderer and preprocess rules.
+ * Stable document port consumed by SmartRenderer.
  *
  * LatexDocument implements this view today; future parsers or incremental
  * document stores should satisfy this interface instead of coupling renderer
@@ -94,31 +117,51 @@ export interface NumberingPayload {
     labels: Record<string, string>;
 }
 
-export interface PatchPayload {
-    type: 'full' | 'patch';
-    start?: number;
-    deleteCount?: number;
-    htmls?: string[];
-    blocks?: RenderedBlockMeta[];
-    shift?: number;
-    preserveUnchangedBlocks?: boolean;
+type FullPayloadBody =
+    | {
+        htmls: string[];
+        blocks?: never;
+        preserveUnchangedBlocks: boolean;
+    }
+    | {
+        htmls?: never;
+        blocks: RenderedBlockMeta[];
+        preserveUnchangedBlocks?: never;
+    };
 
-    numbering?: NumberingPayload;
+export type RenderPayload =
+    | ({
+        type: 'full';
+        start?: never;
+        deleteCount?: never;
+        shift?: never;
+        dirtyBlocks?: never;
+        numbering: NumberingPayload;
+    } & FullPayloadBody)
+    | {
+        type: 'patch';
+        start: number;
+        deleteCount: number;
+        htmls: string[];
+        blocks?: never;
+        shift: number;
+        preserveUnchangedBlocks?: never;
+        numbering: NumberingPayload;
 
-    /**
-     * Blocks that must be refreshed even though their source hash did not change.
-     */
-    dirtyBlocks?: { [index: number]: string };
-}
+        /**
+         * Blocks that must be refreshed even though their source hash did not change.
+         */
+        dirtyBlocks?: { [index: number]: string };
+    };
 
 export interface RenderContext {
     currentMacros: Record<string, string>;
-    document?: RenderDocumentView;
-    citedKeys: string[];
+    metadata?: PreambleData;
     bibEntries: Map<string, BibEntry>;
     protectHtml(namespace: string, html: string): string;
     renderInline(text: string): string;
     resolveCitation(key: string): number;
+    getCitedKeys(): readonly string[];
 }
 
 export interface PreprocessRule {
@@ -153,8 +196,17 @@ export interface BlockDependencyRule {
     collect(input: BlockDependencyInput): RenderDependency[];
 }
 
+export type MetadataExtractionResult = Partial<PreambleMetadata> & {
+    ranges?: TextRange[];
+};
+
+export interface MetadataExtractor {
+    name: string;
+    extract(text: string): MetadataExtractionResult;
+}
+
 export interface RuleRegistry {
-    metadataFields: string[];
-    renderRules: PreprocessRule[];
-    blockDependencyRules: BlockDependencyRule[];
+    readonly metadataExtractors: readonly MetadataExtractor[];
+    readonly renderRules: readonly PreprocessRule[];
+    readonly blockDependencyRules: readonly BlockDependencyRule[];
 }

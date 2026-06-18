@@ -35,11 +35,7 @@ function logHostMemory(label: string) {
 }
 
 function hasExplicitBooleanSetting(inspectResult: ReturnType<vscode.WorkspaceConfiguration['inspect']>): boolean {
-    if (!inspectResult) {
-        return false;
-    }
-
-    return [
+    return !!inspectResult && [
         inspectResult.globalValue,
         inspectResult.workspaceValue,
         inspectResult.workspaceFolderValue,
@@ -50,14 +46,10 @@ function hasExplicitBooleanSetting(inspectResult: ReturnType<vscode.WorkspaceCon
 }
 
 export function getVirtualMode(config = vscode.workspace.getConfiguration('snaptex')): boolean {
-    const virtualMode = config.inspect<boolean>('virtualMode');
-    if (hasExplicitBooleanSetting(virtualMode)) {
-        return config.get<boolean>('virtualMode', true);
-    }
-
-    const legacyVirtualization = config.inspect<boolean>('experimentalVirtualization');
-    if (hasExplicitBooleanSetting(legacyVirtualization)) {
-        return config.get<boolean>('experimentalVirtualization', true);
+    for (const key of ['virtualMode', 'experimentalVirtualization']) {
+        if (hasExplicitBooleanSetting(config.inspect<boolean>(key))) {
+            return config.get<boolean>(key, true);
+        }
     }
 
     return true;
@@ -77,10 +69,7 @@ export function normalizePdfRequestPath(input: unknown): string | undefined {
         return undefined;
     }
 
-    let cleanPath = input.trim().replace(/\\/g, '/');
-    while (cleanPath.startsWith('./')) {
-        cleanPath = cleanPath.substring(2);
-    }
+    const cleanPath = input.trim().replace(/\\/g, '/').replace(/^(?:\.\/)+/, '');
 
     if (
         !cleanPath ||
@@ -363,12 +352,7 @@ export class TexPreviewPanel {
     }
 
     private resolveUpdateUri(): vscode.Uri | undefined {
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-            return editor.document.uri;
-        }
-
-        return this._sourceUri;
+        return vscode.window.activeTextEditor?.document.uri ?? this._sourceUri;
     }
 
     /**

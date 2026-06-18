@@ -2,6 +2,15 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## Unreleased
+- **Added**: Introduced an extensible rule registry with `metadataExtractors`, `renderRules`, and `blockDependencyRules`, making custom metadata and dependency-aware rendering rules configurable from `rules.ts`.
+- **Added**: Added structured title metadata for `\maketitle`, including multi-author names, emails, affiliations, keywords, and custom metadata fields.
+- **Added**: Supported common author/affiliation metadata styles, including repeated `\author`/`\email`/`\affiliation`, authblk-style `\author[1]`/`\affil[1]`, `\inst`/`\institute`, IEEE author blocks, and ACM/Elsevier-style affiliations.
+- **Changed**: Replaced the old `metadata.fields` path with a structured metadata model and updated maketitle rendering to show authors, email markers, affiliations, and custom editor metadata.
+- **Changed**: Unified metadata-sensitive refreshes with block dependency fingerprints so unchanged source blocks can still update when their declared metadata or citation dependencies change.
+- **Changed**: Tightened renderer payload typing, dependency summaries, block hash handling, and virtualized dirty-block replacement while preserving the fixed full-update threshold.
+- **Changed**: Continued simplifying rendering, table, TikZ, webview, and test code by removing redundant helpers, stale tests, and low-value implementation-detail assertions.
+
 ## [0.6.2] - 2026-06-06
 - **Added**: Generalized LaTeX table rendering with richer `tabular`, `tabular*`, and `tabularx` parsing, including nested tabular cells, `\multicolumn`, `\multirow`, `\makecell`, `\tnote`, `tablenotes`, booktabs-style rules, and literal escaped braces such as `\{22, 9\}`.
 - **Fixed**: Prevented protected space tokens from leaking into nested table math by letting table rendering handle text-mode `~` spacing before global protection runs.

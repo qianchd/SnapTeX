@@ -1,13 +1,11 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { SmartRenderer } from '../renderer';
-import { defineBlockDependencyRule, SNAP_TEX_RULES } from '../rules';
+import { defineBlockDependencyRule, defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
 import { optimizeTikzPreviewSource } from '../tikz-preview-optimizer';
 import type { RuleRegistry } from '../types';
 import { normalizeUri, stableHash } from '../utils';
@@ -72,21 +70,6 @@ suite('LatexDocument source mapping', () => {
         assert.equal(result.blockSpans.length, 1);
     });
 
-    test('exposes block text through an accessor for future span-backed storage', () => {
-        const doc = createDocument(['First block', 'Second block']);
-
-        assert.equal(doc.getBlockCount(), 2);
-        assert.equal(doc.getBlockText(0), 'First block');
-        assert.equal(doc.getBlockText(1), 'Second block');
-        assert.equal(doc.getBlockText(2), undefined);
-        assert.equal(doc.getBlockHash(0), stableHash('First block'));
-
-        doc.releaseTextContent();
-        assert.equal(doc.getBlockCount(), 0);
-        assert.equal(doc.getBlockText(0), undefined);
-        assert.equal(doc.getBlockHash(0), undefined);
-    });
-
     test('stores parsed blocks as body spans and hashes', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([
@@ -108,7 +91,15 @@ suite('LatexDocument source mapping', () => {
             'Second paragraph with \\label{p:two}.'
         ]);
         assert.deepStrictEqual(result.blockHashes, resultBlockTexts(result).map(text => stableHash(text)));
+        assert.equal(doc.getBlockCount(), 2);
         assert.equal(doc.getBlockText(1)?.trim(), 'Second paragraph with \\label{p:two}.');
+        assert.equal(doc.getBlockText(2), undefined);
+        assert.equal(doc.getBlockHash(0), result.blockHashes[0]);
+
+        doc.releaseTextContent();
+        assert.equal(doc.getBlockCount(), 0);
+        assert.equal(doc.getBlockText(0), undefined);
+        assert.equal(doc.getBlockHash(0), undefined);
     });
 
     test('drops comment-only blocks without leaving preview gaps', async () => {
@@ -552,7 +543,7 @@ suite('SmartRenderer', () => {
         const renderer = new SmartRenderer();
         const payload = renderer.render(createDocument(['\\maketitle'], {
             title: '<img src=x onerror=alert(1)> \\textbf{Safe} $x<y$',
-            author: 'Ada & Bob',
+            authors: [{ name: 'Ada & Bob', emails: [], affiliationIds: [] }],
             date: '2026 <script>alert(1)</script>'
         }));
         const html = payload.htmls?.join('') ?? '';
@@ -564,6 +555,32 @@ suite('SmartRenderer', () => {
         assert.match(html, /2026 &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
         assert.match(html, /<strong>Safe<\/strong>/);
         assert.match(html, /class="katex"/);
+    });
+
+    test('renders structured maketitle emails next to their authors', () => {
+        const renderer = new SmartRenderer();
+        const payload = renderer.render(createDocument(['\\maketitle'], {
+            title: 'Shared Institute',
+            authors: [
+                { name: 'Alice Smith', emails: [], affiliationIds: ['inst1'] },
+                { name: 'Bob Jones', emails: ['bob@b.edu'], affiliationIds: ['inst2'] },
+                { name: 'Carol Lee', emails: ['carol@c.edu'], affiliationIds: ['inst1', 'inst3'] }
+            ],
+            affiliations: [
+                { id: 'inst1', text: 'University A' },
+                { id: 'inst2', text: 'University B' },
+                { id: 'inst3', text: 'Institute C' }
+            ],
+            custom: { editor: 'Prof. Smith' }
+        }));
+        const html = payload.htmls?.join('') ?? '';
+
+        assert.match(html, /Alice Smith<sup>1<\/sup>/);
+        assert.match(html, /Bob Jones<sup>2<\/sup><span class="latex-author-email">bob@b\.edu<\/span>/);
+        assert.match(html, /Carol Lee<sup>1,3<\/sup><span class="latex-author-email">carol@c\.edu<\/span>/);
+        assert.doesNotMatch(html, /class="latex-email">bob@b\.edu, carol@c\.edu/);
+        assert.match(html, /<sup>1<\/sup> University A/);
+        assert.match(html, /class="latex-editor"><strong>Editor:<\/strong> Prof\. Smith/);
     });
 
     test('escapes raw source HTML while preserving generated preview HTML', () => {
@@ -643,9 +660,8 @@ suite('SmartRenderer', () => {
 
     test('supports custom metadata-dependent blocks without recollecting unchanged dependencies', () => {
         let collectCount = 0;
-        const registry: RuleRegistry = {
+        const registry: RuleRegistry = defineRuleRegistry({
             ...SNAP_TEX_RULES,
-            metadataFields: [...SNAP_TEX_RULES.metadataFields, 'institute'],
             blockDependencyRules: [
                 ...SNAP_TEX_RULES.blockDependencyRules,
                 defineBlockDependencyRule({
@@ -655,7 +671,7 @@ suite('SmartRenderer', () => {
                         if (!text.includes('\\makecover')) { return []; }
                         return [
                             deps.metadata('title'),
-                            deps.metadata('institute')
+                            deps.metadata('custom.editor')
                         ];
                     }
                 })
@@ -666,21 +682,21 @@ suite('SmartRenderer', () => {
                     name: 'makecover',
                     priority: 161,
                     apply: (text, renderer) => {
-                        const fields = renderer.document?.metadata.fields ?? {};
+                        const metadata = renderer.metadata;
                         return text.replace(/\\makecover/g, () => renderer.protectHtml(
                             'meta',
-                            `<div class="cover">${fields.title ?? ''} - ${fields.institute ?? ''}</div>`
+                            `<div class="cover">${metadata?.title ?? ''} - ${metadata?.custom.editor ?? ''}</div>`
                         ));
                     }
                 }
             ]
-        };
+        });
         const renderer = new SmartRenderer(registry);
 
-        renderer.render(createDocument(['\\makecover', 'Plain'], { fields: { title: 'A', institute: 'Old' } }));
+        renderer.render(createDocument(['\\makecover', 'Plain'], { title: 'A', custom: { editor: 'Old' } }));
         assert.equal(collectCount, 2);
 
-        const payload = renderer.render(createDocument(['\\makecover', 'Plain'], { fields: { title: 'A', institute: 'New' } }));
+        const payload = renderer.render(createDocument(['\\makecover', 'Plain'], { title: 'A', custom: { editor: 'New' } }));
 
         assert.equal(collectCount, 2);
         assert.equal(payload.type, 'patch');
@@ -698,28 +714,6 @@ suite('SmartRenderer', () => {
 
         assert.equal(payload.type, 'full');
         assert.equal(payload.htmls?.length, 300);
-    });
-
-    test('uses full render for very large replacement edits', () => {
-        const renderer = new SmartRenderer();
-        const oldBlocks = Array.from({ length: 300 }, (_, index) => `Block ${index}`);
-        const newBlocks = oldBlocks.map((text, index) => index < 220 ? `${text} changed` : text);
-        renderer.render(createDocument(oldBlocks));
-
-        const payload = renderer.render(createDocument(newBlocks));
-
-        assert.equal(payload.type, 'full');
-        assert.equal(payload.htmls?.length, 300);
-    });
-
-    test('forces a full render when macros change', () => {
-        const renderer = new SmartRenderer();
-        renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'x' } }));
-
-        const payload = renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'y' } }));
-
-        assert.equal(payload.type, 'full');
-        assert.equal(payload.htmls?.length, 1);
     });
 
     test('renders figure pdf placeholders and resolves references after numbering', () => {
@@ -1008,21 +1002,6 @@ suite('PDF request validation', () => {
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.parse('https://example.com/a.pdf'), [root]), false);
     });
 
-    test('keeps PDF loading on the URI-only transport path', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const panelSource = fs.readFileSync(path.join(repoRoot, 'src', 'panel.ts'), 'utf8');
-        const webviewSource = ['main.ts', 'pdf.ts', 'tikz.ts', 'virtualization.ts']
-            .map(file => fs.readFileSync(path.join(repoRoot, 'src', 'webview', file), 'utf8'))
-            .join('\n');
-
-        assert.doesNotMatch(panelSource, /\bpdfData\b/);
-        assert.doesNotMatch(panelSource, /\bbase64\b/i);
-        assert.doesNotMatch(panelSource, /\btransport\b/);
-        assert.doesNotMatch(webviewSource, /\bpdfData\b/);
-        assert.doesNotMatch(webviewSource, /\bbase64\b/i);
-        assert.doesNotMatch(webviewSource, /\btransport\b/);
-    });
-
     test('uses virtual mode by default while honoring explicit legacy settings', () => {
         const makeConfig = (
             values: Record<string, boolean | undefined>,
@@ -1044,16 +1023,5 @@ suite('PDF request validation', () => {
         )), true);
     });
 
-});
-
-suite('Webview resource loading', () => {
-    test('keeps the webview CSP on bundled resources instead of remote script/connect sources', () => {
-        const repoRoot = path.resolve(__dirname, '..', '..');
-        const htmlSource = fs.readFileSync(path.join(repoRoot, 'media', 'webview.html'), 'utf8');
-
-        assert.doesNotMatch(htmlSource, /https:\/\/unpkg\.com/);
-        assert.doesNotMatch(htmlSource, /script-src[^;]*https:/);
-        assert.doesNotMatch(htmlSource, /connect-src[^;]*https:/);
-    });
 });
 

@@ -50,11 +50,34 @@ h1.latex-title {
 div.latex-author {
     font-size: 1.1em;
     text-align: center;
-    margin-bottom: 0;
+    margin-bottom: 0.25em;
     font-style: italic;
 }
 
-/* Date Info \author */
+.latex-author-item {
+    display: inline-block;
+    margin: 0 0.55em 0.35em;
+    text-align: center;
+    vertical-align: top;
+}
+
+.latex-author-email {
+    display: block;
+    font-size: 0.86em;
+    font-style: normal;
+}
+
+.latex-affiliations {
+    text-align: center;
+    margin-bottom: 0.75em;
+}
+
+.latex-editor {
+    text-align: left;
+    margin-bottom: 0.75em;
+}
+
+/* Date Info \date */
 div.latex-date {
     font-size: 1.1em;
     text-align: center;

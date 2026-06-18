@@ -41,17 +41,16 @@ function decodeLatexAccents(text: string): string {
     return text;
 }
 
+const HTML_ESCAPE_MAP: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+};
+
 export function escapeHtml(text: string): string {
-    return text.replace(/[&<>"']/g, char => {
-        switch (char) {
-            case '&': return '&amp;';
-            case '<': return '&lt;';
-            case '>': return '&gt;';
-            case '"': return '&quot;';
-            case "'": return '&#39;';
-            default: return char;
-        }
-    });
+    return text.replace(/[&<>"']/g, char => HTML_ESCAPE_MAP[char]);
 }
 
 export function escapeHtmlAttribute(text: string): string {
@@ -83,37 +82,33 @@ export function createHiddenLabelAnchor(labelName: string): string {
 }
 
 const LATEX_LABEL_PATTERN = /\\label\s*\{([^}]+)\}/g;
+const LATEX_STYLE_TAGS: Record<string, [string, string]> = {
+    textbf: ['<strong>', '</strong>'],
+    bf: ['<strong>', '</strong>'],
+    textit: ['<em>', '</em>'],
+    emph: ['<em>', '</em>'],
+    it: ['<em>', '</em>'],
+    texttt: ['<code>', '</code>'],
+    tt: ['<code>', '</code>'],
+    textsf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>'],
+    sf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>'],
+    textrm: ['<span style="font-family: serif;">', '</span>'],
+    rm: ['<span style="font-family: serif;">', '</span>'],
+    underline: ['<u>', '</u>']
+};
+
+function applyLatexStyleCommand(cmd: string, content: string, protectHtml?: (html: string) => string): string {
+    const [startTag, endTag] = LATEX_STYLE_TAGS[cmd] ?? ['', ''];
+    return applyStyleToTexList(startTag, endTag, content, protectHtml);
+}
 
 /**
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
 export function resolveLatexStyles(text: string, protectHtml?: (html: string) => string): string {
-    text = text.replace(/\\(textbf|textit|emph|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content) => {
-        let startTag = '', endTag = '';
-        switch (cmd) {
-            case 'textbf': startTag = '<strong>'; endTag = '</strong>'; break;
-            case 'textit':
-            case 'emph':
-                startTag = '<em>'; endTag = '</em>'; break;
-            case 'texttt': startTag = '<code>'; endTag = '</code>'; break;
-            case 'textsf': startTag = '<span style="font-family: sans-serif; font-size: 0.85em;">'; endTag = '</span>'; break;
-            case 'textrm': startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
-            case 'underline': startTag = '<u>'; endTag = '</u>'; break;
-        }
-        return applyStyleToTexList(startTag, endTag, content, protectHtml);
-    });
+    text = text.replace(/\\(textbf|textit|emph|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content) => applyLatexStyleCommand(cmd, content, protectHtml));
 
-    text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content) => {
-        let startTag = '', endTag = '';
-        switch (cmd) {
-            case 'bf': startTag = '<strong>'; endTag = '</strong>'; break;
-            case 'it': startTag = '<em>'; endTag = '</em>'; break;
-            case 'tt': startTag = '<code>'; endTag = '</code>'; break;
-            case 'sf': startTag = '<span style="font-family: sans-serif; font-size: 0.85em;">'; endTag = '</span>'; break;
-            case 'rm': startTag = '<span style="font-family: serif;">'; endTag = '</span>'; break;
-        }
-        return applyStyleToTexList(startTag, endTag, content, protectHtml);
-    });
+    text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content) => applyLatexStyleCommand(cmd, content, protectHtml));
 
     const applyColorStyle = (_match: string, color: string, content: string) => {
         return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content, protectHtml);
@@ -463,9 +458,8 @@ function applyStyleToTexList(startTag: string, endTag: string, content: string, 
             if (listMatch) {
                 const [_, indent, bullet, innerText] = listMatch;
                 return `${indent}${bullet} ${wrap(innerText)}`;
-            } else {
-                return line.trim().length > 0 ? wrap(line) : line;
             }
+            return line.trim().length > 0 ? wrap(line) : line;
         }).join('\n');
     }
     return wrap(content);
@@ -526,7 +520,7 @@ export function normalizeUri(input: vscode.Uri | string | UriLike): string {
     let str = typeof input === 'string' ? input : input.toString();
     try {
         str = decodeURIComponent(str);
-    } catch (e) {
+    } catch {
     }
 
     str = str.replace(/\\/g, '/');

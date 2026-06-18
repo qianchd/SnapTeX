@@ -52,8 +52,7 @@ export class BlockVirtualizationController {
         }
 
         getBlockIndex(element) {
-            if (!element) return null;
-            return element.getAttribute('data-index');
+            return element ? element.getAttribute('data-index') : null;
         }
 
         estimateBlockHeightFromHtml(html) {
@@ -192,15 +191,11 @@ export class BlockVirtualizationController {
             const html = block.outerHTML;
 
             this.htmlCache.set(key || index, html);
-            const cachedHeight = this.heightCache.get(key);
-            const estimatedHeight = cachedHeight || this.estimateBlockHeightFromHtml(html);
-            return this.createShell(index, hash, estimatedHeight, this.getAnchorIdsFromBlock(block));
+            return this.createShell(index, hash, this.heightCache.get(key) || this.estimateBlockHeightFromHtml(html), this.getAnchorIdsFromBlock(block));
         }
 
         createShellForMeta(meta) {
-            const cachedHeight = this.heightCache.get(meta.hash);
-            const estimatedHeight = cachedHeight || this.estimateBlockHeightFromMeta(meta);
-            return this.createShell(meta.index, meta.hash, estimatedHeight, meta.anchors);
+            return this.createShell(meta.index, meta.hash, this.heightCache.get(meta.hash) || this.estimateBlockHeightFromMeta(meta), meta.anchors);
         }
 
         pruneCaches(activeKeys) {
@@ -218,8 +213,7 @@ export class BlockVirtualizationController {
 
         pruneCachesFromContent() {
             const activeKeys = Array.from(this.contentRoot.children)
-                .map(element => this.getBlockKey(element))
-                .filter(Boolean);
+                .map(element => this.getBlockKey(element));
             this.pruneCaches(activeKeys);
         }
 
@@ -232,14 +226,10 @@ export class BlockVirtualizationController {
         }
 
         getMountMargins(direction) {
-            let above = BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN;
-            let below = BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN;
-            if (direction === 'up') {
-                above += BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN;
-            } else if (direction === 'down') {
-                below += BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN;
-            }
-            return { above, below };
+            return {
+                above: BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN + (direction === 'up' ? BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN : 0),
+                below: BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN + (direction === 'down' ? BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN : 0)
+            };
         }
 
         isShellInMountRange(shell, direction = 'none') {
@@ -314,9 +304,9 @@ export class BlockVirtualizationController {
         replaceContentWithShellElements(shells, onMount, onMissingHtml) {
             const fragment = document.createDocumentFragment();
             shells.forEach(shell => fragment.appendChild(shell));
-            this.pruneCaches(Array.from(fragment.children).map(shell => this.getBlockKey(shell)));
+            this.pruneCaches(shells.map(shell => this.getBlockKey(shell)));
             this.disconnectShellObservers();
-            Array.from(fragment.children).forEach(shell => this.observeShell(shell));
+            shells.forEach(shell => this.observeShell(shell));
             this.contentRoot.replaceChildren(fragment);
             this.updateMountedShells(onMount, onMissingHtml);
         }

@@ -8,8 +8,6 @@ interface TikzPreviewSourceParts {
 const SIMPLE_META_ARROW_TIPS = ['Latex', 'Stealth'];
 
 function rewriteSimpleMetaArrowTips(text: string): string {
-    if (!text) { return text; }
-
     const tipPattern = `(?:${SIMPLE_META_ARROW_TIPS.join('|')})`;
     const delimiter = '(?=\\s*(?:[,}\\]]|$))';
 

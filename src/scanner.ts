@@ -61,7 +61,6 @@ export class LatexCounterScanner {
 
     private updateSummaries(provider: BlockTextProvider): BlockScanSummary[] {
         const count = provider.getBlockCount();
-        const hashes: string[] = [];
         const textCache = new Map<number, string>();
 
         const getText = (index: number) => {
@@ -71,14 +70,7 @@ export class LatexCounterScanner {
             return textCache.get(index) ?? '';
         };
 
-        for (let index = 0; index < count; index++) {
-            let hash = provider.getBlockHash(index);
-            if (!hash) {
-                hash = stableHash(getText(index));
-            }
-            hashes.push(hash);
-        }
-
+        const hashes = Array.from({ length: count }, (_unused, index) => provider.getBlockHash(index) ?? stableHash(getText(index)));
         const previous = this.summaries;
         const currentHashes = hashes.map(hash => ({ hash }));
         const diff = DiffEngine.compute(previous, currentHashes);

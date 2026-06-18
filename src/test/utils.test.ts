@@ -94,7 +94,7 @@ suite('LaTeX style utilities', () => {
         assert.equal(found.content, 'A searched caption');
     });
 
-    test('preserves legacy table command matching contracts', () => {
+    test('preserves table command matching contracts', () => {
         const makecell = readLatexCommandAt('\\makecell[c]{A\\\\B}', 0, {
             name: 'makecell',
             requiredArgs: 1,

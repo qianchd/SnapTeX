@@ -52,7 +52,10 @@ export class LatexDocument implements RenderDocumentView {
         macros: {},
         tikzGlobal: "",
         tikzMacroMap: new Map(),
-        fields: {}
+        authors: [],
+        affiliations: [],
+        keywords: [],
+        custom: {}
     };
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: vscode.Uri | undefined;
@@ -118,7 +121,7 @@ export class LatexDocument implements RenderDocumentView {
         const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, 0, contentOverride);
         const normalizedText = textLines.join('\n');
 
-        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataFields);
+        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors);
 
         const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
 
@@ -130,16 +133,11 @@ export class LatexDocument implements RenderDocumentView {
         }
 
         let bodyText = metaRes.cleanedText;
-        if (rawDocMatch && rawDocMatch.index !== undefined) {
-             const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
-             if (cleanDocMatch && cleanDocMatch.index !== undefined) {
-                 const startIndex = cleanDocMatch.index + cleanDocMatch[0].length;
-                 let endIndex = metaRes.cleanedText.search(/\\end\{document\}/i);
-                 if (endIndex === -1) {
-                     endIndex = metaRes.cleanedText.length;
-                 }
-                 bodyText = metaRes.cleanedText.substring(startIndex, endIndex);
-             }
+        const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
+        if (cleanDocMatch && cleanDocMatch.index !== undefined) {
+            const startIndex = cleanDocMatch.index + cleanDocMatch[0].length;
+            const endIndex = metaRes.cleanedText.search(/\\end\{document\}/i);
+            bodyText = metaRes.cleanedText.substring(startIndex, endIndex === -1 ? metaRes.cleanedText.length : endIndex);
         }
         const rawBlockObjects = LatexBlockSplitter.split(bodyText);
 
@@ -305,24 +303,24 @@ export class LatexDocument implements RenderDocumentView {
 
     private async loadBibliography(text: string, rootDir: vscode.Uri): Promise<Map<string, BibEntry>> {
         const match = text.match(R_BIBLIOGRAPHY);
-        if (match) {
-            let bibFile = match[1].trim();
-            if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
-            const bibUri = this.fileProvider.resolve(rootDir, bibFile);
-            const bibUriStr = bibUri.toString();
+        if (!match) { return new Map(); }
 
-            try {
-                const { mtime } = await this.fileProvider.stat(bibUri);
-                if (mtime === 0) { return new Map(); }
-                const cached = this.bibCache.get(bibUriStr);
-                if (cached && cached.mtime === mtime) { return cached.entries; }
-                const content = await this.fileProvider.read(bibUri);
-                const entries = BibTexParser.parse(content);
-                this.bibCache.set(bibUriStr, { mtime, entries });
-                return entries;
-            } catch (e) {
-                console.error('Failed to load bib file:', e);
-            }
+        let bibFile = match[1].trim();
+        if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
+        const bibUri = this.fileProvider.resolve(rootDir, bibFile);
+        const bibUriStr = bibUri.toString();
+
+        try {
+            const { mtime } = await this.fileProvider.stat(bibUri);
+            if (mtime === 0) { return new Map(); }
+            const cached = this.bibCache.get(bibUriStr);
+            if (cached && cached.mtime === mtime) { return cached.entries; }
+            const content = await this.fileProvider.read(bibUri);
+            const entries = BibTexParser.parse(content);
+            this.bibCache.set(bibUriStr, { mtime, entries });
+            return entries;
+        } catch (e) {
+            console.error('Failed to load bib file:', e);
         }
         return new Map();
     }

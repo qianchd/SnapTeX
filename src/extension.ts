@@ -4,18 +4,22 @@ import { TexPreviewPanel } from './panel';
 import { normalizeUri } from './utils';
 import { ExtensionToWebviewCommand } from './webview-messages';
 
-const flashDecorationTypeHigh = vscode.window.createTextEditorDecorationType({ backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), isWholeLine: true });
-const flashDecorationType80 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 80%, transparent)', isWholeLine: true });
-const flashDecorationType60 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 60%, transparent)', isWholeLine: true });
-const flashDecorationType40 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 40%, transparent)', isWholeLine: true });
-const flashDecorationType10 = vscode.window.createTextEditorDecorationType({ backgroundColor: 'color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) 10%, transparent)', isWholeLine: true });
+const createFlashDecoration = (backgroundColor: string | vscode.ThemeColor) => vscode.window.createTextEditorDecorationType({ backgroundColor, isWholeLine: true });
+const flashColor = (opacity: number) => `color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) ${opacity}%, transparent)`;
+const FLASH_ANIMATION_STEPS = [
+    { backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'), duration: 300 },
+    { backgroundColor: flashColor(80), duration: 40 },
+    { backgroundColor: flashColor(60), duration: 40 },
+    { backgroundColor: flashColor(40), duration: 150 },
+    { backgroundColor: flashColor(10), duration: 240 }
+].map(step => ({ decoration: createFlashDecoration(step.backgroundColor), duration: step.duration }));
 
 let isSyncingFromPreview = false;
 let syncLockTimer: NodeJS.Timeout | undefined;
 let isEditorScrolling = false;
 let scrollEndTimer: NodeJS.Timeout | undefined;
 let autoSyncTimer: NodeJS.Timeout | undefined;
-let currentRenderedUri: vscode.Uri | undefined = undefined;
+let currentRenderedUri: vscode.Uri | undefined;
 let activeCursorScreenRatio: number = 0.5;
 
 const isAutoScrollSyncEnabled = () => vscode.workspace.getConfiguration('snaptex').get<boolean>('autoScrollSync', true);
@@ -39,28 +43,23 @@ function startPreviewSyncLock() {
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) {return "";}
     const lineText = doc.lineAt(line).text;
-    let rawSnippet = (char !== undefined && char >= 0)
+    const rawSnippet = (char !== undefined && char >= 0)
         ? lineText.substring(Math.max(0, char - 20), Math.min(lineText.length, char + 30))
         : lineText.substring(0, 60);
 
-    let clean = rawSnippet.replace(/\\[a-zA-Z]+\*?\{?/g, ' ').replace(/[{}$%]/g, ' ').replace(/\s+/g, ' ').trim();
+    const clean = rawSnippet.replace(/\\[a-zA-Z]+\*?\{?/g, ' ').replace(/[{}$%]/g, ' ').replace(/\s+/g, ' ').trim();
     return clean.length >= 5 ? clean.substring(0, 40) : "";
 }
 
 async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Range) {
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    const seq = [
-        { d: flashDecorationTypeHigh, t: 300 }, { d: flashDecorationType80, t: 40 },
-        { d: flashDecorationType60, t: 40 }, { d: flashDecorationType40, t: 150 },
-        { d: flashDecorationType10, t: 240 }
-    ];
-    for (let i = 0; i < seq.length; i++) {
-        const step = seq[i];
-        editor.setDecorations(step.d, [range]);
-        if (i > 0) {editor.setDecorations(seq[i-1].d, []);}
-        await sleep(step.t);
+    for (let i = 0; i < FLASH_ANIMATION_STEPS.length; i++) {
+        const step = FLASH_ANIMATION_STEPS[i];
+        editor.setDecorations(step.decoration, [range]);
+        if (i > 0) {editor.setDecorations(FLASH_ANIMATION_STEPS[i - 1].decoration, []);}
+        await sleep(step.duration);
     }
-    editor.setDecorations(seq[seq.length-1].d, []);
+    editor.setDecorations(FLASH_ANIMATION_STEPS[FLASH_ANIMATION_STEPS.length - 1].decoration, []);
 }
 
 /**
@@ -78,8 +77,6 @@ function areUrisEqual(uri1: vscode.Uri, uri2: vscode.Uri): boolean {
  * and TexPreviewPanel so this file stays focused on VS Code events.
  */
 export function activate(context: vscode.ExtensionContext) {
-    console.log('[SnapTeX] Activated!');
-
     const renderer = new SmartRenderer();
 
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
@@ -100,10 +97,8 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     const clearPendingAutoSync = () => {
-        if (autoSyncTimer) {
-            clearTimeout(autoSyncTimer);
-            autoSyncTimer = undefined;
-        }
+        if (autoSyncTimer) { clearTimeout(autoSyncTimer); }
+        autoSyncTimer = undefined;
     };
 
     const scheduleAutoSyncToPreview = (

@@ -236,9 +236,7 @@ function parseLatexTableRows(rawContent: string): LatexTableModel {
             if (boundary.kind === 'row') {
                 pushRow();
             } else {
-                if (current.trim()) {
-                    pushRow();
-                }
+                pushRow();
                 if (boundary.rule) {
                     hasRules = true;
                     hasBooktabs ||= boundary.rule === 'top' || boundary.rule === 'mid' || boundary.rule === 'bottom';
@@ -255,9 +253,7 @@ function parseLatexTableRows(rawContent: string): LatexTableModel {
         i = step.end;
     }
 
-    if (current.trim()) {
-        pushRow();
-    }
+    pushRow();
 
     return { rows, hasBooktabs, hasRules };
 }
@@ -322,11 +318,7 @@ function tabularColumnSpecUsesMathMode(columnSpec: string): boolean {
     const hasMathBefore = groups.before.some(isMathModeColumnModifier);
     const hasMathAfter = groups.after.some(isMathModeColumnModifier);
 
-    if (hasMathBefore && hasMathAfter) {
-        return true;
-    }
-
-    return groups.before.some(group => /XSNAP:math:\d+Y/.test(group));
+    return (hasMathBefore && hasMathAfter) || groups.before.some(group => /XSNAP:math:\d+Y/.test(group));
 }
 
 function splitLatexLineBreaks(content: string): string[] {
@@ -341,9 +333,7 @@ function renderTableInlineCommands(content: string, renderer: RenderContext): st
             optionalArgs: 1,
             render: call => {
                 const lines = splitLatexLineBreaks(call.requiredArgs[0].content);
-                const lineHtml = lines.map(line => {
-                    return `<span class="latex-makecell-line">${renderLatexTableInlineContent(line, renderer)}</span>`;
-                }).join('');
+                const lineHtml = lines.map(line => `<span class="latex-makecell-line">${renderLatexTableInlineContent(line, renderer)}</span>`).join('');
                 return renderer.protectHtml('makecell', `<span class="latex-makecell">${lineHtml}</span>`);
             }
         },
@@ -380,10 +370,7 @@ function renderNestedTabular(tabular: TabularEnvironment, source: string, render
     const mathMode = tabularColumnSpecUsesMathMode(tabular.columnSpec);
     const className = `latex-nested-tabular${mathMode ? ' latex-nested-tabular-math' : ''}`;
     const rowsHtml = model.rows.map(row => {
-        const cells = row.cells.map(cell => {
-            const html = mathMode ? renderNestedMathCell(cell, renderer) : renderLatexTableInlineContent(cell, renderer);
-            return `<span class="latex-nested-tabular-cell">${html}</span>`;
-        }).join('');
+        const cells = row.cells.map(cell => `<span class="latex-nested-tabular-cell">${mathMode ? renderNestedMathCell(cell, renderer) : renderLatexTableInlineContent(cell, renderer)}</span>`).join('');
         return `<div class="latex-nested-tabular-row">${cells}</div>`;
     }).join('');
 

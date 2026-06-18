@@ -1,4 +1,4 @@
-import type { PatchPayload } from './types';
+import type { RenderPayload } from './types';
 
 /**
  * Typed message contract between the extension host and the webview.
@@ -62,7 +62,7 @@ type WebviewToExtensionMessage =
 
 interface UpdateMessage {
     command: typeof ExtensionToWebviewCommand.Update;
-    payload: PatchPayload;
+    payload: RenderPayload;
 }
 
 interface ScrollToBlockMessage {

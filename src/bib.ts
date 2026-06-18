@@ -21,15 +21,14 @@ export class BibTexParser {
             const startIndex = match.index;
 
             let block = this.extractBalancedBlock(content, startIndex);
+            if (!block) { continue; }
 
-            if (block) {
-                block = block.replace(/\r\n/g, '\n')
-                             .replace(/^\s*\/\/\s+.*/gm, '')
-                             .replace(/(?<!\\)%.*$/gm, '');
-                const fields = this.parseFieldsRobust(block);
-                if (Object.keys(fields).length > 0) {
-                    entries.set(key, { key, type, fields });
-                }
+            block = block.replace(/\r\n/g, '\n')
+                         .replace(/^\s*\/\/\s+.*/gm, '')
+                         .replace(/(?<!\\)%.*$/gm, '');
+            const fields = this.parseFieldsRobust(block);
+            if (Object.keys(fields).length > 0) {
+                entries.set(key, { key, type, fields });
             }
         }
         return entries;
@@ -92,10 +91,9 @@ export class BibTexParser {
                 const startChar = content[cursor];
 
                 if (startChar === '{') {
-                    let braceDepth = 0;
+                    let braceDepth = 1;
                     const valStart = cursor + 1;
                     cursor++;
-                    braceDepth = 1;
 
                     while (cursor < len && braceDepth > 0) {
                         const c = content[cursor];
