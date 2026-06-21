@@ -107,7 +107,7 @@ export const DEFAULT_SPLITTER_CONFIG: SplitterConfig = {
 };
 
 export const DEFAULT_SPLITTER_RULES: SplitterRule[] = [
-    { name: 'ignored-environments', kind: 'ignored-env', envPattern: envPattern(REGEX_STR.SPLITTER_IGNORED) },
+    { name: 'ignored-environments', kind: 'ignored-env', envPattern: envPattern(`${REGEX_STR.SPLITTER_IGNORED}|appendices`) },
     { name: 'split-environments', kind: 'split-env', envPattern: envPattern(`${REGEX_STR.SPLITTER_MAJOR}|thebibliography|tikzpicture`, true) },
     { name: 'tikz-and-bibliography', kind: 'no-emergency-split-env', envPattern: envPattern('thebibliography|tikzpicture') },
     {
@@ -226,6 +226,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             text = text.replace(/\\(baselineskip|parskip|parindent)\s*=?\s*[-+]?\d+(?:\.\d+)?\s*[a-zA-Z]{2}\s*/g, '');
             text = text.replace(/\\(vspace|hspace)\*?\{[^}]+\}\s*/g, '');
             text = text.replace(/\\(setlength|addtolength)\{[^}]+\}\{[^}]+\}\s*/g, '');
+            text = text.replace(/\\(?:appendix\b|begin\{appendices\}|end\{appendices\})\s*/g, '');
 
             text = text.replace(/\\noindent\s*/g, () => renderer.protectHtml('raw', '<span class="no-indent-marker"></span>'));
 
