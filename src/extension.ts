@@ -14,13 +14,13 @@ const FLASH_ANIMATION_STEPS = [
     { backgroundColor: flashColor(10), duration: 240 }
 ].map(step => ({ decoration: createFlashDecoration(step.backgroundColor), duration: step.duration }));
 
-let isSyncingFromPreview = false;
-let syncLockTimer: NodeJS.Timeout | undefined;
 let isEditorScrolling = false;
 let scrollEndTimer: NodeJS.Timeout | undefined;
 let autoSyncTimer: NodeJS.Timeout | undefined;
 let currentRenderedUri: vscode.Uri | undefined;
 let activeCursorScreenRatio: number = 0.5;
+let suppressTextToPreviewUntil = 0;
+let suppressPreviewToTextUntil = 0;
 
 const isAutoScrollSyncEnabled = () => vscode.workspace.getConfiguration('snaptex').get<boolean>('autoScrollSync', true);
 
@@ -34,10 +34,8 @@ const debounce = <Args extends unknown[]>(func: (...args: Args) => void, waitGet
 
 const getAutoScrollDelay = () => Math.max(0, vscode.workspace.getConfiguration('snaptex').get<number>('autoScrollDelay', 100));
 
-function startPreviewSyncLock() {
-    isSyncingFromPreview = true;
-    if (syncLockTimer) { clearTimeout(syncLockTimer); }
-    syncLockTimer = setTimeout(() => { isSyncingFromPreview = false; }, 500);
+function getSyncSuppressionDuration() {
+    return Math.max(500, getAutoScrollDelay() + 300);
 }
 
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
@@ -91,6 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
         const { index, ratio } = syncData;
         const anchor = getAnchorContext(editor.document, targetLine, targetChar);
 
+        suppressPreviewToTextUntil = Date.now() + getSyncSuppressionDuration();
         TexPreviewPanel.currentPanel.postMessage({
             command: ExtensionToWebviewCommand.ScrollToBlock, index, ratio, anchor, auto: isAutoScroll, viewRatio
         });
@@ -184,7 +183,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchor: string, viewRatio: number = 0.5) => {
-            startPreviewSyncLock();
+            suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
             const sourceLoc = renderer.getSourceSyncData(index, ratio);
             if (!sourceLoc) {return;}
@@ -233,8 +232,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.syncScroll', (index: number, ratio: number) => {
         if (!isAutoScrollSyncEnabled()) { return; }
+        if (Date.now() < suppressPreviewToTextUntil) { return; }
 
-        startPreviewSyncLock();
+        suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
         const sourceLoc = renderer.getSourceSyncData(index, ratio);
         if (!sourceLoc) {return;}
@@ -259,14 +259,14 @@ export function activate(context: vscode.ExtensionContext) {
             activeCursorScreenRatio = Math.max(0.1, Math.min(0.9, activeCursorScreenRatio));
         }
 
-        if (!TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
+        if (!TexPreviewPanel.currentPanel || Date.now() < suppressTextToPreviewUntil) { return; }
         if (!isAutoScrollSyncEnabled()) { return; }
 
         scheduleAutoSyncToPreview(e.textEditor, sel.line, activeCursorScreenRatio, sel.character);
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
-        if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || isSyncingFromPreview) { return; }
+        if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || Date.now() < suppressTextToPreviewUntil) { return; }
         if (!isAutoScrollSyncEnabled()) { return; }
 
         isEditorScrolling = true;
@@ -286,6 +286,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
+            suppressPreviewToTextUntil = Date.now() + getSyncSuppressionDuration();
             const currentConfig = vscode.workspace.getConfiguration('snaptex');
             if (currentConfig.get<boolean>('livePreview', true)) {
                 debouncedUpdatePreview(false);

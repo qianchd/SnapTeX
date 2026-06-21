@@ -83,10 +83,6 @@ export function defineBlockDependencyRule(rule: BlockDependencyRule): BlockDepen
     return rule;
 }
 
-export function defineMetadataExtractor(extractor: MetadataExtractor): MetadataExtractor {
-    return extractor;
-}
-
 export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
     return {
         metadataExtractors: [...registry.metadataExtractors],
@@ -140,15 +136,15 @@ function renderMetadataValue(value: string | undefined, renderer: RenderContext)
  * It stores \editor{...} as metadata.custom.editor. The default \maketitle
  * rule reads this custom field and refreshes when it changes.
  */
-export const EDITOR_METADATA_EXTRACTOR = defineMetadataExtractor({
+export const EDITOR_METADATA_EXTRACTOR = {
     name: 'editor-example',
-    extract: source => {
+    extract: (source: string) => {
         const editor = readMetadataCommand(source, 'editor');
         return editor
             ? { custom: { editor: editor.content }, ranges: [editor.range] }
             : {};
     }
-});
+};
 
 function renderMaketitleAuthors(
     authors: readonly AuthorMetadata[],
@@ -619,7 +615,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
 ];
 
 export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
-    defineBlockDependencyRule({
+    {
         name: 'maketitle',
         collect: ({ text, deps }) => {
             if (!text.includes('\\maketitle')) { return []; }
@@ -631,14 +627,14 @@ export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
                 deps.metadata('custom.editor')
             ];
         }
-    }),
-    defineBlockDependencyRule({
+    },
+    {
         name: 'bibliography',
         collect: ({ text, deps }) => {
             if (!R_BIBLIOGRAPHY.test(text)) { return []; }
             return [deps.citedKeys()];
         }
-    })
+    }
 ];
 
 export const SNAP_TEX_RULES = defineRuleRegistry({
