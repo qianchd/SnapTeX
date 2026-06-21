@@ -1,5 +1,3 @@
-/* preview_style.css - Performance Optimized Refactored Version */
-
 :root {
     /* JS converts this vw value to a physical px value to eliminate calc jitter during resizing */
     --base-font-size: clamp(12px, 2.35vw, 40px);
@@ -9,7 +7,7 @@
 
 body {
     font-family: "Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif;
-    padding: 1em 1em; /* Use em instead of fixed px for padding */
+    padding: 1em 1em;
     margin: 0 auto;
     max-width: var(--content-max-width);
     font-size: var(--base-font-size);
@@ -17,16 +15,13 @@ body {
     color: var(--vscode-editor-foreground);
     background-color: var(--vscode-editor-background);
 
-    /* Optimized text justification */
     text-align: justify;
     text-justify: auto;
 
-    /* Enable automatic hyphenation (Crucial for justification) */
     hyphens: manual;
     -webkit-hyphens: manual;
     -moz-hyphens: manual;
 
-    /* Fallback: Prevent URLs or long words from breaking the layout */
     word-wrap: break-word;
     overflow-wrap: break-word;
 }
@@ -40,7 +35,7 @@ h1, h2, h3, h4 {
 
 /* Paper Title \title */
 h1.latex-title {
-    font-size: 1.7em; /* Roughly equivalent to previous calc(* 1.5) but slightly emphasized */
+    font-size: 1.7em;
     text-align: center;
     margin-bottom: 0.5em;
     margin-top: 0.5em;
@@ -169,31 +164,24 @@ p:has(.no-indent-marker) {
 
 /* TikZ Container */
 .tikz-container {
-    /* [CHANGED] Switch to block layout. Flexbox sometimes respects SVG intrinsic 'pt' width too stubbornly. */
     display: flex;
-    justify-content: center; /* Horizontally center */
-    align-items: center;     /* Vertically center */
+    justify-content: center;
+    align-items: center;
     width: 100%;
     margin: 0 0;
     text-align: center;
-    overflow: visible; /* Allow content to stretch */
+    overflow: visible;
 }
 
-/* Ensure SVG scales responsively and FILLS width */
 .tikz-container svg {
-    /* [CRITICAL] Force width to match container (window) width */
     width: 100% !important;
-    /* [CRITICAL] Auto height uses the viewBox aspect ratio, ignoring the 'height=35pt' attribute */
     height: auto !important;
 
-    /* Ensure it behaves like a block element to fill space */
     display: flex;
     margin: 0 auto;
 
-    /* Remove any potential max-width limits */
     max-width: none !important;
 
-    /* Color inheritance */
     color: var(--vscode-editor-foreground);
     text-align: center;
 }
@@ -265,6 +253,10 @@ body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
     color: var(--vscode-textLink-foreground);
 }
 
+.latex-style-scope .latex-theorem-header {
+    color: inherit;
+}
+
 /* Paragraph handling inside theorem */
 .latex-theorem p {
     margin: 0.5em 0;
@@ -290,10 +282,10 @@ body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
     background-color: rgba(255, 120, 117, 0.05);
     color: #cf1322;
     padding: 1em;
-    margin: 1.5em 0; /* Fixed previous incorrect calc(...)em syntax */
+    margin: 1.5em 0;
     border-radius: 6px;
     font-family: "Courier New", monospace;
-    font-size: 0.7em; /* Slightly reduce source code display size */
+    font-size: 0.7em;
     line-height: 1.0;
     white-space: pre-wrap;
     overflow-x: auto;
@@ -378,6 +370,10 @@ body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
     font-size: 0.94em;
     line-height: 1.35;
     color: var(--vscode-editor-foreground);
+}
+
+.latex-style-scope .latex-table table {
+    color: inherit;
 }
 
 .latex-table .latex-tabular-preview {
@@ -582,8 +578,6 @@ ul li strong:first-child {
 }
 
 
-/* media/preview-style.css - Optimized & Fixed */
-
 /* --- Main Floating Window --- */
 .hover-tooltip {
     position: fixed;
@@ -592,11 +586,9 @@ ul li strong:first-child {
     display: flex;
     flex-direction: column;
 
-    /* [RESTORED] Initial Centering */
     left: 2vw;
     top: 0;
 
-    /* [FIX] Prevent size jumping during JS resize */
     box-sizing: border-box;
 
     /* Visuals */
@@ -617,7 +609,7 @@ ul li strong:first-child {
     pointer-events: auto;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.2s ease-in-out; /* Removed visibility transition for cleaner toggle */
+    transition: opacity 0.2s ease-in-out;
 
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
@@ -639,7 +631,6 @@ ul li strong:first-child {
     cursor: grab;
     user-select: none;
     flex-shrink: 0;
-    /* Ensure header respects border radius of container */
     border-radius: 8px 8px 0 0;
 }
 
@@ -680,7 +671,6 @@ ul li strong:first-child {
     background-color: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
-/* [CLEANUP] Removed redundant styles from pin-btn */
 .pin-btn.active {
     color: var(--vscode-editor-background, white);
     background-color: var(--vscode-button-background, #007acc);
@@ -693,13 +683,12 @@ ul li strong:first-child {
 
 .tooltip-content {
     flex: 1;
-    padding: 12px 16px; /* 调整 padding，右侧留出合理空间 */
+    padding: 12px 16px;
     overflow-y: auto;
     overflow-x: hidden;
     font-size: 0.85em;
     line-height: 1.1;
-    /* [关键修复] 确保滚动条有自己独立的地盘，不与最右侧的 resize handle 抢占像素 */
-    margin-right: 1px; /* Space for scrollbar/handles */
+    margin-right: 1px;
     margin-bottom: 1px;
 }
 

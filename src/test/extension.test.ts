@@ -398,6 +398,7 @@ suite('SmartRenderer', () => {
         const blockHtml = renderBlocks([
             [
                 '{\\color{blue}',
+                '\\section{Styled Section}\\label{sec:styled}',
                 'First synthetic paragraph.',
                 '',
                 '\\begin{proof}',
@@ -409,18 +410,31 @@ suite('SmartRenderer', () => {
                 '\\item Plain item.',
                 '\\end{itemize}',
                 '',
+                '\\begin{theorem}Theorem body.\\end{theorem}',
+                '',
+                '\\begin{table}',
+                '\\begin{tabular}{c}',
+                'Cell \\\\',
+                '\\end{tabular}',
+                '\\end{table}',
+                '',
                 'Second synthetic paragraph.',
                 '}'
             ].join('\n')
         ]);
 
         assert.doesNotMatch(blockHtml, /class="latex-block"[^>]*style="color: blue;"/);
-        assert.match(blockHtml, /<p><span style="color: blue">First synthetic paragraph\.<\/span><\/p>/);
-        assert.match(blockHtml, /<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
-        assert.match(blockHtml, /<span style="color: blue"><span class="no-indent-marker"><\/span><strong>Proof\.<\/strong>[\s\S]*Proof body\.[\s\S]*QED<\/span>/);
-        assert.match(blockHtml, /<li>\s*<p><span style="color: blue"><strong>Key<\/strong>\s+Labeled item\.<\/span><\/p>\s*<\/li>/);
-        assert.match(blockHtml, /<li>\s*<p><span style="color: blue">Plain item\.<\/span><\/p>\s*<\/li>/);
+        assert.match(blockHtml, /<div class="latex-style-scope" style="color: blue">[\s\S]*<h2>/);
+        assert.match(blockHtml, /Styled Section/);
+        assert.match(blockHtml, /<p>[\s\S]*First synthetic paragraph\.<\/p>/);
+        assert.match(blockHtml, /<p>Second synthetic paragraph\.<\/p>/);
+        assert.match(blockHtml, /<span class="no-indent-marker"><\/span><strong>Proof\.<\/strong>[\s\S]*Proof body\.[\s\S]*QED/);
+        assert.match(blockHtml, /<li>\s*<p><strong>Key<\/strong>\s+Labeled item\.<\/p>\s*<\/li>/);
+        assert.match(blockHtml, /<li>\s*<p>Plain item\.<\/p>\s*<\/li>/);
+        assert.match(blockHtml, /class="latex-theorem"[\s\S]*Theorem body/);
+        assert.match(blockHtml, /class="latex-table"[\s\S]*Cell/);
         assert.doesNotMatch(blockHtml, /\\color\{blue\}/);
+        assert.doesNotMatch(blockHtml, /## Styled Section/);
         assert.doesNotMatch(blockHtml, /\*\*Proof\.\*\*/);
         assert.doesNotMatch(blockHtml, /\*\*Key\*\*/);
 

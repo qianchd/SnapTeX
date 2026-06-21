@@ -26,7 +26,7 @@ import {
     R_THEBIBLIOGRAPHY,
     getTheoremDisplayName
 } from './patterns';
-import { createRefLink, protectInlineStyle, renderMath } from './rule-helpers';
+import { createRefLink, createStyleHtmlProtector, renderMath } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
 
@@ -49,7 +49,7 @@ function replaceLatexLinkCommands(text: string, renderer: RenderContext): string
             name: 'href',
             requiredArgs: 2,
             render: call => {
-                const styledContent = resolveLatexStyles(call.requiredArgs[1].content, protectInlineStyle(renderer));
+                const styledContent = resolveLatexStyles(call.requiredArgs[1].content, createStyleHtmlProtector(renderer));
                 return renderExternalLink(call.requiredArgs[0].content, escapeHtml(styledContent), 'latex-href', renderer);
             }
         },
@@ -130,7 +130,7 @@ function renderMetadataValue(value: string | undefined, renderer: RenderContext)
     rendered = rendered.replace(/\\(?:and|And)\b/g, lineBreakToken);
     rendered = rendered.replace(/\\\\/g, lineBreakToken);
     rendered = rendered.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => renderMath(content.trim(), false, renderer));
-    rendered = resolveLatexStyles(rendered, protectInlineStyle(renderer));
+    rendered = resolveLatexStyles(rendered, createStyleHtmlProtector(renderer));
     return escapeHtml(rendered);
 }
 
@@ -493,7 +493,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                     header += `.</strong></span>&nbsp; `;
                 }
 
-                let body = resolveLatexStyles(content.trim(), protectInlineStyle(renderer));
+                let body = resolveLatexStyles(content.trim(), createStyleHtmlProtector(renderer));
                 body = escapeHtml(body);
                 return `\n\n${renderer.protectHtml('thm', `<div class="latex-theorem">${header}${body}</div>`)}\n\n`;
             });
@@ -613,7 +613,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         name: 'text_styles',
         priority: 190,
         apply: (text, renderer: RenderContext) => {
-            return resolveLatexStyles(text, protectInlineStyle(renderer));
+            return resolveLatexStyles(text, createStyleHtmlProtector(renderer));
         }
     }
 ];

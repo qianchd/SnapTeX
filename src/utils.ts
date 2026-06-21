@@ -82,24 +82,31 @@ export function createHiddenLabelAnchor(labelName: string): string {
 }
 
 const LATEX_LABEL_PATTERN = /\\label\s*\{([^}]+)\}/g;
-const LATEX_STYLE_TAGS: Record<string, [string, string]> = {
-    textbf: ['<strong>', '</strong>'],
-    bf: ['<strong>', '</strong>'],
-    textit: ['<em>', '</em>'],
-    emph: ['<em>', '</em>'],
-    it: ['<em>', '</em>'],
-    texttt: ['<code>', '</code>'],
-    tt: ['<code>', '</code>'],
-    textsf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>'],
-    sf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>'],
-    textrm: ['<span style="font-family: serif;">', '</span>'],
-    rm: ['<span style="font-family: serif;">', '</span>'],
-    underline: ['<u>', '</u>']
+type StyleHtmlProtector = (html: string, mode?: Parameters<RenderContext['protectHtml']>[2]) => string;
+type LatexStyleSpec = [inlineStart: string, inlineEnd: string, blockStyle: string];
+
+const LATEX_STYLE_TAGS: Record<string, LatexStyleSpec> = {
+    textbf: ['<strong>', '</strong>', 'font-weight: bold'],
+    bf: ['<strong>', '</strong>', 'font-weight: bold'],
+    textit: ['<em>', '</em>', 'font-style: italic'],
+    emph: ['<em>', '</em>', 'font-style: italic'],
+    it: ['<em>', '</em>', 'font-style: italic'],
+    texttt: ['<code>', '</code>', 'font-family: monospace'],
+    tt: ['<code>', '</code>', 'font-family: monospace'],
+    textsf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>', 'font-family: sans-serif; font-size: 0.85em'],
+    sf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>', 'font-family: sans-serif; font-size: 0.85em'],
+    textrm: ['<span style="font-family: serif;">', '</span>', 'font-family: serif'],
+    rm: ['<span style="font-family: serif;">', '</span>', 'font-family: serif'],
+    underline: ['<u>', '</u>', 'text-decoration: underline']
 };
 
-function applyLatexStyleCommand(cmd: string, content: string, protectHtml?: (html: string) => string): string {
-    const [startTag, endTag] = LATEX_STYLE_TAGS[cmd] ?? ['', ''];
-    return applyStyleToTexList(startTag, endTag, content, protectHtml);
+function startsAfterTextOnLine(source: string, offset: number): boolean {
+    const lineStart = Math.max(source.lastIndexOf('\n', offset - 1), source.lastIndexOf('\r', offset - 1)) + 1;
+    return source.slice(lineStart, offset).trim().length > 0;
+}
+
+function applyLatexStyleCommand(cmd: string, content: string, protectHtml: StyleHtmlProtector | undefined, startsAfterText: boolean): string {
+    return applyLatexStyle(LATEX_STYLE_TAGS[cmd], content, protectHtml, startsAfterText);
 }
 
 /**
@@ -112,15 +119,19 @@ export function resolveLatexTextTransforms(text: string): string {
 /**
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
-export function resolveLatexStyles(text: string, protectHtml?: (html: string) => string): string {
-    text = text.replace(/\\(textbf|textit|emph|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content) => applyLatexStyleCommand(cmd, content, protectHtml));
+export function resolveLatexStyles(text: string, protectHtml?: StyleHtmlProtector): string {
+    text = text.replace(/\\(textbf|textit|emph|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content, offset, source) => {
+        return applyLatexStyleCommand(cmd, content, protectHtml, startsAfterTextOnLine(source, offset));
+    });
 
-    text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content) => applyLatexStyleCommand(cmd, content, protectHtml));
+    text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content, offset, source) => {
+        return applyLatexStyleCommand(cmd, content, protectHtml, startsAfterTextOnLine(source, offset));
+    });
 
-    const applyColorStyle = (_match: string, color: string, content: string) => {
-        return applyStyleToTexList(`<span style="color: ${color}">`, '</span>', content, protectHtml);
+    const applyColorStyle = (_match: string, color: string, content: string, offset: number, source: string) => {
+        return applyLatexStyle([`<span style="color: ${color}">`, '</span>', `color: ${color}`], content, protectHtml, startsAfterTextOnLine(source, offset));
     };
-    text = text.replace(/\{\\color\{([a-zA-Z0-9]+)\}\s*((?:[^{}]|{[^{}]*})*)\}/g, applyColorStyle);
+    text = text.replace(/\{\\color\{([a-zA-Z0-9]+)\}[ \t]*((?:[^{}]|{[^{}]*})*)\}/g, applyColorStyle);
     text = text.replace(/\\color\{([a-zA-Z]+)\}\{([^}]*)\}/g, applyColorStyle);
     text = text.replace(/\\textcolor\{([a-zA-Z0-9]+)\}\{((?:[^{}]|{[^{}]*})*)\}/g, applyColorStyle);
 
@@ -468,25 +479,22 @@ export function toRoman(num: number, uppercase: boolean = false): string {
 }
 
 /**
- * Applies HTML tags to content, handling list items specially if present.
+ * Applies HTML styling without hiding Markdown block syntax from Markdown-it.
  */
-function applyStyleToTexList(startTag: string, endTag: string, content: string, protectHtml?: (html: string) => string): string {
+function applyLatexStyle(style: LatexStyleSpec, content: string, protectHtml: StyleHtmlProtector | undefined, startsAfterText: boolean): string {
+    const [startTag, endTag, blockStyle] = style;
     const wrap = (innerText: string) => {
         if (!protectHtml) {
             return `${startTag}${escapeHtml(innerText)}${endTag}`;
         }
         return `${protectHtml(startTag)}${innerText}${protectHtml(endTag)}`;
     };
-    const lines = content.split(/\r?\n/);
-    if (lines.some(line => /^\s*([-*+]|\d+\.)\s/.test(line))) {
-        return lines.map(line => {
-            const listMatch = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
-            if (listMatch) {
-                const [_, indent, bullet, innerText] = listMatch;
-                return `${indent}${bullet} ${wrap(innerText)}`;
-            }
-            return line.trim().length > 0 ? wrap(line) : line;
-        }).join('\n');
+    if (protectHtml && !startsAfterText && (/^\r?\n/.test(content) || /\r?\n[ \t]*\r?\n/.test(content))) {
+        return [
+            protectHtml(`<div class="latex-style-scope" style="${blockStyle}">`, 'block'),
+            content.trim(),
+            protectHtml('</div>', 'block')
+        ].join('\n\n');
     }
     if (/\r?\n[ \t]*\r?\n/.test(content)) {
         return content

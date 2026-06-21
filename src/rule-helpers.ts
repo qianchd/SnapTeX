@@ -1,5 +1,5 @@
 import katex from 'katex';
-import { RenderContext } from './types';
+import type { RenderContext } from './types';
 import { escapeHtmlAttribute, resolveLatexStyles } from './utils';
 
 /**
@@ -34,8 +34,8 @@ export function createRefLink(key: string, renderer: RenderContext, type: 'ref' 
     return `\\text{${token}}`;
 }
 
-export function protectInlineStyle(renderer: RenderContext): (html: string) => string {
-    return html => renderer.protectHtml('style', html, 'inline');
+export function createStyleHtmlProtector(renderer: RenderContext): (html: string, mode?: Parameters<RenderContext['protectHtml']>[2]) => string {
+    return (html, mode = 'inline') => renderer.protectHtml('style', html, mode);
 }
 
 /**
@@ -55,7 +55,7 @@ export function renderCaptionContent(captionText: string, renderer: RenderContex
     const withMath = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => {
         return renderMath(content.trim(), false, renderer);
     });
-    return renderer.renderInline(resolveLatexStyles(withMath, protectInlineStyle(renderer)));
+    return renderer.renderInline(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
 }
 
 export function unwrapResizeboxAroundProtectedContent(text: string): string {
