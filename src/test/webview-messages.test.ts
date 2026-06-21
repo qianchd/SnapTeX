@@ -4,7 +4,7 @@ import * as assert from 'assert';
 import { isWebviewToExtensionMessage, WebviewToExtensionCommand } from '../webview-messages';
 
 suite('Webview message contracts', () => {
-    test('accepts well-formed webview messages', () => {
+    test('validates accepted and rejected webview messages', () => {
         assert.equal(isWebviewToExtensionMessage({ command: WebviewToExtensionCommand.WebviewLoaded }), true);
         assert.equal(isWebviewToExtensionMessage({
             command: WebviewToExtensionCommand.RevealLine,
@@ -24,9 +24,7 @@ suite('Webview message contracts', () => {
             id: 'pdf-1',
             path: 'figures/a.pdf'
         }), true);
-    });
 
-    test('rejects malformed or unknown webview messages', () => {
         assert.equal(isWebviewToExtensionMessage(null), false);
         assert.equal(isWebviewToExtensionMessage({ command: 'unknown' }), false);
         assert.equal(isWebviewToExtensionMessage({

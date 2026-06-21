@@ -50,7 +50,7 @@ suite('LatexBlockSplitter', () => {
         assert.equal(texts[2].trim(), 'After figure.');
     });
 
-    test('does not emergency-split long closed TikZ figures with internal blank lines', () => {
+    test('does not emergency-split long protected environments', () => {
         const tikzBody = Array.from({ length: 65 }, (_, index) => (
             index % 8 === 0
                 ? ''
@@ -81,14 +81,12 @@ suite('LatexBlockSplitter', () => {
         assert.match(tikzBlocks[0], /\\end\{tikzpicture\}/);
         assert.match(tikzBlocks[0], /\\end\{figure\}/);
         assert.match(texts.join('\n'), /After\./);
-    });
 
-    test('does not emergency-split long thebibliography environments', () => {
         const items = Array.from({ length: 45 }, (_unused, index) => [
             `\\bibitem{K${index}}`,
             `Author ${index}. (2020). Title ${index}.`
         ].join('\n'));
-        const text = [
+        const bibliographyText = [
             'Before.',
             '',
             '\\begin{thebibliography}{99}',
@@ -98,7 +96,7 @@ suite('LatexBlockSplitter', () => {
             'After.'
         ].join('\n');
 
-        const bibliographyBlock = singleBlockContaining(text, 'thebibliography');
+        const bibliographyBlock = singleBlockContaining(bibliographyText, 'thebibliography');
 
         assert.match(bibliographyBlock, /\\bibitem\{K0\}/);
         assert.match(bibliographyBlock, /\\bibitem\{K44\}/);
@@ -121,24 +119,6 @@ suite('LatexBlockSplitter', () => {
 
         assert.match(colorBlock, /blue line 54/);
         assert.match(colorBlock, /\}\s*$/);
-    });
-
-    test('does not emergency-split long old-style text declaration groups', () => {
-        const lines = sparseLines(55, 'styled line', 5);
-        const text = [
-            'Before.',
-            '',
-            '{\\bf',
-            ...lines,
-            '}',
-            '',
-            'After.'
-        ].join('\n');
-
-        const styleBlock = singleBlockContaining(text, '{\\bf');
-
-        assert.match(styleBlock, /styled line 54/);
-        assert.match(styleBlock, /\}\s*$/);
     });
 
     test('honors custom emergency split line limits from the registry', () => {

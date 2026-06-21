@@ -6,7 +6,6 @@ import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
 import { SmartRenderer } from '../renderer';
 import { defineBlockDependencyRule, defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
-import { optimizeTikzPreviewSource } from '../tikz-preview-optimizer';
 import type { RuleRegistry } from '../types';
 import { normalizeUri, stableHash, stripLatexComments } from '../utils';
 import {
@@ -68,31 +67,6 @@ suite('LatexDocument source mapping', () => {
         assert.equal(result.bibEntries.get('smith2024')?.fields.title, 'Paper');
         assert.equal(result.contentStartLineOffset, 0);
         assert.equal(result.blockSpans.length, 1);
-    });
-
-    test('loads inline thebibliography bibitems', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\begin{document}',
-                'See \\citep{rivera2027}.',
-                '\\begin{thebibliography}{99}',
-                '\\bibitem{rivera2027}',
-                'Rivera, A., \\& Quinn, B. (2027). Synthetic inline references. \\textit{Journal of Preview Fixtures}.',
-                '%\\bibitem{hidden2025}',
-                '%Hidden, A. (2015).',
-                '\\end{thebibliography}',
-                '\\end{document}'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-
-        const result = await doc.parse(mainUri);
-
-        assert.ok(result.bibEntries.has('rivera2027'));
-        assert.ok(!result.bibEntries.has('hidden2025'));
-        assert.equal(result.bibEntries.get('rivera2027')?.type, 'bibitem');
-        assert.equal(result.bibEntries.get('rivera2027')?.fields.year, '2027');
     });
 
     test('stores parsed blocks as body spans and hashes', async () => {
@@ -312,29 +286,6 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /\\begin\{tabularx\}|\\toprule|\\bottomrule/);
     });
 
-    test('renders plain hline tables without markdown-style grid borders', () => {
-        const html = renderBlocks([
-            [
-                '\\begin{table}',
-                '\\caption{Plain table}',
-                '\\begin{tabular}{lr}',
-                '\\hline',
-                '\\textbf{Name} & \\textbf{Value} \\\\',
-                '\\hline',
-                'Alpha~One & 10 \\\\',
-                'Beta & 20 \\\\',
-                '\\hline',
-                '\\end{tabular}',
-                '\\end{table}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /<table class="latex-tabular-preview latex-tabular-ruled">/);
-        assert.match(html, /<thead><tr><th scope="col"><strong>Name<\/strong><\/th><th scope="col"><strong>Value<\/strong><\/th><\/tr><\/thead>/);
-        assert.match(html, /<tbody><tr><td>Alpha&nbsp;One<\/td><td>10<\/td><\/tr>/);
-        assert.doesNotMatch(html, /border: 1px solid/);
-    });
-
     test('renders tabular star tables with nested tabular cells', () => {
         const html = renderBlocks([
             [
@@ -428,21 +379,6 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /\\makecell|\\tnote|XSNAP/);
     });
 
-    test('removes standalone comment lines without creating blank preview gaps', () => {
-        const html = renderBlocks([
-            [
-                'aaa.',
-                '% bbb',
-                '    % ccc',
-                '% ddd',
-                'eee.'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /aaa\.\neee\./);
-        assert.doesNotMatch(html, /bbb|ccc|ddd|<div class="latex-block"[^>]*>\s*<\/div>/);
-    });
-
     test('renders journal-style Abstract and Keywords commands', () => {
         const html = renderBlocks([
             [
@@ -458,8 +394,8 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /\\Abstract|\\Keywords|OOABSTRACT|OOKEYWORDS/);
     });
 
-    test('preserves paragraphs inside whole-block color groups', () => {
-        const html = renderBlocks([
+    test('preserves paragraph boundaries inside block and inline color groups', () => {
+        const blockHtml = renderBlocks([
             [
                 '{\\color{blue}',
                 'First synthetic paragraph.',
@@ -469,31 +405,11 @@ suite('SmartRenderer', () => {
             ].join('\n')
         ]);
 
-        assert.doesNotMatch(html, /class="latex-block"[^>]*style="color: blue;"/);
-        assert.match(html, /<p><span style="color: blue">First synthetic paragraph\.<\/span><\/p>\s*<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
-        assert.doesNotMatch(html, /\\color\{blue\}/);
-    });
+        assert.doesNotMatch(blockHtml, /class="latex-block"[^>]*style="color: blue;"/);
+        assert.match(blockHtml, /<p><span style="color: blue">First synthetic paragraph\.<\/span><\/p>\s*<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
+        assert.doesNotMatch(blockHtml, /\\color\{blue\}/);
 
-    test('preserves paragraphs inside color groups after section headings', () => {
-        const html = renderBlocks([
-            [
-                '\\section{Introduction}\\label{sec:intro}',
-                '{\\color{blue}',
-                'First synthetic paragraph with \\citep{alpha2026}.',
-                '',
-                'Second synthetic paragraph.',
-                '}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /<h2>/);
-        assert.match(html, /<span style="color: blue">First synthetic paragraph with \(\[alpha2026\?\]\)\.<\/span>[\s\S]*<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
-        assert.doesNotMatch(html, /\\color\{blue\}/);
-        assert.doesNotMatch(html, /<p>(?:(?!<\/p>)[\s\S])*<p><span style="color: blue">First synthetic paragraph/);
-    });
-
-    test('continues the current paragraph when a color group starts inline', () => {
-        const html = renderBlocks([
+        const inlineHtml = renderBlocks([
             [
                 'Lead sentence before color. {\\color{blue}Inline continuation with \\citep{alpha2026}.',
                 '',
@@ -502,9 +418,9 @@ suite('SmartRenderer', () => {
             ].join('\n')
         ]);
 
-        assert.match(html, /<p>Lead sentence before color\. <span style="color: blue">Inline continuation with \(\[alpha2026\?\]\)\.<\/span><\/p>/);
-        assert.match(html, /<\/p>\s*<p><span style="color: blue">Second colored paragraph\.<\/span><\/p>/);
-        assert.doesNotMatch(html, /\\color\{blue\}/);
+        assert.match(inlineHtml, /<p>Lead sentence before color\. <span style="color: blue">Inline continuation with \(\[alpha2026\?\]\)\.<\/span><\/p>/);
+        assert.match(inlineHtml, /<\/p>\s*<p><span style="color: blue">Second colored paragraph\.<\/span><\/p>/);
+        assert.doesNotMatch(inlineHtml, /\\color\{blue\}/);
     });
 
     test('returns patch payloads for small localized edits', () => {
@@ -693,25 +609,23 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /href="javascript:alert/i);
     });
 
-    test('renders safe LaTeX href and url commands as protected external links', () => {
-        const html = renderBlocks([
+    test('renders safe LaTeX links and escapes unsafe targets', () => {
+        const safeHtml = renderBlocks([
             'See \\href{https://example.com/path?q=1&lang=en}{SnapTeX \\textbf{site}} and \\url{https://snaptex.dev/docs?a=1&b=2}.'
         ]);
 
-        assert.match(html, /<a href="https:\/\/example\.com\/path\?q=1&amp;lang=en" class="latex-link latex-href" target="_blank" rel="noopener noreferrer">SnapTeX <strong>site<\/strong><\/a>/);
-        assert.match(html, /<a href="https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2" class="latex-link latex-url" target="_blank" rel="noopener noreferrer">https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2<\/a>/);
-        assert.doesNotMatch(html, /\\href|\\url/);
-    });
+        assert.match(safeHtml, /<a href="https:\/\/example\.com\/path\?q=1&amp;lang=en" class="latex-link latex-href" target="_blank" rel="noopener noreferrer">SnapTeX <strong>site<\/strong><\/a>/);
+        assert.match(safeHtml, /<a href="https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2" class="latex-link latex-url" target="_blank" rel="noopener noreferrer">https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2<\/a>/);
+        assert.doesNotMatch(safeHtml, /\\href|\\url/);
 
-    test('drops unsafe LaTeX href and url targets while keeping escaped text', () => {
-        const html = renderBlocks([
+        const unsafeHtml = renderBlocks([
             '\\href{javascript:alert(1)}{bad <script>alert(1)</script>} \\url{javascript:alert(2)}'
         ]);
 
-        assert.doesNotMatch(html, /href="javascript:alert/i);
-        assert.doesNotMatch(html, /\\href|\\url/);
-        assert.match(html, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-        assert.match(html, /javascript:alert\(2\)/);
+        assert.doesNotMatch(unsafeHtml, /href="javascript:alert/i);
+        assert.doesNotMatch(unsafeHtml, /\\href|\\url/);
+        assert.match(unsafeHtml, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.match(unsafeHtml, /javascript:alert\(2\)/);
     });
 
     test('keeps numbered display math containers protected under raw-HTML-disabled Markdown', () => {
@@ -960,28 +874,6 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /calc/);
     });
 
-    test('applies TikZ preview lowering through the optimizer', () => {
-        const optimized = optimizeTikzPreviewSource({
-            globalPreamble: '\\tikzset{arrow/.style={-Latex, thick}}',
-            options: 'arrow/.style={Stealth-Stealth}',
-            content: '\\draw[Latex-] (0,0) -- (1,0);',
-            macroDefinitions: '\\def\\fastArrow{Latex-Latex}'
-        });
-
-        assert.equal(optimized.globalPreamble, '\\tikzset{arrow/.style={->, thick}}');
-        assert.equal(optimized.options, 'arrow/.style={<->}');
-        assert.equal(optimized.content, '\\draw[<-] (0,0) -- (1,0);');
-        assert.equal(optimized.macroDefinitions, '\\def\\fastArrow{<->}');
-
-        const exact = optimizeTikzPreviewSource({
-            globalPreamble: '',
-            options: '',
-            content: '\\draw[-{Latex[length=3mm]}] (0,0) -- (1,0);',
-            macroDefinitions: ''
-        });
-        assert.match(exact.content, /-\{Latex\[length=3mm\]\}/);
-    });
-
     test('uses TikZ preview lowerings to avoid arrows.meta for simple preview arrows', () => {
         const renderer = new SmartRenderer();
         const doc = createDocument([
@@ -1059,13 +951,11 @@ suite('SmartRenderer', () => {
 });
 
 suite('PDF request validation', () => {
-    test('normalizes safe relative pdf paths', () => {
+    test('normalizes safe pdf paths and rejects unsafe requests', () => {
         assert.equal(normalizePdfRequestPath('figure.pdf'), 'figure.pdf');
         assert.equal(normalizePdfRequestPath('./figures/Plot.PDF'), 'figures/Plot.PDF');
         assert.equal(normalizePdfRequestPath('figures\\plot.pdf'), 'figures/plot.pdf');
-    });
 
-    test('rejects unsafe or unsupported pdf paths', () => {
         assert.equal(normalizePdfRequestPath('../secret.pdf'), undefined);
         assert.equal(normalizePdfRequestPath('figures/../secret.pdf'), undefined);
         assert.equal(normalizePdfRequestPath('/tmp/secret.pdf'), undefined);

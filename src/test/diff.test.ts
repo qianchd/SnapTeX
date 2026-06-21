@@ -34,21 +34,15 @@ suite('DiffEngine', () => {
             end: 1,
             insertCount: 1
         });
-    });
 
-    test('compares hashes instead of raw payload fields', () => {
-        const oldBlocks = [{ hash: 'same', text: 'old text' }];
-        const newBlocks = [{ hash: 'same', text: 'new text' }];
-
-        assert.deepStrictEqual(
-            DiffEngine.compute(oldBlocks, newBlocks),
-            {
-                start: 1,
-                deleteCount: 0,
-                end: 0,
-                insertCount: 0
-            }
-        );
+        const oldBlocks = [{ hash: 'same', payload: 'old text' }];
+        const newBlocks = [{ hash: 'same', payload: 'new text' }];
+        assert.deepStrictEqual(DiffEngine.compute(oldBlocks, newBlocks), {
+            start: 1,
+            deleteCount: 0,
+            end: 0,
+            insertCount: 0
+        });
     });
 
     test('rebuilds arrays by reusing unchanged prefix and suffix items', () => {

@@ -102,7 +102,7 @@ suite('Metadata extraction', () => {
         assert.doesNotMatch(result.cleanedText, /alice\.stone@example\.edu/);
     });
 
-    test('extracts authblk shared affiliations', () => {
+    test('extracts authblk shared affiliations and grouped emails', () => {
         const result = extract([
             '\\author[1]{Alice}',
             '\\author[1]{Bob}',
@@ -117,9 +117,7 @@ suite('Metadata extraction', () => {
             { id: '1', text: 'University A' },
             { id: '2', text: 'University B' }
         ]);
-    });
 
-    test('extracts authblk emails from grouped email commands', () => {
         const groupedEmail = extract([
             '\\author[1]{Alice Smith}',
             '\\author[2]{Bob Jones}',
@@ -161,7 +159,7 @@ suite('Metadata extraction', () => {
         assert.deepStrictEqual(result.data.affiliations.map(affiliation => affiliation.text), ['University A', 'University B']);
     });
 
-    test('extracts ACM and Elsevier affiliation forms', () => {
+    test('extracts ACM, Elsevier, and IEEE affiliation forms', () => {
         const acm = extract([
             '\\author{Alice}',
             '\\email{alice@a.edu}',
@@ -178,18 +176,16 @@ suite('Metadata extraction', () => {
         assert.deepStrictEqual(elsevier.data.authors[0].affiliationIds, ['inst1']);
         assert.deepStrictEqual(elsevier.data.authors[0].emails, ['bob@b.edu']);
         assert.equal(elsevier.data.affiliations[0].text, 'University B, City, UK');
-    });
 
-    test('extracts IEEE author blocks', () => {
-        const result = extract([
+        const ieee = extract([
             '\\IEEEauthorblockN{Alice Smith, Bob Jones}',
             '\\IEEEauthorblockA{University A\\\\Email: alice@a.edu}'
         ].join('\n'));
 
-        assert.deepStrictEqual(result.data.authors.map(author => author.name), ['Alice Smith', 'Bob Jones']);
-        assert.deepStrictEqual(result.data.authors.map(author => author.affiliationIds), [['1'], ['1']]);
-        assert.deepStrictEqual(result.data.authors.map(author => author.emails), [['alice@a.edu'], ['alice@a.edu']]);
-        assert.equal(result.data.affiliations[0].text, 'University A');
+        assert.deepStrictEqual(ieee.data.authors.map(author => author.name), ['Alice Smith', 'Bob Jones']);
+        assert.deepStrictEqual(ieee.data.authors.map(author => author.affiliationIds), [['1'], ['1']]);
+        assert.deepStrictEqual(ieee.data.authors.map(author => author.emails), [['alice@a.edu'], ['alice@a.edu']]);
+        assert.equal(ieee.data.affiliations[0].text, 'University A');
     });
 
     test('extracts custom metadata through registry extractors', () => {
