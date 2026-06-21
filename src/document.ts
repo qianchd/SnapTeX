@@ -3,10 +3,10 @@ import { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
 import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView } from './types';
-import { R_BIBLIOGRAPHY } from './patterns';
+import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
-import { normalizeUri, scanLatexBraceBalance, stableHash } from './utils';
+import { normalizeUri, scanLatexBraceBalance, stableHash, stripLatexComments } from './utils';
 
 export interface DocumentParseResult {
     bodyText: string;
@@ -139,7 +139,10 @@ export class LatexDocument implements RenderDocumentView {
             const endIndex = metaRes.cleanedText.search(/\\end\{document\}/i);
             bodyText = metaRes.cleanedText.substring(startIndex, endIndex === -1 ? metaRes.cleanedText.length : endIndex);
         }
-        const rawBlockObjects = LatexBlockSplitter.split(bodyText);
+        const rawBlockObjects = LatexBlockSplitter.split(bodyText, {
+            config: this.registry.splitterConfig,
+            rules: this.registry.splitterRules
+        });
 
         const res: DocumentParseResult = {
             bodyText,
@@ -165,15 +168,7 @@ export class LatexDocument implements RenderDocumentView {
     }
 
     private hasRenderableContent(text: string): boolean {
-        const withoutComments = text
-            .split(/\r?\n/)
-            .map(line => {
-                const commentStart = line.search(/(?<!\\)%/);
-                return commentStart === -1 ? line : line.substring(0, commentStart);
-            })
-            .join('\n');
-
-        const withoutListStructure = withoutComments
+        const withoutListStructure = stripLatexComments(text, { preserveLines: true })
             .replace(/\\(?:begin|end)\{(?:itemize|enumerate)\}/g, '')
             .replace(/\\item(?:\[[^\]]*\])?/g, '');
 
@@ -302,6 +297,11 @@ export class LatexDocument implements RenderDocumentView {
     }
 
     private async loadBibliography(text: string, rootDir: vscode.Uri): Promise<Map<string, BibEntry>> {
+        const inlineBibliography = text.match(R_THEBIBLIOGRAPHY);
+        if (inlineBibliography) {
+            return BibTexParser.parseBibItems(inlineBibliography[0]);
+        }
+
         const match = text.match(R_BIBLIOGRAPHY);
         if (!match) { return new Map(); }
 
@@ -315,8 +315,7 @@ export class LatexDocument implements RenderDocumentView {
             if (mtime === 0) { return new Map(); }
             const cached = this.bibCache.get(bibUriStr);
             if (cached && cached.mtime === mtime) { return cached.entries; }
-            const content = await this.fileProvider.read(bibUri);
-            const entries = BibTexParser.parse(content);
+            const entries = BibTexParser.parse(await this.fileProvider.read(bibUri));
             this.bibCache.set(bibUriStr, { mtime, entries });
             return entries;
         } catch (e) {

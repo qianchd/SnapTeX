@@ -4,7 +4,7 @@ import { DiffEngine, DiffResult } from './diff';
 import { BlockNumberingCounts, BlockTextSnapshot, DependencyHelpers, DependencyState, NumberingPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RenderPayload, RuleRegistry, SourceLocation } from './types';
 import { SNAP_TEX_RULES, postProcessHtml } from './rules';
 import { LatexCounterScanner } from './scanner';
-import { R_BIBLIOGRAPHY } from './patterns';
+import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { extractLatexCitationKeys, extractLatexLabelNames, normalizeUri, stableHash } from './utils';
 import { ProtectionManager } from './protection';
 
@@ -58,7 +58,7 @@ export class SmartRenderer {
             get currentMacros() { return renderer.currentMacros; },
             get metadata() { return renderer.documentView?.metadata; },
             get bibEntries() { return renderer.documentView ? renderer.documentView.bibEntries : new Map(); },
-            protectHtml: (namespace, html) => this.protector.protect(namespace, html),
+            protectHtml: (namespace, html, mode) => this.protector.protect(namespace, html, mode),
             renderInline: text => this.renderInline(text),
             resolveCitation: key => this.resolveCitation(key),
             getCitedKeys: () => renderer._citedKeys
@@ -180,7 +180,7 @@ export class SmartRenderer {
             line: map?.start ?? 0,
             lineCount: map?.count ?? text.split(/\r?\n/).length,
             anchors: Array.from(new Set(extractLatexLabelNames(text))),
-            hasBibliography: R_BIBLIOGRAPHY.test(text),
+            hasBibliography: R_BIBLIOGRAPHY.test(text) || R_THEBIBLIOGRAPHY.test(text),
             citationKeys: extractLatexCitationKeys(text)
         };
     }

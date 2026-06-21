@@ -75,6 +75,33 @@ suite('Metadata extraction', () => {
         assert.deepStrictEqual(result.data.authors.map(author => author.affiliationIds), [['1'], ['1']]);
     });
 
+    test('extracts journal-style author address groups', () => {
+        const result = extract([
+            '\\AuthorMark{Alice Stone, Brian Vale, and Cara Reed}',
+            '\\TitleMark{Sparse Canonical Analysis for Synthetic Models}',
+            '\\title{Sparse Canonical Analysis for Synthetic Models\\footnote{Funding note}}',
+            String.raw`\author{Alice \uppercase{Stone}}             %%%  1st Author information  %%%
+    {Address\\Department of Mathematics, Example North University, North City, Exampleland
+    E-mail\,$:alice.stone@example.edu$ }`,
+            String.raw`\author{Brian \uppercase{Vale}}{Address\\Institute of Applied Finance, Example River College, River City, Exampleland E-mail\,$:brian.vale@example.edu$ }`,
+            String.raw`\author{Cara \uppercase{Reed}}{Address\\School of Data Science, Example South Institute, South City, Exampleland\\ E-mail\,$:cara.reed@example.edu$ }`
+        ].join('\n'));
+
+        assert.deepStrictEqual(result.data.authors.map(author => author.name), ['Alice STONE', 'Brian VALE', 'Cara REED']);
+        assert.deepStrictEqual(result.data.authors.map(author => author.emails), [['alice.stone@example.edu'], ['brian.vale@example.edu'], ['cara.reed@example.edu']]);
+        assert.deepStrictEqual(result.data.authors.map(author => author.affiliationIds), [['1'], ['2'], ['3']]);
+        assert.deepStrictEqual(result.data.affiliations.map(affiliation => affiliation.text), [
+            'Department of Mathematics, Example North University, North City, Exampleland',
+            'Institute of Applied Finance, Example River College, River City, Exampleland',
+            'School of Data Science, Example South Institute, South City, Exampleland'
+        ]);
+        assert.equal(result.data.custom.authorMark, 'Alice Stone, Brian Vale, and Cara Reed');
+        assert.equal(result.data.custom.titleMark, 'Sparse Canonical Analysis for Synthetic Models');
+        assert.doesNotMatch(result.cleanedText, /\\AuthorMark/);
+        assert.doesNotMatch(result.cleanedText, /\\TitleMark/);
+        assert.doesNotMatch(result.cleanedText, /alice\.stone@example\.edu/);
+    });
+
     test('extracts authblk shared affiliations', () => {
         const result = extract([
             '\\author[1]{Alice}',
@@ -161,7 +188,8 @@ suite('Metadata extraction', () => {
 
         assert.deepStrictEqual(result.data.authors.map(author => author.name), ['Alice Smith', 'Bob Jones']);
         assert.deepStrictEqual(result.data.authors.map(author => author.affiliationIds), [['1'], ['1']]);
-        assert.equal(result.data.affiliations[0].text, 'University A\\\\Email: alice@a.edu');
+        assert.deepStrictEqual(result.data.authors.map(author => author.emails), [['alice@a.edu'], ['alice@a.edu']]);
+        assert.equal(result.data.affiliations[0].text, 'University A');
     });
 
     test('extracts custom metadata through registry extractors', () => {

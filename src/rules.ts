@@ -11,9 +11,10 @@ import {
     splitLatexCitationKeys,
     replaceLatexCommandCalls,
     resolveLatexStyles,
-    sanitizeHttpUrlForAttribute
+    sanitizeHttpUrlForAttribute,
+    stripLatexComments
 } from './utils';
-import { AffiliationMetadata, AuthorMetadata, BlockDependencyRule, MetadataExtractor, PreprocessRule, RenderContext, RuleRegistry } from './types';
+import { AffiliationMetadata, AuthorMetadata, BibEntry, BlockDependencyRule, MetadataExtractor, PreprocessRule, RenderContext, RuleRegistry, SplitterConfig, SplitterRule } from './types';
 import { BibTexParser } from './bib';
 import {
     REGEX_STR,
@@ -22,9 +23,10 @@ import {
     R_CITATION,
     R_BIBLIOGRAPHY,
     R_BIBLIOGRAPHY_STYLE,
+    R_THEBIBLIOGRAPHY,
     getTheoremDisplayName
 } from './patterns';
-import { createRefLink, renderMath } from './rule-helpers';
+import { createRefLink, protectInlineStyle, renderMath } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
 
@@ -47,7 +49,7 @@ function replaceLatexLinkCommands(text: string, renderer: RenderContext): string
             name: 'href',
             requiredArgs: 2,
             render: call => {
-                const styledContent = resolveLatexStyles(call.requiredArgs[1].content, html => renderer.protectHtml('style', html));
+                const styledContent = resolveLatexStyles(call.requiredArgs[1].content, protectInlineStyle(renderer));
                 return renderExternalLink(call.requiredArgs[0].content, escapeHtml(styledContent), 'latex-href', renderer);
             }
         },
@@ -89,18 +91,46 @@ export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
     return {
         metadataExtractors: [...registry.metadataExtractors],
         renderRules: [...registry.renderRules].sort((a, b) => a.priority - b.priority),
-        blockDependencyRules: [...registry.blockDependencyRules]
+        blockDependencyRules: [...registry.blockDependencyRules],
+        splitterConfig: { ...registry.splitterConfig },
+        splitterRules: [...registry.splitterRules]
     };
 }
+
+const envPattern = (fragment: string, allowStar = false) => new RegExp(`^(${fragment})${allowStar ? '\\*?' : ''}$`);
+
+// User-facing splitter settings. Long protected constructs get a larger window
+// before the splitter treats them as malformed and resumes emergency splitting.
+export const DEFAULT_SPLITTER_CONFIG: SplitterConfig = {
+    maxBlockLines: 40,
+    maxNoEmergencySplitLines: 400
+};
+
+export const DEFAULT_SPLITTER_RULES: SplitterRule[] = [
+    { name: 'ignored-environments', kind: 'ignored-env', envPattern: envPattern(REGEX_STR.SPLITTER_IGNORED) },
+    { name: 'split-environments', kind: 'split-env', envPattern: envPattern(`${REGEX_STR.SPLITTER_MAJOR}|thebibliography|tikzpicture`, true) },
+    { name: 'tikz-and-bibliography', kind: 'no-emergency-split-env', envPattern: envPattern('thebibliography|tikzpicture') },
+    {
+        name: 'long-brace-groups',
+        kind: 'no-emergency-split-begin-token',
+        beginTokenPattern: /(?:\{\\(?:color\{[a-zA-Z0-9]+\}|(?:bf|it|sf|rm|tt)\b)|\\resizebox\s*\{[^{}]*\}\s*\{[^{}]*\}\s*\{)/
+    },
+    { name: 'emergency-split-math-end', kind: 'emergency-split-end-env', envPattern: envPattern(REGEX_STR.MATH_ENVS, true) }
+];
 
 function renderMetadataValue(value: string | undefined, renderer: RenderContext): string {
     if (!value) { return ''; }
     const lineBreakToken = renderer.protectHtml('meta-br', '<br/>');
     let rendered = value.replace(/<br\s*\/?>/gi, lineBreakToken);
+    rendered = replaceLatexCommandCalls(rendered, {
+        name: 'footnote',
+        requiredArgs: 1,
+        render: () => ''
+    });
     rendered = rendered.replace(/\\(?:and|And)\b/g, lineBreakToken);
     rendered = rendered.replace(/\\\\/g, lineBreakToken);
     rendered = rendered.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => renderMath(content.trim(), false, renderer));
-    rendered = resolveLatexStyles(rendered, html => renderer.protectHtml('style', html));
+    rendered = resolveLatexStyles(rendered, protectInlineStyle(renderer));
     return escapeHtml(rendered);
 }
 
@@ -149,15 +179,33 @@ function renderMaketitleAuthors(
         : '');
 }
 
+function abstractSentinel(content: string): string {
+    const trimmed = content.trim();
+    return trimmed ? `\n\nOOABSTRACT_STARTOO\n\n${trimmed}\n\nOOABSTRACT_ENDOO\n\n` : '';
+}
+
+function keywordsSentinel(content: string): string {
+    const trimmed = content.trim();
+    return trimmed ? `\n\nOOKEYWORDS_STARTOO${trimmed}OOKEYWORDS_ENDOO\n\n` : '';
+}
+
+function renderBibliographyItems(items: Array<{ key: string; entry?: BibEntry }>, renderer: RenderContext): string {
+    let html = `<h2 class="latex-bibliography-header">References</h2><div class="latex-bibliography-list">`;
+    items.forEach(({ key, entry }) => {
+        const content = entry
+            ? BibTexParser.formatEntry(entry, renderer)
+            : `<span style="color:red">Bib entry '${escapeHtml(key)}' not found.</span>`;
+        const safeKey = escapeHtmlAttribute(key);
+        html += `<div class="bib-item" id="ref-${safeKey}" style="margin-bottom: 0.8em; padding-left: 2em; text-indent: -2em;">${content}</div>`;
+    });
+    return renderer.protectHtml('bib', html + `</div>`);
+}
+
 export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
         name: 'clean_comments',
         priority: 5,
-        apply: (text) => {
-            return text
-                .replace(/^[ \t]*%.*(?:\r?\n|$)/gm, '')
-                .replace(/(?<!\\)%.*(\r?\n)?/g, '');
-        }
+        apply: text => stripLatexComments(text)
     },
 
     createTikzPictureRule(),
@@ -360,6 +408,12 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         priority: 71,
         apply: (text, renderer: RenderContext) => {
             text = text.replace(R_BIBLIOGRAPHY_STYLE, '');
+            text = text.replace(new RegExp(R_THEBIBLIOGRAPHY, 'gi'), (_match, content) => {
+                const entries = Array.from(BibTexParser.parseBibItems(content).values());
+                return entries.length
+                    ? renderBibliographyItems(entries.map(entry => ({ key: entry.key, entry })), renderer)
+                    : '';
+            });
             return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), () => {
                 const citedKeys = renderer.getCitedKeys();
                 if (citedKeys.length === 0) {
@@ -373,17 +427,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                     return authA.localeCompare(authB);
                 });
 
-                let html = `<h2 class="latex-bibliography-header">References</h2><div class="latex-bibliography-list">`;
-                sortedKeys.forEach((key) => {
-                    const entry = renderer.bibEntries.get(key);
-                    const content = entry
-                        ? BibTexParser.formatEntry(entry, renderer)
-                        : `<span style="color:red">Bib entry '${escapeHtml(key)}' not found.</span>`;
-                    const safeKey = escapeHtmlAttribute(key);
-                    html += `<div class="bib-item" id="ref-${safeKey}" style="margin-bottom: 0.8em; padding-left: 2em; text-indent: -2em;">${content}</div>`;
-                });
-                html += `</div>`;
-                return renderer.protectHtml('bib', html);
+                return renderBibliographyItems(sortedKeys.map(key => ({ key, entry: renderer.bibEntries.get(key) })), renderer);
             });
         }
     },
@@ -448,7 +492,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                     header += `.</strong></span>&nbsp; `;
                 }
 
-                let body = resolveLatexStyles(content.trim(), html => renderer.protectHtml('style', html));
+                let body = resolveLatexStyles(content.trim(), protectInlineStyle(renderer));
                 body = escapeHtml(body);
                 return `\n\n${renderer.protectHtml('thm', `<div class="latex-theorem">${header}${body}</div>`)}\n\n`;
             });
@@ -488,15 +532,22 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 text = text.replace(/ \[meta:.*?\]/g, '');
             }
 
-            text = text.replace(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/gi, (_match, content) => {
-                return `\n\nOOABSTRACT_STARTOO\n\n${content.trim()}\n\nOOABSTRACT_ENDOO\n\n`;
-            });
+            text = text.replace(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/gi, (_match, content) => abstractSentinel(content));
+            text = replaceLatexCommandCalls(text, [
+                {
+                    name: ['Abstract', 'abstract'],
+                    requiredArgs: 1,
+                    render: call => abstractSentinel(call.requiredArgs[0].content)
+                },
+                {
+                    name: ['Keywords', 'keywords', 'Keyword', 'keyword'],
+                    requiredArgs: 1,
+                    render: call => keywordsSentinel(call.requiredArgs[0].content)
+                }
+            ]);
 
             const keywordsRegex = /(?:\\begin\{keywords?\}([\s\S]*?)\\end\{keywords?\}|\\noindent\{\\bf Keywords\}:\s*(.*))/gi;
-            text = text.replace(keywordsRegex, (_match, contentA, contentB) => {
-                const content = (contentA || contentB || '').trim();
-                return `\n\nOOKEYWORDS_STARTOO${content}OOKEYWORDS_ENDOO\n\n`;
-            });
+            text = text.replace(keywordsRegex, (_match, contentA, contentB) => keywordsSentinel(contentA || contentB || ''));
 
             return text;
         }
@@ -561,7 +612,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         name: 'text_styles',
         priority: 190,
         apply: (text, renderer: RenderContext) => {
-            return resolveLatexStyles(text, html => renderer.protectHtml('style', html));
+            return resolveLatexStyles(text, protectInlineStyle(renderer));
         }
     }
 ];
@@ -595,7 +646,9 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
         EDITOR_METADATA_EXTRACTOR
     ],
     renderRules: DEFAULT_RENDER_RULES,
-    blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES
+    blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
+    splitterConfig: DEFAULT_SPLITTER_CONFIG,
+    splitterRules: DEFAULT_SPLITTER_RULES
 });
 
 export function postProcessHtml(html: string): string {

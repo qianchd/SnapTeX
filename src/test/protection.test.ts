@@ -12,6 +12,13 @@ suite('ProtectionManager', () => {
         assert.equal(protector.resolve(`<p>${outer}</p>`), '<div><span>inner</span></div>');
     });
 
+    test('preserves paragraph wrappers for inline tokens', () => {
+        const protector = new ProtectionManager();
+        const token = protector.protect('style', '<span>inline</span>', 'inline');
+
+        assert.equal(protector.resolve(`<p>${token}</p>`), '<p><span>inline</span></p>');
+    });
+
     test('reset clears old tokens and restarts ids', () => {
         const protector = new ProtectionManager();
         const token = protector.protect('x', '<b>x</b>');

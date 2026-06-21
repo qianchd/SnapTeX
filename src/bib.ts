@@ -1,5 +1,6 @@
-import { cleanLatexCommands, escapeHtml, escapeHtmlAttribute, sanitizeHttpUrlForAttribute } from './utils';
+import { cleanLatexCommands, escapeHtml, escapeHtmlAttribute, sanitizeHttpUrlForAttribute, stripLatexComments } from './utils';
 import type { BibEntry, RenderContext } from './types';
+import { R_THEBIBLIOGRAPHY } from './patterns';
 
 /**
  * Small BibTeX parser used for preview citations and bibliography rendering.
@@ -23,15 +24,63 @@ export class BibTexParser {
             let block = this.extractBalancedBlock(content, startIndex);
             if (!block) { continue; }
 
-            block = block.replace(/\r\n/g, '\n')
-                         .replace(/^\s*\/\/\s+.*/gm, '')
-                         .replace(/(?<!\\)%.*$/gm, '');
+            block = stripLatexComments(block.replace(/\r\n/g, '\n').replace(/^\s*\/\/\s+.*/gm, ''), { preserveLines: true });
             const fields = this.parseFieldsRobust(block);
             if (Object.keys(fields).length > 0) {
                 entries.set(key, { key, type, fields });
             }
         }
         return entries;
+    }
+
+    public static parseBibItems(content: string): Map<string, BibEntry> {
+        const entries = new Map<string, BibEntry>();
+        const cleanContent = stripLatexComments(content.replace(/\r\n/g, '\n'), { preserveLines: true });
+        const envRegex = new RegExp(R_THEBIBLIOGRAPHY, 'gi');
+        let match: RegExpExecArray | null;
+        let foundEnvironment = false;
+
+        while ((match = envRegex.exec(cleanContent)) !== null) {
+            foundEnvironment = true;
+            this.parseBibItemBlock(match[1], entries);
+        }
+        if (!foundEnvironment) {
+            this.parseBibItemBlock(cleanContent, entries);
+        }
+        return entries;
+    }
+
+    private static parseBibItemBlock(content: string, entries: Map<string, BibEntry>): void {
+        const matches = Array.from(content.matchAll(/\\bibitem(?:\s*\[([^\]]*)\])?\s*\{([^}]+)\}/g));
+        matches.forEach((match, index) => {
+            const key = match[2].trim();
+            const raw = content.slice((match.index ?? 0) + match[0].length, matches[index + 1]?.index ?? content.length).trim();
+            if (!key || !raw) { return; }
+
+            const label = (match[1] ?? '').trim();
+            const year = this.inferBibItemYear(label, raw);
+            const author = this.inferBibItemAuthor(label || raw, year);
+            entries.set(key, {
+                key,
+                type: 'bibitem',
+                fields: {
+                    raw,
+                    ...(label ? { label } : {}),
+                    ...(author ? { author } : {}),
+                    ...(year ? { year } : {})
+                }
+            });
+        });
+    }
+
+    private static inferBibItemYear(...parts: string[]): string {
+        return parts.join(' ').match(/\b(?:18|19|20)\d{2}[a-z]?\b/i)?.[0] ?? '';
+    }
+
+    private static inferBibItemAuthor(source: string, year: string): string {
+        const yearIndex = year ? source.indexOf(year) : -1;
+        const prefix = yearIndex > 0 ? source.slice(0, yearIndex) : source.split('.')[0];
+        return prefix.replace(/\(?\s*$/, '').replace(/[,.\s]+$/, '').trim();
     }
 
     private static extractBalancedBlock(text: string, startIndex: number): string | null {
@@ -140,6 +189,9 @@ export class BibTexParser {
 
     public static formatEntry(entry: BibEntry, renderer: Pick<RenderContext, 'protectHtml'>): string {
         const f = entry.fields;
+        if (entry.type === 'bibitem') {
+            return cleanLatexCommands(f.raw || '', renderer);
+        }
 
         let author = f.author ? cleanLatexCommands(f.author, renderer) : 'Unknown';
         author = author.replace(/\s+and\s+/g, ', ');
@@ -184,7 +236,7 @@ export class BibTexParser {
         cleanName = cleanName.replace(/\\['"`^~]\{?([a-zA-Z])\}?/g, '$1');
         cleanName = cleanName.replace(/\\[a-zA-Z]+\s*/g, '');
 
-        const authors = cleanName.split(/\s+and\s+/i);
+        const authors = cleanName.split(/\s+and\s+|\\?&/i).map(author => author.trim()).filter(Boolean);
 
         const getSurname = (n: string) => {
             const trimmed = n.trim();

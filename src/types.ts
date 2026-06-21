@@ -158,11 +158,13 @@ export interface RenderContext {
     currentMacros: Record<string, string>;
     metadata?: PreambleData;
     bibEntries: Map<string, BibEntry>;
-    protectHtml(namespace: string, html: string): string;
+    protectHtml(namespace: string, html: string, mode?: ProtectedHtmlMode): string;
     renderInline(text: string): string;
     resolveCitation(key: string): number;
     getCitedKeys(): readonly string[];
 }
+
+export type ProtectedHtmlMode = 'block' | 'inline';
 
 export interface PreprocessRule {
     name: string;
@@ -196,6 +198,23 @@ export interface BlockDependencyRule {
     collect(input: BlockDependencyInput): RenderDependency[];
 }
 
+export interface SplitterConfig {
+    maxBlockLines: number;
+    maxNoEmergencySplitLines: number;
+}
+
+export type SplitterRule =
+    | { name: string; kind: 'ignored-env'; envPattern: RegExp }
+    | { name: string; kind: 'split-env'; envPattern: RegExp }
+    | { name: string; kind: 'no-emergency-split-env'; envPattern: RegExp }
+    | { name: string; kind: 'no-emergency-split-begin-token'; beginTokenPattern: RegExp }
+    | { name: string; kind: 'emergency-split-end-env'; envPattern: RegExp };
+
+export interface SplitterOptions {
+    config: SplitterConfig;
+    rules: readonly SplitterRule[];
+}
+
 export type MetadataExtractionResult = Partial<PreambleMetadata> & {
     ranges?: TextRange[];
 };
@@ -209,4 +228,6 @@ export interface RuleRegistry {
     readonly metadataExtractors: readonly MetadataExtractor[];
     readonly renderRules: readonly PreprocessRule[];
     readonly blockDependencyRules: readonly BlockDependencyRule[];
+    readonly splitterConfig: SplitterConfig;
+    readonly splitterRules: readonly SplitterRule[];
 }

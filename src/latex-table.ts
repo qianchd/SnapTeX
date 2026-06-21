@@ -1,6 +1,6 @@
 import { RenderContext } from './types';
 import { readLatexCommandAt, readLatexGroup, replaceLatexCommandCalls, resolveLatexStyles, type LatexGroup } from './utils';
-import { renderMath } from './rule-helpers';
+import { protectInlineStyle, renderMath } from './rule-helpers';
 
 type TableRuleKind = 'top' | 'mid' | 'bottom' | 'hline';
 
@@ -355,7 +355,7 @@ export function renderLatexTableInlineContent(content: string, renderer: RenderC
         return renderMath(tex.trim(), false, renderer);
     });
     const withSpaces = withMath.replace(/~/g, () => renderer.protectHtml('space', '&nbsp;'));
-    const styledContent = resolveLatexStyles(withSpaces, html => renderer.protectHtml('style', html));
+    const styledContent = resolveLatexStyles(withSpaces, protectInlineStyle(renderer));
     return renderer.renderInline(stripLatexGroupingBraces(styledContent));
 }
 

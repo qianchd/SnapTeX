@@ -34,6 +34,10 @@ export function createRefLink(key: string, renderer: RenderContext, type: 'ref' 
     return `\\text{${token}}`;
 }
 
+export function protectInlineStyle(renderer: RenderContext): (html: string) => string {
+    return html => renderer.protectHtml('style', html, 'inline');
+}
+
 /**
  * Recovers protection tokens that were embedded in ignored float regions.
  */
@@ -51,7 +55,7 @@ export function renderCaptionContent(captionText: string, renderer: RenderContex
     const withMath = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => {
         return renderMath(content.trim(), false, renderer);
     });
-    return renderer.renderInline(resolveLatexStyles(withMath, html => renderer.protectHtml('style', html)));
+    return renderer.renderInline(resolveLatexStyles(withMath, protectInlineStyle(renderer)));
 }
 
 export function unwrapResizeboxAroundProtectedContent(text: string): string {

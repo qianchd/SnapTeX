@@ -2,7 +2,6 @@
 
 import * as assert from 'assert';
 import { ProtectionManager } from '../protection';
-import { postProcessHtml } from '../rules';
 import {
     cleanLatexCommands,
     extractAndHideLabels,
@@ -13,6 +12,7 @@ import {
     readLatexGroup,
     resolveLatexStyles,
     scanLatexBraceBalance,
+    stripLatexComments,
     splitLatexCitationKeys
 } from '../utils';
 
@@ -72,6 +72,12 @@ suite('LaTeX style utilities', () => {
         assert.ok(bracketGroup);
         assert.equal(bracketGroup.content, 'short [nested]');
         assert.equal(bracketGroup.end, 18);
+    });
+
+    test('strips LaTeX comments for rendering or metadata scanning', () => {
+        const source = 'aaa % inline\n% whole line\nbbb \\% literal';
+        assert.equal(stripLatexComments(source), 'aaa bbb \\% literal');
+        assert.equal(stripLatexComments(source, { preserveLines: true }), 'aaa \n\nbbb \\% literal');
     });
 
     test('reads commands at the requested position without searching ahead', () => {
@@ -161,17 +167,4 @@ suite('LaTeX style utilities', () => {
         assert.match(protector.resolve(unsafe), /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     });
 
-    test('post-processes abstract and keyword sentinel blocks', () => {
-        const html = postProcessHtml([
-            '<p>OOABSTRACT_STARTOO</p>',
-            '<p>This is the abstract.</p>',
-            '<p>OOABSTRACT_ENDOO</p>',
-            '<p>OOKEYWORDS_STARTOOalpha; betaOOKEYWORDS_ENDOO</p>'
-        ].join(''));
-
-        assert.match(html, /<div class="latex-abstract"><span class="latex-abstract-title">Abstract<\/span>/);
-        assert.match(html, /<p>This is the abstract\.<\/p><\/div>/);
-        assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> alpha; beta<\/div>/);
-        assert.doesNotMatch(html, /OOABSTRACT|OOKEYWORDS/);
-    });
 });

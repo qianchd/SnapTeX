@@ -1,6 +1,6 @@
 import { PreprocessRule, RenderContext } from './types';
 import { escapeHtmlAttribute, extractAndHideLabels, findCommand, resolveLatexStyles } from './utils';
-import { recoverPreservedTokens, renderCaptionContent, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
+import { protectInlineStyle, recoverPreservedTokens, renderCaptionContent, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 import { findFirstTabularEnvironment, renderLatexTabular, renderLatexTableInlineContent } from './latex-table';
 
 interface FloatCaptionConfig {
@@ -111,7 +111,7 @@ export function createAlgorithmRule(): PreprocessRule {
                             }
                         }
 
-                        contentToRender = resolveLatexStyles(contentToRender, html => renderer.protectHtml('style', html));
+                        contentToRender = resolveLatexStyles(contentToRender, protectInlineStyle(renderer));
                         const renderedContent = renderer.renderInline(contentToRender);
                         const itemClass = isSpecialLine ? "alg-item alg-item-no-marker" : "alg-item";
                         listItems += `<li class="${itemClass}">${prefixHtml}${renderedContent}</li>`;

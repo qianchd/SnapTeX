@@ -103,6 +103,13 @@ function applyLatexStyleCommand(cmd: string, content: string, protectHtml?: (htm
 }
 
 /**
+ * Applies text-only LaTeX transforms that do not emit HTML.
+ */
+export function resolveLatexTextTransforms(text: string): string {
+    return text.replace(/\\(?:uppercase|MakeUppercase)\s*\{([^{}]*)\}/g, (_match, content: string) => content.toUpperCase());
+}
+
+/**
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
 export function resolveLatexStyles(text: string, protectHtml?: (html: string) => string): string {
@@ -195,7 +202,7 @@ interface LatexCommandReadOptions {
 }
 
 interface LatexCommandReplacementRule extends Omit<LatexCommandReadOptions, 'name' | 'skipWhitespace'> {
-    name: string;
+    name: string | readonly string[];
     render(call: LatexCommandCall): string;
 }
 
@@ -218,6 +225,18 @@ interface LatexBraceScanResult {
 export function skipLatexWhitespace(text: string, index: number): number {
     while (index < text.length && /\s/.test(text[index])) { index++; }
     return index;
+}
+
+/**
+ * Removes LaTeX line comments, optionally preserving line breaks for source maps.
+ */
+export function stripLatexComments(text: string, options: { preserveLines?: boolean } = {}): string {
+    if (options.preserveLines) {
+        return text.replace(/(?<!\\)%.*$/gm, '');
+    }
+    return text
+        .replace(/^[ \t]*%.*(?:\r?\n|$)/gm, '')
+        .replace(/(?<!\\)%.*(\r?\n)?/g, '');
 }
 
 /**
@@ -314,9 +333,14 @@ export function replaceLatexCommandCalls(text: string, rules: LatexCommandReplac
     const ruleList = Array.isArray(rules) ? rules : [rules];
     if (ruleList.length === 0) { return text; }
 
-    const ruleByName = new Map(ruleList.map(rule => [rule.name, rule]));
-    const commandPattern = ruleList
-        .map(rule => rule.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const ruleByName = new Map<string, LatexCommandReplacementRule>();
+    for (const rule of ruleList) {
+        for (const name of Array.isArray(rule.name) ? rule.name : [rule.name]) {
+            ruleByName.set(name, rule);
+        }
+    }
+    const commandPattern = Array.from(ruleByName.keys())
+        .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         .join('|');
     const commandRegex = new RegExp(`\\\\(${commandPattern})\\b`, 'g');
     let result = '';
@@ -462,6 +486,14 @@ function applyStyleToTexList(startTag: string, endTag: string, content: string, 
             return line.trim().length > 0 ? wrap(line) : line;
         }).join('\n');
     }
+    if (/\r?\n[ \t]*\r?\n/.test(content)) {
+        return content
+            .split(/\r?\n[ \t]*\r?\n/)
+            .map(part => part.trim())
+            .filter(Boolean)
+            .map(wrap)
+            .join('\n\n');
+    }
     return wrap(content);
 }
 
@@ -485,6 +517,7 @@ export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, '
         .replace(/\\emph\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<em>${escapeHtml(content)}</em>`))
         .replace(/\\cite\{[^}]+\}/g, '[cite]')
         .replace(/\\ref\{[^}]+\}/g, '[ref]')
+        .replace(/\\([%#&])/g, '$1')
         .replace(/\\small\s*/g, '')
         .replace(/\\large\s*/g, '');
 

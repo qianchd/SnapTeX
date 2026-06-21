@@ -38,6 +38,34 @@ suite('BibTexParser', () => {
         assert.equal(BibTexParser.getShortAuthor(entry), 'Muller <em>et al.</em>');
     });
 
+    test('parses inline thebibliography bibitems', () => {
+        const entries = BibTexParser.parseBibItems(`
+            \\begin{thebibliography}{99}
+            \\bibitem{rivera2027}
+            Rivera, A., \\& Quinn, B. (2027). Synthetic inline references. \\textit{Journal of Preview Fixtures}, \\textbf{12}, 34--56.
+
+            %\\bibitem{hidden2025}
+            %Commented, A. (2015). Hidden entry.
+
+            \\bibitem{vale2027}
+            Vale, C., Reed, D., \\& Sol, E. (2027). Another synthetic reference.
+            \\end{thebibliography}
+        `);
+
+        const entry = entries.get('rivera2027');
+        assert.ok(entry);
+        assert.equal(entry.type, 'bibitem');
+        assert.equal(entry.fields.year, '2027');
+        assert.match(entry.fields.raw, /Journal of Preview Fixtures/);
+        assert.equal(BibTexParser.getShortAuthor(entry), 'Rivera &amp; Quinn');
+        assert.ok(!entries.has('hidden2025'));
+
+        const protector = new ProtectionManager();
+        const html = protector.resolve(BibTexParser.formatEntry(entry, { protectHtml: protector.protect.bind(protector) }));
+        assert.match(html, /Rivera, A\., &amp; Quinn, B\./);
+        assert.match(html, /<i>Journal of Preview Fixtures<\/i>/);
+    });
+
     test('escapes formatted bibliography fields and rejects unsafe URLs', () => {
         const protector = new ProtectionManager();
         const renderer = { protectHtml: protector.protect.bind(protector) };

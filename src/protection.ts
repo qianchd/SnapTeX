@@ -1,3 +1,10 @@
+import type { ProtectedHtmlMode } from './types';
+
+interface ProtectedHtmlEntry {
+    content: string;
+    mode: ProtectedHtmlMode;
+}
+
 /**
  * Stores renderer-generated HTML behind temporary text tokens while Markdown-it
  * processes user text with raw HTML disabled.
@@ -6,7 +13,7 @@
  * resolves the tokens after Markdown rendering, including nested tokens.
  */
 export class ProtectionManager {
-    private storage: Map<string, string> = new Map();
+    private storage: Map<string, ProtectedHtmlEntry> = new Map();
     private counter: number = 0;
 
     private readonly tokenPattern = /XSNAP:([a-zA-Z0-9_-]+):(\d+)Y/;
@@ -14,10 +21,10 @@ export class ProtectionManager {
     /**
      * Registers content to be protected and returns a token.
      */
-    public protect(namespace: string, content: string): string {
+    public protect(namespace: string, content: string, mode: ProtectedHtmlMode = 'block'): string {
         const id = this.counter++;
         const token = `XSNAP:${namespace}:${id}Y`;
-        this.storage.set(token, content);
+        this.storage.set(token, { content, mode });
         return token;
     }
 
@@ -34,8 +41,12 @@ export class ProtectionManager {
         while (this.tokenPattern.test(currentText) && depth < maxDepth) {
             currentText = currentText.replace(resolvePattern, (fullMatch, pWrappedToken, bareToken) => {
                 const token = pWrappedToken || bareToken;
-                const val = this.storage.get(token);
-                return val !== undefined ? val : fullMatch;
+                const entry = this.storage.get(token);
+                if (!entry) { return fullMatch; }
+                if (pWrappedToken && entry.mode === 'inline') {
+                    return `<p>${entry.content}</p>`;
+                }
+                return entry.content;
             });
             depth++;
         }

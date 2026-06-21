@@ -1,5 +1,5 @@
 import { AffiliationMetadata, AuthorMetadata, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleMetadata, TextRange } from './types';
-import { findCommand, readLatexCommandAt, readLatexGroup, skipLatexWhitespace } from './utils';
+import { findCommand, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
 
 type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providenewcommand' | 'def' | 'gdef' | 'DeclareMathOperator';
 type AuthorExtraction = { authors: AuthorMetadata[]; affiliations: AffiliationMetadata[] };
@@ -202,6 +202,7 @@ interface MetadataCommandCall extends TextRange {
     name: string;
     content: string;
     optionalArg?: string;
+    detailContent?: string;
 }
 
 const AUTHOR_METADATA_COMMANDS = [
@@ -218,6 +219,7 @@ const AUTHOR_METADATA_COMMAND_PATTERN = [...AUTHOR_METADATA_COMMANDS]
     .sort((a, b) => b.length - a.length)
     .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|');
+const EMAIL_PATTERN_SOURCE = '[A-Z0-9._%+-]+@[A-Z0-9.-]*[A-Z0-9]';
 
 /**
  * Metadata command readers for built-in and user-provided extractors.
@@ -247,14 +249,19 @@ function collectAuthorCommandCalls(text: string): MetadataCommandCall[] {
         });
         if (!call) { continue; }
 
+        const detailGroup = name === 'author'
+            ? readLatexGroup(text, call.end)
+            : undefined;
+        const end = detailGroup?.end ?? call.end;
         calls.push({
             name,
             content: call.requiredArgs[0].content.trim(),
             optionalArg: call.optionalArgs[0]?.content.trim(),
+            detailContent: detailGroup?.content.trim(),
             start: call.start,
-            end: call.end
+            end
         });
-        commandRegex.lastIndex = call.end;
+        commandRegex.lastIndex = end;
     }
 
     return calls;
@@ -272,7 +279,7 @@ function normalizeWhitespace(value: string): string {
 }
 
 function stripAuthorMarkers(value: string): string {
-    return normalizeWhitespace(value
+    return normalizeWhitespace(resolveLatexTextTransforms(value)
         .replace(/\\(?:inst|IEEEauthorrefmark|thanks|corref|tnoteref)\s*\{[^{}]*\}/g, '')
         .replace(/^\s*,\s*|\s*,\s*$/g, ''));
 }
@@ -285,7 +292,13 @@ function splitEmails(content: string): string[] {
     const plain = content
         .replace(/\\(?:texttt|email)\s*\{([^{}]*)\}/g, '$1')
         .replace(/^Email:\s*/i, '');
-    return Array.from(new Set(plain.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]*[A-Z0-9]/gi) ?? []));
+    return Array.from(new Set(plain.match(new RegExp(EMAIL_PATTERN_SOURCE, 'gi')) ?? []));
+}
+
+function stripAffiliationEmailText(content: string): string {
+    return content
+        .replace(new RegExp(`(?:^|\\s|\\\\\\\\)\\s*E-?mail\\s*(?:\\\\,\\s*)?\\$?[^\\\\\\n{}]*${EMAIL_PATTERN_SOURCE}[^\\\\\\n{}]*\\$?`, 'gim'), '')
+        .replace(/^\s*Address\s*(?:\\\\|\n|:)?\s*/i, '');
 }
 
 function appendUnique(target: string[], values: readonly string[]): void {
@@ -296,11 +309,15 @@ function appendUnique(target: string[], values: readonly string[]): void {
     }
 }
 
+function appendUniqueValue(target: string[], value: string | undefined): void {
+    if (value) { appendUnique(target, [value]); }
+}
+
 function appendEmailsByPosition(authors: AuthorMetadata[], emails: readonly string[]): boolean {
     const targets = authors.filter(author => author.emails.length === 0);
     if (emails.length <= 1 || targets.length !== emails.length) { return false; }
 
-    targets.forEach((author, index) => appendUnique(author.emails, [emails[index]]));
+    targets.forEach((author, index) => appendUniqueValue(author.emails, emails[index]));
     return true;
 }
 
@@ -318,6 +335,7 @@ const AFFILIATION_KEY_VALUE_REGEX = new RegExp(`\\b(?:${AFFILIATION_FIELD_COMMAN
  */
 function formatAffiliationContent(content: string): string {
     content = content.replace(/(?:\\\\\s*)?\\(?:email|ead)\s*\{[^{}]*\}/g, '');
+    content = stripAffiliationEmailText(content);
     const pieces: string[] = [];
 
     for (const field of AFFILIATION_FIELD_COMMANDS) {
@@ -335,9 +353,9 @@ function formatAffiliationContent(content: string): string {
     return (pieces.length > 0 ? pieces : [content]).map(normalizeWhitespace).filter(Boolean).join(', ');
 }
 
-function addAffiliation(affiliations: AffiliationMetadata[], text: string, preferredId?: string): string {
+function addAffiliation(affiliations: AffiliationMetadata[], text: string, preferredId?: string): string | undefined {
     const cleanText = formatAffiliationContent(text);
-    if (!cleanText) { return preferredId || String(affiliations.length + 1); }
+    if (!cleanText) { return undefined; }
 
     if (preferredId) {
         const existingById = affiliations.find(affiliation => affiliation.id === preferredId);
@@ -387,13 +405,13 @@ function parseInstituteContent(
         authors
             .filter((author, authorIndex) => author.affiliationIds.includes(id) || (parts.length === authors.length && authorIndex === index))
             .forEach(author => {
-                appendUnique(author.affiliationIds, [affiliationId]);
+                appendUniqueValue(author.affiliationIds, affiliationId);
                 appendUnique(author.emails, emails);
             });
     });
 
     if (authors.length > 0 && !authors.some(author => author.affiliationIds.length > 0) && affiliations.length === 1) {
-        authors.forEach(author => appendUnique(author.affiliationIds, [affiliations[0].id]));
+        authors.forEach(author => appendUniqueValue(author.affiliationIds, affiliations[0].id));
     }
 }
 
@@ -421,10 +439,12 @@ function parseIeeeAuthors(calls: MetadataCommandCall[]): AuthorExtraction {
                 });
         } else if (call.name === 'IEEEauthorblockA') {
             const id = addAffiliation(affiliations, call.content);
+            const emails = splitEmails(call.content);
             pendingAuthorIndices.forEach(index => {
                 const author = authors[index];
                 if (author) {
-                    appendUnique(author.affiliationIds, [id]);
+                    appendUniqueValue(author.affiliationIds, id);
+                    appendUnique(author.emails, emails);
                 }
             });
         }
@@ -458,6 +478,7 @@ function parseAuthorCommands(calls: MetadataCommandCall[]): AuthorExtraction {
     let currentAuthor: AuthorMetadata | undefined;
     const plainAuthor = calls.length === 1 && calls[0].name === 'author'
         && !calls[0].optionalArg
+        && !calls[0].detailContent
         && !/\\inst\s*\{/.test(calls[0].content);
 
     if (plainAuthor) {
@@ -476,9 +497,15 @@ function parseAuthorCommands(calls: MetadataCommandCall[]): AuthorExtraction {
             case 'author': {
                 // Handles repeated \author, authblk \author[1], and \author{Alice\inst{1}}.
                 const optionalIds = call.optionalArg ? splitTrimmed(call.optionalArg, /[,;]/) : [];
+                const detailAffiliationId = call.detailContent ? addAffiliation(affiliations, call.detailContent) : undefined;
+                const detailEmails = call.detailContent ? splitEmails(call.detailContent) : [];
                 for (const part of splitTrimmed(call.content, /\\(?:and|And)\b/g)) {
                     const instIds = extractInstIds(part);
-                    const author = addAuthor(authors, part, instIds.length > 0 ? instIds : optionalIds);
+                    const affiliationIds = [
+                        ...(instIds.length > 0 ? instIds : optionalIds),
+                        ...(detailAffiliationId ? [detailAffiliationId] : [])
+                    ];
+                    const author = addAuthor(authors, part, affiliationIds, detailEmails);
                     if (author) { currentAuthor = author; }
                 }
                 break;
@@ -503,7 +530,7 @@ function parseAuthorCommands(calls: MetadataCommandCall[]): AuthorExtraction {
                 }
                 const id = addAffiliation(affiliations, call.content, optionalId || undefined);
                 if (!optionalId && currentAuthor) {
-                    appendUnique(currentAuthor.affiliationIds, [id]);
+                    appendUniqueValue(currentAuthor.affiliationIds, id);
                 }
                 break;
             }
@@ -541,10 +568,14 @@ export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = {
         const title = readMetadataCommand(text, 'title');
         const date = readMetadataCommand(text, 'date');
         const keywords = readMetadataCommand(text, 'keywords') ?? readMetadataCommand(text, 'keyword');
+        const titleMark = readMetadataCommand(text, 'TitleMark');
+        const authorMark = readMetadataCommand(text, 'AuthorMark');
 
         if (title) { ranges.push(title.range); }
         if (date) { ranges.push(date.range); }
         if (keywords) { ranges.push(keywords.range); }
+        if (titleMark) { ranges.push(titleMark.range); }
+        if (authorMark) { ranges.push(authorMark.range); }
 
         const authorCalls = collectAuthorCommandCalls(text);
         authorCalls.forEach(call => ranges.push({ start: call.start, end: call.end }));
@@ -556,6 +587,10 @@ export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = {
             authors,
             affiliations,
             keywords: keywords ? [keywords.content] : [],
+            custom: {
+                ...(titleMark ? { titleMark: titleMark.content } : {}),
+                ...(authorMark ? { authorMark: authorMark.content } : {})
+            },
             ranges
         };
     }
@@ -568,7 +603,7 @@ export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = {
  * blanking definitions that should not render as document body content.
  */
 export function extractMetadata(text: string, metadataExtractors: readonly MetadataExtractor[]): MetadataResult {
-    let cleanedText = text.replace(/(?<!\\)%.*/gm, '%');
+    let cleanedText = stripLatexComments(text, { preserveLines: true });
 
     cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
 

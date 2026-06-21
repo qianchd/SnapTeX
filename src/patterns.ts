@@ -45,8 +45,7 @@ const SPLITTER_IGNORED_ENVS = [
 const SPLITTER_MAJOR_ENVS = [
     ...MATH_ENVS,
     ...FLOAT_ENVS,
-    ...THEOREM_ENVS,
-    'tikzpicture'
+    ...THEOREM_ENVS
 ];
 
 const join = (arr: readonly string[]) => arr.join('|');
@@ -71,6 +70,8 @@ export const R_LABEL = /\\label\s*\{([^}]+)\}/;
 export const R_REF = /\\(ref|eqref)\*?\{([^}]+)\}/g;
 
 export const R_BIBLIOGRAPHY = /\\bibliography\{([^}]+)\}/;
+
+export const R_THEBIBLIOGRAPHY = /\\begin\{thebibliography\}(?:\{[^}]*\})?([\s\S]*?)\\end\{thebibliography\}/i;
 
 export const R_BIBLIOGRAPHY_STYLE = /\\bibliographystyle\{[^}]+\}/g;
 

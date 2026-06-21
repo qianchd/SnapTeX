@@ -3,11 +3,18 @@
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
+
+## [0.6.3] - 2026-06-21
 - **Added**: Introduced an extensible rule registry with `metadataExtractors`, `renderRules`, and `blockDependencyRules`, making custom metadata and dependency-aware rendering rules configurable from `rules.ts`.
+- **Added**: Moved splitter configuration into `rules.ts`, including configurable line budgets, split environments, no-emergency-split environments, protected begin tokens, and emergency split recovery rules.
 - **Added**: Added structured title metadata for `\maketitle`, including multi-author names, emails, affiliations, keywords, and custom metadata fields.
 - **Added**: Supported common author/affiliation metadata styles, including repeated `\author`/`\email`/`\affiliation`, authblk-style `\author[1]`/`\affil[1]`, `\inst`/`\institute`, IEEE author blocks, and ACM/Elsevier-style affiliations.
+- **Added**: Rendered inline `thebibliography` / `\bibitem` references without requiring an external `.bib` file.
+- **Added**: Rendered `\Abstract{...}` / `\Keywords{...}`-style journal commands in addition to environment-based abstracts and keywords.
 - **Changed**: Replaced the old `metadata.fields` path with a structured metadata model and updated maketitle rendering to show authors, email markers, affiliations, and custom editor metadata.
 - **Changed**: Unified metadata-sensitive refreshes with block dependency fingerprints so unchanged source blocks can still update when their declared metadata or citation dependencies change.
+- **Changed**: Improved protected HTML handling for inline LaTeX styles so long colored or old-style styled groups can preserve paragraph breaks without leaking raw tokens.
+- **Changed**: Improved splitter recovery for long TikZ, bibliography, resizebox, color, and old-style text declaration groups while keeping normal command handling in render rules.
 - **Changed**: Tightened renderer payload typing, dependency summaries, block hash handling, and virtualized dirty-block replacement while preserving the fixed full-update threshold.
 - **Changed**: Continued simplifying rendering, table, TikZ, webview, and test code by removing redundant helpers, stale tests, and low-value implementation-detail assertions.
 

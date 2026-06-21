@@ -8,7 +8,7 @@ import { SmartRenderer } from '../renderer';
 import { defineBlockDependencyRule, defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
 import { optimizeTikzPreviewSource } from '../tikz-preview-optimizer';
 import type { RuleRegistry } from '../types';
-import { normalizeUri, stableHash } from '../utils';
+import { normalizeUri, stableHash, stripLatexComments } from '../utils';
 import {
     createDocument,
     MemoryFileProvider,
@@ -68,6 +68,31 @@ suite('LatexDocument source mapping', () => {
         assert.equal(result.bibEntries.get('smith2024')?.fields.title, 'Paper');
         assert.equal(result.contentStartLineOffset, 0);
         assert.equal(result.blockSpans.length, 1);
+    });
+
+    test('loads inline thebibliography bibitems', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'See \\citep{rivera2027}.',
+                '\\begin{thebibliography}{99}',
+                '\\bibitem{rivera2027}',
+                'Rivera, A., \\& Quinn, B. (2027). Synthetic inline references. \\textit{Journal of Preview Fixtures}.',
+                '%\\bibitem{hidden2025}',
+                '%Hidden, A. (2015).',
+                '\\end{thebibliography}',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+
+        const result = await doc.parse(mainUri);
+
+        assert.ok(result.bibEntries.has('rivera2027'));
+        assert.ok(!result.bibEntries.has('hidden2025'));
+        assert.equal(result.bibEntries.get('rivera2027')?.type, 'bibitem');
+        assert.equal(result.bibEntries.get('rivera2027')?.fields.year, '2027');
     });
 
     test('stores parsed blocks as body spans and hashes', async () => {
@@ -133,16 +158,7 @@ suite('LatexDocument source mapping', () => {
         doc.applyResult(result);
         const html = new SmartRenderer().render(doc).htmls?.join('') ?? '';
         const blocks = resultBlockTexts(result);
-        const withoutComments = (text: string) => text
-            .split(/\r?\n/)
-            .map(line => {
-                const commentStart = line.search(/(?<!\\)%/);
-                return commentStart === -1 ? line : line.substring(0, commentStart);
-            })
-            .join('\n')
-            .trim();
-
-        assert.ok(blocks.every(block => withoutComments(block).length > 0));
+        assert.ok(blocks.every(block => stripLatexComments(block, { preserveLines: true }).trim().length > 0));
         assert.ok(blocks.some(block => block.includes('Notice that this paragraph')));
         assert.ok(blocks.some(block => block.includes('In Eq.~\\eqref{eq:real}')));
         assert.doesNotMatch(blocks.join('\n'), /eq:commented/);
@@ -427,6 +443,70 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /bbb|ccc|ddd|<div class="latex-block"[^>]*>\s*<\/div>/);
     });
 
+    test('renders journal-style Abstract and Keywords commands', () => {
+        const html = renderBlocks([
+            [
+                '\\Abstract{This paper studies robust sparse CCA for heavy-tailed data.}',
+                '',
+                '\\Keywords{Canonical correlation analysis, Elliptical distributions, High dimensional data}'
+            ].join('\n')
+        ]);
+
+        assert.match(html, /<div class="latex-abstract"><span class="latex-abstract-title">Abstract<\/span>/);
+        assert.match(html, /robust sparse CCA/);
+        assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> Canonical correlation analysis, Elliptical distributions, High dimensional data<\/div>/);
+        assert.doesNotMatch(html, /\\Abstract|\\Keywords|OOABSTRACT|OOKEYWORDS/);
+    });
+
+    test('preserves paragraphs inside whole-block color groups', () => {
+        const html = renderBlocks([
+            [
+                '{\\color{blue}',
+                'First synthetic paragraph.',
+                '',
+                'Second synthetic paragraph.',
+                '}'
+            ].join('\n')
+        ]);
+
+        assert.doesNotMatch(html, /class="latex-block"[^>]*style="color: blue;"/);
+        assert.match(html, /<p><span style="color: blue">First synthetic paragraph\.<\/span><\/p>\s*<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
+        assert.doesNotMatch(html, /\\color\{blue\}/);
+    });
+
+    test('preserves paragraphs inside color groups after section headings', () => {
+        const html = renderBlocks([
+            [
+                '\\section{Introduction}\\label{sec:intro}',
+                '{\\color{blue}',
+                'First synthetic paragraph with \\citep{alpha2026}.',
+                '',
+                'Second synthetic paragraph.',
+                '}'
+            ].join('\n')
+        ]);
+
+        assert.match(html, /<h2>/);
+        assert.match(html, /<span style="color: blue">First synthetic paragraph with \(\[alpha2026\?\]\)\.<\/span>[\s\S]*<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
+        assert.doesNotMatch(html, /\\color\{blue\}/);
+        assert.doesNotMatch(html, /<p>(?:(?!<\/p>)[\s\S])*<p><span style="color: blue">First synthetic paragraph/);
+    });
+
+    test('continues the current paragraph when a color group starts inline', () => {
+        const html = renderBlocks([
+            [
+                'Lead sentence before color. {\\color{blue}Inline continuation with \\citep{alpha2026}.',
+                '',
+                'Second colored paragraph.',
+                '}'
+            ].join('\n')
+        ]);
+
+        assert.match(html, /<p>Lead sentence before color\. <span style="color: blue">Inline continuation with \(\[alpha2026\?\]\)\.<\/span><\/p>/);
+        assert.match(html, /<\/p>\s*<p><span style="color: blue">Second colored paragraph\.<\/span><\/p>/);
+        assert.doesNotMatch(html, /\\color\{blue\}/);
+    });
+
     test('returns patch payloads for small localized edits', () => {
         const renderer = new SmartRenderer();
         renderer.render(createDocument(['A', 'B', 'C']));
@@ -542,7 +622,7 @@ suite('SmartRenderer', () => {
     test('escapes maketitle metadata while preserving LaTeX formatting', () => {
         const renderer = new SmartRenderer();
         const payload = renderer.render(createDocument(['\\maketitle'], {
-            title: '<img src=x onerror=alert(1)> \\textbf{Safe} $x<y$',
+            title: '<img src=x onerror=alert(1)> \\textbf{Safe} $x<y$\\footnote{Hidden note}',
             authors: [{ name: 'Ada & Bob', emails: [], affiliationIds: [] }],
             date: '2026 <script>alert(1)</script>'
         }));
@@ -555,6 +635,7 @@ suite('SmartRenderer', () => {
         assert.match(html, /2026 &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
         assert.match(html, /<strong>Safe<\/strong>/);
         assert.match(html, /class="katex"/);
+        assert.doesNotMatch(html, /Hidden note/);
     });
 
     test('renders structured maketitle emails next to their authors', () => {
