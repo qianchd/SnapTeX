@@ -472,8 +472,10 @@ export function toRoman(num: number, uppercase: boolean = false): string {
  */
 function applyStyleToTexList(startTag: string, endTag: string, content: string, protectHtml?: (html: string) => string): string {
     const wrap = (innerText: string) => {
-        const html = `${startTag}${escapeHtml(innerText)}${endTag}`;
-        return protectHtml ? protectHtml(html) : html;
+        if (!protectHtml) {
+            return `${startTag}${escapeHtml(innerText)}${endTag}`;
+        }
+        return `${protectHtml(startTag)}${innerText}${protectHtml(endTag)}`;
     };
     const lines = content.split(/\r?\n/);
     if (lines.some(line => /^\s*([-*+]|\d+\.)\s/.test(line))) {

@@ -400,14 +400,29 @@ suite('SmartRenderer', () => {
                 '{\\color{blue}',
                 'First synthetic paragraph.',
                 '',
+                '\\begin{proof}',
+                'Proof body.',
+                '\\end{proof}',
+                '',
+                '\\begin{itemize}',
+                '\\item[Key] Labeled item.',
+                '\\item Plain item.',
+                '\\end{itemize}',
+                '',
                 'Second synthetic paragraph.',
                 '}'
             ].join('\n')
         ]);
 
         assert.doesNotMatch(blockHtml, /class="latex-block"[^>]*style="color: blue;"/);
-        assert.match(blockHtml, /<p><span style="color: blue">First synthetic paragraph\.<\/span><\/p>\s*<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
+        assert.match(blockHtml, /<p><span style="color: blue">First synthetic paragraph\.<\/span><\/p>/);
+        assert.match(blockHtml, /<p><span style="color: blue">Second synthetic paragraph\.<\/span><\/p>/);
+        assert.match(blockHtml, /<span style="color: blue"><span class="no-indent-marker"><\/span><strong>Proof\.<\/strong>[\s\S]*Proof body\.[\s\S]*QED<\/span>/);
+        assert.match(blockHtml, /<li>\s*<p><span style="color: blue"><strong>Key<\/strong>\s+Labeled item\.<\/span><\/p>\s*<\/li>/);
+        assert.match(blockHtml, /<li>\s*<p><span style="color: blue">Plain item\.<\/span><\/p>\s*<\/li>/);
         assert.doesNotMatch(blockHtml, /\\color\{blue\}/);
+        assert.doesNotMatch(blockHtml, /\*\*Proof\.\*\*/);
+        assert.doesNotMatch(blockHtml, /\*\*Key\*\*/);
 
         const inlineHtml = renderBlocks([
             [
@@ -582,13 +597,13 @@ suite('SmartRenderer', () => {
 
     test('escapes raw source HTML while preserving generated preview HTML', () => {
         const html = renderBlocks([
-            'Plain <img src=x onerror=alert(1)> and \\textbf{bold}.',
+            'Plain <img src=x onerror=alert(1)> and \\textbf{bold <script>alert(2)</script>}.',
             '\\begin{theorem}<script>alert(1)</script> and \\emph{safe}.\\end{theorem}'
         ]);
 
         assert.doesNotMatch(html, /<img|<script/i);
         assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-        assert.match(html, /<strong>bold<\/strong>/);
+        assert.match(html, /<strong>bold &lt;script&gt;alert\(2\)&lt;\/script&gt;<\/strong>/);
         assert.match(html, /class="latex-theorem"/);
         assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
         assert.match(html, /<em>safe<\/em>/);
