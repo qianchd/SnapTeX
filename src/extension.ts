@@ -49,6 +49,22 @@ function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number)
     return clean.length >= 5 ? clean.substring(0, 40) : "";
 }
 
+function findNearestAnchorLine(document: vscode.TextDocument, anchors: string[], startLine: number, endLine: number, estimatedLine: number): number | undefined {
+    for (const anchor of new Set(anchors)) {
+        const normalizedAnchor = anchor.replace(/\s+/g, ' ').trim();
+        if (normalizedAnchor.length <= 3) { continue; }
+        let closestLine: number | undefined;
+        for (let line = startLine; line <= endLine; line++) {
+            if (!document.lineAt(line).text.replace(/\s+/g, ' ').includes(normalizedAnchor)) { continue; }
+            if (closestLine === undefined || Math.abs(line - estimatedLine) < Math.abs(closestLine - estimatedLine)) {
+                closestLine = line;
+            }
+        }
+        if (closestLine !== undefined) { return closestLine; }
+    }
+    return undefined;
+}
+
 async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Range) {
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     for (let i = 0; i < FLASH_ANIMATION_STEPS.length; i++) {
@@ -182,7 +198,7 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchor: string, viewRatio: number = 0.5) => {
+        vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchors: string[] = [], viewRatio: number = 0.5) => {
             suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
             const sourceLoc = renderer.getSourceSyncData(index, ratio);
@@ -205,13 +221,10 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.window.showTextDocument(targetEditor.document, { viewColumn: targetEditor.viewColumn });
             }
 
-            if (anchor && anchor.length > 3) {
-                const range = new vscode.Range(Math.max(0, targetLine - 5), 0, Math.min(targetEditor.document.lineCount, targetLine + 10), 0);
-                const text = targetEditor.document.getText(range);
-                const idx = text.indexOf(anchor);
-                if (idx !== -1) {
-                    targetLine = Math.max(0, targetLine - 5) + text.substring(0, idx).split('\n').length - 1;
-                }
+            if (anchors.length > 0) {
+                const startLine = Math.max(0, sourceLoc.blockRange?.startLine ?? targetLine - 5);
+                const endLine = Math.min(targetEditor.document.lineCount - 1, sourceLoc.blockRange?.endLine ?? targetLine + 10);
+                targetLine = findNearestAnchorLine(targetEditor.document, anchors, startLine, endLine, targetLine) ?? targetLine;
             }
 
             const range = targetEditor.document.lineAt(Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1))).range;

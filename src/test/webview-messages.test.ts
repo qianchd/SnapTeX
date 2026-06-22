@@ -10,7 +10,7 @@ suite('Webview message contracts', () => {
             command: WebviewToExtensionCommand.RevealLine,
             index: 2,
             ratio: 0.5,
-            anchor: 'word',
+            anchors: ['nearby context word', 'word'],
             viewRatio: 0.4
         }), true);
         assert.equal(isWebviewToExtensionMessage({

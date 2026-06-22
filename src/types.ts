@@ -7,6 +7,7 @@ export interface BibEntry {
 export interface SourceLocation {
     file: string;
     line: number;
+    blockRange?: { startLine: number; endLine: number };
 }
 
 export interface TextRange {

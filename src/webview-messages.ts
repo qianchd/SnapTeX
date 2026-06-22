@@ -30,7 +30,7 @@ export interface RevealLineMessage {
     command: typeof WebviewToExtensionCommand.RevealLine;
     index: number;
     ratio: number;
-    anchor?: string;
+    anchors?: string[];
     viewRatio?: number;
 }
 
@@ -126,7 +126,7 @@ export function isWebviewToExtensionMessage(value: unknown): value is WebviewToE
         case WebviewToExtensionCommand.RevealLine:
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number'
-                && isOptionalType(value.anchor, 'string')
+                && (value.anchors === undefined || (Array.isArray(value.anchors) && value.anchors.every(anchor => typeof anchor === 'string')))
                 && isOptionalType(value.viewRatio, 'number');
         case WebviewToExtensionCommand.SyncScroll:
             return typeof value.index === 'number'

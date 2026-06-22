@@ -978,23 +978,37 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                     const rect = block.getBoundingClientRect();
                     const relativeY = event.clientY - rect.top;
                     const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
-                    let anchorText = "";
+                    let anchors = [];
                     const selection = window.getSelection();
                     if (selection && selection.toString().trim().length > 0) {
-                        anchorText = selection.toString().trim();
+                        const selectedText = selection.toString().replace(/\s+/g, ' ').trim();
+                        anchors = [selectedText, selectedText.split(' ')[0]];
                     } else if (document.caretRangeFromPoint) {
                         const range = document.caretRangeFromPoint(event.clientX, event.clientY);
                         if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
-                            const text = range.startContainer.textContent;
+                            const text = range.startContainer.textContent || '';
                             const offset = range.startOffset;
-                            let start = offset, end = offset;
-                            while (start > 0 && /\S/.test(text[start - 1])) start--;
-                            while (end < text.length && /\S/.test(text[end])) end++;
-                            if (end > start) { anchorText = text.substring(start, end); }
+                            const words = Array.from(text.matchAll(/\S+/g));
+                            const wordIndex = words.findIndex(word => {
+                                const start = word.index;
+                                return offset >= start && offset <= start + word[0].length;
+                            });
+                            if (wordIndex >= 0) {
+                                const clickedWord = words[wordIndex][0];
+                                const context = words
+                                    .slice(Math.max(0, wordIndex - 2), wordIndex + 3)
+                                    .map(word => word[0])
+                                    .join(' ');
+                                anchors = [context, clickedWord];
+                            }
                         }
                     }
                     vscode.postMessage({
-                        command: WebviewToExtensionCommand.RevealLine, index: parseInt(index), ratio: ratio, anchor: anchorText, viewRatio: event.clientY / window.innerHeight
+                        command: WebviewToExtensionCommand.RevealLine,
+                        index: parseInt(index),
+                        ratio,
+                        anchors,
+                        viewRatio: event.clientY / window.innerHeight
                     });
                 }
             }

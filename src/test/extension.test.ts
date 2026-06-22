@@ -45,6 +45,7 @@ suite('LatexDocument source mapping', () => {
         assert.ok(original);
         assert.equal(normalizeUri(original.file), normalizeUri(sectionUri));
         assert.equal(original.line, 0);
+
     });
 
     test('loads bibliography entries relative to the root document', async () => {
@@ -94,6 +95,12 @@ suite('LatexDocument source mapping', () => {
         assert.equal(doc.getBlockText(1)?.trim(), 'Second paragraph with \\label{p:two}.');
         assert.equal(doc.getBlockText(2), undefined);
         assert.equal(doc.getBlockHash(0), result.blockHashes[0]);
+
+        const renderer = new SmartRenderer();
+        renderer.render(doc);
+        const sourceSync = renderer.getSourceSyncData(1, 0.5);
+        assert.ok(sourceSync?.blockRange);
+        assert.ok(sourceSync.blockRange.startLine <= sourceSync.line && sourceSync.blockRange.endLine >= sourceSync.line);
 
         doc.releaseTextContent();
         assert.equal(doc.getBlockCount(), 0);

@@ -432,7 +432,24 @@ export class SmartRenderer {
     public getSourceSyncData(blockIndex: number, ratio: number): SourceLocation | null {
         if (!this.documentView) {return null;}
         const flatLine = this.getLineByBlockIndex(blockIndex, ratio);
-        return this.documentView.getOriginalPosition(flatLine) || null;
+        const sourceLoc = this.documentView.getOriginalPosition(flatLine);
+        if (!sourceLoc) { return null; }
+
+        const block = this.blockMap[blockIndex];
+        if (!block) { return sourceLoc; }
+
+        const startLoc = this.documentView.getOriginalPosition(block.start);
+        const endLoc = this.documentView.getOriginalPosition(block.start + Math.max(0, block.count - 1));
+        if (startLoc && endLoc && startLoc.file === sourceLoc.file && endLoc.file === sourceLoc.file) {
+            return {
+                ...sourceLoc,
+                blockRange: {
+                    startLine: Math.min(startLoc.line, endLoc.line),
+                    endLine: Math.max(startLoc.line, endLoc.line)
+                }
+            };
+        }
+        return sourceLoc;
     }
 
     private getBlockIndexByLine(line: number): { index: number; ratio: number } {

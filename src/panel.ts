@@ -234,7 +234,7 @@ export class TexPreviewPanel {
                 this._sourceUri,
                 message.index,
                 message.ratio,
-                message.anchor,
+                message.anchors,
                 message.viewRatio
             );
         }
