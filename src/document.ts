@@ -168,7 +168,7 @@ export class LatexDocument implements RenderDocumentView {
     }
 
     private hasRenderableContent(text: string): boolean {
-        const withoutListStructure = stripLatexComments(text, { preserveLines: true })
+        const withoutListStructure = stripLatexComments(text)
             .replace(/\\(?:begin|end)\{(?:itemize|enumerate)\}/g, '')
             .replace(/\\item(?:\[[^\]]*\])?/g, '');
 

@@ -603,7 +603,7 @@ export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = {
  * blanking definitions that should not render as document body content.
  */
 export function extractMetadata(text: string, metadataExtractors: readonly MetadataExtractor[]): MetadataResult {
-    let cleanedText = stripLatexComments(text, { preserveLines: true });
+    let cleanedText = stripLatexComments(text, { mode: 'mask' });
 
     cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
 

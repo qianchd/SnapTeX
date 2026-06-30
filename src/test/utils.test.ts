@@ -72,12 +72,16 @@ suite('LaTeX style utilities', () => {
         assert.ok(bracketGroup);
         assert.equal(bracketGroup.content, 'short [nested]');
         assert.equal(bracketGroup.end, 18);
+
+        const groupAfterComment = readLatexGroup('{first} % comment\n {second}', 7);
+        assert.ok(groupAfterComment);
+        assert.equal(groupAfterComment.content, 'second');
     });
 
     test('strips LaTeX comments for rendering or metadata scanning', () => {
         const source = 'aaa % inline\n% whole line\nbbb \\% literal';
         assert.equal(stripLatexComments(source), 'aaa bbb \\% literal');
-        assert.equal(stripLatexComments(source, { preserveLines: true }), 'aaa \n\nbbb \\% literal');
+        assert.equal(stripLatexComments(source, { mode: 'mask' }), 'aaa %\n%\nbbb \\% literal');
     });
 
     test('reads commands at the requested position without searching ahead', () => {

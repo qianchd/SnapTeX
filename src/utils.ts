@@ -231,19 +231,31 @@ interface LatexBraceScanResult {
 }
 
 /**
- * Advances across whitespace before a lightweight LaTeX token read.
+ * Advances across whitespace and TeX line comments before a token read.
  */
 export function skipLatexWhitespace(text: string, index: number): number {
-    while (index < text.length && /\s/.test(text[index])) { index++; }
+    while (index < text.length) {
+        while (index < text.length && /\s/.test(text[index])) { index++; }
+        if (text[index] !== '%') { break; }
+
+        const newlineIndex = text.indexOf('\n', index);
+        if (newlineIndex === -1) { return text.length; }
+        index = newlineIndex + 1;
+    }
     return index;
 }
 
+type LatexCommentStripMode = 'remove' | 'mask';
+
 /**
- * Removes LaTeX line comments, optionally preserving line breaks for source maps.
+ * Handles LaTeX line comments for either display cleanup or source-stable scans.
+ *
+ * remove: delete comments for preview text.
+ * mask: keep line numbers and TeX comment semantics by shortening comments to "%".
  */
-export function stripLatexComments(text: string, options: { preserveLines?: boolean } = {}): string {
-    if (options.preserveLines) {
-        return text.replace(/(?<!\\)%.*$/gm, '');
+export function stripLatexComments(text: string, options: { mode?: LatexCommentStripMode } = {}): string {
+    if (options.mode === 'mask') {
+        return text.replace(/(?<!\\)%.*$/gm, '%');
     }
     return text
         .replace(/^[ \t]*%.*(?:\r?\n|$)/gm, '')

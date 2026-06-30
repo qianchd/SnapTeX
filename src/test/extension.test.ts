@@ -139,7 +139,7 @@ suite('LatexDocument source mapping', () => {
         doc.applyResult(result);
         const html = new SmartRenderer().render(doc).htmls?.join('') ?? '';
         const blocks = resultBlockTexts(result);
-        assert.ok(blocks.every(block => stripLatexComments(block, { preserveLines: true }).trim().length > 0));
+        assert.ok(blocks.every(block => stripLatexComments(block).trim().length > 0));
         assert.ok(blocks.some(block => block.includes('Notice that this paragraph')));
         assert.ok(blocks.some(block => block.includes('In Eq.~\\eqref{eq:real}')));
         assert.doesNotMatch(blocks.join('\n'), /eq:commented/);

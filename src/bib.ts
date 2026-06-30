@@ -24,7 +24,7 @@ export class BibTexParser {
             let block = this.extractBalancedBlock(content, startIndex);
             if (!block) { continue; }
 
-            block = stripLatexComments(block.replace(/\r\n/g, '\n').replace(/^\s*\/\/\s+.*/gm, ''), { preserveLines: true });
+            block = stripLatexComments(block.replace(/\r\n/g, '\n').replace(/^\s*\/\/\s+.*/gm, ''));
             const fields = this.parseFieldsRobust(block);
             if (Object.keys(fields).length > 0) {
                 entries.set(key, { key, type, fields });
@@ -35,7 +35,7 @@ export class BibTexParser {
 
     public static parseBibItems(content: string): Map<string, BibEntry> {
         const entries = new Map<string, BibEntry>();
-        const cleanContent = stripLatexComments(content.replace(/\r\n/g, '\n'), { preserveLines: true });
+        const cleanContent = stripLatexComments(content.replace(/\r\n/g, '\n'));
         const envRegex = new RegExp(R_THEBIBLIOGRAPHY, 'gi');
         let match: RegExpExecArray | null;
         let foundEnvironment = false;

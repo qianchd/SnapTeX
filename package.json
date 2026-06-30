@@ -11,7 +11,7 @@
     "url": "https://github.com/qianchd/snaptex.git"
   },
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "^1.80.0"
   },
   "categories": [
     "Visualization",
@@ -156,7 +156,7 @@
     "@types/markdown-it": "^14.1.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.19.17",
-    "@types/vscode": "^1.107.0",
+    "@types/vscode": "^1.80.0",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.27.1",

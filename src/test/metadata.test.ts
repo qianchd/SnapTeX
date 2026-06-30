@@ -45,6 +45,21 @@ suite('Metadata extraction', () => {
         assert.doesNotMatch(result.cleanedText, /\\usetikzlibrary/);
     });
 
+    test('masks comments in extracted TikZ globals without creating TeX paragraphs', () => {
+        const result = extract([
+            '\\tikzset{',
+            '  dot/.style={circle},',
+            '  % comment inside pgfkeys',
+            '  pics/right angle/.append style={',
+            '    /tikz/draw',
+            '  }',
+            '}'
+        ].join('\n'));
+
+        assert.match(result.data.tikzGlobal, /\n\s*%\n\s*pics\/right angle/);
+        assert.doesNotMatch(result.data.tikzGlobal, /\n\s*\n\s*pics\/right angle/);
+    });
+
     test('keeps plain author blocks as one author entry', () => {
         const result = extract([
             '\\author{Alice Smith\\\\University A\\\\\\texttt{alice@a.edu}\\and Bob Jones\\\\University B}',
