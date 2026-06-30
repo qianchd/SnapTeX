@@ -4,6 +4,12 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+## [0.6.4] - 2026-06-30
+- **Changed**: More stable styling, e.g., `{\it ...}`, `{\color{blue} ...}`.
+- **Changed**: stabilize bidirectional preview synchronization.
+- **Changed**: Support old vscode version.
+- **fixed**: stripLatexComments breaks lines in preamble field.
+
 ## [0.6.3] - 2026-06-21
 - **Added**: Introduced an extensible rule registry with `metadataExtractors`, `renderRules`, and `blockDependencyRules`, making custom metadata and dependency-aware rendering rules configurable from `rules.ts`.
 - **Added**: Moved splitter configuration into `rules.ts`, including configurable line budgets, split environments, no-emergency-split environments, protected begin tokens, and emergency split recovery rules.

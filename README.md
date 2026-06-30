@@ -106,6 +106,12 @@ SnapTeX is designed to be "zero-config." It works out of the box with no externa
 * Pdfjs: for import pdf-type figures.
 * Tikzjax: [Jim Fowler's original](https://github.com/kisonecat/tikzjax); [Glenn Rice's fork](https://github.com/drgrice1/tikzjax);
 
+## For Developers and AI-assistants
+
+* If you plan to add new features or rendering rules, please try your best to add them in the [@rules.ts](src/rules.ts) file. SnapTeX defines sufficient APIs for the extension possibilities.
+
+* We plan to support user-defined rules in the future version.
+
 ---
 
 **Enjoy writing LaTeX with SnapTeX!**
