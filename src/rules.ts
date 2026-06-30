@@ -185,6 +185,51 @@ function keywordsSentinel(content: string): string {
     return trimmed ? `\n\nOOKEYWORDS_STARTOO${trimmed}OOKEYWORDS_ENDOO\n\n` : '';
 }
 
+const ENUMERATE_LABEL_MARKER = 'SNAP_ENUM_LABEL:';
+
+function encodeEnumerateLabel(label: string): string {
+    return `${ENUMERATE_LABEL_MARKER}${encodeURIComponent(label)}`;
+}
+
+function decodeEnumerateLabel(label: string): string {
+    return label.startsWith(ENUMERATE_LABEL_MARKER)
+        ? decodeURIComponent(label.slice(ENUMERATE_LABEL_MARKER.length))
+        : label;
+}
+
+function indexToLetters(index: number): string {
+    let value = index;
+    let result = '';
+    while (value > 0) {
+        value--;
+        result = String.fromCharCode(97 + (value % 26)) + result;
+        value = Math.floor(value / 26);
+    }
+    return result;
+}
+
+function replaceCounterToken(template: string, token: '1' | 'i' | 'a', value: string): string | undefined {
+    if (token === '1') {
+        return template.includes('1') ? template.replace(/1/, value) : undefined;
+    }
+    const pattern = new RegExp(`(^|[^A-Za-z])${token}([^A-Za-z]|$)`);
+    return pattern.test(template)
+        ? template.replace(pattern, (_match, before, after) => `${before}${value}${after}`)
+        : undefined;
+}
+
+function formatEnumerateLabel(template: string, index: number): string {
+    return replaceCounterToken(template, '1', String(index))
+        ?? replaceCounterToken(template, 'i', toRoman(index, false))
+        ?? replaceCounterToken(template, 'a', indexToLetters(index))
+        ?? template;
+}
+
+function renderListLabel(label: string, renderer: RenderContext): string {
+    const withMath = label.replace(/\$((?:\\.|[^\\$])*)\$/g, (_match, content) => renderMath(content, false, renderer));
+    return escapeHtml(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
+}
+
 function renderBibliographyItems(items: Array<{ key: string; entry?: BibEntry }>, renderer: RenderContext): string {
     let html = `<h2 class="latex-bibliography-header">References</h2><div class="latex-bibliography-list">`;
     items.forEach(({ key, entry }) => {
@@ -299,6 +344,14 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 return result + (isFollowedByText ? renderer.protectHtml('raw', '<span class="no-indent-marker"></span>') : '');
             });
         }
+    },
+
+    {
+        name: 'enumerate_label_markers',
+        priority: 45,
+        apply: text => text.replace(/\\begin\{enumerate\}\s*\[([^\]]*)\]/g, (_match, label) => {
+            return `\\begin{enumerate}[${encodeEnumerateLabel(label)}]`;
+        })
     },
 
     {
@@ -476,23 +529,21 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
         name: 'theorems_and_proofs',
         priority: 150,
         apply: (text, renderer: RenderContext) => {
-            const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?([\\s\\S]*?)\\\\end\\{\\1\\}`, 'gi');
+            const thmBeginRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?`, 'gi');
 
-            text = text.replace(thmRegex, (_match, envName, optArg, content) => {
+            text = text.replace(thmBeginRegex, (_match, envName, optArg) => {
                 const displayName = getTheoremDisplayName(envName);
-
                 let header = `<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span>`;
-
                 if (optArg) {
                     header += `</strong>&nbsp;(${escapeHtml(optArg)}).</span>&nbsp; `;
                 } else {
                     header += `.</strong></span>&nbsp; `;
                 }
-
-                let body = resolveLatexStyles(content.trim(), createStyleHtmlProtector(renderer));
-                body = escapeHtml(body);
-                return `\n\n${renderer.protectHtml('thm', `<div class="latex-theorem">${header}${body}</div>`)}\n\n`;
+                return `\n\n${renderer.protectHtml('thm-open', `<div class="latex-theorem">${header}`)}\n\n`;
             });
+
+            const thmEndRegex = new RegExp(`\\\\end\\{(${REGEX_STR.THEOREM_ENVS})\\}`, 'gi');
+            text = text.replace(thmEndRegex, () => `\n\n${renderer.protectHtml('thm-close', '</div>')}\n\n`);
 
             text = text.replace(/\\begin\{proof\}(?:\[(.*?)\])?/gi, (_match, optArg) => {
                 const title = optArg ? `Proof (${escapeHtml(optArg)}).` : `Proof.`;
@@ -584,11 +635,15 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
         name: 'lists',
         priority: 180,
-        apply: (text) => {
-            const listStack: string[] = [];
-            return text.replace(/(\\begin\{(?:itemize|enumerate)\})|(\\end\{(?:itemize|enumerate)\})|(\\item(?:\[(.*?)\])?)/g, (match, pBegin, pEnd, pItem, pLabel) => {
+        apply: (text, renderer: RenderContext) => {
+            const listStack: Array<{ type: 'ul' | 'ol'; labelTemplate?: string; itemIndex: number }> = [];
+            return text.replace(/(\\begin\{(itemize|enumerate)\}(?:\[([^\]]*)\])?)|(\\end\{(?:itemize|enumerate)\})|(\\item(?:\[(.*?)\])?)/g, (match, pBegin, envName, beginLabel, pEnd, pItem, pLabel) => {
                 if (pBegin) {
-                    listStack.push(match.includes('itemize') ? 'ul' : 'ol');
+                    listStack.push({
+                        type: envName === 'itemize' ? 'ul' : 'ol',
+                        labelTemplate: beginLabel ? decodeEnumerateLabel(beginLabel) : undefined,
+                        itemIndex: 0
+                    });
                     return '\n\n';
                 } else if (pEnd) {
                     listStack.pop();
@@ -596,9 +651,13 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 } else if (pItem) {
                     const depth = listStack.length;
                     const indent = '  '.repeat(Math.max(0, depth - 1));
-                    const currentType = listStack[listStack.length - 1] || 'ul';
-                    if (pLabel) { return `\n${indent}- **${pLabel}** `; }
-                    return `\n${indent}${currentType === 'ul' ? '-' : '1.'} `;
+                    const current = listStack[listStack.length - 1] || { type: 'ul' as const, itemIndex: 0 };
+                    current.itemIndex++;
+                    const rawLabel = pLabel
+                        ? pLabel
+                        : current.labelTemplate ? formatEnumerateLabel(current.labelTemplate, current.itemIndex) : '';
+                    if (rawLabel) { return `\n${indent}- **${renderListLabel(rawLabel, renderer)}** `; }
+                    return `\n${indent}${current.type === 'ul' ? '-' : '1.'} `;
                 }
                 return match;
             });

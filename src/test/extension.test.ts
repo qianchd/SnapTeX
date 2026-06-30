@@ -639,6 +639,70 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /Assum <span class="sn-cnt"/);
     });
 
+    test('renders enumerate lists nested inside theorem environments', () => {
+        const html = renderBlocks([[
+            '\\begin{definition}[Separability of an interval]',
+            'For the intervals $(\\tau_l,\\tau_r] \\in G$, we make the following definitions,',
+            '\\begin{enumerate}[$G_1:$]',
+            '\\item $(\\tau_l,\\tau_r] \\in (0, n]$ is separable.',
+            '\\item $(\\tau_l,\\tau_r] \\in (0, n]$ is left-separable.',
+            '\\end{enumerate}',
+            '\\end{definition}'
+        ].join('\n')]);
+
+        assert.match(html, /class="latex-theorem"/);
+        assert.match(html, /<ul>/);
+        assert.equal((html.match(/<li>/g) ?? []).length, 2);
+        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>/);
+        assert.doesNotMatch(html, /\\begin\{enumerate\}|\\item|SNAP_ENUM_LABEL/);
+    });
+
+    test('lets block rules render content nested inside theorem environments', () => {
+        const html = renderBlocks([[
+            '\\begin{definition}[With table]',
+            'Before table.',
+            '\\begin{table}',
+            '\\begin{tabular}{cc}',
+            '\\toprule',
+            'A & B \\\\',
+            '\\bottomrule',
+            '\\end{tabular}',
+            '\\end{table}',
+            'After table.',
+            '\\end{definition}'
+        ].join('\n')]);
+
+        assert.match(html, /class="latex-theorem"[\s\S]*Before table\./);
+        assert.match(html, /class="latex-theorem"[\s\S]*class="latex-table"[\s\S]*After table\./);
+        assert.doesNotMatch(html, /\\begin\{table\}|\\begin\{tabular\}/);
+    });
+
+    test('renders common enumerate label templates', () => {
+        const html = renderBlocks([[
+            '\\begin{enumerate}[(a)]',
+            '\\item Alpha.',
+            '\\item Beta.',
+            '\\end{enumerate}',
+            '',
+            '\\begin{enumerate}[(i)]',
+            '\\item One.',
+            '\\item Two.',
+            '\\end{enumerate}',
+            '',
+            '\\begin{enumerate}[$H_a$]',
+            '\\item Gamma.',
+            '\\item Delta.',
+            '\\end{enumerate}'
+        ].join('\n')]);
+
+        assert.match(html, /<strong>\(a\)<\/strong>\s+Alpha/);
+        assert.match(html, /<strong>\(b\)<\/strong>\s+Beta/);
+        assert.match(html, /<strong>\(i\)<\/strong>\s+One/);
+        assert.match(html, /<strong>\(ii\)<\/strong>\s+Two/);
+        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>\s+Gamma/);
+        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>\s+Delta/);
+    });
+
     test('does not trust KaTeX HTML-producing commands by default', () => {
         const html = renderBlocks(['$\\href{javascript:alert(1)}{bad}$']);
 
@@ -852,6 +916,50 @@ suite('SmartRenderer', () => {
 
         assert.equal(html.match(/<\/script>/gi)?.length ?? 0, 1);
         assert.match(html, /<\\\/script><img src=x onerror=alert\(1\)>/);
+    });
+
+    test('builds TikZJax input from parsed documents without comment paragraphs', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\documentclass{article}',
+                '\\usepackage{tikz}',
+                '\\definecolor{tikzfontcolor}{HTML}{000000}',
+                '\\usetikzlibrary{calc, shapes.geometric, positioning, decorations.pathreplacing, patterns, arrows.meta, backgrounds}',
+                '\\tikzset{',
+                '  dot/.style={circle, fill=tikzfontcolor, inner sep=1pt, outer sep=0pt},',
+                '  % style for every pics named "right angle"',
+                '  pics/right angle/.append style={',
+                '    /tikz/draw, /tikz/angle radius=5pt',
+                '  }',
+                '}',
+                '\\newcommand{\\htau}{\\hat{\\tau}}',
+                '\\begin{document}',
+                '\\begin{figure}[H]',
+                '\\centering',
+                '\\resizebox{\\textwidth}{!}{',
+                '\\begin{tikzpicture}',
+                '\\path coordinate (A) at (0, 0) coordinate (E) at (15, 0);',
+                '\\path coordinate (B) at ($ (A)!.25!(E) $);',
+                '\\draw[line width=.5pt] (A) -- (B) -- (E);',
+                '\\node[dot, label = {$\\htau_{a}$}] at (A) {};',
+                '\\node[dot, label = {$\\tau_{h}^\\ast$}] at (B) {};',
+                '\\end{tikzpicture}}',
+                '\\end{figure}',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        doc.applyResult(await doc.parse(mainUri));
+
+        const html = new SmartRenderer().render(doc).htmls?.join('\n') ?? '';
+        const script = html.match(/<script type="text\/snaptex-tikz"[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? '';
+
+        assert.match(script, /\\usetikzlibrary\{calc\}/);
+        assert.match(script, /\\def\\htau\{\\hat\{\\tau\}\}/);
+        assert.match(script, /%\r?\n[^\S\r\n]*pics\/right angle/);
+        assert.doesNotMatch(script, /%\r?\n[^\S\r\n]*\r?\n[^\S\r\n]*pics\/right angle/);
+        assert.doesNotMatch(script, /\\resizebox|\\begin\{figure\}/);
     });
 
     test('injects only TikZ libraries used by each picture', () => {

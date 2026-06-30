@@ -3,6 +3,8 @@
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
+- **Added**: Supported common `enumerate` optional label templates such as `[(a)]`, `[(i)]`, `[$G_1$]`, and `[$H_a$]` by replacing `1`, `i`, or `a` counters inside the label template.
+- **Fixed**: Render theorem-like environments as containers so nested lists, tables, and other block rules can render inside definitions, theorems, lemmas, and related environments.
 
 ## [0.6.4] - 2026-06-30
 - **Changed**: More stable styling, e.g., `{\it ...}`, `{\color{blue} ...}`.
