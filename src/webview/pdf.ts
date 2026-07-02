@@ -7,6 +7,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
     const pdfJsUri = document.body.dataset.pdfJsUri || '';
     const pdfWorkerUri = document.body.dataset.pdfWorkerUri || '';
     let pdfjsLib = null;
+    let pdfRuntimeReady = null;
 
     /**
      * Handles PDF.js loading and canvas rendering inside the webview.
@@ -14,11 +15,16 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
      * The extension host validates paths and returns webview-safe URIs; this
      * module only consumes those URIs and paints the first page into canvases.
      */
-    const pdfRuntimeReady = import(pdfJsUri).then(module => {
-        pdfjsLib = module;
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUri;
-        return setupPdfWorker();
-    });
+    function ensurePdfRuntimeReady() {
+        if (!pdfRuntimeReady) {
+            pdfRuntimeReady = import(pdfJsUri).then(module => {
+                pdfjsLib = module;
+                pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUri;
+                return setupPdfWorker();
+            });
+        }
+        return pdfRuntimeReady;
+    }
 
     async function setupPdfWorker() {
         if (!('Worker' in window) || !('fetch' in window) || !('Blob' in window) || !URL.createObjectURL) {
@@ -112,7 +118,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         if (!canvas) return;
 
         try {
-            await pdfRuntimeReady;
+            await ensurePdfRuntimeReady();
             await renderPdfDocument(canvas, pdfjsLib.getDocument({
                 url: pdfUri,
                 disableRange: true,

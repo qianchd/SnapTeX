@@ -149,7 +149,11 @@ export class SmartRenderer {
 
     private createRenderBlockAccess(doc: RenderDocumentView, blockCount: number) {
         const textCache = new Map<number, string>();
+        let textCacheEnabled = true;
         const getText = (index: number): string => {
+            if (!textCacheEnabled) {
+                return doc.getBlockText(index) ?? '';
+            }
             if (!textCache.has(index)) {
                 const rawText = doc.getBlockText(index) ?? '';
                 textCache.set(index, rawText);
@@ -163,6 +167,10 @@ export class SmartRenderer {
 
         return {
             getText,
+            setTextCacheEnabled: (enabled: boolean) => {
+                textCacheEnabled = enabled;
+                if (!enabled) { textCache.clear(); }
+            },
             hashBlocks: Array.from({ length: blockCount }, (_unused, index) => ({ hash: getHash(index) })),
             provider: {
                 getBlockCount: () => blockCount,
@@ -172,11 +180,11 @@ export class SmartRenderer {
         };
     }
 
-    private buildBlockMeta(text: string, index: number): BlockSnapshot {
+    private buildBlockMeta(text: string, index: number, hash = stableHash(text)): BlockSnapshot {
         const map = this.blockMap[index];
         return {
             index,
-            hash: stableHash(text),
+            hash,
             line: map?.start ?? 0,
             lineCount: map?.count ?? text.split(/\r?\n/).length,
             anchors: Array.from(new Set(extractLatexLabelNames(text))),
@@ -195,8 +203,13 @@ export class SmartRenderer {
         };
     }
 
-    private buildNextBlockSnapshots(blockCount: number, diff: DiffResult, getBlockText: (index: number) => string): BlockSnapshot[] {
-        const createBlockMeta = (index: number) => this.buildBlockMeta(getBlockText(index), index);
+    private buildNextBlockSnapshots(
+        blockCount: number,
+        diff: DiffResult,
+        getBlockText: (index: number) => string,
+        hashes: readonly { hash: string }[]
+    ): BlockSnapshot[] {
+        const createBlockMeta = (index: number) => this.buildBlockMeta(getBlockText(index), index, hashes[index]?.hash);
         return DiffEngine.rebuildArray(
             this.lastBlocks,
             blockCount,
@@ -346,15 +359,17 @@ export class SmartRenderer {
             count: span.lineCount
         }));
 
+        const diff = DiffEngine.compute(this.lastBlocks, blockAccess.hashBlocks);
+
+        const isFullUpdate = this.lastBlocks.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
+        blockAccess.setTextCacheEnabled(!(isFullUpdate && options.deferFullHtml));
+
         const scanResult = this.scanner.scan(blockAccess.provider);
 
         const numberingData = this.buildNumberingPayload(scanResult);
 
-        const diff = DiffEngine.compute(this.lastBlocks, blockAccess.hashBlocks);
-
-        const isFullUpdate = this.lastBlocks.length === 0 || diff.insertCount > 50 || diff.deleteCount > 50;
         let payload: RenderPayload;
-        let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, blockAccess.getText);
+        let blockMeta = this.buildNextBlockSnapshots(blockCount, diff, blockAccess.getText, blockAccess.hashBlocks);
         const nextCitedKeys = this.collectCitedKeys(blockMeta);
         this._citedKeys = nextCitedKeys;
         blockMeta = this.applyBibliographyAnchors(blockMeta, nextCitedKeys);

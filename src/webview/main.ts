@@ -1,13 +1,13 @@
 // @ts-nocheck
 /* eslint-disable curly */
 import { CoalescingTaskScheduler } from './scheduler';
-import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml } from './virtualization';
+import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
 const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
     window.snaptexVsCodeApi = vscode;
-    const PDF_RENDER_MARGIN = 1200;
-    const PDF_RELEASE_MARGIN = 3600;
+    const PDF_RENDER_MARGIN_VH = 130;
+    const PDF_RELEASE_MARGIN_VH = 380;
     window.pdfReqQueue = [];
     window.renderPdfToCanvas = function(path, canvasId) {
         window.pdfReqQueue.push({ path, canvasId });
@@ -430,7 +430,19 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             this.pendingBlockHtmlRequests = new Map();
             this.pdfObserver = null;
             this.pdfRenderTimer = null;
+            this.deferHeavyPreviewWork = false;
+            this.initialExpansionFrame = null;
             this.virtualization = new BlockVirtualizationController(this.contentRoot);
+            this.debugStats = {
+                blockHtmlRequestsSent: 0,
+                blockHtmlResponses: 0,
+                blockHtmlChars: 0,
+                maxBlockHtmlChars: 0,
+                blockMounts: 0,
+                tikzBatchRuns: 0,
+                tikzActivatedScripts: 0,
+                pdfRenderRuns: 0
+            };
             window.snaptexPreviewController = this;
             this.tikzRenderScheduler = new CoalescingTaskScheduler({
                 debounceMs: TIKZ_RENDER_DEBOUNCE_MS,
@@ -499,15 +511,19 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         }
 
         handleUpdate(payload) {
+            this.logPayloadStats(payload);
             if (payload.numbering) {
                 this.currentNumbering = payload.numbering;
             }
             if (payload.type === 'full') {
                 this.state = 'RENDERING';
+                this.deferHeavyPreviewWork = this.isFirstLoad && !!payload.blocks && this.virtualization.isEnabled();
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
                 if (payload.blocks && this.virtualization.isEnabled()) {
-                    this.smartFullUpdateFromBlockMetadata(payload.blocks);
+                    this.smartFullUpdateFromBlockMetadata(payload.blocks, {
+                        phase: this.deferHeavyPreviewWork ? 'initial' : 'normal'
+                    });
                 } else if (payload.htmls) {
                     this.smartFullUpdateFromBlocks(payload.htmls, payload.preserveUnchangedBlocks !== false);
                 }
@@ -524,22 +540,86 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             if (payload.numbering) {
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
             }
-            this.schedulePendingPdfRender();
+            if (!this.deferHeavyPreviewWork) {
+                this.scheduleHeavyPreviewWork();
+            }
+        }
 
-            this.triggerTikzRendering();
+        formatDebugMb(bytes) {
+            return Math.round(bytes / 1024 / 1024 * 10) / 10;
+        }
+
+        sumStringChars(values) {
+            return values.reduce((sum, value) => sum + (typeof value === 'string' ? value.length : 0), 0);
+        }
+
+        getPayloadStats(payload) {
+            const htmls = Array.isArray(payload.htmls) ? payload.htmls : [];
+            const dirtyBlocks = payload.dirtyBlocks ? Object.values(payload.dirtyBlocks) : [];
+            return {
+                type: payload.type,
+                payloadKind: payload.blocks ? `${payload.type}:blocks` : `${payload.type}:htmls`,
+                blocks: payload.blocks ? payload.blocks.length : 0,
+                htmls: htmls.length,
+                htmlChars: this.sumStringChars(htmls),
+                dirtyBlocks: dirtyBlocks.length,
+                dirtyBlockChars: this.sumStringChars(dirtyBlocks),
+                numberingBlocks: payload.numbering?.blocks ? Object.keys(payload.numbering.blocks).length : 0,
+                labels: payload.numbering?.labels ? Object.keys(payload.numbering.labels).length : 0
+            };
+        }
+
+        logPayloadStats(payload) {
+            if (!this.config.debugMemory || !payload) return;
+            console.log('[SnapTeX][webview-payload]', this.getPayloadStats(payload));
+        }
+
+        getCanvasStats() {
+            const canvases = Array.from(document.querySelectorAll('canvas'));
+            let pixels = 0;
+            canvases.forEach(canvas => {
+                pixels += (canvas.width || 0) * (canvas.height || 0);
+            });
+            return {
+                canvasCount: canvases.length,
+                canvasPixels: pixels,
+                canvasApproxMB: this.formatDebugMb(pixels * 4)
+            };
+        }
+
+        getBrowserHeapStats() {
+            const memory = performance && performance.memory;
+            if (!memory) return {};
+            return {
+                jsHeapUsedMB: this.formatDebugMb(memory.usedJSHeapSize || 0),
+                jsHeapTotalMB: this.formatDebugMb(memory.totalJSHeapSize || 0),
+                jsHeapLimitMB: this.formatDebugMb(memory.jsHeapSizeLimit || 0)
+            };
         }
 
         logDomStats(label) {
             if (!this.config.debugMemory) return;
+            const canvasStats = this.getCanvasStats();
             console.log('[SnapTeX][webview]', label, {
+                virtualMode: this.virtualization.isEnabled(),
                 blocks: document.querySelectorAll('.latex-block').length,
                 shells: document.querySelectorAll('.latex-block-shell').length,
                 mountedShells: document.querySelectorAll('.latex-block-shell[data-mounted="true"]').length,
+                contentChildren: this.contentRoot.children.length,
+                ...this.virtualization.getCacheStats(),
+                pendingBlockHtmlRequests: this.pendingBlockHtmlRequests.size,
+                katexNodes: document.querySelectorAll('.katex').length,
+                mathmlNodes: document.querySelectorAll('math').length,
+                latexTables: document.querySelectorAll('.latex-table').length,
+                tikzContainers: document.querySelectorAll('.tikz-container').length,
                 pdfCanvases: document.querySelectorAll('canvas[data-req-path]').length,
                 renderedPdfs: document.querySelectorAll('canvas[data-rendered="true"]').length,
-                tikzScripts: document.querySelectorAll('script[type="text/tikz"]').length,
+                tikzScripts: document.querySelectorAll('script[type="text/tikz"], script[type="text/snaptex-tikz"]').length,
                 svgCount: document.querySelectorAll('svg').length,
-                scrollHeight: document.documentElement.scrollHeight
+                ...canvasStats,
+                scrollHeight: document.documentElement.scrollHeight,
+                debugStats: { ...this.debugStats },
+                ...this.getBrowserHeapStats()
             });
         }
 
@@ -596,6 +676,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
         onVirtualBlockMounted(block) {
             if (!block) return;
+            this.debugStats.blockMounts += 1;
 
             const shell = block.closest('.latex-block-shell');
             this.attachStaleTikzPreviews(block, this.consumeStaleTikzPreviewsFromShell(shell));
@@ -603,8 +684,9 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             if (this.currentNumbering) {
                 requestAnimationFrame(() => this.applyNumbering(this.currentNumbering));
             }
-            this.schedulePendingPdfRender();
-            this.triggerTikzRendering();
+            if (!this.deferHeavyPreviewWork) {
+                this.scheduleHeavyPreviewWork();
+            }
         }
 
         updateScrollDirection() {
@@ -642,7 +724,8 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 shell => this.requestVirtualBlockHtml(shell),
                 {
                     direction: this.scrollDirection,
-                    allowUnmount: options.allowUnmount !== false
+                    allowUnmount: options.allowUnmount !== false,
+                    phase: options.phase || 'normal'
                 }
             );
         }
@@ -816,6 +899,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 forceMount: requestOptions.forceMount === true,
                 callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
             });
+            this.debugStats.blockHtmlRequestsSent += 1;
             vscode.postMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash });
             return true;
         }
@@ -837,6 +921,10 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
             const index = typeof message.index === 'number' ? message.index : pending?.index;
             const hash = message.hash || pending?.hash || '';
+            const htmlChars = message.html.length;
+            this.debugStats.blockHtmlResponses += 1;
+            this.debugStats.blockHtmlChars += htmlChars;
+            this.debugStats.maxBlockHtmlChars = Math.max(this.debugStats.maxBlockHtmlChars, htmlChars);
             const shell = this.virtualization.storeBlockHtml(index, hash, message.html);
             if (shell) {
                 shell.removeAttribute('data-html-request-id');
@@ -905,42 +993,78 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         async runTikzRenderBatch() {
             if (!this.contentRoot.querySelector(TIKZ_SCRIPT_SELECTOR) || window.tikzJaxFailed) return;
 
-            await window.ensureTikzJaxLoaded();
             const containers = this.getPendingTikzContainers(this.contentRoot);
             if (containers.length === 0 || window.tikzJaxFailed) return;
+            await window.ensureTikzJaxLoaded();
 
             if (this.config.debugMemory) {
                 console.log('[SnapTeX] Loading TikZJax for TikZ content...');
             }
-            window.watchPendingTikzContainers(this.contentRoot);
-            const activated = window.activatePendingTikzScripts(this.contentRoot);
+            window.watchPendingTikzContainers(this.contentRoot, containers);
+            const activated = window.activatePendingTikzScripts(this.contentRoot, containers);
             if (activated === 0) return;
+            this.debugStats.tikzBatchRuns += 1;
+            this.debugStats.tikzActivatedScripts += activated;
+            this.logDomStats('after tikz activation');
 
             await this.waitForTikzBatch(containers);
+            this.logDomStats('after tikz batch');
         }
 
         triggerTikzRendering() {
             const pendingTikz = this.contentRoot.querySelector(TIKZ_SCRIPT_SELECTOR);
             if (!pendingTikz || window.tikzJaxFailed) return;
 
-            window.ensureTikzJaxLoaded().catch(() => {});
             this.tikzRenderScheduler.request();
         }
 
+        scheduleHeavyPreviewWork() {
+            this.schedulePendingPdfRender();
+            this.triggerTikzRendering();
+        }
+
+        scheduleInitialVirtualExpansion(includeHeavyWork) {
+            if (this.initialExpansionFrame) {
+                cancelAnimationFrame(this.initialExpansionFrame);
+            }
+
+            this.initialExpansionFrame = requestAnimationFrame(() => {
+                this.initialExpansionFrame = requestAnimationFrame(() => {
+                    this.initialExpansionFrame = null;
+                    this.deferHeavyPreviewWork = true;
+                    try {
+                        this.updateVirtualizedBlocks({ allowUnmount: false, phase: 'normal' });
+                    } finally {
+                        this.deferHeavyPreviewWork = false;
+                    }
+                    this.logDomStats('after initial virtual expansion');
+                    if (includeHeavyWork) {
+                        this.scheduleHeavyPreviewWork();
+                    }
+                });
+            });
+        }
+
         onRenderComplete(savedScrollState) {
+            const wasFirstLoad = this.isFirstLoad;
+            const wasDeferringHeavyWork = this.deferHeavyPreviewWork;
             this.state = 'IDLE';
             document.body.classList.remove('preload-mode');
-            let scrollHandled = false;
             if (this.pendingScroll) {
                 this.executeScroll(this.pendingScroll);
                 this.pendingScroll = null;
-                scrollHandled = true;
             } else if (!this.isFirstLoad) {
                 this.restoreScrollState(savedScrollState);
-                scrollHandled = true;
             }
             this.isFirstLoad = false;
-            this.schedulePendingPdfRender();
+            this.deferHeavyPreviewWork = false;
+            if (wasFirstLoad && this.virtualization.isEnabled()) {
+                this.scheduleInitialVirtualExpansion(wasDeferringHeavyWork);
+            } else if (wasDeferringHeavyWork) {
+                this.scheduleHeavyPreviewWork();
+            } else {
+                this.schedulePendingPdfRender();
+            }
         }
 
         handleScrollCommand(data) {
@@ -1092,11 +1216,12 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             this.smartFullUpdateElements(newElements, preserveUnchangedBlocks);
         }
 
-        smartFullUpdateFromBlockMetadata(blocks) {
+        smartFullUpdateFromBlockMetadata(blocks, options = {}) {
             this.virtualization.replaceContentWithBlockMetadata(
                 blocks,
                 block => this.onVirtualBlockMounted(block),
-                shell => this.requestVirtualBlockHtml(shell)
+                shell => this.requestVirtualBlockHtml(shell),
+                options
             );
         }
 
@@ -1239,6 +1364,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
         initPdfObserver() {
             if (!('IntersectionObserver' in window)) return;
+            const rootMargin = `${viewportHeightToPixels(PDF_RENDER_MARGIN_VH)}px`;
             this.pdfObserver = new IntersectionObserver(entries => {
                 entries.forEach(entry => {
                     if (!entry.isIntersecting) return;
@@ -1247,7 +1373,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                     this.pdfObserver.unobserve(canvas);
                     canvas.removeAttribute('data-pdf-observed');
                 });
-            }, { rootMargin: '1200px' });
+            }, { rootMargin });
         }
 
         requestPdfCanvas(canvas) {
@@ -1295,13 +1421,16 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         }
 
         renderPendingPdfs() {
+            this.debugStats.pdfRenderRuns += 1;
             const pdfCanvases = document.querySelectorAll('canvas[data-req-path]');
+            const renderMargin = viewportHeightToPixels(PDF_RENDER_MARGIN_VH);
+            const releaseMargin = viewportHeightToPixels(PDF_RELEASE_MARGIN_VH);
             pdfCanvases.forEach(canvas => {
-                if (!isElementWithinViewportMargins(canvas, PDF_RELEASE_MARGIN)) {
+                if (!isElementWithinViewportMargins(canvas, releaseMargin)) {
                     this.releasePdfCanvasBitmap(canvas);
                 }
                 if (canvas.getAttribute('data-rendered') || canvas.getAttribute('data-requested')) return;
-                if (isElementWithinViewportMargins(canvas, PDF_RENDER_MARGIN)) {
+                if (isElementWithinViewportMargins(canvas, renderMargin)) {
                     this.requestPdfCanvas(canvas);
                     return;
                 }

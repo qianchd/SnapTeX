@@ -48,6 +48,71 @@ suite('LatexDocument source mapping', () => {
 
     });
 
+    test('maps nested included source files back to their original lines', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const sectionUri = vscode.Uri.file('/project/sections/section1.tex');
+        const nestedUri = vscode.Uri.file('/project/sections/nested/detail.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\documentclass{article}',
+                '\\begin{document}',
+                'Root before.',
+                '\\input{sections/section1}',
+                'Root after.',
+                '\\end{document}'
+            ].join('\n')],
+            [normalizeUri(sectionUri), [
+                'Section before.',
+                '\\input{nested/detail}',
+                'Section after.'
+            ].join('\n')],
+            [normalizeUri(nestedUri), [
+                'Nested first line.',
+                '',
+                'Nested target line.'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+
+        const result = await doc.parse(mainUri);
+        doc.applyResult(result);
+
+        assert.deepStrictEqual(resultBlockTexts(result).map(block => block.trim()), [
+            'Root before.\nSection before.\nNested first line.',
+            'Nested target line.\nSection after.\nRoot after.'
+        ]);
+
+        const flatLine = doc.getFlattenedLine(nestedUri.toString(), 2);
+        assert.notEqual(flatLine, -1);
+        const original = doc.getOriginalPosition(flatLine);
+        assert.ok(original);
+        assert.equal(normalizeUri(original.file), normalizeUri(nestedUri));
+        assert.equal(original.line, 2);
+    });
+
+    test('reports parse trace milestones for memory diagnostics', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'A paragraph.',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        const labels: string[] = [];
+
+        await doc.parse(mainUri, undefined, { trace: label => labels.push(label) });
+
+        assert.deepStrictEqual(labels, [
+            'after flatten',
+            'after metadata',
+            'after body slice',
+            'after split',
+            'after block hashes'
+        ]);
+    });
+
     test('loads bibliography entries relative to the root document', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const bibUri = vscode.Uri.file('/project/refs.bib');
@@ -552,11 +617,12 @@ suite('SmartRenderer', () => {
 
     test('can defer full HTML and render block HTML on demand', () => {
         const renderer = new SmartRenderer();
-        const payload = renderer.render(createDocument([
+        const doc = createDocument([
             'See Figure~\\ref{fig:a} and \\cite{smith2024}.',
             '\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}',
             '\\bibliography{refs}'
-        ]), { deferFullHtml: true });
+        ]);
+        const payload = renderer.render(doc, { deferFullHtml: true });
 
         assert.equal(payload.type, 'full');
         assert.equal(payload.htmls, undefined);
@@ -565,6 +631,7 @@ suite('SmartRenderer', () => {
         assert.equal(payload.blocks?.[1].hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));
         assert.deepStrictEqual(payload.blocks?.[1].anchors, ['fig:a']);
         assert.ok(payload.blocks?.[2].anchors.includes('ref-smith2024'));
+        doc.releaseTextContent();
         const block = renderer.renderBlockByIndex(1);
         assert.match(block?.html ?? '', /data-index="1"/);
         assert.equal(block?.hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));

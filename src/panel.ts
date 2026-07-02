@@ -3,6 +3,7 @@ import { SmartRenderer } from './renderer';
 import { LatexDocument } from './document';
 import { VscodeFileProvider } from './file-provider';
 import { getBasename, normalizeUri } from './utils';
+import type { RenderPayload } from './types';
 import {
     assertNever,
     ExtensionToWebviewCommand,
@@ -15,7 +16,7 @@ import {
 } from './webview-messages';
 
 function logHostMemory(label: string) {
-    if (!vscode.workspace.getConfiguration('snaptex').get<boolean>('debugMemory', false)) {
+    if (!isDebugMemoryEnabled()) {
         return;
     }
 
@@ -31,6 +32,34 @@ function logHostMemory(label: string) {
         heapUsed: mb(memory.heapUsed),
         heapTotal: mb(memory.heapTotal),
         external: mb(memory.external)
+    });
+}
+
+function isDebugMemoryEnabled(): boolean {
+    return vscode.workspace.getConfiguration('snaptex').get<boolean>('debugMemory', false);
+}
+
+function sumStringChars(values: readonly string[]): number {
+    return values.reduce((sum, value) => sum + value.length, 0);
+}
+
+function logPayloadStats(label: string, payload: RenderPayload) {
+    if (!isDebugMemoryEnabled()) {
+        return;
+    }
+
+    const htmls = payload.htmls ?? [];
+    const dirtyBlocks = payload.dirtyBlocks ? Object.values(payload.dirtyBlocks) : [];
+    console.log(`[SnapTeX][payload] ${label}`, {
+        type: payload.type,
+        payloadKind: payload.blocks ? `${payload.type}:blocks` : `${payload.type}:htmls`,
+        blocks: payload.blocks?.length ?? 0,
+        htmls: htmls.length,
+        htmlChars: sumStringChars(htmls),
+        dirtyBlocks: dirtyBlocks.length,
+        dirtyBlockChars: sumStringChars(dirtyBlocks),
+        numberingBlocks: Object.keys(payload.numbering.blocks).length,
+        labels: Object.keys(payload.numbering.labels).length
     });
 }
 
@@ -417,18 +446,25 @@ export class TexPreviewPanel {
         this.postWebviewConfig();
 
         const virtualizeBlocks = getVirtualMode();
-        const parseResult = await this._currentDocument.parse(this._sourceUri, text);
+        const parseResult = await this._currentDocument.parse(this._sourceUri, text, { trace: logHostMemory });
+        text = "";
         logHostMemory('after parse');
 
         this._currentDocument.applyResult(parseResult);
         const payload = this._renderer.render(this._currentDocument, { deferFullHtml: virtualizeBlocks });
         logHostMemory('after render');
         this._currentDocument.releaseTextContent();
+        parseResult.bodyText = "";
+        parseResult.blockSpans = [];
+        parseResult.blockHashes = [];
 
         if (payload.htmls) {
-            payload.htmls = payload.htmls.map(h => this.fixHtmlPaths(h));
+            for (let index = 0; index < payload.htmls.length; index++) {
+                payload.htmls[index] = this.fixHtmlPaths(payload.htmls[index]);
+            }
         }
         logHostMemory('after fixPaths');
+        logPayloadStats('before postMessage', payload);
         this.postMessage({ command: ExtensionToWebviewCommand.Update, payload });
         logHostMemory('after postMessage');
     }

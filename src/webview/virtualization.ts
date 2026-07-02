@@ -1,11 +1,16 @@
 // @ts-nocheck
 /* eslint-disable curly */
 
-const BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN = 5200;
-const BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN = 5200;
-const BLOCK_VIRTUALIZATION_RETAIN_MARGIN = 14000;
+const BLOCK_VIRTUALIZATION_INITIAL_PRELOAD_MARGIN_VH = 140;
+const BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN_VH = 350;
+const BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN_VH = 350;
+const BLOCK_VIRTUALIZATION_RETAIN_MARGIN_VH = 800;
 export const BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS = 700;
 const BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT = 180;
+
+export function viewportHeightToPixels(valueInVh) {
+    return Math.max(0, Math.round(window.innerHeight * valueInVh / 100));
+}
 
 export function parseFirstElementFromHtml(html) {
     const tempDiv = document.createElement('div');
@@ -180,7 +185,6 @@ export class BlockVirtualizationController {
             shell.setAttribute('data-mounted', 'false');
             this.lockShellHeight(shell, height);
             this.setShellAnchors(shell, anchors);
-            this.observeShell(shell);
             return shell;
         }
 
@@ -217,6 +221,18 @@ export class BlockVirtualizationController {
             this.pruneCaches(activeKeys);
         }
 
+        getCacheStats() {
+            let htmlChars = 0;
+            for (const html of this.htmlCache.values()) {
+                htmlChars += html.length;
+            }
+            return {
+                heightCacheEntries: this.heightCache.size,
+                htmlCacheEntries: this.htmlCache.size,
+                htmlCacheChars: htmlChars
+            };
+        }
+
         getShells() {
             return Array.from(this.contentRoot.querySelectorAll('.latex-block-shell'));
         }
@@ -225,19 +241,25 @@ export class BlockVirtualizationController {
             return shell ? shell.querySelector(':scope > .latex-block') : null;
         }
 
-        getMountMargins(direction) {
+        getMountMargins(direction, phase = 'normal') {
+            const baseMargin = phase === 'initial'
+                ? viewportHeightToPixels(BLOCK_VIRTUALIZATION_INITIAL_PRELOAD_MARGIN_VH)
+                : viewportHeightToPixels(BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN_VH);
+            const directionalMargin = phase === 'initial'
+                ? 0
+                : viewportHeightToPixels(BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN_VH);
             return {
-                above: BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN + (direction === 'up' ? BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN : 0),
-                below: BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN + (direction === 'down' ? BLOCK_VIRTUALIZATION_DIRECTIONAL_PRELOAD_MARGIN : 0)
+                above: baseMargin + (direction === 'up' ? directionalMargin : 0),
+                below: baseMargin + (direction === 'down' ? directionalMargin : 0)
             };
         }
 
-        isShellInMountRange(shell, direction = 'none') {
-            return isElementWithinViewportMargins(shell, this.getMountMargins(direction));
+        isShellInMountRange(shell, direction = 'none', phase = 'normal') {
+            return isElementWithinViewportMargins(shell, this.getMountMargins(direction, phase));
         }
 
         isShellInRetainRange(shell) {
-            return isElementWithinViewportMargins(shell, BLOCK_VIRTUALIZATION_RETAIN_MARGIN);
+            return isElementWithinViewportMargins(shell, viewportHeightToPixels(BLOCK_VIRTUALIZATION_RETAIN_MARGIN_VH));
         }
 
         mountShell(shell, onMissingHtml) {
@@ -263,6 +285,7 @@ export class BlockVirtualizationController {
             }
             shell.setAttribute('data-mounted', 'true');
             this.setShellAnchors(shell, this.getAnchorIdsFromBlock(block));
+            this.observeShell(shell);
             this.refreshMountedShellHeight(shell);
             return block;
         }
@@ -277,6 +300,7 @@ export class BlockVirtualizationController {
             block.remove();
             this.lockShellHeight(shell, height);
             shell.setAttribute('data-mounted', 'false');
+            this.unobserveShell(shell);
         }
 
         updateMountedShells(onMount, onMissingHtml, options = {}) {
@@ -284,9 +308,10 @@ export class BlockVirtualizationController {
 
             const mounted = [];
             const direction = options.direction || 'none';
+            const phase = options.phase || 'normal';
             const allowUnmount = options.allowUnmount !== false;
             this.getShells().forEach(shell => {
-                if (this.isShellInMountRange(shell, direction)) {
+                if (this.isShellInMountRange(shell, direction, phase)) {
                     const block = this.mountShell(shell, onMissingHtml);
                     if (block) {
                         mounted.push(block);
@@ -301,14 +326,13 @@ export class BlockVirtualizationController {
             return mounted;
         }
 
-        replaceContentWithShellElements(shells, onMount, onMissingHtml) {
+        replaceContentWithShellElements(shells, onMount, onMissingHtml, options = {}) {
             const fragment = document.createDocumentFragment();
             shells.forEach(shell => fragment.appendChild(shell));
             this.pruneCaches(shells.map(shell => this.getBlockKey(shell)));
             this.disconnectShellObservers();
-            shells.forEach(shell => this.observeShell(shell));
             this.contentRoot.replaceChildren(fragment);
-            this.updateMountedShells(onMount, onMissingHtml);
+            this.updateMountedShells(onMount, onMissingHtml, options);
         }
 
         replaceContentWithShells(blocks, onMount) {
@@ -318,11 +342,12 @@ export class BlockVirtualizationController {
             );
         }
 
-        replaceContentWithBlockMetadata(blocks, onMount, onMissingHtml) {
+        replaceContentWithBlockMetadata(blocks, onMount, onMissingHtml, options = {}) {
             this.replaceContentWithShellElements(
                 blocks.map(meta => this.createShellForMeta(meta)),
                 onMount,
-                onMissingHtml
+                onMissingHtml,
+                options
             );
         }
 

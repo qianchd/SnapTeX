@@ -2,6 +2,8 @@
 /* eslint-disable curly */
 
 window.tikzJaxJsUri = document.body.dataset.tikzJaxJsUri || '';
+    window.tikzJaxCssUri = document.body.dataset.tikzJaxCssUri || '';
+    window.tikzJaxCssLoadPromise = null;
     window.tikzJaxLoadPromise = null;
     window.tikzJaxFailed = false;
 const TIKZ_ACTIVE_RENDER_TIMEOUT_MS = 60000;
@@ -31,9 +33,32 @@ export function hasRenderedTikz(container) {
         container.dispatchEvent(new CustomEvent('snaptex-tikz-settled', { bubbles: true }));
     }
 
+    function ensureTikzJaxCssLoaded() {
+        if (window.tikzJaxCssLoadPromise) {
+            return window.tikzJaxCssLoadPromise;
+        }
+        if (!window.tikzJaxCssUri || document.getElementById('tikzjax-fonts-css')) {
+            return Promise.resolve();
+        }
+
+        window.tikzJaxCssLoadPromise = new Promise(resolve => {
+            const link = document.createElement('link');
+            link.id = 'tikzjax-fonts-css';
+            link.rel = 'stylesheet';
+            link.href = window.tikzJaxCssUri;
+            link.onload = () => resolve();
+            link.onerror = () => {
+                console.warn('[SnapTeX] Failed to load TikZJax fonts CSS; continuing with fallback fonts.');
+                resolve();
+            };
+            document.head.appendChild(link);
+        });
+        return window.tikzJaxCssLoadPromise;
+    }
+
     window.ensureTikzJaxLoaded = function() {
         if (window.TikzJax) {
-            return Promise.resolve();
+            return ensureTikzJaxCssLoaded();
         }
         if (window.tikzJaxFailed) {
             return Promise.reject(new Error('TikZJax is disabled after a previous load failure.'));
@@ -42,7 +67,7 @@ export function hasRenderedTikz(container) {
             return window.tikzJaxLoadPromise;
         }
 
-        window.tikzJaxLoadPromise = new Promise((resolve, reject) => {
+        window.tikzJaxLoadPromise = ensureTikzJaxCssLoaded().then(() => new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.src = window.tikzJaxJsUri;
             script.id = 'tikzjax-script';
@@ -54,7 +79,7 @@ export function hasRenderedTikz(container) {
                 reject(new Error('Failed to load TikZJax.'));
             };
             document.head.appendChild(script);
-        });
+        }));
 
         return window.tikzJaxLoadPromise;
     };
@@ -113,16 +138,19 @@ export function setTikzContainerState(container, state) {
         });
     };
 
-    window.watchPendingTikzContainers = function(root = document) {
-        root.querySelectorAll('.tikz-container').forEach(container => {
+    window.watchPendingTikzContainers = function(root = document, containers = null) {
+        const targets = containers || Array.from(root.querySelectorAll('.tikz-container'));
+        targets.forEach(container => {
             if (hasRenderedTikz(container) || container.getAttribute('data-tikz-state') === 'failed') return;
 
             setTikzContainerState(container, 'queued');
         });
     };
 
-    window.activatePendingTikzScripts = function(root = document) {
-        const pendingScripts = Array.from(root.querySelectorAll(TIKZ_PENDING_SCRIPT_SELECTOR));
+    window.activatePendingTikzScripts = function(root = document, containers = null) {
+        const pendingScripts = containers
+            ? containers.flatMap(container => Array.from(container.querySelectorAll(TIKZ_PENDING_SCRIPT_SELECTOR)))
+            : Array.from(root.querySelectorAll(TIKZ_PENDING_SCRIPT_SELECTOR));
         pendingScripts.forEach(script => {
             if (!script.isConnected) return;
 

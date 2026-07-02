@@ -70,7 +70,14 @@ export class LatexCounterScanner {
             return textCache.get(index) ?? '';
         };
 
-        const hashes = Array.from({ length: count }, (_unused, index) => provider.getBlockHash(index) ?? stableHash(getText(index)));
+        const hashes = Array.from({ length: count }, (_unused, index) => {
+            const hash = provider.getBlockHash(index);
+            if (hash !== undefined) { return hash; }
+
+            const text = provider.getBlockText(index) ?? '';
+            textCache.set(index, text);
+            return stableHash(text);
+        });
         const previous = this.summaries;
         const currentHashes = hashes.map(hash => ({ hash }));
         const diff = DiffEngine.compute(previous, currentHashes);

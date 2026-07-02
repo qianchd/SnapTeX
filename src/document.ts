@@ -25,9 +25,14 @@ interface BibCacheEntry {
     entries: Map<string, BibEntry>;
 }
 
-interface IndexedLine {
-    text: string;
-    line: number;
+interface FlattenOutput {
+    textLines: string[];
+    fileIndices: number[];
+    lines: number[];
+}
+
+interface ParseOptions {
+    trace?: (label: string) => void;
 }
 
 /**
@@ -112,25 +117,28 @@ export class LatexDocument implements RenderDocumentView {
      * Parses a root .tex document into metadata, bibliography entries, source
      * mappings, and block spans.
      */
-    public async parse(entryUri: vscode.Uri, contentOverride?: string): Promise<DocumentParseResult> {
+    public async parse(entryUri: vscode.Uri, contentOverride?: string, options: ParseOptions = {}): Promise<DocumentParseResult> {
         const filePool: string[] = [];
 
         const rootDir = this.fileProvider.dir(entryUri);
         this.rootDir = rootDir;
 
         const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, 0, contentOverride);
-        const normalizedText = textLines.join('\n');
-
-        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors);
-
-        const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
+        options.trace?.('after flatten');
+        let normalizedText = textLines.join('\n');
+        textLines.length = 0;
 
         let contentStartLineOffset = 0;
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
         if (rawDocMatch && rawDocMatch.index !== undefined) {
-            const preContent = normalizedText.substring(0, rawDocMatch.index + rawDocMatch[0].length);
-            contentStartLineOffset = preContent.split('\n').length - 1;
+            contentStartLineOffset = this.countNewlinesBefore(normalizedText, rawDocMatch.index + rawDocMatch[0].length);
         }
+
+        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors);
+        normalizedText = "";
+        options.trace?.('after metadata');
+
+        const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
 
         let bodyText = metaRes.cleanedText;
         const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
@@ -139,10 +147,13 @@ export class LatexDocument implements RenderDocumentView {
             const endIndex = metaRes.cleanedText.search(/\\end\{document\}/i);
             bodyText = metaRes.cleanedText.substring(startIndex, endIndex === -1 ? metaRes.cleanedText.length : endIndex);
         }
+        options.trace?.('after body slice');
+
         const rawBlockObjects = LatexBlockSplitter.split(bodyText, {
             config: this.registry.splitterConfig,
             rules: this.registry.splitterRules
         });
+        options.trace?.('after split');
 
         const res: DocumentParseResult = {
             bodyText,
@@ -155,6 +166,8 @@ export class LatexDocument implements RenderDocumentView {
             bibEntries,
             contentStartLineOffset
         };
+        fileIndices.length = 0;
+        lines.length = 0;
 
         for (const b of rawBlockObjects) {
             const blockText = bodyText.slice(b.start, b.end);
@@ -163,8 +176,18 @@ export class LatexDocument implements RenderDocumentView {
                 res.blockHashes.push(stableHash(blockText));
             }
         }
+        options.trace?.('after block hashes');
 
         return res;
+    }
+
+    private countNewlinesBefore(text: string, endExclusive: number): number {
+        let count = 0;
+        const limit = Math.min(endExclusive, text.length);
+        for (let index = 0; index < limit; index++) {
+            if (text.charCodeAt(index) === 10) { count++; }
+        }
+        return count;
     }
 
     private hasRenderableContent(text: string): boolean {
@@ -180,8 +203,20 @@ export class LatexDocument implements RenderDocumentView {
         filePool: string[],
         depth: number = 0,
         contentOverride?: string
-    ): Promise<{ textLines: string[], fileIndices: number[], lines: number[] }> {
-        if (depth > 20) { return { textLines: [], fileIndices: [], lines: [] }; }
+    ): Promise<FlattenOutput> {
+        const output: FlattenOutput = { textLines: [], fileIndices: [], lines: [] };
+        await this.flattenInto(fileUri, filePool, output, depth, contentOverride);
+        return output;
+    }
+
+    private async flattenInto(
+        fileUri: vscode.Uri,
+        filePool: string[],
+        output: FlattenOutput,
+        depth: number = 0,
+        contentOverride?: string
+    ): Promise<void> {
+        if (depth > 20) { return; }
 
         let content = "";
         const filePathStr = fileUri.toString();
@@ -196,39 +231,35 @@ export class LatexDocument implements RenderDocumentView {
             content = contentOverride;
         } else {
             if (!(await this.fileProvider.exists(fileUri))) {
-                return {
-                    textLines: [`% [SnapTeX] File not found: ${filePathStr}`],
-                    fileIndices: [currentFileIndex],
-                    lines: [0]
-                };
+                output.textLines.push(`% [SnapTeX] File not found: ${filePathStr}`);
+                output.fileIndices.push(currentFileIndex);
+                output.lines.push(0);
+                return;
             }
             try {
                 content = await this.fileProvider.read(fileUri);
             } catch (e) {
-                return {
-                    textLines: [`% [SnapTeX] Error reading: ${filePathStr}`],
-                    fileIndices: [currentFileIndex],
-                    lines: [0]
-                };
+                output.textLines.push(`% [SnapTeX] Error reading: ${filePathStr}`);
+                output.fileIndices.push(currentFileIndex);
+                output.lines.push(0);
+                return;
             }
         }
 
-        const sourceLines = content.split(/\r?\n/).map((text, line) => ({ text, line }));
-        const rawLines = depth > 0 ? this.stripStandaloneWrapper(sourceLines) : sourceLines;
-        const flattenedLines: string[] = [];
-        const outIndices: number[] = [];
-        const outLines: number[] = [];
+        const sourceLines = content.split(/\r?\n/);
+        const selectedLines = depth > 0 ? this.selectStandaloneLines(sourceLines) : undefined;
         const inputRegex = /^(\s*)(?:\\input|\\include)\{([^}]+)\}/;
+        const lineCount = selectedLines?.length ?? sourceLines.length;
 
-        for (let i = 0; i < rawLines.length; i++) {
-            const sourceLine = rawLines[i];
-            const line = sourceLine.text.replace(/\r/g, '');
+        for (let i = 0; i < lineCount; i++) {
+            const sourceLineNumber = selectedLines ? selectedLines[i] : i;
+            const line = sourceLines[sourceLineNumber].replace(/\r/g, '');
             const trimmed = line.trim();
 
             if (trimmed.startsWith('%')) {
-                flattenedLines.push(line);
-                outIndices.push(currentFileIndex);
-                outLines.push(sourceLine.line);
+                output.textLines.push(line);
+                output.fileIndices.push(currentFileIndex);
+                output.lines.push(sourceLineNumber);
                 continue;
             }
 
@@ -240,54 +271,48 @@ export class LatexDocument implements RenderDocumentView {
                 const currentDir = this.fileProvider.dir(fileUri);
                 const targetUri = this.fileProvider.resolve(currentDir, relPath);
 
-                const result = await this.loadAndFlatten(targetUri, filePool, depth + 1);
-                const len = result.textLines.length;
-                for (let j = 0; j < len; j++) {
-                    flattenedLines.push(result.textLines[j]);
-                    outIndices.push(result.fileIndices[j]);
-                    outLines.push(result.lines[j]);
-                }
+                await this.flattenInto(targetUri, filePool, output, depth + 1);
             } else {
-                flattenedLines.push(line);
-                outIndices.push(currentFileIndex);
-                outLines.push(sourceLine.line);
+                output.textLines.push(line);
+                output.fileIndices.push(currentFileIndex);
+                output.lines.push(sourceLineNumber);
             }
         }
-
-        return { textLines: flattenedLines, fileIndices: outIndices, lines: outLines };
     }
 
-    private stripStandaloneWrapper(lines: IndexedLine[]): IndexedLine[] {
-        const beginIndex = lines.findIndex(line => /\\begin\{document\}/i.test(line.text));
-        if (beginIndex === -1) { return lines; }
+    private selectStandaloneLines(lines: string[]): number[] | undefined {
+        const beginIndex = lines.findIndex(line => /\\begin\{document\}/i.test(line));
+        if (beginIndex === -1) { return undefined; }
 
-        const endOffset = lines.slice(beginIndex + 1).findIndex(line => /\\end\{document\}/i.test(line.text));
-        if (endOffset === -1) { return lines; }
+        const endOffset = lines.slice(beginIndex + 1).findIndex(line => /\\end\{document\}/i.test(line));
+        if (endOffset === -1) { return undefined; }
 
         const endIndex = beginIndex + 1 + endOffset;
-        return [
-            ...this.extractPortablePreambleLines(lines.slice(0, beginIndex)),
-            ...lines.slice(beginIndex + 1, endIndex)
-        ];
+        const selected = this.extractPortablePreambleLines(lines, beginIndex);
+        for (let index = beginIndex + 1; index < endIndex; index++) {
+            selected.push(index);
+        }
+        return selected;
     }
 
-    private extractPortablePreambleLines(lines: IndexedLine[]): IndexedLine[] {
-        const portableLines: IndexedLine[] = [];
+    private extractPortablePreambleLines(lines: string[], endExclusive: number): number[] {
+        const portableLines: number[] = [];
         let capturingDefinition = false;
         let braceDepth = 0;
         const portableCommandRegex = /^\\(?:(?:provide|re)?newcommand\*?|g?def|DeclareMathOperator\*?|usetikzlibrary|tikzset|definecolor)(?=\s|\\|\{|\[|$)/;
 
-        for (const line of lines) {
-            const trimmed = line.text.trim();
+        for (let index = 0; index < endExclusive; index++) {
+            const line = lines[index];
+            const trimmed = line.trim();
             if (!capturingDefinition && !portableCommandRegex.test(trimmed)) {
                 continue;
             }
 
-            portableLines.push(line);
+            portableLines.push(index);
             capturingDefinition = true;
-            braceDepth += scanLatexBraceBalance(line.text, { commentMode: 'stop' }).depth;
+            braceDepth += scanLatexBraceBalance(line, { commentMode: 'stop' }).depth;
 
-            if (braceDepth <= 0 && /}/.test(line.text)) {
+            if (braceDepth <= 0 && /}/.test(line)) {
                 capturingDefinition = false;
                 braceDepth = 0;
             }

@@ -7,3 +7,4 @@ media/webview-pdf.js
 media/webview-*.js.map
 .vscode-test/
 *.vsix
+src/localtestTeX
