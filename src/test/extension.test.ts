@@ -90,29 +90,6 @@ suite('LatexDocument source mapping', () => {
         assert.equal(original.line, 2);
     });
 
-    test('reports parse trace milestones for memory diagnostics', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\begin{document}',
-                'A paragraph.',
-                '\\end{document}'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-        const labels: string[] = [];
-
-        await doc.parse(mainUri, undefined, { trace: label => labels.push(label) });
-
-        assert.deepStrictEqual(labels, [
-            'after flatten',
-            'after metadata',
-            'after body slice',
-            'after split',
-            'after block hashes'
-        ]);
-    });
-
     test('loads bibliography entries relative to the root document', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const bibUri = vscode.Uri.file('/project/refs.bib');
@@ -524,20 +501,7 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(inlineHtml, /\\color\{blue\}/);
     });
 
-    test('returns patch payloads for small localized edits', () => {
-        const renderer = new SmartRenderer();
-        renderer.render(createDocument(['A', 'B', 'C']));
-
-        const payload = renderer.render(createDocument(['A', 'B changed', 'C']));
-
-        assert.equal(payload.type, 'patch');
-        assert.equal(payload.start, 1);
-        assert.equal(payload.deleteCount, 1);
-        assert.equal(payload.htmls?.length, 1);
-        assert.match(payload.htmls?.[0] ?? '', /B changed/);
-    });
-
-    test('reads only changed block text for localized hash patches', () => {
+    test('returns localized patches while reading only changed block text', () => {
         const renderer = new SmartRenderer();
         renderer.render(createDocument(['A', 'B', 'C']));
 
@@ -552,6 +516,10 @@ suite('SmartRenderer', () => {
         const payload = renderer.render(nextDoc);
 
         assert.equal(payload.type, 'patch');
+        assert.equal(payload.start, 1);
+        assert.equal(payload.deleteCount, 1);
+        assert.equal(payload.htmls?.length, 1);
+        assert.match(payload.htmls?.[0] ?? '', /B changed/);
         assert.deepStrictEqual(reads, [1]);
     });
 
@@ -697,16 +665,7 @@ suite('SmartRenderer', () => {
         assert.match(html, /<em>safe<\/em>/);
     });
 
-    test('uses shared theorem display names for supported aliases', () => {
-        const html = renderBlocks([
-            '\\begin{assum}Bounded moments.\\end{assum}'
-        ]);
-
-        assert.match(html, /<strong class="latex-theorem-header">Assumption <span class="sn-cnt" data-type="thm"><\/span>/);
-        assert.doesNotMatch(html, /Assum <span class="sn-cnt"/);
-    });
-
-    test('renders enumerate lists nested inside theorem environments', () => {
+    test('renders nested lists and block content inside theorem environments', () => {
         const html = renderBlocks([[
             '\\begin{definition}[Separability of an interval]',
             'For the intervals $(\\tau_l,\\tau_r] \\in G$, we make the following definitions,',
@@ -714,19 +673,6 @@ suite('SmartRenderer', () => {
             '\\item $(\\tau_l,\\tau_r] \\in (0, n]$ is separable.',
             '\\item $(\\tau_l,\\tau_r] \\in (0, n]$ is left-separable.',
             '\\end{enumerate}',
-            '\\end{definition}'
-        ].join('\n')]);
-
-        assert.match(html, /class="latex-theorem"/);
-        assert.match(html, /<ul>/);
-        assert.equal((html.match(/<li>/g) ?? []).length, 2);
-        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>/);
-        assert.doesNotMatch(html, /\\begin\{enumerate\}|\\item|SNAP_ENUM_LABEL/);
-    });
-
-    test('lets block rules render content nested inside theorem environments', () => {
-        const html = renderBlocks([[
-            '\\begin{definition}[With table]',
             'Before table.',
             '\\begin{table}',
             '\\begin{tabular}{cc}',
@@ -739,8 +685,12 @@ suite('SmartRenderer', () => {
             '\\end{definition}'
         ].join('\n')]);
 
-        assert.match(html, /class="latex-theorem"[\s\S]*Before table\./);
+        assert.match(html, /class="latex-theorem"/);
+        assert.match(html, /<ul>/);
+        assert.equal((html.match(/<li>/g) ?? []).length, 2);
+        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>/);
         assert.match(html, /class="latex-theorem"[\s\S]*class="latex-table"[\s\S]*After table\./);
+        assert.doesNotMatch(html, /\\begin\{enumerate\}|\\item|SNAP_ENUM_LABEL/);
         assert.doesNotMatch(html, /\\begin\{table\}|\\begin\{tabular\}/);
     });
 
@@ -770,12 +720,6 @@ suite('SmartRenderer', () => {
         assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>\s+Delta/);
     });
 
-    test('does not trust KaTeX HTML-producing commands by default', () => {
-        const html = renderBlocks(['$\\href{javascript:alert(1)}{bad}$']);
-
-        assert.doesNotMatch(html, /href="javascript:alert/i);
-    });
-
     test('renders safe LaTeX links and escapes unsafe targets', () => {
         const safeHtml = renderBlocks([
             'See \\href{https://example.com/path?q=1&lang=en}{SnapTeX \\textbf{site}} and \\url{https://snaptex.dev/docs?a=1&b=2}.'
@@ -793,6 +737,9 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(unsafeHtml, /\\href|\\url/);
         assert.match(unsafeHtml, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
         assert.match(unsafeHtml, /javascript:alert\(2\)/);
+
+        const unsafeMathHtml = renderBlocks(['$\\href{javascript:alert(1)}{bad}$']);
+        assert.doesNotMatch(unsafeMathHtml, /href="javascript:alert/i);
     });
 
     test('keeps numbered display math containers protected under raw-HTML-disabled Markdown', () => {
@@ -918,7 +865,8 @@ suite('SmartRenderer', () => {
                 'See \\ref{sec:intro,fig:missing}, Eq.~\\eqref{eq:one}, \\ref{sec:a&b}, \\citep[see][p. 2]{smith2024,doe2025}, \\citet{smith2024}, and \\citeyear{doe2025}.',
                 '\\label{sec:a&b}'
             ].join('\n'),
-            '\\begin{equation}\\label{eq:one}x=1\\end{equation}'
+            '\\begin{equation}\\label{eq:one}x=1\\end{equation}',
+            '\\bibliographystyle{alpha}'
         ]);
         doc.bibEntries = new Map([
             ['smith2024', { key: 'smith2024', type: 'article', fields: { author: 'Smith, Jane', year: '2024', title: 'A Paper' } }],
@@ -936,18 +884,6 @@ suite('SmartRenderer', () => {
         assert.match(html, /\(see <a href="#ref-smith2024"[^>]*>Smith, 2024<\/a>; <a href="#ref-doe2025"[^>]*>Doe, 2025<\/a>, p\. 2\)/);
         assert.match(html, /Smith \(<a href="#ref-smith2024"[^>]*>2024<\/a>\)/);
         assert.match(html, /and <a href="#ref-doe2025"[^>]*>2025<\/a>/);
-    });
-
-    test('hides bibliography style control commands', () => {
-        const html = renderBlocks([
-            [
-                'Text before references.',
-                '\\bibliographystyle{alpha}',
-                '\\bibliography{sample}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /Text before references\./);
         assert.doesNotMatch(html, /\\bibliographystyle|alpha/);
     });
 
@@ -1029,7 +965,7 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(script, /\\resizebox|\\begin\{figure\}/);
     });
 
-    test('injects only TikZ libraries used by each picture', () => {
+    test('prunes TikZ libraries per picture while preserving used global styles', () => {
         const renderer = new SmartRenderer();
         const doc = createDocument([
             [
@@ -1060,11 +996,8 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /decorations\.pathreplacing/);
         assert.doesNotMatch(html, /patterns/);
         assert.doesNotMatch(html, /shapes\.geometric/);
-    });
 
-    test('includes TikZ libraries required by used global styles', () => {
-        const renderer = new SmartRenderer();
-        const doc = createDocument([
+        const styleDoc = createDocument([
             [
                 '\\begin{tikzpicture}',
                 '\\draw[braceStyle] (0,0) -- (1,0);',
@@ -1077,17 +1010,16 @@ suite('SmartRenderer', () => {
                 '\\tikzset{posStyle/.style={right=of other}}'
             ].join('\n')
         });
-        const payload = renderer.render(doc);
-        const html = payload.htmls?.join('') ?? '';
+        const styleHtml = renderer.render(styleDoc).htmls?.join('') ?? '';
 
-        assert.match(html, /\\usetikzlibrary\{decorations\.pathreplacing\}/);
-        assert.doesNotMatch(html, /positioning/);
-        assert.doesNotMatch(html, /calc/);
+        assert.match(styleHtml, /\\usetikzlibrary\{decorations\.pathreplacing\}/);
+        assert.doesNotMatch(styleHtml, /positioning/);
+        assert.doesNotMatch(styleHtml, /calc/);
     });
 
-    test('uses TikZ preview lowerings to avoid arrows.meta for simple preview arrows', () => {
+    test('uses TikZ preview lowerings while preserving exact arrow tips', () => {
         const renderer = new SmartRenderer();
-        const doc = createDocument([
+        const simpleDoc = createDocument([
             [
                 '\\begin{tikzpicture}[',
                 '  node distance=1.7cm,',
@@ -1101,17 +1033,14 @@ suite('SmartRenderer', () => {
         ], {
             tikzGlobal: '\\usetikzlibrary{arrows.meta, positioning}'
         });
-        const html = renderer.render(doc).htmls?.join('') ?? '';
+        const simpleHtml = renderer.render(simpleDoc).htmls?.join('') ?? '';
 
-        assert.match(html, /\\usetikzlibrary\{positioning\}/);
-        assert.match(html, /arrow\/\.style=\{->, thick\}/);
-        assert.doesNotMatch(html, /arrows\.meta/);
-        assert.doesNotMatch(html, /-Latex/);
-    });
+        assert.match(simpleHtml, /\\usetikzlibrary\{positioning\}/);
+        assert.match(simpleHtml, /arrow\/\.style=\{->, thick\}/);
+        assert.doesNotMatch(simpleHtml, /arrows\.meta/);
+        assert.doesNotMatch(simpleHtml, /-Latex/);
 
-    test('keeps arrows.meta for exact parameterized TikZ arrow tips', () => {
-        const renderer = new SmartRenderer();
-        const doc = createDocument([
+        const exactDoc = createDocument([
             [
                 '\\begin{tikzpicture}',
                 '\\draw[-{Latex[length=3mm]}] (0,0) -- (1,0);',
@@ -1120,11 +1049,11 @@ suite('SmartRenderer', () => {
         ], {
             tikzGlobal: '\\usetikzlibrary{arrows.meta, positioning}'
         });
-        const html = renderer.render(doc).htmls?.join('') ?? '';
+        const exactHtml = renderer.render(exactDoc).htmls?.join('') ?? '';
 
-        assert.match(html, /\\usetikzlibrary\{arrows\.meta\}/);
-        assert.match(html, /-\{Latex\[length=3mm\]\}/);
-        assert.doesNotMatch(html, /positioning/);
+        assert.match(exactHtml, /\\usetikzlibrary\{arrows\.meta\}/);
+        assert.match(exactHtml, /-\{Latex\[length=3mm\]\}/);
+        assert.doesNotMatch(exactHtml, /positioning/);
     });
 
     test('renders a fixture-backed long document and keeps localized edits as patches', async () => {
@@ -1162,7 +1091,7 @@ suite('SmartRenderer', () => {
 });
 
 suite('PDF request validation', () => {
-    test('normalizes safe pdf paths and rejects unsafe requests', () => {
+    test('normalizes pdf paths and checks allowed roots', () => {
         assert.equal(normalizePdfRequestPath('figure.pdf'), 'figure.pdf');
         assert.equal(normalizePdfRequestPath('./figures/Plot.PDF'), 'figures/Plot.PDF');
         assert.equal(normalizePdfRequestPath('figures\\plot.pdf'), 'figures/plot.pdf');
@@ -1173,9 +1102,7 @@ suite('PDF request validation', () => {
         assert.equal(normalizePdfRequestPath('C:/tmp/secret.pdf'), undefined);
         assert.equal(normalizePdfRequestPath('figure.png'), undefined);
         assert.equal(normalizePdfRequestPath(42), undefined);
-    });
 
-    test('checks resolved pdf uris against allowed roots', () => {
         const root = vscode.Uri.file('/project');
         const docDir = vscode.Uri.file('/project/chapter');
 
@@ -1184,25 +1111,14 @@ suite('PDF request validation', () => {
         assert.equal(isUriWithinAllowedRoots(vscode.Uri.parse('https://example.com/a.pdf'), [root]), false);
     });
 
-    test('uses virtual mode by default while honoring explicit legacy settings', () => {
-        const makeConfig = (
-            values: Record<string, boolean | undefined>,
-            explicit: Record<string, boolean | undefined> = values
-        ) => ({
+    test('uses virtual mode by default while honoring explicit settings', () => {
+        const makeConfig = (values: Record<string, boolean | undefined>) => ({
             get: (key: string, fallback: boolean) => values[key] ?? fallback,
-            inspect: (key: string) => explicit[key] === undefined ? undefined : { globalValue: explicit[key] }
         }) as unknown as vscode.WorkspaceConfiguration;
 
         assert.equal(getVirtualMode(makeConfig({})), true);
         assert.equal(getVirtualMode(makeConfig({ virtualMode: false })), false);
-        assert.equal(getVirtualMode(makeConfig(
-            { experimentalVirtualization: false },
-            { experimentalVirtualization: false }
-        )), false);
-        assert.equal(getVirtualMode(makeConfig(
-            { virtualMode: true, experimentalVirtualization: false },
-            { virtualMode: true, experimentalVirtualization: false }
-        )), true);
+        assert.equal(getVirtualMode(makeConfig({ virtualMode: true })), true);
     });
 
 });

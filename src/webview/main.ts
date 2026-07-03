@@ -416,8 +416,6 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             this.isFirstLoad = true;
             this.lastScrollTime = 0;
             this.scrollCommandSeq = 0;
-            this.lastVirtualScrollY = window.scrollY;
-            this.scrollDirection = 'none';
             this.virtualUpdateFrame = null;
             this.virtualCleanupTimer = null;
             this.config = {
@@ -463,7 +461,6 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
         bindEvents() {
             window.addEventListener('message', event => this.onMessage(event));
             window.addEventListener('scroll', () => {
-                this.updateScrollDirection();
                 this.requestVirtualizedUpdate({ allowUnmount: false });
                 this.scheduleVirtualizedCleanup();
                 this.onScroll();
@@ -689,15 +686,6 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             }
         }
 
-        updateScrollDirection() {
-            const currentY = window.scrollY;
-            const delta = currentY - this.lastVirtualScrollY;
-            if (Math.abs(delta) > 2) {
-                this.scrollDirection = delta < 0 ? 'up' : 'down';
-                this.lastVirtualScrollY = currentY;
-            }
-        }
-
         requestVirtualizedUpdate(options = {}) {
             if (!this.virtualization.isEnabled() || this.virtualUpdateFrame) return;
 
@@ -713,7 +701,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
             }
             this.virtualCleanupTimer = setTimeout(() => {
                 this.virtualCleanupTimer = null;
-                this.updateVirtualizedBlocks({ allowUnmount: true });
+                this.updateVirtualizedBlocks({ allowUnmount: true, pruneHtmlCache: true });
             }, BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS);
         }
 
@@ -723,9 +711,9 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 block => this.onVirtualBlockMounted(block),
                 shell => this.requestVirtualBlockHtml(shell),
                 {
-                    direction: this.scrollDirection,
                     allowUnmount: options.allowUnmount !== false,
-                    phase: options.phase || 'normal'
+                    phase: options.phase || 'normal',
+                    pruneHtmlCache: options.pruneHtmlCache === true
                 }
             );
         }
@@ -933,12 +921,12 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 pending?.callbacks?.forEach(callback => callback(null));
                 return;
             }
-            if (!pending?.forceMount && !this.virtualization.isShellInMountRange(shell, this.scrollDirection)) return;
+            if (!pending?.forceMount && !this.virtualization.isShellInMountRange(shell)) return;
 
-            const block = this.virtualization.mountShell(
+            const block = this.virtualization.withViewportAnchorPreserved(() => this.virtualization.mountShell(
                 shell,
                 missingShell => this.requestVirtualBlockHtml(missingShell)
-            );
+            ));
             if (block) { this.onVirtualBlockMounted(block); }
             pending?.callbacks?.forEach(callback => callback(block || null));
         }

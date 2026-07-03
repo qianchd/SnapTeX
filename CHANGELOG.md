@@ -3,6 +3,13 @@
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
+
+## [0.6.5] - 2026-07-03
+- **Changed**: Reduced initial preview work in virtual mode by shrinking the first-load and normal block mount windows, improving long-document first-open speed and lowering peak webview memory usage.
+- **Changed**: Pruned cached on-demand block HTML after virtual cleanup when shells move outside the retain window, so scrolling through long documents no longer keeps every previously visited block's HTML in memory.
+- **Changed**: Kept PDF and TikZ work lazy under virtual mode: only mounted blocks trigger heavy preview work, while offscreen shells continue to hold lightweight metadata and measured heights.
+- **Changed**: Removed the old `snaptex.experimentalVirtualization` compatibility setting; `snaptex.virtualMode` is now the only virtual preview switch.
+- **Fixed**: Smoothed upward scrolling in virtual mode by compensating above-viewport shell height changes, including asynchronous media/TikZ/PDF height updates, without widening the preload window.
 - **Added**: Supported common `enumerate` optional label templates such as `[(a)]`, `[(i)]`, `[$G_1$]`, and `[$H_a$]` by replacing `1`, `i`, or `a` counters inside the label template.
 - **Fixed**: Render theorem-like environments as containers so nested lists, tables, and other block rules can render inside definitions, theorems, lemmas, and related environments.
 
@@ -52,7 +59,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Changed**: Reworked TikZ rendering to lazy-load TikZJax, bootstrap worker assets through blob URLs, cache runtime resources for the webview session, prune unused TikZ libraries per picture, preserve stale SVGs while rerendering, surface compile failures cleanly, add watchdogs, and coalesce edit-triggered render batches.
 - **Changed**: Improved full-update behavior with block text hashes, block-list full payloads, per-block path fixing, and DOM preservation for unchanged blocks while keeping the existing fixed full-update threshold.
 - **Added**: Implemented shell-based virtual mode behind `snaptex.virtualMode`, including shell placeholders, measured/estimated block heights, viewport-near mounting, far-offscreen unmounting, and editor-to-preview sync through shells.
-- **Changed**: Made virtual mode the default low-memory preview path while retaining compatibility with explicit legacy `snaptex.experimentalVirtualization` settings.
+- **Changed**: Made virtual mode the default low-memory preview path controlled by `snaptex.virtualMode`.
 - **Fixed**: Restored `\ref`/citation anchor jumps and hover tooltips under virtual mode by indexing anchors on block shells and mounting the target block on demand.
 - **Fixed**: Stabilized forward sync under virtual mode by mounting the target block before scrolling and cancelling stale auto-sync timers.
 - **Changed**: Replaced fragile manual `scrollY` compensation in virtual mode with a larger directional preload window and delayed cleanup of far-offscreen mounted blocks, making upward scrolling smoother while preserving most memory savings.

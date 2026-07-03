@@ -63,25 +63,8 @@ function logPayloadStats(label: string, payload: RenderPayload) {
     });
 }
 
-function hasExplicitBooleanSetting(inspectResult: ReturnType<vscode.WorkspaceConfiguration['inspect']>): boolean {
-    return !!inspectResult && [
-        inspectResult.globalValue,
-        inspectResult.workspaceValue,
-        inspectResult.workspaceFolderValue,
-        inspectResult.globalLanguageValue,
-        inspectResult.workspaceLanguageValue,
-        inspectResult.workspaceFolderLanguageValue
-    ].some(value => typeof value === 'boolean');
-}
-
 export function getVirtualMode(config = vscode.workspace.getConfiguration('snaptex')): boolean {
-    for (const key of ['virtualMode', 'experimentalVirtualization']) {
-        if (hasExplicitBooleanSetting(config.inspect<boolean>(key))) {
-            return config.get<boolean>(key, true);
-        }
-    }
-
-    return true;
+    return config.get<boolean>('virtualMode', true);
 }
 
 function decodeHtmlAttribute(value: string): string {
