@@ -1,8 +1,7 @@
-import * as vscode from 'vscode';
 import { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
-import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView } from './types';
+import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView, UriLike } from './types';
 import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
@@ -42,7 +41,7 @@ interface ParseOptions {
  * string, stores block spans instead of duplicated block strings, and keeps
  * compact source maps for editor-preview synchronization.
  */
-export class LatexDocument implements RenderDocumentView {
+export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocumentView {
     private bodyText: string = "";
     public blockSpans: BlockTextSpan[] = [];
     public blockHashes: string[] = [];
@@ -63,11 +62,11 @@ export class LatexDocument implements RenderDocumentView {
         custom: {}
     };
     public bibEntries: Map<string, BibEntry> = new Map();
-    public rootDir: vscode.Uri | undefined;
+    public rootDir: TUri | undefined;
 
     private bibCache: Map<string, BibCacheEntry> = new Map();
 
-    constructor(private fileProvider: IFileProvider, private registry = SNAP_TEX_RULES) {}
+    constructor(private fileProvider: IFileProvider<TUri>, private registry = SNAP_TEX_RULES) {}
 
     /**
      * Releases the transient body text after the renderer has taken a snapshot.
@@ -117,7 +116,7 @@ export class LatexDocument implements RenderDocumentView {
      * Parses a root .tex document into metadata, bibliography entries, source
      * mappings, and block spans.
      */
-    public async parse(entryUri: vscode.Uri, contentOverride?: string, options: ParseOptions = {}): Promise<DocumentParseResult> {
+    public async parse(entryUri: TUri, contentOverride?: string, options: ParseOptions = {}): Promise<DocumentParseResult> {
         const filePool: string[] = [];
 
         const rootDir = this.fileProvider.dir(entryUri);
@@ -199,7 +198,7 @@ export class LatexDocument implements RenderDocumentView {
     }
 
     private async loadAndFlatten(
-        fileUri: vscode.Uri,
+        fileUri: TUri,
         filePool: string[],
         depth: number = 0,
         contentOverride?: string
@@ -210,7 +209,7 @@ export class LatexDocument implements RenderDocumentView {
     }
 
     private async flattenInto(
-        fileUri: vscode.Uri,
+        fileUri: TUri,
         filePool: string[],
         output: FlattenOutput,
         depth: number = 0,
@@ -321,7 +320,7 @@ export class LatexDocument implements RenderDocumentView {
         return portableLines;
     }
 
-    private async loadBibliography(text: string, rootDir: vscode.Uri): Promise<Map<string, BibEntry>> {
+    private async loadBibliography(text: string, rootDir: TUri): Promise<Map<string, BibEntry>> {
         const inlineBibliography = text.match(R_THEBIBLIOGRAPHY);
         if (inlineBibliography) {
             return BibTexParser.parseBibItems(inlineBibliography[0]);

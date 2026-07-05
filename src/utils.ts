@@ -2,7 +2,6 @@
  * Shared text, URI, and lightweight LaTeX parsing utilities.
  */
 
-import * as vscode from 'vscode';
 import { R_CITATION } from './patterns';
 import type { RenderContext, UriLike } from './types';
 
@@ -556,8 +555,8 @@ export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, '
 }
 
 
-export function getBasename(uri: vscode.Uri): string {
-    const pathStr = uri.path;
+export function getBasename(uri: UriLike & { path?: string }): string {
+    const pathStr = uri.path ?? uri.toString();
     const idx = pathStr.lastIndexOf('/');
     return idx === -1 ? pathStr : pathStr.substring(idx + 1);
 }
@@ -571,7 +570,7 @@ export function stableHash(input: string): string {
     return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function normalizeUri(input: vscode.Uri | string | UriLike): string {
+export function normalizeUri(input: string | UriLike): string {
     let str = typeof input === 'string' ? input : input.toString();
     try {
         str = decodeURIComponent(str);

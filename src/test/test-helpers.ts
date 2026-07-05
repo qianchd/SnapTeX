@@ -9,7 +9,7 @@ import { BlockTextProvider, LatexCounterScanner } from '../scanner';
 import { AffiliationMetadata, AuthorMetadata, BlockTextSpan } from '../types';
 import { normalizeUri, stableHash } from '../utils';
 
-export class MemoryFileProvider implements IFileProvider {
+export class MemoryFileProvider implements IFileProvider<vscode.Uri> {
     constructor(private readonly files: Map<string, string> = new Map()) {}
 
     async read(uri: vscode.Uri): Promise<string> {

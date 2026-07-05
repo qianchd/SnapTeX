@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { UriLike } from './types';
 import { normalizeUri } from './utils';
 
 /**
@@ -7,18 +8,18 @@ import { normalizeUri } from './utils';
  * Keeping this boundary narrow lets document.ts work with local, remote, and
  * virtual VS Code file systems without direct workspace.fs calls.
  */
-export interface IFileProvider {
-    read(uri: vscode.Uri): Promise<string>;
-    exists(uri: vscode.Uri): Promise<boolean>;
-    stat(uri: vscode.Uri): Promise<{ mtime: number }>;
-    resolve(base: vscode.Uri, relative: string): vscode.Uri;
-    dir(uri: vscode.Uri): vscode.Uri;
+export interface IFileProvider<TUri extends UriLike = UriLike> {
+    read(uri: TUri): Promise<string>;
+    exists(uri: TUri): Promise<boolean>;
+    stat(uri: TUri): Promise<{ mtime: number }>;
+    resolve(base: TUri, relative: string): TUri;
+    dir(uri: TUri): TUri;
 }
 
 /**
  * VS Code implementation that prefers dirty open editors before disk reads.
  */
-export class VscodeFileProvider implements IFileProvider {
+export class VscodeFileProvider implements IFileProvider<vscode.Uri> {
     async read(uri: vscode.Uri): Promise<string> {
         const targetNorm = normalizeUri(uri);
         const openDoc = vscode.workspace.textDocuments.find(d => normalizeUri(d.uri) === targetNorm);
