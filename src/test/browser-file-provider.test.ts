@@ -42,6 +42,26 @@ suite('BrowserFileProvider', () => {
         assert.equal(closed, true);
     });
 
+    test('loads project text lazily and caches it after the first read', async () => {
+        const provider = new BrowserFileProvider();
+        const uri = new BrowserUri('/project/lazy.tex');
+        let reads = 0;
+
+        provider.setProjectFiles([{
+            path: uri.path,
+            readText: async () => {
+                reads += 1;
+                return 'Lazy paragraph.';
+            }
+        }]);
+
+        const beforeRead = await provider.stat(uri);
+        assert.equal(await provider.read(uri), 'Lazy paragraph.');
+        assert.equal(await provider.read(uri), 'Lazy paragraph.');
+        assert.equal((await provider.stat(uri)).mtime, beforeRead.mtime);
+        assert.equal(reads, 1);
+    });
+
     test('stores binary project resources as cached object URLs', async () => {
         const provider = new BrowserFileProvider();
         const uri = new BrowserUri('/figures/result.png');
@@ -79,7 +99,7 @@ suite('BrowserFileProvider', () => {
             },
             {
                 path: '/project/sections/intro.tex',
-                text: 'Included paragraph.'
+                readText: async () => 'Included paragraph.'
             }
         ]);
         const service = new PreviewUpdateService(provider, new SmartRenderer());

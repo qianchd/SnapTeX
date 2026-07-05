@@ -99,9 +99,20 @@ async function projectFileFromFile(file: File, path: string, handle?: BrowserFil
         handle
     };
     if (isProjectTextFile(path)) {
-        projectFile.text = await file.text();
+        projectFile.readText = () => file.text();
     }
     return projectFile;
+}
+
+async function projectFileFromHandle(handle: BrowserFileHandle, path: string): Promise<BrowserProjectFile> {
+    if (isProjectTextFile(path)) {
+        return {
+            path,
+            handle,
+            readText: async () => (await handle.getFile()).text()
+        };
+    }
+    return projectFileFromFile(await handle.getFile(), path, handle);
 }
 
 function fileInputPath(file: File): string {
@@ -117,7 +128,7 @@ async function readDirectoryHandle(directory: BrowserDirectoryHandle, prefix = '
             continue;
         }
         if (isProjectFile(path)) {
-            files.push(await projectFileFromFile(await entry.getFile(), path, entry));
+            files.push(await projectFileFromHandle(entry, path));
         }
     }
     return files;
@@ -145,7 +156,7 @@ async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Pr
             }]
         });
         if (handle) {
-            await loadProject(host, [await projectFileFromFile(await handle.getFile(), `/${handle.name}`, handle)]);
+            await loadProject(host, [await projectFileFromHandle(handle, `/${handle.name}`)]);
         }
         return;
     }

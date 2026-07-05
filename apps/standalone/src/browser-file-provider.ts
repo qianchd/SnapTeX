@@ -11,6 +11,7 @@ export interface BrowserWritableFileHandle {
 export interface BrowserProjectFile {
     path: string;
     text?: string;
+    readText?: () => Promise<string>;
     blob?: Blob;
     handle?: BrowserWritableFileHandle;
 }
@@ -52,7 +53,7 @@ export class BrowserUri implements UriLike {
  * In-memory file provider shared by desktop browsers and future WebView hosts.
  */
 export class BrowserFileProvider implements IFileProvider<BrowserUri> {
-    private readonly files = new Map<string, { text?: string; blob?: Blob; mtime: number; handle?: BrowserWritableFileHandle; objectUrl?: string }>();
+    private readonly files = new Map<string, { text?: string; readText?: () => Promise<string>; blob?: Blob; mtime: number; handle?: BrowserWritableFileHandle; objectUrl?: string }>();
     private version = 1;
 
     private clear() {
@@ -73,6 +74,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         }
         this.files.set(normalizedPath, {
             text: file.text,
+            readText: file.readText,
             blob: file.blob ?? (file.text === undefined ? undefined : new Blob([file.text], { type: 'text/plain' })),
             handle: file.handle ?? existing?.handle,
             mtime: this.version++
@@ -95,10 +97,6 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             handle: handle ?? existing?.handle,
             mtime: this.version++
         });
-    }
-
-    getFileText(uri: BrowserUri): string | undefined {
-        return this.files.get(uri.path)?.text;
     }
 
     getResourceUrl(uri: BrowserUri, createObjectUrl: (blob: Blob) => string = blob => URL.createObjectURL(blob)): string | undefined {
@@ -127,9 +125,17 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
 
     async read(uri: BrowserUri): Promise<string> {
         const file = this.files.get(uri.path);
-        if (file?.text === undefined) {
+        if (!file) {
             throw new Error(`Missing browser file: ${uri.path}`);
         }
+        if (file.text !== undefined) {
+            return file.text;
+        }
+        if (!file.readText) {
+            throw new Error(`Missing browser file: ${uri.path}`);
+        }
+        file.text = await file.readText();
+        file.blob ??= new Blob([file.text], { type: 'text/plain' });
         return file.text;
     }
 
