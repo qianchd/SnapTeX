@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
-import { SmartRenderer } from './renderer';
-import { LatexDocument } from './document';
-import { VscodeFileProvider } from './vscode-file-provider';
+import type { IFileProvider } from './file-provider';
 import { getBasename, normalizeUri } from './utils';
 import { fillPreviewHtmlTemplate } from './preview-template';
+import type { PreviewUpdateService } from './preview-update-service';
 import type { RenderPayload } from './types';
 import {
     assertNever,
@@ -133,16 +132,19 @@ export class TexPreviewPanel {
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
     private _disposables: vscode.Disposable[] = [];
-    private _renderer: SmartRenderer;
-    private _fileProvider: VscodeFileProvider;
+    private readonly _fileProvider: IFileProvider<vscode.Uri>;
+    private readonly _updateService: PreviewUpdateService<vscode.Uri>;
 
     private _sourceUri: vscode.Uri | undefined;
-    private readonly _currentDocument: LatexDocument;
     private _updateRunning = false;
     private _pendingRootUri: vscode.Uri | undefined;
     private _webviewReady = false;
 
-    public static createOrShow(extensionUri: vscode.Uri, renderer: SmartRenderer): TexPreviewPanel {
+    public static createOrShow(
+        extensionUri: vscode.Uri,
+        fileProvider: IFileProvider<vscode.Uri>,
+        updateService: PreviewUpdateService<vscode.Uri>
+    ): TexPreviewPanel {
         const editor = vscode.window.activeTextEditor;
         const column = editor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One;
         if (TexPreviewPanel.currentPanel) {
@@ -166,11 +168,16 @@ export class TexPreviewPanel {
             }
         );
 
-        TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionUri, renderer);
+        TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionUri, fileProvider, updateService);
         return TexPreviewPanel.currentPanel;
     }
 
-    public static revive(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, renderer: SmartRenderer) {
+    public static revive(
+        panel: vscode.WebviewPanel,
+        extensionUri: vscode.Uri,
+        fileProvider: IFileProvider<vscode.Uri>,
+        updateService: PreviewUpdateService<vscode.Uri>
+    ) {
         if (TexPreviewPanel.currentPanel) {
             TexPreviewPanel.currentPanel.dispose();
         }
@@ -180,18 +187,21 @@ export class TexPreviewPanel {
             localResourceRoots: [extensionUri, mediaRoot]
         };
 
-        TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionUri, renderer);
+        TexPreviewPanel.currentPanel = new TexPreviewPanel(panel, extensionUri, fileProvider, updateService);
     }
 
-    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, renderer: SmartRenderer) {
+    private constructor(
+        panel: vscode.WebviewPanel,
+        extensionUri: vscode.Uri,
+        fileProvider: IFileProvider<vscode.Uri>,
+        updateService: PreviewUpdateService<vscode.Uri>
+    ) {
         this._panel = panel;
         this._extensionUri = extensionUri;
-        this._renderer = renderer;
+        this._fileProvider = fileProvider;
+        this._updateService = updateService;
 
-        this._fileProvider = new VscodeFileProvider();
-        this._currentDocument = new LatexDocument(this._fileProvider);
-
-        this._renderer.resetState();
+        this._updateService.resetState();
 
         this._panel.webview.onDidReceiveMessage(
             async message => {
@@ -204,7 +214,7 @@ export class TexPreviewPanel {
                     case WebviewToExtensionCommand.WebviewLoaded:
                         console.log('[SnapTeX] Webview reloaded.');
                         this._webviewReady = true;
-                        this._renderer.resetState();
+                        this._updateService.resetState();
                         void this.update(this._pendingRootUri);
                         break;
                     case WebviewToExtensionCommand.RevealLine:
@@ -323,7 +333,7 @@ export class TexPreviewPanel {
             return;
         }
 
-        const block = this._renderer.renderBlockByIndex(index);
+        const block = this._updateService.renderBlockByIndex(index);
         if (!block) {
             this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, error: 'Block not found' });
             return;
@@ -417,7 +427,7 @@ export class TexPreviewPanel {
 
         this._sourceUri = docUri;
         if (sourceChanged) {
-            this._renderer.resetState();
+            this._updateService.resetState();
         }
 
         const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
@@ -430,24 +440,12 @@ export class TexPreviewPanel {
         this.postWebviewConfig();
 
         const virtualizeBlocks = getVirtualMode();
-        const parseResult = await this._currentDocument.parse(this._sourceUri, text, { trace: logHostMemory });
+        const payload = await this._updateService.render(this._sourceUri, text, {
+            deferFullHtml: virtualizeBlocks,
+            trace: logHostMemory,
+            transformHtml: html => this.fixHtmlPaths(html)
+        });
         text = "";
-        logHostMemory('after parse');
-
-        this._currentDocument.applyResult(parseResult);
-        const payload = this._renderer.render(this._currentDocument, { deferFullHtml: virtualizeBlocks });
-        logHostMemory('after render');
-        this._currentDocument.releaseTextContent();
-        parseResult.bodyText = "";
-        parseResult.blockSpans = [];
-        parseResult.blockHashes = [];
-
-        if (payload.htmls) {
-            for (let index = 0; index < payload.htmls.length; index++) {
-                payload.htmls[index] = this.fixHtmlPaths(payload.htmls[index]);
-            }
-        }
-        logHostMemory('after fixPaths');
         logPayloadStats('before postMessage', payload);
         this.postMessage({ command: ExtensionToWebviewCommand.Update, payload });
         logHostMemory('after postMessage');

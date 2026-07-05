@@ -3,6 +3,8 @@ import { SmartRenderer } from './renderer';
 import { TexPreviewPanel } from './panel';
 import { normalizeUri } from './utils';
 import { ExtensionToWebviewCommand } from './webview-messages';
+import { PreviewUpdateService } from './preview-update-service';
+import { VscodeFileProvider } from './vscode-file-provider';
 
 const createFlashDecoration = (backgroundColor: string | vscode.ThemeColor) => vscode.window.createTextEditorDecorationType({ backgroundColor, isWholeLine: true });
 const flashColor = (opacity: number) => `color-mix(in srgb, var(--vscode-editor-wordHighlightBackground) ${opacity}%, transparent)`;
@@ -92,6 +94,8 @@ function areUrisEqual(uri1: vscode.Uri, uri2: vscode.Uri): boolean {
  */
 export function activate(context: vscode.ExtensionContext) {
     const renderer = new SmartRenderer();
+    const fileProvider = new VscodeFileProvider();
+    const updateService = new PreviewUpdateService(fileProvider, renderer);
 
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
         if (!TexPreviewPanel.currentPanel) {return;}
@@ -173,7 +177,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         else {
             const editor = vscode.window.activeTextEditor;
-            const panel = TexPreviewPanel.createOrShow(context.extensionUri, renderer);
+            const panel = TexPreviewPanel.createOrShow(context.extensionUri, fileProvider, updateService);
             if (editor) {
                 currentRenderedUri = editor.document.uri;
                 void panel.update(editor.document.uri);
@@ -316,7 +320,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (vscode.window.registerWebviewPanelSerializer) {
         context.subscriptions.push(vscode.window.registerWebviewPanelSerializer(TexPreviewPanel.viewType, {
             async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, _state: unknown) {
-                TexPreviewPanel.revive(webviewPanel, context.extensionUri, renderer);
+                TexPreviewPanel.revive(webviewPanel, context.extensionUri, fileProvider, updateService);
             }
         }));
     }
