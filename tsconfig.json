@@ -17,6 +17,8 @@
 	},
 	"include": [
 		"src/**/*.ts",
-		"apps/vscode/src/**/*.ts"
+		"apps/vscode/src/**/*.ts",
+		"apps/standalone/src/**/*.ts",
+		"apps/web/src/**/*.ts"
 	]
 }

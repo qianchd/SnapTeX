@@ -386,7 +386,22 @@ async function main() {
         plugins: [esbuildProblemMatcherPlugin],
     });
 
-    const contexts = [extensionCtx, webviewMainCtx, webviewPdfCtx];
+    const webAppCtx = await esbuild.context({
+        entryPoints: ['apps/web/src/main.ts'],
+        bundle: true,
+        format: 'iife',
+        globalName: 'SnapTeXStandaloneWeb',
+        minify: production,
+        sourcemap: !production,
+        sourcesContent: false,
+        platform: 'browser',
+        target: 'es2022',
+        outfile: 'apps/web/dist/web-main.js',
+        logLevel: 'silent',
+        plugins: [esbuildProblemMatcherPlugin],
+    });
+
+    const contexts = [extensionCtx, webviewMainCtx, webviewPdfCtx, webAppCtx];
     if (watch) {
         await Promise.all(contexts.map(ctx => ctx.watch()));
     } else {

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/media/vendor/katex/katex.min.css">
+    <link rel="stylesheet" href="/media/preview-style.css">
+    <link rel="stylesheet" href="/apps/web/web.css">
+    <title>SnapTeX Web Preview</title>
+</head>
+<body
+    data-tikz-jax-js-uri="/media/vendor/tikzjax/tikzjax.js"
+    data-tikz-jax-css-uri="/media/vendor/tikzjax/fonts.css"
+    data-pdf-js-uri="/media/vendor/pdfjs/pdf.mjs"
+    data-pdf-worker-uri="/media/vendor/pdfjs/pdf.worker.mjs"
+>
+    <main id="app-shell">
+        <section id="editor-pane" aria-label="LaTeX editor">
+            <div id="editor"></div>
+        </section>
+        <div id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor and preview panes"></div>
+        <section id="preview-pane" aria-label="SnapTeX preview">
+            <div id="content-root"></div>
+        </section>
+    </main>
+    <script>
+        window.snaptexPreviewMessageQueue = [];
+        window.snaptexPreviewBridge = {
+            postMessage(message) {
+                if (window.snaptexStandaloneHost) {
+                    window.snaptexStandaloneHost.handlePreviewMessage(message);
+                } else {
+                    window.snaptexPreviewMessageQueue.push(message);
+                }
+            }
+        };
+    </script>
+    <script src="/media/webview-main.js"></script>
+    <script src="/media/webview-pdf.js"></script>
+    <script src="/apps/web/dist/web-main.js"></script>
+</body>
+</html>

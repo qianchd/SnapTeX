@@ -2,7 +2,7 @@
   "name": "snaptex",
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "icon": "media/icon.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
@@ -148,7 +148,9 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
-    "lint": "eslint src apps/vscode/src",
+    "lint": "eslint src apps/vscode/src apps/standalone/src apps/web/src",
+    "web:build": "node esbuild.js",
+    "web:serve": "npm run web:build && node apps/web/server.mjs",
     "test": "vscode-test"
   },
   "devDependencies": {
@@ -166,7 +168,11 @@
     "typescript-eslint": "^8.48.1"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/state": "^6.7.0",
+    "@codemirror/view": "^6.43.5",
     "@planktimerr/tikzjax": "^1.0.0",
+    "codemirror": "^6.0.2",
     "katex": "^0.16.27",
     "markdown-it": "^14.1.0",
     "pdfjs-dist": "^5.4.449"
