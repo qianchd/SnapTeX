@@ -5,7 +5,7 @@ import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri, type BrowserProjectFile } from './browser-file-provider';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { SmartRenderer } from '../../../src/renderer';
-import { decodeHtmlAttribute, escapeHtmlAttribute } from '../../../src/utils';
+import { decodeHtmlAttribute, escapeHtmlAttribute, getSyncAnchorContext } from '../../../src/utils';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage, type WebviewToExtensionMessage } from '../../../src/webview-messages';
 
 declare global {
@@ -36,6 +36,10 @@ function debounce(callback: () => void, delayMs: number): () => void {
         }
         timer = window.setTimeout(callback, delayMs);
     };
+}
+
+function lineAt(text: string, line: number): string {
+    return text.split(/\r?\n/)[line] ?? '';
 }
 
 /**
@@ -167,6 +171,26 @@ export class StandaloneHost {
         };
     }
 
+    syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5) {
+        if (!this.previewReady) {
+            return;
+        }
+
+        const syncData = this.updateService.getPreviewSyncData(this.activeUri.toString(), line);
+        if (!syncData) {
+            return;
+        }
+
+        this.postToPreview({
+            command: ExtensionToWebviewCommand.ScrollToBlock,
+            index: syncData.index,
+            ratio: syncData.ratio,
+            anchor: getSyncAnchorContext(lineText ?? lineAt(this.editorView.state.doc.toString(), line), character),
+            auto: true,
+            viewRatio
+        });
+    }
+
     handleEditorUpdate() {
         if (this.suppressNextEditorUpdate) {
             this.suppressNextEditorUpdate = false;
@@ -289,6 +313,12 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     const scheduleRender = debounce(() => {
         void host?.renderCurrentText();
     }, 150);
+    let pendingSelection: { line: number; character: number; text: string } | undefined;
+    const scheduleSelectionSync = debounce(() => {
+        if (pendingSelection) {
+            host?.syncEditorSelection(pendingSelection.line, pendingSelection.character, pendingSelection.text);
+        }
+    }, 100);
 
     const editorView = new EditorView({
         parent: options.editorParent,
@@ -300,7 +330,17 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                 EditorView.lineWrapping,
                 EditorView.updateListener.of(update => {
                     if (update.docChanged) {
+                        pendingSelection = undefined;
                         host?.handleEditorUpdate();
+                    } else if (update.selectionSet) {
+                        const selection = update.state.selection.main;
+                        const line = update.state.doc.lineAt(selection.head);
+                        pendingSelection = {
+                            line: line.number - 1,
+                            character: selection.head - line.from,
+                            text: line.text
+                        };
+                        scheduleSelectionSync();
                     }
                 })
             ]
