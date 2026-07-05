@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SmartRenderer } from '../../../src/renderer';
 import { TexPreviewPanel } from './panel';
-import { normalizeUri } from '../../../src/utils';
+import { getSyncAnchorContext, normalizeUri } from '../../../src/utils';
 import { ExtensionToWebviewCommand } from '../../../src/webview-messages';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { VscodeFileProvider } from './vscode-file-provider';
@@ -42,13 +42,7 @@ function getSyncSuppressionDuration() {
 
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) {return "";}
-    const lineText = doc.lineAt(line).text;
-    const rawSnippet = (char !== undefined && char >= 0)
-        ? lineText.substring(Math.max(0, char - 20), Math.min(lineText.length, char + 30))
-        : lineText.substring(0, 60);
-
-    const clean = rawSnippet.replace(/\\[a-zA-Z]+\*?\{?/g, ' ').replace(/[{}$%]/g, ' ').replace(/\s+/g, ' ').trim();
-    return clean.length >= 5 ? clean.substring(0, 40) : "";
+    return getSyncAnchorContext(doc.lineAt(line).text, char);
 }
 
 function findNearestAnchorLine(document: vscode.TextDocument, anchors: string[], startLine: number, endLine: number, estimatedLine: number): number | undefined {

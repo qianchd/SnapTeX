@@ -84,6 +84,15 @@ export function sanitizeHttpUrlForAttribute(rawUrl: string): string | undefined 
     }
 }
 
+export function getSyncAnchorContext(lineText: string, char?: number): string {
+    const rawSnippet = (char !== undefined && char >= 0)
+        ? lineText.substring(Math.max(0, char - 20), Math.min(lineText.length, char + 30))
+        : lineText.substring(0, 60);
+
+    const clean = rawSnippet.replace(/\\[a-zA-Z]+\*?\{?/g, ' ').replace(/[{}$%]/g, ' ').replace(/\s+/g, ' ').trim();
+    return clean.length >= 5 ? clean.substring(0, 40) : "";
+}
+
 export function createHiddenLabelAnchor(labelName: string): string {
     const safeLabel = escapeHtmlAttribute(labelName);
     return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`;

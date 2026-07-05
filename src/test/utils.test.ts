@@ -8,6 +8,7 @@ import {
     extractLatexCitationKeys,
     extractLatexLabelNames,
     findCommand,
+    getSyncAnchorContext,
     readLatexCommandAt,
     readLatexGroup,
     resolveLatexStyles,
@@ -82,6 +83,14 @@ suite('LaTeX style utilities', () => {
         const source = 'aaa % inline\n% whole line\nbbb \\% literal';
         assert.equal(stripLatexComments(source), 'aaa bbb \\% literal');
         assert.equal(stripLatexComments(source, { mode: 'mask' }), 'aaa %\n%\nbbb \\% literal');
+    });
+
+    test('builds compact sync anchor text from LaTeX source lines', () => {
+        assert.equal(
+            getSyncAnchorContext('Before $x_i$ and \\textbf{important words} after'),
+            'Before x_i and important words after'
+        );
+        assert.equal(getSyncAnchorContext('\\alpha'), '');
     });
 
     test('reads commands at the requested position without searching ahead', () => {
