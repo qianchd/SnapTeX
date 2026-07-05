@@ -10,7 +10,8 @@ export interface BrowserWritableFileHandle {
 
 export interface BrowserProjectFile {
     path: string;
-    text: string;
+    text?: string;
+    blob?: Blob;
     handle?: BrowserWritableFileHandle;
 }
 
@@ -51,16 +52,31 @@ export class BrowserUri implements UriLike {
  * In-memory file provider shared by desktop browsers and future WebView hosts.
  */
 export class BrowserFileProvider implements IFileProvider<BrowserUri> {
-    private readonly files = new Map<string, { text: string; mtime: number; handle?: BrowserWritableFileHandle }>();
+    private readonly files = new Map<string, { text?: string; blob?: Blob; mtime: number; handle?: BrowserWritableFileHandle; objectUrl?: string }>();
     private version = 1;
 
     private clear() {
+        this.revokeObjectUrls();
         this.files.clear();
     }
 
     setProjectFiles(files: readonly BrowserProjectFile[]) {
         this.clear();
-        files.forEach(file => this.setFileText(file.path, file.text, file.handle));
+        files.forEach(file => this.setProjectFile(file));
+    }
+
+    setProjectFile(file: BrowserProjectFile) {
+        const normalizedPath = normalizeBrowserPath(file.path);
+        const existing = this.files.get(normalizedPath);
+        if (existing?.objectUrl) {
+            this.revokeObjectUrl(existing.objectUrl);
+        }
+        this.files.set(normalizedPath, {
+            text: file.text,
+            blob: file.blob ?? (file.text === undefined ? undefined : new Blob([file.text], { type: 'text/plain' })),
+            handle: file.handle ?? existing?.handle,
+            mtime: this.version++
+        });
     }
 
     setFile(uri: BrowserUri, text: string, handle?: BrowserWritableFileHandle) {
@@ -70,11 +86,30 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
     setFileText(path: string, text: string, handle?: BrowserWritableFileHandle) {
         const normalizedPath = normalizeBrowserPath(path);
         const existing = this.files.get(normalizedPath);
-        this.files.set(normalizedPath, { text, handle: handle ?? existing?.handle, mtime: this.version++ });
+        if (existing?.objectUrl) {
+            this.revokeObjectUrl(existing.objectUrl);
+        }
+        this.files.set(normalizedPath, {
+            text,
+            blob: new Blob([text], { type: 'text/plain' }),
+            handle: handle ?? existing?.handle,
+            mtime: this.version++
+        });
     }
 
     getFileText(uri: BrowserUri): string | undefined {
         return this.files.get(uri.path)?.text;
+    }
+
+    getResourceUrl(uri: BrowserUri, createObjectUrl: (blob: Blob) => string = blob => URL.createObjectURL(blob)): string | undefined {
+        const file = this.files.get(uri.path);
+        if (!file?.blob) {
+            return undefined;
+        }
+        if (!file.objectUrl) {
+            file.objectUrl = createObjectUrl(file.blob);
+        }
+        return file.objectUrl;
     }
 
     async write(uri: BrowserUri, text: string): Promise<boolean> {
@@ -92,7 +127,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
 
     async read(uri: BrowserUri): Promise<string> {
         const file = this.files.get(uri.path);
-        if (!file) {
+        if (file?.text === undefined) {
             throw new Error(`Missing browser file: ${uri.path}`);
         }
         return file.text;
@@ -115,5 +150,19 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
 
     dir(uri: BrowserUri): BrowserUri {
         return new BrowserUri(parentDir(uri.path));
+    }
+
+    private revokeObjectUrls() {
+        for (const file of this.files.values()) {
+            if (file.objectUrl) {
+                this.revokeObjectUrl(file.objectUrl);
+            }
+        }
+    }
+
+    private revokeObjectUrl(url: string) {
+        if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+            URL.revokeObjectURL(url);
+        }
     }
 }

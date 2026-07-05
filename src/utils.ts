@@ -56,6 +56,15 @@ export function escapeHtmlAttribute(text: string): string {
     return escapeHtml(text);
 }
 
+export function decodeHtmlAttribute(value: string): string {
+    return value
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+}
+
 export function escapeScriptRawText(text: string): string {
     return text.replace(/<\/script/gi, '<\\/script');
 }

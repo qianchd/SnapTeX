@@ -5,6 +5,7 @@ import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri, type BrowserProjectFile } from './browser-file-provider';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { SmartRenderer } from '../../../src/renderer';
+import { decodeHtmlAttribute, escapeHtmlAttribute } from '../../../src/utils';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage, type WebviewToExtensionMessage } from '../../../src/webview-messages';
 
 declare global {
@@ -107,12 +108,7 @@ export class StandaloneHost {
                 this.handleBlockHtmlRequest(message.id, message.index, message.hash);
                 break;
             case WebviewToExtensionCommand.RequestPdf:
-                this.postToPreview({
-                    command: ExtensionToWebviewCommand.PdfUri,
-                    id: message.id,
-                    path: message.path,
-                    error: 'PDF rendering is not available in the first standalone web prototype.'
-                });
+                this.handlePdfRequest(message.id, message.path);
                 break;
             case WebviewToExtensionCommand.RevealLine:
             case WebviewToExtensionCommand.SyncScroll:
@@ -128,7 +124,8 @@ export class StandaloneHost {
         const text = this.editorView.state.doc.toString();
         this.fileProvider.setFile(this.rootUri, text);
         const payload = await this.updateService.render(this.rootUri, text, {
-            deferFullHtml: true
+            deferFullHtml: true,
+            transformHtml: html => this.fixHtmlPaths(html)
         });
 
         this.postToPreview({ command: ExtensionToWebviewCommand.Update, payload });
@@ -141,9 +138,34 @@ export class StandaloneHost {
             id,
             index,
             hash: rendered?.hash ?? hash,
-            html: rendered?.html,
+            html: rendered?.html === undefined ? undefined : this.fixHtmlPaths(rendered.html),
             error: rendered?.html ? undefined : 'Block HTML is unavailable.'
         });
+    }
+
+    private handlePdfRequest(id: string, path: unknown) {
+        const pathText = typeof path === 'string' ? decodeHtmlAttribute(path) : '';
+        if (!pathText.toLowerCase().endsWith('.pdf')) {
+            this.postToPreview({ command: ExtensionToWebviewCommand.PdfUri, id, error: 'Invalid PDF path' });
+            return;
+        }
+
+        const uri = this.resolveProjectResourceUri(pathText);
+        const url = this.fileProvider.getResourceUrl(uri);
+        this.postToPreview(url
+            ? { command: ExtensionToWebviewCommand.PdfUri, id, path: pathText, uri: url }
+            : { command: ExtensionToWebviewCommand.PdfUri, id, path: pathText, error: 'PDF not found' });
+    }
+
+    private fixHtmlPaths(html: string): string {
+        return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (_match, attr, relPath) => {
+            const url = this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(decodeHtmlAttribute(relPath)));
+            return url ? `${attr}="${escapeHtmlAttribute(url)}"` : `${attr}=""`;
+        });
+    }
+
+    private resolveProjectResourceUri(relativePath: string): BrowserUri {
+        return this.fileProvider.resolve(this.fileProvider.dir(this.rootUri), relativePath);
     }
 
     private postToPreview(message: ExtensionToWebviewMessage) {
