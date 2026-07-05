@@ -23,6 +23,7 @@ suite('Preview HTML template', () => {
 
     test('fails when a template placeholder is not supplied', () => {
         assert.throws(() => fillPreviewHtmlTemplate('{{unknown}}', {
+            cspMeta: '',
             styleLinks: [],
             bodyData: {},
             scripts: []

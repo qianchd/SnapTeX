@@ -1,7 +1,7 @@
 import { escapeHtmlAttribute } from './utils';
 
 export interface PreviewHtmlTemplateData {
-    cspMeta?: string;
+    cspMeta: string;
     styleLinks: string[];
     bodyData: Record<string, string>;
     scripts: string[];
@@ -28,7 +28,7 @@ function renderScriptTags(srcs: string[]): string {
 
 export function fillPreviewHtmlTemplate(template: string, data: PreviewHtmlTemplateData): string {
     const replacements: Record<string, string> = {
-        cspMeta: data.cspMeta ?? '',
+        cspMeta: data.cspMeta,
         styleLinks: renderStylesheetLinks(data.styleLinks),
         bodyData: renderAttributes(data.bodyData),
         scripts: renderScriptTags(data.scripts)
