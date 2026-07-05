@@ -210,4 +210,43 @@ suite('StandaloneHost', () => {
             restoreWindow();
         }
     });
+
+    test('reports missing project dependencies', async () => {
+        const editor = new TestEditorView();
+        const messages: ExtensionToWebviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject([
+                {
+                    path: '/main.tex',
+                    text: [
+                        '\\begin{document}',
+                        '\\input{missing-chapter}',
+                        '\\begin{figure}',
+                        '\\includegraphics{missing-image.png}',
+                        '\\includegraphics{missing-doc.pdf}',
+                        '\\end{figure}',
+                        '\\bibliography{missing-refs}',
+                        '\\end{document}'
+                    ].join('\n')
+                }
+            ], '/main.tex');
+
+            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            await host.renderCurrentText();
+            requestBlockHtml(host, messages);
+            host.handlePreviewMessage({ command: WebviewToExtensionCommand.RequestPdf, id: 'pdf-1', path: 'missing-doc.pdf' });
+
+            assert.deepEqual(host.getDiagnostics(), [
+                'Missing input file: /missing-chapter.tex',
+                'Missing bibliography file: /missing-refs.bib',
+                'Missing image: missing-image.png',
+                'Missing PDF: missing-doc.pdf'
+            ]);
+        } finally {
+            restoreWindow();
+        }
+    });
 });

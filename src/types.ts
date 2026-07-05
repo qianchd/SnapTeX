@@ -45,6 +45,10 @@ export interface MetadataResult {
     cleanedText: string;
 }
 
+export interface DocumentDiagnostic {
+    message: string;
+}
+
 export interface UriLike {
     toString(): string;
 }

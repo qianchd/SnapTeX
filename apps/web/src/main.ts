@@ -156,8 +156,13 @@ async function loadProject(host: StandaloneHost, files: readonly BrowserProjectF
 
     await host.loadProject(files, rootPath);
     currentProjectTextPaths = projectTextPaths(files);
-    renderProjectFiles(host, currentProjectTextPaths);
+    renderProjectState(host);
     setStatus(`Opened ${rootPath} (${files.length} files)`);
+}
+
+function renderProjectState(host: StandaloneHost): void {
+    renderProjectFiles(host, currentProjectTextPaths);
+    renderProjectDiagnostics(host);
 }
 
 function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): void {
@@ -177,7 +182,7 @@ function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): voi
         openButton.addEventListener('click', () => {
             host.openEditorFile(path)
                 .then(() => {
-                    renderProjectFiles(host, paths);
+                    renderProjectState(host);
                     setStatus(`Editing ${path}`);
                 })
                 .catch(error => reportFailure('Open file', error));
@@ -197,7 +202,7 @@ function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): voi
             rootButton.addEventListener('click', () => {
                 host.setPreviewRoot(path)
                     .then(() => {
-                        renderProjectFiles(host, paths);
+                        renderProjectState(host);
                         setStatus(`Preview root ${path}`);
                     })
                     .catch(error => reportFailure('Set root', error));
@@ -206,6 +211,27 @@ function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): voi
         }
         return entry;
     }));
+}
+
+function renderProjectDiagnostics(host: StandaloneHost): void {
+    const panel = document.getElementById('project-diagnostics');
+    if (!panel) {
+        return;
+    }
+
+    const diagnostics = host.getDiagnostics();
+    if (diagnostics.length === 0) {
+        panel.replaceChildren();
+        return;
+    }
+
+    const list = document.createElement('ul');
+    list.replaceChildren(...diagnostics.map(message => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        return item;
+    }));
+    panel.replaceChildren(list);
 }
 
 async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Promise<void> {
@@ -250,7 +276,7 @@ function downloadText(path: string, text: string): void {
 
 async function saveActiveFile(host: StandaloneHost): Promise<void> {
     const result = await host.saveCurrentText();
-    renderProjectFiles(host, currentProjectTextPaths);
+    renderProjectState(host);
     if (result.wroteToSource) {
         setStatus(`Saved ${result.path}`);
         return;
@@ -334,6 +360,6 @@ let host: StandaloneHost;
 host = createStandaloneSnapTeXApp({
     editorParent,
     initialText: INITIAL_TEX,
-    onStateChange: updatedHost => renderProjectFiles(updatedHost, currentProjectTextPaths)
+    onStateChange: renderProjectState
 });
 bindProjectControls(host);

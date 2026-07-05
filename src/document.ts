@@ -1,7 +1,7 @@
 import type { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
-import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView, UriLike } from './types';
+import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, DocumentDiagnostic, RenderDocumentView, UriLike } from './types';
 import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
@@ -16,6 +16,7 @@ export interface DocumentParseResult {
     sourceLines: Int32Array;
     metadata: PreambleData;
     bibEntries: Map<string, BibEntry>;
+    diagnostics: DocumentDiagnostic[];
     contentStartLineOffset: number;
 }
 
@@ -51,6 +52,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public sourceLines: Int32Array = new Int32Array(0);
 
     public contentStartLineOffset: number = 0;
+    public diagnostics: DocumentDiagnostic[] = [];
 
     public metadata: PreambleData = {
         macros: {},
@@ -109,6 +111,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
         this.metadata = result.metadata;
         this.bibEntries = result.bibEntries;
+        this.diagnostics = result.diagnostics;
         this.contentStartLineOffset = result.contentStartLineOffset;
     }
 
@@ -122,7 +125,8 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         const rootDir = this.fileProvider.dir(entryUri);
         this.rootDir = rootDir;
 
-        const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, 0, contentOverride);
+        const diagnostics: DocumentDiagnostic[] = [];
+        const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, diagnostics, 0, contentOverride);
         options.trace?.('after flatten');
         let normalizedText = textLines.join('\n');
         textLines.length = 0;
@@ -137,7 +141,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         normalizedText = "";
         options.trace?.('after metadata');
 
-        const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir);
+        const bibEntries = await this.loadBibliography(metaRes.cleanedText, rootDir, diagnostics);
 
         let bodyText = metaRes.cleanedText;
         const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
@@ -163,6 +167,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             sourceLines: new Int32Array(lines),
             metadata: metaRes.data,
             bibEntries,
+            diagnostics,
             contentStartLineOffset
         };
         fileIndices.length = 0;
@@ -200,11 +205,12 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     private async loadAndFlatten(
         fileUri: TUri,
         filePool: string[],
+        diagnostics: DocumentDiagnostic[],
         depth: number = 0,
         contentOverride?: string
     ): Promise<FlattenOutput> {
         const output: FlattenOutput = { textLines: [], fileIndices: [], lines: [] };
-        await this.flattenInto(fileUri, filePool, output, depth, contentOverride);
+        await this.flattenInto(fileUri, filePool, output, diagnostics, depth, contentOverride);
         return output;
     }
 
@@ -212,10 +218,14 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         fileUri: TUri,
         filePool: string[],
         output: FlattenOutput,
+        diagnostics: DocumentDiagnostic[],
         depth: number = 0,
         contentOverride?: string
     ): Promise<void> {
-        if (depth > 20) { return; }
+        if (depth > 20) {
+            diagnostics.push({ message: `Input nesting is too deep near ${fileUri.toString()}` });
+            return;
+        }
 
         let content = "";
         const filePathStr = fileUri.toString();
@@ -230,6 +240,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             content = contentOverride;
         } else {
             if (!(await this.fileProvider.exists(fileUri))) {
+                diagnostics.push({ message: `Missing input file: ${filePathStr}` });
                 output.textLines.push(`% [SnapTeX] File not found: ${filePathStr}`);
                 output.fileIndices.push(currentFileIndex);
                 output.lines.push(0);
@@ -238,6 +249,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             try {
                 content = await this.fileProvider.read(fileUri);
             } catch (e) {
+                diagnostics.push({ message: `Error reading input file: ${filePathStr}` });
                 output.textLines.push(`% [SnapTeX] Error reading: ${filePathStr}`);
                 output.fileIndices.push(currentFileIndex);
                 output.lines.push(0);
@@ -270,7 +282,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
                 const currentDir = this.fileProvider.dir(fileUri);
                 const targetUri = this.fileProvider.resolve(currentDir, relPath);
 
-                await this.flattenInto(targetUri, filePool, output, depth + 1);
+                await this.flattenInto(targetUri, filePool, output, diagnostics, depth + 1);
             } else {
                 output.textLines.push(line);
                 output.fileIndices.push(currentFileIndex);
@@ -320,7 +332,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         return portableLines;
     }
 
-    private async loadBibliography(text: string, rootDir: TUri): Promise<Map<string, BibEntry>> {
+    private async loadBibliography(text: string, rootDir: TUri, diagnostics: DocumentDiagnostic[]): Promise<Map<string, BibEntry>> {
         const inlineBibliography = text.match(R_THEBIBLIOGRAPHY);
         if (inlineBibliography) {
             return BibTexParser.parseBibItems(inlineBibliography[0]);
@@ -336,7 +348,10 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
         try {
             const { mtime } = await this.fileProvider.stat(bibUri);
-            if (mtime === 0) { return new Map(); }
+            if (mtime === 0) {
+                diagnostics.push({ message: `Missing bibliography file: ${bibUriStr}` });
+                return new Map();
+            }
             const cached = this.bibCache.get(bibUriStr);
             if (cached && cached.mtime === mtime) { return cached.entries; }
             const entries = BibTexParser.parse(await this.fileProvider.read(bibUri));
@@ -344,6 +359,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             return entries;
         } catch (e) {
             console.error('Failed to load bib file:', e);
+            diagnostics.push({ message: `Error reading bibliography file: ${bibUriStr}` });
         }
         return new Map();
     }
