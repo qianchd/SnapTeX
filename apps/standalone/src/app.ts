@@ -77,6 +77,13 @@ export class StandaloneHost {
         await this.renderCurrentText();
     }
 
+    async setPreviewRoot(path: string) {
+        this.persistActiveEditorText();
+        this.rootUri = new BrowserUri(path);
+        this.updateService.resetState();
+        await this.renderCurrentText();
+    }
+
     getRootPath(): string {
         return this.rootUri.path;
     }
