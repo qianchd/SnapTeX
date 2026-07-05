@@ -92,6 +92,7 @@ export function createDocument(
             custom: options.custom ?? {}
         },
         bibEntries: new Map(),
+        diagnostics: [],
         contentStartLineOffset: 0
     });
     return doc;

@@ -48,6 +48,7 @@ export class StandaloneHost {
     private readonly updateService = new PreviewUpdateService(this.fileProvider, new SmartRenderer());
     private readonly savedTexts = new Map<string, string>();
     private readonly dirtyPaths = new Set<string>();
+    private readonly diagnostics = new Set<string>();
     private previewReady = false;
     private suppressNextEditorUpdate = false;
 
@@ -111,6 +112,10 @@ export class StandaloneHost {
 
     isDirty(path: string): boolean {
         return this.dirtyPaths.has(new BrowserUri(path).path);
+    }
+
+    getDiagnostics(): readonly string[] {
+        return [...this.diagnostics];
     }
 
     private replaceEditorText(text: string) {
@@ -209,6 +214,7 @@ export class StandaloneHost {
             transformHtml: html => this.fixHtmlPaths(html)
         });
 
+        this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));
         this.postToPreview({ command: ExtensionToWebviewCommand.Update, payload });
     }
 
@@ -233,6 +239,9 @@ export class StandaloneHost {
 
         const uri = this.resolveProjectResourceUri(pathText);
         const url = this.fileProvider.getResourceUrl(uri);
+        if (!url) {
+            this.addDiagnostic(`Missing PDF: ${pathText}`);
+        }
         this.postToPreview(url
             ? { command: ExtensionToWebviewCommand.PdfUri, id, path: pathText, uri: url }
             : { command: ExtensionToWebviewCommand.PdfUri, id, path: pathText, error: 'PDF not found' });
@@ -240,7 +249,11 @@ export class StandaloneHost {
 
     private fixHtmlPaths(html: string): string {
         return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (_match, attr, relPath) => {
-            const url = this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(decodeHtmlAttribute(relPath)));
+            const path = decodeHtmlAttribute(relPath);
+            const url = this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(path));
+            if (!url) {
+                this.addDiagnostic(`${attr === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
+            }
             return url ? `${attr}="${escapeHtmlAttribute(url)}"` : `${attr}=""`;
         });
     }
@@ -251,6 +264,23 @@ export class StandaloneHost {
 
     private postToPreview(message: ExtensionToWebviewMessage) {
         window.postMessage(message, window.location.origin);
+    }
+
+    private replaceDiagnostics(messages: readonly string[]) {
+        const previous = this.getDiagnostics().join('\n');
+        this.diagnostics.clear();
+        messages.forEach(message => this.diagnostics.add(message));
+        if (previous !== this.getDiagnostics().join('\n')) {
+            this.notifyStateChanged();
+        }
+    }
+
+    private addDiagnostic(message: string) {
+        const size = this.diagnostics.size;
+        this.diagnostics.add(message);
+        if (this.diagnostics.size !== size) {
+            this.notifyStateChanged();
+        }
     }
 }
 

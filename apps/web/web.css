@@ -98,6 +98,28 @@ body {
     display: none;
 }
 
+#project-diagnostics {
+    display: none;
+    flex: 0 0 auto;
+    max-height: 84px;
+    overflow: auto;
+    padding: 6px 10px;
+    border-bottom: 1px solid #f3d2b5;
+    background: #fff7ed;
+    color: #9a3412;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 12px;
+}
+
+#project-diagnostics:not(:empty) {
+    display: block;
+}
+
+#project-diagnostics ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
 #project-files button {
     border: 1px solid transparent;
     border-radius: 4px;

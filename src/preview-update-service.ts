@@ -1,7 +1,7 @@
 import { LatexDocument } from './document';
 import type { IFileProvider } from './file-provider';
 import type { SmartRenderer } from './renderer';
-import type { RenderPayload, UriLike } from './types';
+import type { DocumentDiagnostic, RenderPayload, UriLike } from './types';
 
 export interface PreviewRenderOptions {
     deferFullHtml: boolean;
@@ -14,6 +14,7 @@ export interface PreviewRenderOptions {
  */
 export class PreviewUpdateService<TUri extends UriLike = UriLike> {
     private readonly document: LatexDocument<TUri>;
+    private diagnostics: DocumentDiagnostic[] = [];
 
     constructor(fileProvider: IFileProvider<TUri>, private readonly renderer: SmartRenderer) {
         this.document = new LatexDocument(fileProvider);
@@ -21,14 +22,20 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
 
     public resetState() {
         this.renderer.resetState();
+        this.diagnostics = [];
     }
 
     public renderBlockByIndex(index: number) {
         return this.renderer.renderBlockByIndex(index);
     }
 
+    public getDiagnostics(): readonly DocumentDiagnostic[] {
+        return this.diagnostics;
+    }
+
     public async render(uri: TUri, text: string, options: PreviewRenderOptions): Promise<RenderPayload> {
         const parseResult = await this.document.parse(uri, text, { trace: options.trace });
+        this.diagnostics = parseResult.diagnostics;
         options.trace?.('after parse');
 
         this.document.applyResult(parseResult);
