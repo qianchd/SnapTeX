@@ -42,6 +42,28 @@ suite('BrowserFileProvider', () => {
         assert.equal(closed, true);
     });
 
+    test('stores binary project resources as cached object URLs', async () => {
+        const provider = new BrowserFileProvider();
+        const uri = new BrowserUri('/figures/result.png');
+        let createCalls = 0;
+
+        provider.setProjectFiles([{ path: uri.path, blob: new Blob(['image-bytes'], { type: 'image/png' }) }]);
+
+        const firstUrl = provider.getResourceUrl(uri, blob => {
+            createCalls += 1;
+            assert.equal(blob.type, 'image/png');
+            return `blob:test-${createCalls}`;
+        });
+        const secondUrl = provider.getResourceUrl(uri, () => {
+            throw new Error('Object URL should be cached.');
+        });
+
+        assert.equal(firstUrl, 'blob:test-1');
+        assert.equal(secondUrl, 'blob:test-1');
+        assert.equal(createCalls, 1);
+        await assert.rejects(() => provider.read(uri), /Missing browser file/);
+    });
+
     test('lets the preview pipeline read included project files', async () => {
         const provider = new BrowserFileProvider();
         const rootUri = new BrowserUri('/project/main.tex');

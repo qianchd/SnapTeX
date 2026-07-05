@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { IFileProvider } from '../../../src/file-provider';
-import { getBasename, normalizeUri } from '../../../src/utils';
+import { decodeHtmlAttribute, getBasename, normalizeUri } from '../../../src/utils';
 import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
 import type { PreviewUpdateService } from '../../../src/preview-update-service';
 import type { RenderPayload } from '../../../src/types';
@@ -65,15 +65,6 @@ function logPayloadStats(label: string, payload: RenderPayload) {
 
 export function getVirtualMode(config = vscode.workspace.getConfiguration('snaptex')): boolean {
     return config.get<boolean>('virtualMode', true);
-}
-
-function decodeHtmlAttribute(value: string): string {
-    return value
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&');
 }
 
 export function normalizePdfRequestPath(input: unknown): string | undefined {

@@ -119,7 +119,7 @@ The shared code should eventually depend only on these host-provided capabilitie
 - [x] Implement the first browser file provider after the interface stabilized.
 - [x] Preserve VS Code dirty-editor reads before disk reads.
 - [x] Define how file versions/mtimes work for browser-uploaded files that do not have stable filesystem mtimes.
-- [ ] Decide whether binary assets are handled by `FileProvider`, `ResourceResolver`, or a separate asset provider.
+- [x] Decide first-pass binary asset handling for web: store browser blobs in `BrowserFileProvider`; keep `ResourceResolver` as the later host boundary.
 - [ ] Normalize document-relative paths consistently across Windows, browser virtual paths, and Android document URIs.
 - [ ] Keep source-map file identities stable enough for forward and reverse sync.
 - [x] Test current VS Code parsing, `\input`, inline TikZ input, and `.bib` loading.
@@ -183,7 +183,7 @@ The shared code should eventually depend only on these host-provided capabilitie
   - [x] `\input` for loaded project files
   - [x] `.bib` for loaded project files
   - [x] save current root file, with download fallback when direct write is unavailable
-  - [ ] image/PDF blob URLs
+  - [x] image/PDF blob URLs
   - [ ] TikZJax assets
   - [ ] reference/citation/tooltips
   - [ ] editor-preview sync

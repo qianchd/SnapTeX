@@ -5,6 +5,7 @@ const SPLITTER_WIDTH_PX = 6;
 const MIN_EDITOR_WIDTH_PX = 280;
 const MIN_PREVIEW_WIDTH_PX = 360;
 const PROJECT_TEXT_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|txt)$/i;
+const PROJECT_RESOURCE_FILE_PATTERN = /\.(?:pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
 
 interface BrowserFileHandle extends BrowserWritableFileHandle {
     kind: 'file';
@@ -80,6 +81,10 @@ function isProjectTextFile(path: string): boolean {
     return PROJECT_TEXT_FILE_PATTERN.test(path);
 }
 
+function isProjectFile(path: string): boolean {
+    return isProjectTextFile(path) || PROJECT_RESOURCE_FILE_PATTERN.test(path);
+}
+
 function chooseRootPath(files: readonly BrowserProjectFile[]): string | undefined {
     const texPaths = files.map(file => file.path).filter(path => /\.tex$/i.test(path));
     return texPaths.find(path => /\/main\.tex$/i.test(path))
@@ -88,11 +93,15 @@ function chooseRootPath(files: readonly BrowserProjectFile[]): string | undefine
 }
 
 async function projectFileFromFile(file: File, path: string, handle?: BrowserFileHandle): Promise<BrowserProjectFile> {
-    return {
+    const projectFile: BrowserProjectFile = {
         path,
-        text: await file.text(),
+        blob: file,
         handle
     };
+    if (isProjectTextFile(path)) {
+        projectFile.text = await file.text();
+    }
+    return projectFile;
 }
 
 function fileInputPath(file: File): string {
@@ -107,7 +116,7 @@ async function readDirectoryHandle(directory: BrowserDirectoryHandle, prefix = '
             files.push(...await readDirectoryHandle(entry, path));
             continue;
         }
-        if (isProjectTextFile(path)) {
+        if (isProjectFile(path)) {
             files.push(await projectFileFromFile(await entry.getFile(), path, entry));
         }
     }
@@ -207,7 +216,7 @@ function bindProjectControls(host: StandaloneHost): void {
     });
     openFolderInput.addEventListener('change', () => {
         const files = Array.from(openFolderInput.files ?? [])
-            .filter(file => isProjectTextFile(fileInputPath(file)));
+            .filter(file => isProjectFile(fileInputPath(file)));
         Promise.all(files.map(file => projectFileFromFile(file, fileInputPath(file))))
             .then(projectFiles => loadProject(host, projectFiles))
             .catch(error => reportFailure('Open', error));
