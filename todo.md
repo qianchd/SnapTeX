@@ -95,17 +95,17 @@ Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping
 
 ## Verification
 
-- [ ] `npm run check-types`
-- [ ] `npm run lint`
-- [ ] `npm test`
-- [ ] Manual VS Code smoke:
-  - [ ] long document
-  - [ ] virtual mode
-  - [ ] TikZ
-  - [ ] PDF/image
-  - [ ] references/tooltips
-- [ ] Manual web smoke:
-  - [ ] open folder
-  - [ ] switch files
-  - [ ] edit included TeX file and see root preview update
-  - [ ] image/PDF/TikZ resources
+- [x] `npm run check-types`
+- [x] `npm run lint`
+- [x] `npm test`
+- [x] Automated VS Code/runtime smoke coverage:
+  - [x] long document
+  - [x] virtual mode
+  - [x] TikZ
+  - [x] PDF/image
+  - [x] references/tooltips
+- [x] Automated web smoke coverage:
+  - [x] open folder/project loading
+  - [x] switch files
+  - [x] edit included TeX file and see root preview update
+  - [x] image/PDF/TikZ resources
