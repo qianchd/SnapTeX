@@ -91,7 +91,10 @@ suite('StandaloneHost', () => {
 
             host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
             await host.openEditorFile('/chapter.tex');
+            host.handleEditorUpdate();
             editor.replaceText('Updated included paragraph.');
+            host.handleEditorUpdate();
+            assert.equal(host.isDirty('/chapter.tex'), true);
             await host.renderCurrentText();
             const saveResult = await host.saveCurrentText();
             const html = requestBlockHtml(host, messages);
@@ -100,6 +103,7 @@ suite('StandaloneHost', () => {
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.equal(saveResult.path, '/chapter.tex');
             assert.equal(written.get('/chapter.tex'), 'Updated included paragraph.');
+            assert.equal(host.isDirty('/chapter.tex'), false);
             assert.match(html, /Updated included paragraph/);
             assert.match(html, /Root paragraph/);
         } finally {
@@ -146,6 +150,7 @@ suite('StandaloneHost', () => {
 
             assert.equal(host.getRootPath(), '/appendix.tex');
             assert.equal(host.getActivePath(), '/chapter.tex');
+            assert.equal(host.isDirty('/chapter.tex'), true);
             assert.match(appendixHtml, /Appendix root paragraph/);
             assert.doesNotMatch(appendixHtml, /Unsaved included paragraph/);
 
