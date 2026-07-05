@@ -76,14 +76,14 @@ Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping
 
 ## Milestone 5: Build Boundary Cleanup
 
-- [ ] Split `esbuild.js` responsibilities into small functions:
-  - [ ] extension bundle
-  - [ ] preview runtime bundles
-  - [ ] web app bundle
-  - [ ] vendor asset copy/patch
-- [ ] Keep generated bundles ignored/generated.
-- [ ] Preserve TikZJax patching and copied `tex_files/*.gz`.
-- [ ] Avoid npm workspaces until source boundaries are stable.
+- [x] Split `esbuild.js` responsibilities into small functions:
+  - [x] extension bundle
+  - [x] preview runtime bundles
+  - [x] web app bundle
+  - [x] vendor asset copy/patch
+- [x] Keep generated bundles ignored/generated.
+- [x] Preserve TikZJax patching and copied `tex_files/*.gz`.
+- [x] Avoid npm workspaces until source boundaries are stable.
 
 ## Milestone 6: Android Preparation
 
