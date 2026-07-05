@@ -3,7 +3,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
-import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../panel';
+import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../../apps/vscode/src/panel';
 import { SmartRenderer } from '../renderer';
 import { defineBlockDependencyRule, defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
 import type { RuleRegistry } from '../types';

@@ -29,23 +29,9 @@ suite('Preview bridge', () => {
         assert.deepEqual(sent, [{ command: WebviewToExtensionCommand.WebviewLoaded }]);
     });
 
-    test('falls back to the VS Code API once and caches it', () => {
-        let acquireCalls = 0;
-        const bridge: PreviewBridge = { postMessage: () => undefined };
-        const fakeWindow: {
-            acquireVsCodeApi: () => PreviewBridge;
-            snaptexPreviewBridge?: PreviewBridge;
-        } = {
-            acquireVsCodeApi: () => {
-                acquireCalls += 1;
-                return bridge;
-            }
-        };
-        (globalThis as { window?: unknown }).window = fakeWindow;
+    test('fails clearly when the host bridge is missing', () => {
+        (globalThis as { window?: unknown }).window = {};
 
-        assert.strictEqual(getPreviewBridge(), bridge);
-        assert.strictEqual(getPreviewBridge(), bridge);
-        assert.equal(acquireCalls, 1);
-        assert.strictEqual(fakeWindow.snaptexPreviewBridge, bridge);
+        assert.throws(() => getPreviewBridge(), /host must install window\.snaptexPreviewBridge/);
     });
 });

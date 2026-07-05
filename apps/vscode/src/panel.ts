@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import type { IFileProvider } from './file-provider';
-import { getBasename, normalizeUri } from './utils';
-import { fillPreviewHtmlTemplate } from './preview-template';
-import type { PreviewUpdateService } from './preview-update-service';
-import type { RenderPayload } from './types';
+import type { IFileProvider } from '../../../src/file-provider';
+import { getBasename, normalizeUri } from '../../../src/utils';
+import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
+import type { PreviewUpdateService } from '../../../src/preview-update-service';
+import type { RenderPayload } from '../../../src/types';
 import {
     assertNever,
     ExtensionToWebviewCommand,
@@ -13,7 +13,7 @@ import {
     type RequestBlockHtmlMessage,
     type RequestPdfMessage,
     type RevealLineMessage
-} from './webview-messages';
+} from '../../../src/webview-messages';
 
 function logHostMemory(label: string) {
     if (!isDebugMemoryEnabled()) {
@@ -496,6 +496,7 @@ export class TexPreviewPanel {
                 'data-pdf-js-uri': pdfJsUri.toString(),
                 'data-pdf-worker-uri': pdfWorkerUri.toString()
             },
+            bridgeScript: '<script>window.snaptexPreviewBridge=acquireVsCodeApi();</script>',
             scripts: [
                 webviewMainUri.toString(),
                 webviewPdfUri.toString()

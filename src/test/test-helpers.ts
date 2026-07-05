@@ -106,7 +106,7 @@ export function renderBlocks(blockTexts: string[]): string {
 }
 
 export function readFixture(name: string): string {
-    return fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', name), 'utf8');
+    return fs.readFileSync(path.join(__dirname, '..', '..', '..', 'src', 'test', 'fixtures', name), 'utf8');
 }
 
 export function spanText(text: string, span: BlockTextSpan): string {

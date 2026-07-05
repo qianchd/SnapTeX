@@ -337,7 +337,7 @@ const esbuildProblemMatcherPlugin = {
 async function main() {
     const extensionCtx = await esbuild.context({
         entryPoints: [
-            'src/extension.ts'
+            'apps/vscode/src/extension.ts'
         ],
         bundle: true,
         format: 'cjs',

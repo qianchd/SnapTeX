@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import type { IFileProvider } from './file-provider';
-import { normalizeUri } from './utils';
+import type { IFileProvider } from '../../../src/file-provider';
+import { normalizeUri } from '../../../src/utils';
 
 /**
  * VS Code implementation that prefers dirty open editors before disk reads.

@@ -4,6 +4,7 @@ export interface PreviewHtmlTemplateData {
     cspMeta: string;
     styleLinks: string[];
     bodyData: Record<string, string>;
+    bridgeScript: string;
     scripts: string[];
 }
 
@@ -31,6 +32,7 @@ export function fillPreviewHtmlTemplate(template: string, data: PreviewHtmlTempl
         cspMeta: data.cspMeta,
         styleLinks: renderStylesheetLinks(data.styleLinks),
         bodyData: renderAttributes(data.bodyData),
+        bridgeScript: data.bridgeScript,
         scripts: renderScriptTags(data.scripts)
     };
 

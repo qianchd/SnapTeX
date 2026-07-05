@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { SmartRenderer } from './renderer';
+import { SmartRenderer } from '../../../src/renderer';
 import { TexPreviewPanel } from './panel';
-import { normalizeUri } from './utils';
-import { ExtensionToWebviewCommand } from './webview-messages';
-import { PreviewUpdateService } from './preview-update-service';
+import { normalizeUri } from '../../../src/utils';
+import { ExtensionToWebviewCommand } from '../../../src/webview-messages';
+import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { VscodeFileProvider } from './vscode-file-provider';
 
 const createFlashDecoration = (backgroundColor: string | vscode.ThemeColor) => vscode.window.createTextEditorDecorationType({ backgroundColor, isWholeLine: true });

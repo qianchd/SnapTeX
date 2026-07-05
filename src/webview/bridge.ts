@@ -6,7 +6,6 @@ export interface PreviewBridge {
 
 declare global {
     interface Window {
-        acquireVsCodeApi?: () => PreviewBridge;
         snaptexPreviewBridge?: PreviewBridge;
     }
 }
@@ -15,10 +14,5 @@ export function getPreviewBridge(): PreviewBridge {
     if (window.snaptexPreviewBridge) {
         return window.snaptexPreviewBridge;
     }
-    if (typeof window.acquireVsCodeApi === 'function') {
-        const bridge = window.acquireVsCodeApi();
-        window.snaptexPreviewBridge = bridge;
-        return bridge;
-    }
-    throw new Error('SnapTeX preview bridge is unavailable.');
+    throw new Error('SnapTeX preview bridge is unavailable. The host must install window.snaptexPreviewBridge before loading the preview runtime.');
 }
