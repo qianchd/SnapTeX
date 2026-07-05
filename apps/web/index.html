@@ -16,7 +16,15 @@
 >
     <main id="app-shell">
         <section id="editor-pane" aria-label="LaTeX editor">
+            <div id="web-toolbar" aria-label="Project controls">
+                <button id="open-file-button" type="button">Open TeX</button>
+                <button id="open-folder-button" type="button">Open Folder</button>
+                <button id="save-button" type="button">Save</button>
+                <span id="project-status">Demo document</span>
+            </div>
             <div id="editor"></div>
+            <input id="open-file-input" type="file" accept=".tex" hidden>
+            <input id="open-folder-input" type="file" webkitdirectory multiple hidden>
         </section>
         <div id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor and preview panes"></div>
         <section id="preview-pane" aria-label="SnapTeX preview">

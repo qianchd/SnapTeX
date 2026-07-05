@@ -1,8 +1,30 @@
-import { createStandaloneSnapTeXApp } from '../../standalone/src/app';
+import { createStandaloneSnapTeXApp, type StandaloneHost } from '../../standalone/src/app';
+import type { BrowserProjectFile, BrowserWritableFileHandle } from '../../standalone/src/browser-file-provider';
 
 const SPLITTER_WIDTH_PX = 6;
 const MIN_EDITOR_WIDTH_PX = 280;
 const MIN_PREVIEW_WIDTH_PX = 360;
+const PROJECT_TEXT_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|txt)$/i;
+
+interface BrowserFileHandle extends BrowserWritableFileHandle {
+    kind: 'file';
+    name: string;
+    getFile(): Promise<File>;
+}
+
+interface BrowserDirectoryHandle {
+    kind: 'directory';
+    name: string;
+    values(): AsyncIterable<BrowserFileHandle | BrowserDirectoryHandle>;
+}
+
+interface BrowserFilePickerWindow extends Window {
+    showOpenFilePicker?: (options?: {
+        multiple?: boolean;
+        types?: Array<{ description: string; accept: Record<string, string[]> }>;
+    }) => Promise<BrowserFileHandle[]>;
+    showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>;
+}
 
 function enableSplitPaneResize(splitter: HTMLElement): void {
     const shell = document.getElementById('app-shell');
@@ -39,6 +61,160 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     splitter.addEventListener('pointercancel', endResize);
 }
 
+function setStatus(message: string): void {
+    const status = document.getElementById('project-status');
+    if (status) {
+        status.textContent = message;
+    }
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function reportFailure(action: string, error: unknown): void {
+    setStatus(`${action} failed: ${errorMessage(error)}`);
+}
+
+function isProjectTextFile(path: string): boolean {
+    return PROJECT_TEXT_FILE_PATTERN.test(path);
+}
+
+function chooseRootPath(files: readonly BrowserProjectFile[]): string | undefined {
+    const texPaths = files.map(file => file.path).filter(path => /\.tex$/i.test(path));
+    return texPaths.find(path => /\/main\.tex$/i.test(path))
+        ?? texPaths.find(path => /\/root\.tex$/i.test(path))
+        ?? texPaths[0];
+}
+
+async function projectFileFromFile(file: File, path: string, handle?: BrowserFileHandle): Promise<BrowserProjectFile> {
+    return {
+        path,
+        text: await file.text(),
+        handle
+    };
+}
+
+function fileInputPath(file: File): string {
+    return `/${(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}`;
+}
+
+async function readDirectoryHandle(directory: BrowserDirectoryHandle, prefix = ''): Promise<BrowserProjectFile[]> {
+    const files: BrowserProjectFile[] = [];
+    for await (const entry of directory.values()) {
+        const path = `${prefix}/${entry.name}`;
+        if (entry.kind === 'directory') {
+            files.push(...await readDirectoryHandle(entry, path));
+            continue;
+        }
+        if (isProjectTextFile(path)) {
+            files.push(await projectFileFromFile(await entry.getFile(), path, entry));
+        }
+    }
+    return files;
+}
+
+async function loadProject(host: StandaloneHost, files: readonly BrowserProjectFile[]): Promise<void> {
+    const rootPath = chooseRootPath(files);
+    if (!rootPath) {
+        setStatus('No TeX file found.');
+        return;
+    }
+
+    await host.loadProject(files, rootPath);
+    setStatus(`Opened ${rootPath} (${files.length} files)`);
+}
+
+async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Promise<void> {
+    const pickerWindow = window as BrowserFilePickerWindow;
+    if (pickerWindow.showOpenFilePicker) {
+        const [handle] = await pickerWindow.showOpenFilePicker({
+            multiple: false,
+            types: [{
+                description: 'LaTeX files',
+                accept: { 'text/plain': ['.tex'] }
+            }]
+        });
+        if (handle) {
+            await loadProject(host, [await projectFileFromFile(await handle.getFile(), `/${handle.name}`, handle)]);
+        }
+        return;
+    }
+
+    input.click();
+}
+
+async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promise<void> {
+    const pickerWindow = window as BrowserFilePickerWindow;
+    if (pickerWindow.showDirectoryPicker) {
+        const directory = await pickerWindow.showDirectoryPicker();
+        await loadProject(host, await readDirectoryHandle(directory));
+        return;
+    }
+
+    input.click();
+}
+
+function downloadText(path: string, text: string): void {
+    const blob = new Blob([text], { type: 'text/x-tex;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = path.split('/').pop() || 'main.tex';
+    link.click();
+    URL.revokeObjectURL(url);
+}
+
+async function saveActiveFile(host: StandaloneHost): Promise<void> {
+    const result = await host.saveCurrentText();
+    if (result.wroteToSource) {
+        setStatus(`Saved ${result.path}`);
+        return;
+    }
+
+    downloadText(result.path, result.text);
+    setStatus(`Downloaded ${result.path}`);
+}
+
+function bindProjectControls(host: StandaloneHost): void {
+    const openFileButton = document.getElementById('open-file-button');
+    const openFolderButton = document.getElementById('open-folder-button');
+    const saveButton = document.getElementById('save-button');
+    const openFileInput = document.getElementById('open-file-input') as HTMLInputElement | null;
+    const openFolderInput = document.getElementById('open-folder-input') as HTMLInputElement | null;
+    if (!openFileButton || !openFolderButton || !saveButton || !openFileInput || !openFolderInput) {
+        throw new Error('Missing web project controls.');
+    }
+
+    openFileButton.addEventListener('click', () => {
+        openSingleFile(host, openFileInput).catch(error => reportFailure('Open', error));
+    });
+    openFolderButton.addEventListener('click', () => {
+        openFolder(host, openFolderInput).catch(error => reportFailure('Open', error));
+    });
+    saveButton.addEventListener('click', () => {
+        saveActiveFile(host).catch(error => reportFailure('Save', error));
+    });
+
+    openFileInput.addEventListener('change', () => {
+        const file = openFileInput.files?.[0];
+        if (file) {
+            projectFileFromFile(file, `/${file.name}`)
+                .then(projectFile => loadProject(host, [projectFile]))
+                .catch(error => reportFailure('Open', error));
+        }
+        openFileInput.value = '';
+    });
+    openFolderInput.addEventListener('change', () => {
+        const files = Array.from(openFolderInput.files ?? [])
+            .filter(file => isProjectTextFile(fileInputPath(file)));
+        Promise.all(files.map(file => projectFileFromFile(file, fileInputPath(file))))
+            .then(projectFiles => loadProject(host, projectFiles))
+            .catch(error => reportFailure('Open', error));
+        openFolderInput.value = '';
+    });
+}
+
 const INITIAL_TEX = String.raw`\title{SnapTeX Standalone Preview}
 \author{CodeMirror Browser Prototype}
 \date{\today}
@@ -70,7 +246,8 @@ if (splitter) {
     enableSplitPaneResize(splitter);
 }
 
-createStandaloneSnapTeXApp({
+const host = createStandaloneSnapTeXApp({
     editorParent,
     initialText: INITIAL_TEX
 });
+bindProjectControls(host);
