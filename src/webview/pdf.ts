@@ -1,9 +1,9 @@
 // @ts-nocheck
 /* eslint-disable curly */
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
+import { getPreviewBridge } from './bridge';
 
-const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
-    window.snaptexVsCodeApi = vscode;
+const previewBridge = getPreviewBridge();
     const pdfJsUri = document.body.dataset.pdfJsUri || '';
     const pdfWorkerUri = document.body.dataset.pdfWorkerUri || '';
     let pdfjsLib = null;
@@ -138,7 +138,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
         canvas.setAttribute('data-requested', 'true');
 
-        vscode.postMessage({
+        previewBridge.postMessage({
             command: WebviewToExtensionCommand.RequestPdf,
             id: canvasId,
             path: path

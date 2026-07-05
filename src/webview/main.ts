@@ -4,8 +4,8 @@ import { CoalescingTaskScheduler } from './scheduler';
 import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
-const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
-    window.snaptexVsCodeApi = vscode;
+import { getPreviewBridge } from './bridge';
+const previewBridge = getPreviewBridge();
     const PDF_RENDER_MARGIN_VH = 130;
     const PDF_RELEASE_MARGIN_VH = 380;
     window.pdfReqQueue = [];
@@ -455,7 +455,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
 
             this.initPdfObserver();
             this.bindEvents();
-            vscode.postMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            previewBridge.postMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
         }
 
         bindEvents() {
@@ -888,7 +888,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                 callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
             });
             this.debugStats.blockHtmlRequestsSent += 1;
-            vscode.postMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash });
+            previewBridge.postMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash });
             return true;
         }
 
@@ -1076,7 +1076,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                         const offset = viewCenter - rect.top;
                         ratio = Math.max(0, Math.min(1, offset / rect.height));
                     }
-                    vscode.postMessage({ command: WebviewToExtensionCommand.SyncScroll, index: index, ratio: ratio });
+                    previewBridge.postMessage({ command: WebviewToExtensionCommand.SyncScroll, index: index, ratio: ratio });
                     break;
                 }
             }
@@ -1115,7 +1115,7 @@ const vscode = window.snaptexVsCodeApi || acquireVsCodeApi();
                             }
                         }
                     }
-                    vscode.postMessage({
+                    previewBridge.postMessage({
                         command: WebviewToExtensionCommand.RevealLine,
                         index: parseInt(index),
                         ratio,

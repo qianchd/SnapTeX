@@ -53,7 +53,7 @@ export interface RequestBlockHtmlMessage {
     hash: string;
 }
 
-type WebviewToExtensionMessage =
+export type WebviewToExtensionMessage =
     | WebviewLoadedMessage
     | RevealLineMessage
     | SyncScrollMessage
