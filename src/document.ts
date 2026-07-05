@@ -1,4 +1,4 @@
-import { IFileProvider } from './file-provider';
+import type { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
 import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, RenderDocumentView, UriLike } from './types';

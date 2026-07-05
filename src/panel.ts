@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SmartRenderer } from './renderer';
 import { LatexDocument } from './document';
-import { VscodeFileProvider } from './file-provider';
+import { VscodeFileProvider } from './vscode-file-provider';
 import { getBasename, normalizeUri } from './utils';
 import { fillPreviewHtmlTemplate } from './preview-template';
 import type { RenderPayload } from './types';

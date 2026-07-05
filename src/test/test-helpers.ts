@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DocumentParseResult, LatexDocument } from '../document';
-import { IFileProvider } from '../file-provider';
+import type { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
 import { BlockTextProvider, LatexCounterScanner } from '../scanner';
 import { AffiliationMetadata, AuthorMetadata, BlockTextSpan } from '../types';
