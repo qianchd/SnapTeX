@@ -61,7 +61,7 @@ export class StandaloneHost {
     async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
         this.fileProvider.setProjectFiles(files);
         this.rootUri = new BrowserUri(rootPath);
-        const text = this.fileProvider.getFileText(this.rootUri) ?? '';
+        const text = await this.fileProvider.read(this.rootUri);
         if (this.editorView.state.doc.toString() !== text) {
             this.suppressNextEditorUpdate = true;
             this.editorView.dispatch({
