@@ -27,6 +27,8 @@ interface BrowserFilePickerWindow extends Window {
     showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>;
 }
 
+let currentProjectTextPaths: string[] = [];
+
 function enableSplitPaneResize(splitter: HTMLElement): void {
     const shell = document.getElementById('app-shell');
     if (!shell) {
@@ -153,7 +155,8 @@ async function loadProject(host: StandaloneHost, files: readonly BrowserProjectF
     }
 
     await host.loadProject(files, rootPath);
-    renderProjectFiles(host, projectTextPaths(files));
+    currentProjectTextPaths = projectTextPaths(files);
+    renderProjectFiles(host, currentProjectTextPaths);
     setStatus(`Opened ${rootPath} (${files.length} files)`);
 }
 
@@ -181,6 +184,7 @@ function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): voi
         });
 
         entry.className = 'project-file-entry';
+        entry.dataset.dirty = String(host.isDirty(path));
         entry.dataset.root = String(path === host.getRootPath());
         entry.append(openButton);
         if (isTexFile(path)) {
@@ -246,6 +250,7 @@ function downloadText(path: string, text: string): void {
 
 async function saveActiveFile(host: StandaloneHost): Promise<void> {
     const result = await host.saveCurrentText();
+    renderProjectFiles(host, currentProjectTextPaths);
     if (result.wroteToSource) {
         setStatus(`Saved ${result.path}`);
         return;
@@ -325,8 +330,10 @@ if (splitter) {
     enableSplitPaneResize(splitter);
 }
 
-const host = createStandaloneSnapTeXApp({
+let host: StandaloneHost;
+host = createStandaloneSnapTeXApp({
     editorParent,
-    initialText: INITIAL_TEX
+    initialText: INITIAL_TEX,
+    onStateChange: updatedHost => renderProjectFiles(updatedHost, currentProjectTextPaths)
 });
 bindProjectControls(host);

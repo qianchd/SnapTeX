@@ -19,6 +19,7 @@ export interface StandaloneAppOptions {
     editorParent: HTMLElement;
     initialText: string;
     rootPath?: string;
+    onStateChange?: (host: StandaloneHost) => void;
 }
 
 export interface StandaloneSaveResult {
@@ -45,10 +46,17 @@ export class StandaloneHost {
     private activeUri: BrowserUri;
     private readonly fileProvider = new BrowserFileProvider();
     private readonly updateService = new PreviewUpdateService(this.fileProvider, new SmartRenderer());
+    private readonly savedTexts = new Map<string, string>();
+    private readonly dirtyPaths = new Set<string>();
     private previewReady = false;
     private suppressNextEditorUpdate = false;
 
-    constructor(private readonly editorView: EditorView, rootPath: string = '/main.tex', private readonly scheduleRender: () => void = () => undefined) {
+    constructor(
+        private readonly editorView: EditorView,
+        rootPath: string = '/main.tex',
+        private readonly scheduleRender: () => void = () => undefined,
+        private readonly onStateChange: () => void = () => undefined
+    ) {
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
     }
@@ -62,18 +70,27 @@ export class StandaloneHost {
 
     async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
         this.fileProvider.setProjectFiles(files);
+        this.savedTexts.clear();
+        this.dirtyPaths.clear();
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
         const text = await this.fileProvider.read(this.activeUri);
+        this.markSaved(this.activeUri.path, text);
         this.replaceEditorText(text);
         this.updateService.resetState();
+        this.notifyStateChanged();
         await this.renderCurrentText();
     }
 
     async openEditorFile(path: string) {
         this.persistActiveEditorText();
         this.activeUri = new BrowserUri(path);
-        this.replaceEditorText(await this.fileProvider.read(this.activeUri));
+        const text = await this.fileProvider.read(this.activeUri);
+        if (!this.savedTexts.has(this.activeUri.path)) {
+            this.markSaved(this.activeUri.path, text);
+        }
+        this.replaceEditorText(text);
+        this.notifyStateChanged();
         await this.renderCurrentText();
     }
 
@@ -92,6 +109,10 @@ export class StandaloneHost {
         return this.activeUri.path;
     }
 
+    isDirty(path: string): boolean {
+        return this.dirtyPaths.has(new BrowserUri(path).path);
+    }
+
     private replaceEditorText(text: string) {
         if (this.editorView.state.doc.toString() !== text) {
             this.suppressNextEditorUpdate = true;
@@ -102,12 +123,38 @@ export class StandaloneHost {
     }
 
     private persistActiveEditorText() {
-        this.fileProvider.setFile(this.activeUri, this.editorView.state.doc.toString());
+        const text = this.editorView.state.doc.toString();
+        this.fileProvider.setFile(this.activeUri, text);
+        this.updateDirtyState(this.activeUri.path, text);
+    }
+
+    private markSaved(path: string, text: string) {
+        this.savedTexts.set(path, text);
+        this.updateDirtyState(path, text);
+    }
+
+    private updateDirtyState(path: string, text: string) {
+        const wasDirty = this.dirtyPaths.has(path);
+        const savedText = this.savedTexts.get(path);
+        const isDirty = savedText !== undefined && text !== savedText;
+        if (isDirty) {
+            this.dirtyPaths.add(path);
+        } else {
+            this.dirtyPaths.delete(path);
+        }
+        if (wasDirty !== isDirty) {
+            this.notifyStateChanged();
+        }
+    }
+
+    private notifyStateChanged() {
+        this.onStateChange();
     }
 
     async saveCurrentText(): Promise<StandaloneSaveResult> {
         const text = this.editorView.state.doc.toString();
         const wroteToSource = await this.fileProvider.write(this.activeUri, text);
+        this.markSaved(this.activeUri.path, text);
         return {
             path: this.activeUri.path,
             text,
@@ -120,6 +167,7 @@ export class StandaloneHost {
             this.suppressNextEditorUpdate = false;
             return;
         }
+        this.persistActiveEditorText();
         this.scheduleRender();
     }
 
@@ -154,8 +202,7 @@ export class StandaloneHost {
             return;
         }
 
-        const text = this.editorView.state.doc.toString();
-        this.fileProvider.setFile(this.activeUri, text);
+        this.persistActiveEditorText();
         const rootText = await this.fileProvider.read(this.rootUri);
         const payload = await this.updateService.render(this.rootUri, rootText, {
             deferFullHtml: true,
@@ -230,7 +277,11 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
         })
     });
 
-    host = new StandaloneHost(editorView, options.rootPath, scheduleRender);
+    host = new StandaloneHost(editorView, options.rootPath, scheduleRender, () => {
+        if (host) {
+            options.onStateChange?.(host);
+        }
+    });
     host.start();
     return host;
 }

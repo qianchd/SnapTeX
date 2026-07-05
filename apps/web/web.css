@@ -129,8 +129,18 @@ body {
     background: #f8fafc;
 }
 
+.project-file-entry[data-dirty="true"] {
+    background: #fff7ed;
+}
+
 .project-file-open {
     max-width: 220px;
+}
+
+.project-file-entry[data-dirty="true"] .project-file-open::after {
+    content: " *";
+    color: #b45309;
+    font-weight: 700;
 }
 
 .project-file-open[data-active="true"] {
