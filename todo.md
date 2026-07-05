@@ -49,7 +49,7 @@ Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping
 
 ## Milestone 2: Web Project Usability
 
-- [ ] Allow choosing/changing the preview root from the file list.
+- [x] Allow choosing/changing the preview root from the file list.
 - [ ] Track dirty state per active file at minimum.
 - [ ] Confirm project reload does not keep stale object URLs or stale text cache.
 - [ ] Surface missing `\input`, missing image/PDF, and missing bibliography errors in a readable status area.

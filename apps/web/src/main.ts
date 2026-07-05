@@ -99,6 +99,10 @@ function projectTextPaths(files: readonly BrowserProjectFile[]): string[] {
         .sort((a, b) => a.localeCompare(b));
 }
 
+function isTexFile(path: string): boolean {
+    return /\.tex$/i.test(path);
+}
+
 async function projectFileFromFile(file: File, path: string, handle?: BrowserFileHandle): Promise<BrowserProjectFile> {
     const projectFile: BrowserProjectFile = {
         path,
@@ -160,13 +164,14 @@ function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): voi
     }
 
     fileList.replaceChildren(...paths.map(path => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.textContent = path.replace(/^\//, '');
-        button.title = path;
-        button.dataset.active = String(path === host.getActivePath());
-        button.dataset.root = String(path === host.getRootPath());
-        button.addEventListener('click', () => {
+        const entry = document.createElement('span');
+        const openButton = document.createElement('button');
+        openButton.type = 'button';
+        openButton.className = 'project-file-open';
+        openButton.textContent = path.replace(/^\//, '');
+        openButton.title = path;
+        openButton.dataset.active = String(path === host.getActivePath());
+        openButton.addEventListener('click', () => {
             host.openEditorFile(path)
                 .then(() => {
                     renderProjectFiles(host, paths);
@@ -174,7 +179,28 @@ function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): voi
                 })
                 .catch(error => reportFailure('Open file', error));
         });
-        return button;
+
+        entry.className = 'project-file-entry';
+        entry.dataset.root = String(path === host.getRootPath());
+        entry.append(openButton);
+        if (isTexFile(path)) {
+            const rootButton = document.createElement('button');
+            rootButton.type = 'button';
+            rootButton.className = 'project-root-button';
+            rootButton.textContent = path === host.getRootPath() ? 'root' : 'set root';
+            rootButton.disabled = path === host.getRootPath();
+            rootButton.title = path === host.getRootPath() ? 'Preview root' : `Set ${path} as preview root`;
+            rootButton.addEventListener('click', () => {
+                host.setPreviewRoot(path)
+                    .then(() => {
+                        renderProjectFiles(host, paths);
+                        setStatus(`Preview root ${path}`);
+                    })
+                    .catch(error => reportFailure('Set root', error));
+            });
+            entry.append(rootButton);
+        }
+        return entry;
     }));
 }
 

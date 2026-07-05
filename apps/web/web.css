@@ -99,7 +99,6 @@ body {
 }
 
 #project-files button {
-    max-width: 220px;
     border: 1px solid transparent;
     border-radius: 4px;
     background: transparent;
@@ -116,16 +115,39 @@ body {
     background: #f1f5f9;
 }
 
-#project-files button[data-active="true"] {
+.project-file-entry {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 300px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+}
+
+.project-file-entry[data-root="true"] {
+    border-color: #d1d5db;
+    background: #f8fafc;
+}
+
+.project-file-open {
+    max-width: 220px;
+}
+
+.project-file-open[data-active="true"] {
     border-color: #bfdbfe;
     background: #dbeafe;
     color: #1d4ed8;
 }
 
-#project-files button[data-root="true"]::after {
-    content: " root";
+.project-root-button {
+    flex: 0 0 auto;
     color: #64748b;
     font-size: 11px;
+}
+
+.project-root-button:disabled {
+    cursor: default;
+    opacity: 0.8;
 }
 
 #splitter {
