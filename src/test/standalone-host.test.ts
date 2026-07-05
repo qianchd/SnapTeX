@@ -7,6 +7,8 @@ import type { BrowserWritableFileHandle } from '../../apps/standalone/src/browse
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage } from '../webview-messages';
 
 class TestEditorView {
+    public selectionAnchor = -1;
+
     constructor(private text = '') {}
 
     get state() {
@@ -18,9 +20,14 @@ class TestEditorView {
         };
     }
 
-    dispatch(update: { changes: { from: number; to: number; insert: string } }) {
-        const { from, to, insert } = update.changes;
-        this.text = `${this.text.slice(0, from)}${insert}${this.text.slice(to)}`;
+    dispatch(update: { changes?: { from: number; to: number; insert: string }; selection?: { anchor: number } }) {
+        if (update.changes) {
+            const { from, to, insert } = update.changes;
+            this.text = `${this.text.slice(0, from)}${insert}${this.text.slice(to)}`;
+        }
+        if (update.selection) {
+            this.selectionAnchor = update.selection.anchor;
+        }
     }
 
     replaceText(text: string) {
@@ -288,6 +295,50 @@ suite('StandaloneHost', () => {
             assert.doesNotMatch(response.anchor ?? '', /\\textbf/);
             assert.equal(typeof response.index, 'number');
             assert.equal(typeof response.ratio, 'number');
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('reveals preview double-click locations in the active editor', async () => {
+        const editor = new TestEditorView();
+        const messages: ExtensionToWebviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+        const chapterText = [
+            'Included first paragraph.',
+            '',
+            'Included second paragraph with \\textbf{sync anchor}.'
+        ].join('\n');
+
+        try {
+            await host.loadProject([
+                {
+                    path: '/main.tex',
+                    text: [
+                        '\\begin{document}',
+                        'Root paragraph.',
+                        '\\input{chapter}',
+                        '\\end{document}'
+                    ].join('\n')
+                },
+                {
+                    path: '/chapter.tex',
+                    text: chapterText
+                }
+            ], '/main.tex');
+
+            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            await host.openEditorFile('/chapter.tex');
+            host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
+            const scroll = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock);
+            assert.ok(scroll && scroll.command === ExtensionToWebviewCommand.ScrollToBlock);
+
+            await host.openEditorFile('/main.tex');
+            await host.revealPreviewLocation(scroll.index, scroll.ratio, ['sync anchor']);
+
+            assert.equal(host.getActivePath(), '/chapter.tex');
+            assert.equal(editor.selectionAnchor, chapterText.indexOf('Included second paragraph'));
         } finally {
             restoreWindow();
         }

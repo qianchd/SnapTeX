@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SmartRenderer } from '../../../src/renderer';
 import { TexPreviewPanel } from './panel';
-import { getSyncAnchorContext, normalizeUri } from '../../../src/utils';
+import { findNearestSyncAnchorLine, getSyncAnchorContext, normalizeUri } from '../../../src/utils';
 import { ExtensionToWebviewCommand } from '../../../src/webview-messages';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { VscodeFileProvider } from './vscode-file-provider';
@@ -43,22 +43,6 @@ function getSyncSuppressionDuration() {
 function getAnchorContext(doc: vscode.TextDocument, line: number, char?: number): string {
     if (line < 0 || line >= doc.lineCount) {return "";}
     return getSyncAnchorContext(doc.lineAt(line).text, char);
-}
-
-function findNearestAnchorLine(document: vscode.TextDocument, anchors: string[], startLine: number, endLine: number, estimatedLine: number): number | undefined {
-    for (const anchor of new Set(anchors)) {
-        const normalizedAnchor = anchor.replace(/\s+/g, ' ').trim();
-        if (normalizedAnchor.length <= 3) { continue; }
-        let closestLine: number | undefined;
-        for (let line = startLine; line <= endLine; line++) {
-            if (!document.lineAt(line).text.replace(/\s+/g, ' ').includes(normalizedAnchor)) { continue; }
-            if (closestLine === undefined || Math.abs(line - estimatedLine) < Math.abs(closestLine - estimatedLine)) {
-                closestLine = line;
-            }
-        }
-        if (closestLine !== undefined) { return closestLine; }
-    }
-    return undefined;
 }
 
 async function performFlashAnimation(editor: vscode.TextEditor, range: vscode.Range) {
@@ -222,7 +206,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (anchors.length > 0) {
                 const startLine = Math.max(0, sourceLoc.blockRange?.startLine ?? targetLine - 5);
                 const endLine = Math.min(targetEditor.document.lineCount - 1, sourceLoc.blockRange?.endLine ?? targetLine + 10);
-                targetLine = findNearestAnchorLine(targetEditor.document, anchors, startLine, endLine, targetLine) ?? targetLine;
+                targetLine = findNearestSyncAnchorLine(anchors, startLine, endLine, targetLine, line => targetEditor.document.lineAt(line).text) ?? targetLine;
             }
 
             const range = targetEditor.document.lineAt(Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1))).range;

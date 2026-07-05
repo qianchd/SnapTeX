@@ -58,10 +58,10 @@ Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping
 ## Milestone 3: Editor And Preview Sync
 
 - [x] Implement forward sync from CodeMirror cursor to preview.
-- [ ] Implement reverse sync from preview double-click to CodeMirror.
-- [ ] Reuse existing source-map data instead of adding web-only mapping logic.
-- [ ] Avoid scroll feedback loops between editor and preview.
-- [ ] Add minimal tests around message routing and source-map lookup where practical.
+- [x] Implement reverse sync from preview double-click to CodeMirror.
+- [x] Reuse existing source-map data instead of adding web-only mapping logic.
+- [x] Avoid scroll feedback loops between editor and preview.
+- [x] Add minimal tests around message routing and source-map lookup where practical.
 
 ## Milestone 4: CodeMirror Assistance
 

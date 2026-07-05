@@ -93,6 +93,29 @@ export function getSyncAnchorContext(lineText: string, char?: number): string {
     return clean.length >= 5 ? clean.substring(0, 40) : "";
 }
 
+export function findNearestSyncAnchorLine(
+    anchors: readonly string[],
+    startLine: number,
+    endLine: number,
+    estimatedLine: number,
+    getLineText: (line: number) => string
+): number | undefined {
+    for (const anchor of new Set(anchors)) {
+        const normalizedAnchor = anchor.replace(/\s+/g, ' ').trim();
+        if (normalizedAnchor.length <= 3) { continue; }
+
+        let closestLine: number | undefined;
+        for (let line = startLine; line <= endLine; line++) {
+            if (!getLineText(line).replace(/\s+/g, ' ').includes(normalizedAnchor)) { continue; }
+            if (closestLine === undefined || Math.abs(line - estimatedLine) < Math.abs(closestLine - estimatedLine)) {
+                closestLine = line;
+            }
+        }
+        if (closestLine !== undefined) { return closestLine; }
+    }
+    return undefined;
+}
+
 export function createHiddenLabelAnchor(labelName: string): string {
     const safeLabel = escapeHtmlAttribute(labelName);
     return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`;
