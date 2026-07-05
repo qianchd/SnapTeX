@@ -24,28 +24,28 @@ This file tracks the current migration from a VS Code-only extension to a shared
 - [x] Web shell can open a single TeX file or project folder.
 - [x] Web shell can render text, math, images, PDF placeholders, and TikZ.
 - [x] Web shell has a real TikZJax asset smoke test.
-- [ ] Web shell still lacks multi-file editing UI and project session state.
+- [x] Web shell has a minimal multi-file editing loop.
 
 ## Milestone 1: Web Project Editing Loop
 
 Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping preview rooted at the selected main TeX file.
 
-- [ ] Track two file roles explicitly:
-  - [ ] `rootPath`: document used for preview rendering.
-  - [ ] `activePath`: file currently loaded in CodeMirror.
-- [ ] Save editor text into the browser file provider before switching active files.
-- [ ] When editing an included file, render preview from `rootPath`, not `activePath`.
-- [ ] Add a minimal file list for project text files:
-  - [ ] `.tex`
-  - [ ] `.bib`
-  - [ ] `.sty`
-  - [ ] `.cls`
-  - [ ] `.bst`
-  - [ ] `.txt`
-- [ ] Highlight the active file and indicate the preview root.
-- [ ] Save the active file, with download fallback when direct write is unavailable.
-- [ ] Keep all project text reads lazy except the active file opened into the editor.
-- [ ] Add focused tests for root/active switching and lazy included-file rendering.
+- [x] Track two file roles explicitly:
+  - [x] `rootPath`: document used for preview rendering.
+  - [x] `activePath`: file currently loaded in CodeMirror.
+- [x] Save editor text into the browser file provider before switching active files.
+- [x] When editing an included file, render preview from `rootPath`, not `activePath`.
+- [x] Add a minimal file list for project text files:
+  - [x] `.tex`
+  - [x] `.bib`
+  - [x] `.sty`
+  - [x] `.cls`
+  - [x] `.bst`
+  - [x] `.txt`
+- [x] Highlight the active file and indicate the preview root.
+- [x] Save the active file, with download fallback when direct write is unavailable.
+- [x] Keep all project text reads lazy except the active file opened into the editor.
+- [x] Add focused tests for root/active switching and lazy included-file rendering.
 
 ## Milestone 2: Web Project Usability
 

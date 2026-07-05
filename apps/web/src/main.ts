@@ -92,6 +92,13 @@ function chooseRootPath(files: readonly BrowserProjectFile[]): string | undefine
         ?? texPaths[0];
 }
 
+function projectTextPaths(files: readonly BrowserProjectFile[]): string[] {
+    return files
+        .map(file => file.path)
+        .filter(isProjectTextFile)
+        .sort((a, b) => a.localeCompare(b));
+}
+
 async function projectFileFromFile(file: File, path: string, handle?: BrowserFileHandle): Promise<BrowserProjectFile> {
     const projectFile: BrowserProjectFile = {
         path,
@@ -142,7 +149,33 @@ async function loadProject(host: StandaloneHost, files: readonly BrowserProjectF
     }
 
     await host.loadProject(files, rootPath);
+    renderProjectFiles(host, projectTextPaths(files));
     setStatus(`Opened ${rootPath} (${files.length} files)`);
+}
+
+function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): void {
+    const fileList = document.getElementById('project-files');
+    if (!fileList) {
+        return;
+    }
+
+    fileList.replaceChildren(...paths.map(path => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = path.replace(/^\//, '');
+        button.title = path;
+        button.dataset.active = String(path === host.getActivePath());
+        button.dataset.root = String(path === host.getRootPath());
+        button.addEventListener('click', () => {
+            host.openEditorFile(path)
+                .then(() => {
+                    renderProjectFiles(host, paths);
+                    setStatus(`Editing ${path}`);
+                })
+                .catch(error => reportFailure('Open file', error));
+        });
+        return button;
+    }));
 }
 
 async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Promise<void> {

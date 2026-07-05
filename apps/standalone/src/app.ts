@@ -42,6 +42,7 @@ function debounce(callback: () => void, delayMs: number): () => void {
  */
 export class StandaloneHost {
     private rootUri: BrowserUri;
+    private activeUri: BrowserUri;
     private readonly fileProvider = new BrowserFileProvider();
     private readonly updateService = new PreviewUpdateService(this.fileProvider, new SmartRenderer());
     private previewReady = false;
@@ -49,6 +50,7 @@ export class StandaloneHost {
 
     constructor(private readonly editorView: EditorView, rootPath: string = '/main.tex', private readonly scheduleRender: () => void = () => undefined) {
         this.rootUri = new BrowserUri(rootPath);
+        this.activeUri = this.rootUri;
     }
 
     start() {
@@ -61,22 +63,46 @@ export class StandaloneHost {
     async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
         this.fileProvider.setProjectFiles(files);
         this.rootUri = new BrowserUri(rootPath);
-        const text = await this.fileProvider.read(this.rootUri);
+        this.activeUri = this.rootUri;
+        const text = await this.fileProvider.read(this.activeUri);
+        this.replaceEditorText(text);
+        this.updateService.resetState();
+        await this.renderCurrentText();
+    }
+
+    async openEditorFile(path: string) {
+        this.persistActiveEditorText();
+        this.activeUri = new BrowserUri(path);
+        this.replaceEditorText(await this.fileProvider.read(this.activeUri));
+        await this.renderCurrentText();
+    }
+
+    getRootPath(): string {
+        return this.rootUri.path;
+    }
+
+    getActivePath(): string {
+        return this.activeUri.path;
+    }
+
+    private replaceEditorText(text: string) {
         if (this.editorView.state.doc.toString() !== text) {
             this.suppressNextEditorUpdate = true;
             this.editorView.dispatch({
                 changes: { from: 0, to: this.editorView.state.doc.length, insert: text }
             });
         }
-        this.updateService.resetState();
-        await this.renderCurrentText();
+    }
+
+    private persistActiveEditorText() {
+        this.fileProvider.setFile(this.activeUri, this.editorView.state.doc.toString());
     }
 
     async saveCurrentText(): Promise<StandaloneSaveResult> {
         const text = this.editorView.state.doc.toString();
-        const wroteToSource = await this.fileProvider.write(this.rootUri, text);
+        const wroteToSource = await this.fileProvider.write(this.activeUri, text);
         return {
-            path: this.rootUri.path,
+            path: this.activeUri.path,
             text,
             wroteToSource
         };
@@ -122,8 +148,9 @@ export class StandaloneHost {
         }
 
         const text = this.editorView.state.doc.toString();
-        this.fileProvider.setFile(this.rootUri, text);
-        const payload = await this.updateService.render(this.rootUri, text, {
+        this.fileProvider.setFile(this.activeUri, text);
+        const rootText = await this.fileProvider.read(this.rootUri);
+        const payload = await this.updateService.render(this.rootUri, rootText, {
             deferFullHtml: true,
             transformHtml: html => this.fixHtmlPaths(html)
         });
