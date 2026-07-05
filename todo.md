@@ -115,10 +115,10 @@ The shared code should eventually depend only on these host-provided capabilitie
 - [x] Split the generic file-provider interface from the VS Code implementation.
 - [x] Make the interface use a host-agnostic URI type, such as `UriLike` or a generic parameter.
 - [x] Keep `VscodeFileProvider` as the VS Code-specific implementation.
-- [ ] Add a browser-oriented interface shape for future `BrowserFileProvider`.
-- [ ] Avoid adding browser implementation until the interface is stable.
+- [x] Add a browser-oriented interface shape for `BrowserFileProvider`.
+- [x] Implement the first browser file provider after the interface stabilized.
 - [x] Preserve VS Code dirty-editor reads before disk reads.
-- [ ] Define how file versions/mtimes work for browser-uploaded files that do not have stable filesystem mtimes.
+- [x] Define how file versions/mtimes work for browser-uploaded files that do not have stable filesystem mtimes.
 - [ ] Decide whether binary assets are handled by `FileProvider`, `ResourceResolver`, or a separate asset provider.
 - [ ] Normalize document-relative paths consistently across Windows, browser virtual paths, and Android document URIs.
 - [ ] Keep source-map file identities stable enough for forward and reverse sync.
@@ -178,9 +178,11 @@ The shared code should eventually depend only on these host-provided capabilitie
 - [x] Keep editor-preview sync minimal in the first pass; basic render/update is the required milestone.
 - [x] Keep Android-specific file permissions and asset loading out of this layer.
 - [ ] Then add:
-  - [ ] project folder or zip loading
-  - [ ] `\input`
-  - [ ] `.bib`
+  - [x] project folder loading
+  - [ ] zip loading
+  - [x] `\input` for loaded project files
+  - [x] `.bib` for loaded project files
+  - [x] save current root file, with download fallback when direct write is unavailable
   - [ ] image/PDF blob URLs
   - [ ] TikZJax assets
   - [ ] reference/citation/tooltips

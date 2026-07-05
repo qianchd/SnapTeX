@@ -42,9 +42,44 @@ body {
 #editor-pane {
     position: sticky;
     top: 0;
+    display: flex;
+    flex-direction: column;
     height: 100vh;
     border-right: 1px solid #d7d7d2;
     background: #ffffff;
+}
+
+#web-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #d7d7d2;
+    background: #f8f8f5;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 13px;
+}
+
+#web-toolbar button {
+    border: 1px solid #c7c7c1;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #1f2328;
+    cursor: pointer;
+    font: inherit;
+    padding: 4px 8px;
+}
+
+#web-toolbar button:hover {
+    background: #eeeeea;
+}
+
+#project-status {
+    min-width: 0;
+    overflow: hidden;
+    color: #5f6368;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 #splitter {
@@ -68,7 +103,8 @@ body.is-resizing-split {
 }
 
 #editor {
-    height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 #editor .cm-editor {

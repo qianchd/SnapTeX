@@ -2,7 +2,7 @@ import { basicSetup, EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
-import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
+import { BrowserFileProvider, BrowserUri, type BrowserProjectFile } from './browser-file-provider';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { SmartRenderer } from '../../../src/renderer';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage, type WebviewToExtensionMessage } from '../../../src/webview-messages';
@@ -20,6 +20,12 @@ export interface StandaloneAppOptions {
     rootPath?: string;
 }
 
+export interface StandaloneSaveResult {
+    path: string;
+    text: string;
+    wroteToSource: boolean;
+}
+
 function debounce(callback: () => void, delayMs: number): () => void {
     let timer: number | undefined;
     return () => {
@@ -34,12 +40,13 @@ function debounce(callback: () => void, delayMs: number): () => void {
  * Shared browser/WebView host for the standalone SnapTeX preview.
  */
 export class StandaloneHost {
-    private readonly rootUri: BrowserUri;
+    private rootUri: BrowserUri;
     private readonly fileProvider = new BrowserFileProvider();
     private readonly updateService = new PreviewUpdateService(this.fileProvider, new SmartRenderer());
     private previewReady = false;
+    private suppressNextEditorUpdate = false;
 
-    constructor(private readonly editorView: EditorView, rootPath: string = '/main.tex') {
+    constructor(private readonly editorView: EditorView, rootPath: string = '/main.tex', private readonly scheduleRender: () => void = () => undefined) {
         this.rootUri = new BrowserUri(rootPath);
     }
 
@@ -48,6 +55,38 @@ export class StandaloneHost {
         const queued = window.snaptexPreviewMessageQueue ?? [];
         window.snaptexPreviewMessageQueue = [];
         queued.forEach(message => this.handlePreviewMessage(message));
+    }
+
+    async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
+        this.fileProvider.setProjectFiles(files);
+        this.rootUri = new BrowserUri(rootPath);
+        const text = this.fileProvider.getFileText(this.rootUri) ?? '';
+        if (this.editorView.state.doc.toString() !== text) {
+            this.suppressNextEditorUpdate = true;
+            this.editorView.dispatch({
+                changes: { from: 0, to: this.editorView.state.doc.length, insert: text }
+            });
+        }
+        this.updateService.resetState();
+        await this.renderCurrentText();
+    }
+
+    async saveCurrentText(): Promise<StandaloneSaveResult> {
+        const text = this.editorView.state.doc.toString();
+        const wroteToSource = await this.fileProvider.write(this.rootUri, text);
+        return {
+            path: this.rootUri.path,
+            text,
+            wroteToSource
+        };
+    }
+
+    handleEditorUpdate() {
+        if (this.suppressNextEditorUpdate) {
+            this.suppressNextEditorUpdate = false;
+            return;
+        }
+        this.scheduleRender();
     }
 
     handlePreviewMessage(message: WebviewToExtensionMessage) {
@@ -128,14 +167,14 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                 EditorView.lineWrapping,
                 EditorView.updateListener.of(update => {
                     if (update.docChanged) {
-                        scheduleRender();
+                        host?.handleEditorUpdate();
                     }
                 })
             ]
         })
     });
 
-    host = new StandaloneHost(editorView, options.rootPath);
+    host = new StandaloneHost(editorView, options.rootPath, scheduleRender);
     host.start();
     return host;
 }
