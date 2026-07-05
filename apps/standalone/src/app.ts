@@ -3,6 +3,7 @@ import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri, normalizeBrowserPath, type BrowserProjectFile } from './browser-file-provider';
+import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { SmartRenderer } from '../../../src/renderer';
 import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext } from '../../../src/utils';
@@ -64,6 +65,8 @@ export class StandaloneHost {
     private readonly savedTexts = new Map<string, string>();
     private readonly dirtyPaths = new Set<string>();
     private readonly diagnostics = new Set<string>();
+    private projectPaths: string[] = [];
+    private labels: string[] = [];
     private previewReady = false;
     private suppressNextEditorUpdate = false;
     private suppressNextSelectionSync = false;
@@ -87,6 +90,8 @@ export class StandaloneHost {
 
     async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
         this.fileProvider.setProjectFiles(files);
+        this.projectPaths = files.map(file => normalizeBrowserPath(file.path)).sort((a, b) => a.localeCompare(b));
+        this.labels = [];
         this.savedTexts.clear();
         this.dirtyPaths.clear();
         this.rootUri = new BrowserUri(rootPath);
@@ -132,6 +137,15 @@ export class StandaloneHost {
 
     getDiagnostics(): readonly string[] {
         return [...this.diagnostics];
+    }
+
+    getLatexCompletionData(): LatexCompletionData {
+        return {
+            labels: this.labels,
+            citationKeys: this.updateService.getBibliographyKeys(),
+            projectPaths: this.projectPaths,
+            macros: this.updateService.getMacroNames()
+        };
     }
 
     private replaceEditorText(text: string) {
@@ -287,6 +301,7 @@ export class StandaloneHost {
             transformHtml: html => this.fixHtmlPaths(html)
         });
 
+        this.labels = Object.keys(payload.numbering.labels).sort((a, b) => a.localeCompare(b));
         this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));
         this.postToPreview({ command: ExtensionToWebviewCommand.Update, payload });
     }
@@ -377,6 +392,12 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                 basicSetup,
                 keymap.of([indentWithTab]),
                 EditorView.lineWrapping,
+                createLatexEditorExtensions(() => host?.getLatexCompletionData() ?? {
+                    labels: [],
+                    citationKeys: [],
+                    projectPaths: [],
+                    macros: []
+                }),
                 EditorView.updateListener.of(update => {
                     if (update.docChanged) {
                         pendingSelection = undefined;

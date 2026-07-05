@@ -65,14 +65,14 @@ Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping
 
 ## Milestone 4: CodeMirror Assistance
 
-- [ ] Research existing CodeMirror/Lezer LaTeX language packages before implementing editor features.
-- [ ] Integrate LaTeX syntax highlighting through a maintained plugin when practical.
-- [ ] Evaluate existing completion helpers and reuse them where they fit SnapTeX's project model.
-- [ ] Dynamic label completions for `\ref` and `\eqref`.
-- [ ] Dynamic citation-key completions for cite commands.
-- [ ] Project-file completions for `\input`, `\include`, and `\includegraphics`.
-- [ ] User macro hints from parsed metadata.
-- [ ] Keep completions optional and derived from existing parse metadata.
+- [x] Research existing CodeMirror/Lezer LaTeX language packages before implementing editor features.
+- [x] Integrate LaTeX syntax highlighting through a maintained plugin when practical.
+- [x] Evaluate existing completion helpers and reuse them where they fit SnapTeX's project model.
+- [x] Dynamic label completions for `\ref` and `\eqref`.
+- [x] Dynamic citation-key completions for cite commands.
+- [x] Project-file completions for `\input`, `\include`, and `\includegraphics`.
+- [x] User macro hints from parsed metadata.
+- [x] Keep completions optional and derived from existing parse metadata.
 
 ## Milestone 5: Build Boundary Cleanup
 

@@ -41,6 +41,14 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
         return this.renderer.getSourceSyncData(blockIndex, ratio);
     }
 
+    public getBibliographyKeys(): string[] {
+        return [...this.document.bibEntries.keys()].sort((a, b) => a.localeCompare(b));
+    }
+
+    public getMacroNames(): string[] {
+        return Object.keys(this.document.metadata.macros).sort((a, b) => a.localeCompare(b));
+    }
+
     public async render(uri: TUri, text: string, options: PreviewRenderOptions): Promise<RenderPayload> {
         const parseResult = await this.document.parse(uri, text, { trace: options.trace });
         this.diagnostics = parseResult.diagnostics;
