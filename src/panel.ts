@@ -3,6 +3,7 @@ import { SmartRenderer } from './renderer';
 import { LatexDocument } from './document';
 import { VscodeFileProvider } from './file-provider';
 import { getBasename, normalizeUri } from './utils';
+import { fillPreviewHtmlTemplate } from './preview-template';
 import type { RenderPayload } from './types';
 import {
     assertNever,
@@ -474,16 +475,34 @@ export class TexPreviewPanel {
             return `<html><body>Error loading Webview HTML</body></html>`;
         }
 
-        return htmlContent
-            .replace(/{{cspSource}}/g, this._panel.webview.cspSource)
-            .replace(/{{katexCssUri}}/g, katexCssUri.toString())
-            .replace(/{{styleUri}}/g, styleUri.toString())
-            .replace(/{{webviewMainUri}}/g, webviewMainUri.toString())
-            .replace(/{{webviewPdfUri}}/g, webviewPdfUri.toString())
-            .replace(/{{pdfJsUri}}/g, pdfJsUri.toString())
-            .replace(/{{pdfWorkerUri}}/g, pdfWorkerUri.toString())
-            .replace(/{{tikzJaxJsUri}}/g, tikzJaxJsUri.toString())
-            .replace(/{{tikzJaxCssUri}}/g, tikzJaxCssUri.toString());
+        const cspSource = this._panel.webview.cspSource;
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="
+        default-src 'none';
+        script-src ${cspSource} 'unsafe-inline' 'unsafe-eval' blob:;
+        worker-src ${cspSource} blob:;
+        style-src ${cspSource} 'unsafe-inline';
+        font-src ${cspSource} data:;
+        img-src ${cspSource} data: blob:;
+        connect-src ${cspSource} blob:;
+    ">`;
+
+        return fillPreviewHtmlTemplate(htmlContent, {
+            cspMeta,
+            styleLinks: [
+                katexCssUri.toString(),
+                styleUri.toString()
+            ],
+            bodyData: {
+                'data-tikz-jax-js-uri': tikzJaxJsUri.toString(),
+                'data-tikz-jax-css-uri': tikzJaxCssUri.toString(),
+                'data-pdf-js-uri': pdfJsUri.toString(),
+                'data-pdf-worker-uri': pdfWorkerUri.toString()
+            },
+            scripts: [
+                webviewMainUri.toString(),
+                webviewPdfUri.toString()
+            ]
+        });
     }
 
     public dispose() {
