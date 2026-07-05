@@ -84,6 +84,35 @@ suite('BrowserFileProvider', () => {
         await assert.rejects(() => provider.read(uri), /Missing browser file/);
     });
 
+    test('clears stale project text and resource URLs when reloading files', async () => {
+        const provider = new BrowserFileProvider();
+        const oldTextUri = new BrowserUri('/old/main.tex');
+        const oldImageUri = new BrowserUri('/old/figure.png');
+        const revokedUrls: string[] = [];
+        const originalRevokeObjectUrl = URL.revokeObjectURL;
+
+        URL.revokeObjectURL = (url: string) => {
+            revokedUrls.push(url);
+        };
+
+        try {
+            provider.setProjectFiles([
+                { path: oldTextUri.path, text: 'Old text.' },
+                { path: oldImageUri.path, blob: new Blob(['old-image'], { type: 'image/png' }) }
+            ]);
+            assert.equal(provider.getResourceUrl(oldImageUri, () => 'blob:old-image'), 'blob:old-image');
+
+            provider.setProjectFiles([{ path: '/new/main.tex', text: 'New text.' }]);
+
+            assert.deepEqual(revokedUrls, ['blob:old-image']);
+            assert.equal(provider.getResourceUrl(oldImageUri, () => 'blob:should-not-exist'), undefined);
+            await assert.rejects(() => provider.read(oldTextUri), /Missing browser file/);
+            assert.equal(await provider.read(new BrowserUri('/new/main.tex')), 'New text.');
+        } finally {
+            URL.revokeObjectURL = originalRevokeObjectUrl;
+        }
+    });
+
     test('lets the preview pipeline read included project files', async () => {
         const provider = new BrowserFileProvider();
         const rootUri = new BrowserUri('/project/main.tex');

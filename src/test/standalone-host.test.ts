@@ -160,4 +160,54 @@ suite('StandaloneHost', () => {
             restoreWindow();
         }
     });
+
+    test('reloads a project with fresh root, active file, and dirty state', async () => {
+        const editor = new TestEditorView();
+        const messages: ExtensionToWebviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject([
+                {
+                    path: '/old/main.tex',
+                    text: [
+                        '\\begin{document}',
+                        '\\input{chapter}',
+                        '\\end{document}'
+                    ].join('\n')
+                },
+                {
+                    path: '/old/chapter.tex',
+                    text: 'Old included paragraph.'
+                }
+            ], '/old/main.tex');
+
+            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            await host.openEditorFile('/old/chapter.tex');
+            host.handleEditorUpdate();
+            editor.replaceText('Unsaved old paragraph.');
+            host.handleEditorUpdate();
+            assert.equal(host.isDirty('/old/chapter.tex'), true);
+
+            await host.loadProject([
+                {
+                    path: '/new/main.tex',
+                    text: [
+                        '\\begin{document}',
+                        'New root paragraph.',
+                        '\\end{document}'
+                    ].join('\n')
+                }
+            ], '/new/main.tex');
+
+            assert.equal(host.getRootPath(), '/new/main.tex');
+            assert.equal(host.getActivePath(), '/new/main.tex');
+            assert.equal(host.isDirty('/old/chapter.tex'), false);
+            assert.equal(host.isDirty('/new/main.tex'), false);
+            assert.match(requestBlockHtml(host, messages), /New root paragraph/);
+        } finally {
+            restoreWindow();
+        }
+    });
 });
