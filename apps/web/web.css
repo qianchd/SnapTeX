@@ -82,6 +82,52 @@ body {
     white-space: nowrap;
 }
 
+#project-files {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 6px 8px;
+    border-bottom: 1px solid #e2e2dd;
+    background: #ffffff;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 12px;
+}
+
+#project-files:empty {
+    display: none;
+}
+
+#project-files button {
+    max-width: 220px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: #374151;
+    cursor: pointer;
+    font: inherit;
+    overflow: hidden;
+    padding: 3px 7px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#project-files button:hover {
+    background: #f1f5f9;
+}
+
+#project-files button[data-active="true"] {
+    border-color: #bfdbfe;
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+#project-files button[data-root="true"]::after {
+    content: " root";
+    color: #64748b;
+    font-size: 11px;
+}
+
 #splitter {
     position: sticky;
     top: 0;
