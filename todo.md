@@ -87,11 +87,11 @@ Goal: make `apps/web` useful for a normal multi-file LaTeX project while keeping
 
 ## Milestone 6: Android Preparation
 
-- [ ] Reuse `apps/standalone` for Android WebView.
-- [ ] Use Android asset loading for bundled runtime/vendor assets.
-- [ ] Evaluate `WebViewAssetLoader` before adding any local HTTP server.
-- [ ] Add Storage Access Framework file-provider support.
-- [ ] Keep virtual mode, lazy PDF, lazy TikZJax, and bounded caches enabled by default.
+- [x] Reuse `apps/standalone` for Android WebView.
+- [x] Use Android asset loading for bundled runtime/vendor assets.
+- [x] Evaluate `WebViewAssetLoader` before adding any local HTTP server.
+- [x] Add Storage Access Framework file-provider support.
+- [x] Keep virtual mode, lazy PDF, lazy TikZJax, and bounded caches enabled by default.
 
 ## Verification
 
