@@ -35,7 +35,6 @@ suite('Preview bridge', () => {
         const fakeWindow: {
             acquireVsCodeApi: () => PreviewBridge;
             snaptexPreviewBridge?: PreviewBridge;
-            snaptexVsCodeApi?: PreviewBridge;
         } = {
             acquireVsCodeApi: () => {
                 acquireCalls += 1;
@@ -47,7 +46,6 @@ suite('Preview bridge', () => {
         assert.strictEqual(getPreviewBridge(), bridge);
         assert.strictEqual(getPreviewBridge(), bridge);
         assert.equal(acquireCalls, 1);
-        assert.strictEqual(fakeWindow.snaptexVsCodeApi, bridge);
         assert.strictEqual(fakeWindow.snaptexPreviewBridge, bridge);
     });
 });

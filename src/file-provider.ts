@@ -3,8 +3,8 @@ import type { UriLike } from './types';
 /**
  * Async file-system adapter used by the parser.
  *
- * Keeping this boundary narrow lets document.ts work with local, remote, and
- * virtual VS Code file systems without direct workspace.fs calls.
+ * Keeping this boundary narrow lets document.ts work with host-provided file
+ * systems without depending on a concrete editor or runtime.
  */
 export interface IFileProvider<TUri extends UriLike = UriLike> {
     read(uri: TUri): Promise<string>;
