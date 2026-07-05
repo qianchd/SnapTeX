@@ -65,9 +65,13 @@ suite('BrowserFileProvider', () => {
     test('stores binary project resources as cached object URLs', async () => {
         const provider = new BrowserFileProvider();
         const uri = new BrowserUri('/figures/result.png');
+        const hostUri = new BrowserUri('/figures/android.png');
         let createCalls = 0;
 
-        provider.setProjectFiles([{ path: uri.path, blob: new Blob(['image-bytes'], { type: 'image/png' }) }]);
+        provider.setProjectFiles([
+            { path: uri.path, blob: new Blob(['image-bytes'], { type: 'image/png' }) },
+            { path: hostUri.path, resourceUrl: 'https://appassets.androidplatform.net/project/figures/android.png' }
+        ]);
 
         const firstUrl = provider.getResourceUrl(uri, blob => {
             createCalls += 1;
@@ -80,6 +84,9 @@ suite('BrowserFileProvider', () => {
 
         assert.equal(firstUrl, 'blob:test-1');
         assert.equal(secondUrl, 'blob:test-1');
+        assert.equal(provider.getResourceUrl(hostUri, () => {
+            throw new Error('Host-backed resource URLs should not create object URLs.');
+        }), 'https://appassets.androidplatform.net/project/figures/android.png');
         assert.equal(createCalls, 1);
         await assert.rejects(() => provider.read(uri), /Missing browser file/);
     });

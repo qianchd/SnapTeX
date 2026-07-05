@@ -13,6 +13,7 @@ export interface BrowserProjectFile {
     text?: string;
     readText?: () => Promise<string>;
     blob?: Blob;
+    resourceUrl?: string;
     handle?: BrowserWritableFileHandle;
 }
 
@@ -53,7 +54,7 @@ export class BrowserUri implements UriLike {
  * In-memory file provider shared by desktop browsers and future WebView hosts.
  */
 export class BrowserFileProvider implements IFileProvider<BrowserUri> {
-    private readonly files = new Map<string, { text?: string; readText?: () => Promise<string>; blob?: Blob; mtime: number; handle?: BrowserWritableFileHandle; objectUrl?: string }>();
+    private readonly files = new Map<string, { text?: string; readText?: () => Promise<string>; blob?: Blob; resourceUrl?: string; mtime: number; handle?: BrowserWritableFileHandle; objectUrl?: string }>();
     private version = 1;
 
     private clear() {
@@ -76,6 +77,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             text: file.text,
             readText: file.readText,
             blob: file.blob ?? (file.text === undefined ? undefined : new Blob([file.text], { type: 'text/plain' })),
+            resourceUrl: file.resourceUrl,
             handle: file.handle ?? existing?.handle,
             mtime: this.version++
         });
@@ -101,6 +103,9 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
 
     getResourceUrl(uri: BrowserUri, createObjectUrl: (blob: Blob) => string = blob => URL.createObjectURL(blob)): string | undefined {
         const file = this.files.get(uri.path);
+        if (file?.resourceUrl) {
+            return file.resourceUrl;
+        }
         if (!file?.blob) {
             return undefined;
         }
