@@ -2,10 +2,10 @@ import { basicSetup, EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
-import { BrowserFileProvider, BrowserUri, type BrowserProjectFile } from './browser-file-provider';
+import { BrowserFileProvider, BrowserUri, normalizeBrowserPath, type BrowserProjectFile } from './browser-file-provider';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { SmartRenderer } from '../../../src/renderer';
-import { decodeHtmlAttribute, escapeHtmlAttribute, getSyncAnchorContext } from '../../../src/utils';
+import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext } from '../../../src/utils';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage, type WebviewToExtensionMessage } from '../../../src/webview-messages';
 
 declare global {
@@ -42,6 +42,17 @@ function lineAt(text: string, line: number): string {
     return text.split(/\r?\n/)[line] ?? '';
 }
 
+function lineStartOffset(text: string, line: number): number {
+    if (line <= 0) { return 0; }
+    let offset = 0;
+    for (let index = 0; index < line; index++) {
+        const next = text.indexOf('\n', offset);
+        if (next === -1) { return text.length; }
+        offset = next + 1;
+    }
+    return offset;
+}
+
 /**
  * Shared browser/WebView host for the standalone SnapTeX preview.
  */
@@ -55,6 +66,7 @@ export class StandaloneHost {
     private readonly diagnostics = new Set<string>();
     private previewReady = false;
     private suppressNextEditorUpdate = false;
+    private suppressNextSelectionSync = false;
 
     constructor(
         private readonly editorView: EditorView,
@@ -191,6 +203,41 @@ export class StandaloneHost {
         });
     }
 
+    consumeSelectionSyncSuppression(): boolean {
+        const suppressed = this.suppressNextSelectionSync;
+        this.suppressNextSelectionSync = false;
+        return suppressed;
+    }
+
+    async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5) {
+        const source = this.updateService.getSourceSyncData(index, ratio);
+        if (!source) {
+            return;
+        }
+
+        const targetPath = normalizeBrowserPath(source.file);
+        if (targetPath !== this.activeUri.path) {
+            await this.openEditorFile(targetPath);
+        }
+
+        const text = this.editorView.state.doc.toString();
+        let targetLine = source.line;
+        if (anchors.length > 0) {
+            const lines = text.split(/\r?\n/);
+            const startLine = Math.max(0, source.blockRange?.startLine ?? targetLine - 5);
+            const endLine = Math.min(lines.length - 1, source.blockRange?.endLine ?? targetLine + 10);
+            targetLine = findNearestSyncAnchorLine(anchors, startLine, endLine, targetLine, line => lines[line] ?? '') ?? targetLine;
+        }
+
+        const line = Math.max(0, targetLine);
+        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, line));
+        this.suppressNextSelectionSync = true;
+        this.editorView.dispatch({
+            selection: { anchor: position },
+            effects: EditorView.scrollIntoView(position, { y: viewRatio < 0.35 ? 'start' : viewRatio > 0.65 ? 'end' : 'center' })
+        });
+    }
+
     handleEditorUpdate() {
         if (this.suppressNextEditorUpdate) {
             this.suppressNextEditorUpdate = false;
@@ -221,6 +268,8 @@ export class StandaloneHost {
                 this.handlePdfRequest(message.id, message.path);
                 break;
             case WebviewToExtensionCommand.RevealLine:
+                void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio);
+                break;
             case WebviewToExtensionCommand.SyncScroll:
                 break;
         }
@@ -333,6 +382,10 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                         pendingSelection = undefined;
                         host?.handleEditorUpdate();
                     } else if (update.selectionSet) {
+                        if (host?.consumeSelectionSyncSuppression()) {
+                            pendingSelection = undefined;
+                            return;
+                        }
                         const selection = update.state.selection.main;
                         const line = update.state.doc.lineAt(selection.head);
                         pendingSelection = {

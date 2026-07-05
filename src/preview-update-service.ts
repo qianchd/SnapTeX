@@ -37,6 +37,10 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
         return this.renderer.getPreviewSyncData(filePath, line);
     }
 
+    public getSourceSyncData(blockIndex: number, ratio: number) {
+        return this.renderer.getSourceSyncData(blockIndex, ratio);
+    }
+
     public async render(uri: TUri, text: string, options: PreviewRenderOptions): Promise<RenderPayload> {
         const parseResult = await this.document.parse(uri, text, { trace: options.trace });
         this.diagnostics = parseResult.diagnostics;
