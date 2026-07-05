@@ -3,8 +3,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
-const port = Number(process.env.PORT || 5178);
+const defaultRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const defaultPort = Number(process.env.PORT || 5178);
 
 const contentTypes = new Map([
     ['.css', 'text/css; charset=utf-8'],
@@ -15,28 +15,37 @@ const contentTypes = new Map([
     ['.gz', 'application/gzip']
 ]);
 
-function resolveRequestPath(url) {
+function resolveRequestPath(root, url, port = defaultPort) {
     const parsed = new URL(url, `http://localhost:${port}`);
     const pathname = parsed.pathname === '/' ? '/apps/web/index.html' : parsed.pathname;
     const filePath = normalize(join(root, decodeURIComponent(pathname)));
     return filePath.startsWith(root) ? filePath : undefined;
 }
 
-const server = createServer((request, response) => {
-    const filePath = resolveRequestPath(request.url ?? '/');
-    if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
-        response.writeHead(404);
-        response.end('Not found');
-        return;
-    }
+export function createSnapTeXWebServer(options = {}) {
+    const root = resolve(options.root ?? defaultRoot);
+    const port = Number(options.port ?? defaultPort);
+    return createServer((request, response) => {
+        const filePath = resolveRequestPath(root, request.url ?? '/', port);
+        if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
+            response.writeHead(404);
+            response.end('Not found');
+            return;
+        }
 
-    response.writeHead(200, {
-        'Content-Type': contentTypes.get(extname(filePath)) ?? 'application/octet-stream',
-        'Cache-Control': 'no-store'
+        response.writeHead(200, {
+            'Content-Type': contentTypes.get(extname(filePath)) ?? 'application/octet-stream',
+            'Cache-Control': 'no-store'
+        });
+        createReadStream(filePath).pipe(response);
     });
-    createReadStream(filePath).pipe(response);
-});
+}
 
-server.listen(port, () => {
-    console.log(`[SnapTeX Web] http://localhost:${port}/apps/web/index.html`);
-});
+const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+
+if (isDirectRun) {
+    const server = createSnapTeXWebServer();
+    server.listen(defaultPort, () => {
+        console.log(`[SnapTeX Web] http://localhost:${defaultPort}/apps/web/index.html`);
+    });
+}
