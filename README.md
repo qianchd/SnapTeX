@@ -1,5 +1,8 @@
 # SnapTeX: High-Performance LaTeX Live Previewer
 
+> [!IMPORTANT]
+> **New:** SnapTeX now has a pure static web version: **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)**. Try the editor and live preview directly from GitHub Pages, with no VS Code extension install required.
+
 <div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/icon.png">
