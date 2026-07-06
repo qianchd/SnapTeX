@@ -36,6 +36,7 @@ function readSourceIndex(root) {
 
 function makeStaticIndex(source) {
     return source
+        .replaceAll('href="/media/icon.png"', 'href="media/icon.png"')
         .replaceAll('href="/media/vendor/katex/katex.min.css"', 'href="media/vendor/katex/katex.min.css"')
         .replaceAll('href="/media/preview-style.css"', 'href="media/preview-style.css"')
         .replaceAll('href="/apps/web/web.css"', 'href="web.css"')
@@ -48,6 +49,7 @@ function makeStaticIndex(source) {
         .replaceAll('data-tikz-jax-css-uri="/media/vendor/tikzjax/fonts.css"', 'data-tikz-jax-css-uri="media/vendor/tikzjax/fonts.css"')
         .replaceAll('data-pdf-js-uri="/media/vendor/pdfjs/pdf.mjs"', 'data-pdf-js-uri="media/vendor/pdfjs/pdf.mjs"')
         .replaceAll('data-pdf-worker-uri="/media/vendor/pdfjs/pdf.worker.mjs"', 'data-pdf-worker-uri="media/vendor/pdfjs/pdf.worker.mjs"')
+        .replaceAll('src="/media/icon.png"', 'src="media/icon.png"')
         .replaceAll('src="/media/webview-main.js"', 'src="media/webview-main.js"')
         .replaceAll('src="/media/webview-pdf.js"', 'src="media/webview-pdf.js"')
         .replaceAll('src="/apps/web/dist/web-main.js"', 'src="web-main.js"')

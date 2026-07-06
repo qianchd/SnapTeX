@@ -173,6 +173,23 @@ body[data-explorer-collapsed="true"] {
     gap: 6px;
 }
 
+#snaptex-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 4px;
+    color: var(--snaptex-ui-fg);
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+#snaptex-brand img {
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+}
+
 .toolbar-actions {
     justify-content: flex-end;
 }
