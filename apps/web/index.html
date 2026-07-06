@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/media/icon.png">
+    <link rel="apple-touch-icon" href="/media/icon.png">
     <link rel="stylesheet" href="/media/vendor/katex/katex.min.css">
     <link rel="stylesheet" href="/media/preview-style.css">
     <link rel="stylesheet" href="/apps/web/web.css">
@@ -18,6 +20,10 @@
     <main id="app-shell">
         <header id="web-toolbar" aria-label="Project controls">
             <div class="toolbar-group">
+                <a id="snaptex-brand" href="." aria-label="SnapTeX Web">
+                    <img src="/media/icon.png" alt="" aria-hidden="true">
+                    <span>SnapTeX</span>
+                </a>
                 <button id="toggle-explorer-button" type="button" aria-expanded="false" aria-controls="explorer-panel">Explorer</button>
                 <button id="open-file-button" type="button">Open TeX</button>
                 <button id="open-folder-button" type="button">Open Folder</button>

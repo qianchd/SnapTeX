@@ -80,7 +80,10 @@ suite('Standalone web assets', () => {
             assert.ok(build.assets.includes('demo/sections/project-editing.tex'));
             assert.ok(build.assets.includes('demo/sample.bib'));
             assert.ok(build.assets.includes('demo/frog.jpg'));
+            assert.ok(build.assets.includes('media/icon.png'));
             assert.ok(build.assets.includes('media/vendor/tikzjax/tex.wasm.gz'));
+            assert.match(indexHtml, /href="media\/icon\.png"/);
+            assert.match(indexHtml, /src="media\/icon\.png"/);
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
 
             assert.match(await fetchText(baseUrl, '/demo/main.tex'), /\\input\{sections\/project-editing\}/);
