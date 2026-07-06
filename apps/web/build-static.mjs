@@ -7,6 +7,7 @@ const rootDir = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const defaultOutDir = resolve(rootDir, 'dist-web');
 
 const staticFiles = [
+    ['demo', 'demo'],
     ['media/vendor', 'media/vendor'],
     ['media/icon.png', 'media/icon.png'],
     ['media/preview-style.css', 'media/preview-style.css'],

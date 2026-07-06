@@ -681,26 +681,32 @@ function bindProjectControls(host: StandaloneHost): void {
     syncSettingsControls(host);
 }
 
-const INITIAL_TEX = String.raw`\title{SnapTeX Standalone Preview}
-\author{CodeMirror Browser Prototype}
-\date{\today}
+const INITIAL_TEX = 'Loading the SnapTeX demo project...';
+const DEMO_PROJECT_FILES = [
+    { path: '/demo/main.tex', url: 'demo/main.tex', text: true },
+    { path: '/demo/sample.bib', url: 'demo/sample.bib', text: true },
+    { path: '/demo/sections/project-editing.tex', url: 'demo/sections/project-editing.tex', text: true },
+    { path: '/demo/frog.jpg', url: 'demo/frog.jpg' }
+] satisfies ReadonlyArray<{ path: string; url: string; text?: boolean }>;
 
-\begin{document}
-\maketitle
+async function fetchText(url: string): Promise<string> {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to load ${url}: ${response.status}`);
+    }
+    return response.text();
+}
 
-\section{Hello SnapTeX}
+function demoProjectFile(file: typeof DEMO_PROJECT_FILES[number]): BrowserProjectFile {
+    return file.text
+        ? { path: file.path, readText: () => fetchText(file.url) }
+        : { path: file.path, resourceUrl: file.url };
+}
 
-This is the first browser-hosted SnapTeX preview. It reuses the shared parser,
-renderer, preview runtime, and virtualization pipeline.
-
-\begin{equation}\label{eq:demo}
-    a^2 + b^2 = c^2
-\end{equation}
-
-Equation~\ref{eq:demo} is rendered by the same KaTeX rule path used by the VS Code extension.
-
-\end{document}
-`;
+async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
+    setStatus('Loading demo project...');
+    await loadProject(host, DEMO_PROJECT_FILES.map(demoProjectFile));
+}
 
 const editorParent = document.getElementById('editor');
 if (!editorParent) {
@@ -724,3 +730,4 @@ host = createStandaloneSnapTeXApp({
     onStateChange: renderProjectState
 });
 bindProjectControls(host);
+void loadDefaultDemoProject(host).catch(error => reportFailure('Load demo', error));
