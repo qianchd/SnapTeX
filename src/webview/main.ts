@@ -31,7 +31,7 @@ const previewBridge = getPreviewBridge();
                     if (parentTooltip && !parentTooltip.classList.contains('pinned')) {
                         return;
                     }
-                    this.onLinkEnter(link);
+                    this.onLinkEnter(link, e.clientY);
                 }
             });
 
@@ -48,12 +48,12 @@ const previewBridge = getPreviewBridge();
 
         }
 
-        onLinkEnter(link) {
+        onLinkEnter(link, anchorY) {
             if (!this.activeTransientTooltip || this.activeTransientTooltip.isPinned) {
                 this.activeTransientTooltip = new Tooltip(this);
             }
 
-            this.activeTransientTooltip.scheduleShow(link);
+            this.activeTransientTooltip.scheduleShow(link, anchorY);
         }
 
         onLinkLeave() {
@@ -88,6 +88,7 @@ const previewBridge = getPreviewBridge();
 
             this.isPinned = false;
             this.currentLink = null;
+            this.anchorY = null;
             this.hideTimer = null;
             this.showTimer = null;
 
@@ -242,11 +243,12 @@ const previewBridge = getPreviewBridge();
             this.element.style.cursor = '';
         }
 
-        scheduleShow(link) {
+        scheduleShow(link, anchorY) {
             this.clearHideTimer();
             if (this.currentLink === link && this.element.classList.contains('visible')) return;
 
             if (this.showTimer) clearTimeout(this.showTimer);
+            this.anchorY = anchorY ?? null;
 
             this.showTimer = setTimeout(() => {
                 this.onLinkEnter(link);
@@ -320,7 +322,7 @@ const previewBridge = getPreviewBridge();
 
             this.contentContainer.appendChild(frag);
             this.refreshPDFs();
-            this.positionTooltip(linkElement);
+            this.positionTooltip(linkElement, this.anchorY);
 
             setTimeout(() => {
                  this.triggerTikzRendering();
@@ -386,7 +388,7 @@ const previewBridge = getPreviewBridge();
             });
         }
 
-        getDefaultBounds() {
+        getTooltipBounds() {
             const host = document.getElementById('preview-pane') || document.getElementById('content-root');
             const rect = host?.getBoundingClientRect();
             if (rect && rect.width > 0) {
@@ -395,27 +397,23 @@ const previewBridge = getPreviewBridge();
             return { left: 0, right: window.innerWidth, width: window.innerWidth };
         }
 
-        positionTooltip(linkElement) {
+        positionTooltip(linkElement, anchorY) {
             const linkRect = linkElement.getBoundingClientRect();
             const viewportHeight = window.innerHeight;
             const margin = 15;
-            const bounds = this.getDefaultBounds();
+            const bounds = this.getTooltipBounds();
             const maxWidth = Math.max(300, bounds.width - margin * 2);
+            const verticalAnchor = anchorY ?? linkRect.top + linkRect.height / 2;
 
-            const isTopHalf = linkRect.top < (viewportHeight / 2);
             this.element.style.maxWidth = `${maxWidth}px`;
-            this.element.style.left = `${Math.max(
-                bounds.left + margin,
-                Math.min(linkRect.left, bounds.right - Math.min(this.element.offsetWidth || maxWidth, maxWidth) - margin)
-            )}px`;
+            this.element.style.left = `${bounds.left + margin}px`;
             this.element.style.right = 'auto';
 
-            if (isTopHalf) {
-                this.element.style.top = `${linkRect.bottom + margin}px`;
+            if (verticalAnchor < viewportHeight / 2) {
+                this.element.style.top = `${verticalAnchor + margin}px`;
                 this.element.style.bottom = '';
             } else {
-                const bottomDist = viewportHeight - linkRect.top + margin;
-                this.element.style.bottom = `${bottomDist}px`;
+                this.element.style.bottom = `${viewportHeight - verticalAnchor + margin}px`;
                 this.element.style.top = 'auto';
             }
         }
