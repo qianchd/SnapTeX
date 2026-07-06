@@ -76,13 +76,22 @@ suite('Standalone web assets', () => {
 
             assert.ok(build.assets.includes('index.html'));
             assert.ok(build.assets.includes('manifest.webmanifest'));
+            assert.ok(build.assets.includes('demo/main.tex'));
+            assert.ok(build.assets.includes('demo/sections/project-editing.tex'));
+            assert.ok(build.assets.includes('demo/sample.bib'));
+            assert.ok(build.assets.includes('demo/frog.jpg'));
             assert.ok(build.assets.includes('media/vendor/tikzjax/tex.wasm.gz'));
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
 
+            assert.match(await fetchText(baseUrl, '/demo/main.tex'), /\\input\{sections\/project-editing\}/);
+            await fetchText(baseUrl, '/demo/sections/project-editing.tex');
+            await fetchText(baseUrl, '/demo/sample.bib');
+            await fetchBytes(baseUrl, '/demo/frog.jpg');
             await fetchText(baseUrl, '/manifest.webmanifest');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
             assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
             assert.match(serviceWorker, /\.\/index\.html/);
+            assert.match(serviceWorker, /\.\/demo\/main\.tex/);
             assert.match(serviceWorker, /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz/);
             await fetchText(baseUrl, tikzJaxUri);
             await fetchText(baseUrl, tikzCssUri);
