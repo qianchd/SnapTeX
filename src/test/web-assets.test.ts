@@ -1,13 +1,18 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import type { Server } from 'http';
 import { join, resolve } from 'path';
+import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
 
 type WebServerModule = {
-    createSnapTeXWebServer(options: { root: string; port: number }): Server;
+    createSnapTeXWebServer(options: { root: string; port: number; indexPath?: string }): Server;
+};
+
+type StaticBuildModule = {
+    buildStaticWeb(options: { root: string; outDir: string }): { outDir: string; assets: string[] };
 };
 
 async function listen(server: Server): Promise<string> {
@@ -53,19 +58,32 @@ function repoRoot(): string {
 }
 
 suite('Standalone web assets', () => {
-    test('serves TikZJax runtime assets used by the browser host', async function() {
+    test('builds and serves the static PWA assets used by the browser host', async function() {
         this.timeout(10000);
         const root = repoRoot();
+        const outDir = mkdtempSync(join(tmpdir(), 'snaptex-web-'));
+        const buildModule = await import(pathToFileURL(resolve(root, 'apps/web/build-static.mjs')).href) as StaticBuildModule;
         const serverModule = await import(pathToFileURL(resolve(root, 'apps/web/server.mjs')).href) as WebServerModule;
-        const server = serverModule.createSnapTeXWebServer({ root, port: 0 });
+        const build = buildModule.buildStaticWeb({ root, outDir });
+        const server = serverModule.createSnapTeXWebServer({ root: build.outDir, port: 0 });
         const baseUrl = await listen(server);
 
         try {
-            const indexHtml = await fetchText(baseUrl, '/apps/web/index.html');
+            const indexHtml = await fetchText(baseUrl, '/');
             const tikzJaxUri = readDataAttribute(indexHtml, 'tikz-jax-js-uri');
             const tikzCssUri = readDataAttribute(indexHtml, 'tikz-jax-css-uri');
             const tikzBaseUri = tikzJaxUri.replace(/\/tikzjax\.js$/, '');
 
+            assert.ok(build.assets.includes('index.html'));
+            assert.ok(build.assets.includes('manifest.webmanifest'));
+            assert.ok(build.assets.includes('media/vendor/tikzjax/tex.wasm.gz'));
+            assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
+
+            await fetchText(baseUrl, '/manifest.webmanifest');
+            const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
+            assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
+            assert.match(serviceWorker, /\.\/index\.html/);
+            assert.match(serviceWorker, /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz/);
             await fetchText(baseUrl, tikzJaxUri);
             await fetchText(baseUrl, tikzCssUri);
             await fetchText(baseUrl, `${tikzBaseUri}/run-tex.js`);
@@ -74,6 +92,7 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, `${tikzBaseUri}/tex_files/tikzlibrarycalc.code.tex.gz`);
         } finally {
             await closeServer(server);
+            rmSync(outDir, { recursive: true, force: true });
         }
     });
 

@@ -261,7 +261,7 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
-        if (e.textEditor !== vscode.window.activeTextEditor || !TexPreviewPanel.currentPanel || Date.now() < suppressTextToPreviewUntil) { return; }
+        if (!TexPreviewPanel.currentPanel || Date.now() < suppressTextToPreviewUntil) { return; }
         if (!isAutoScrollSyncEnabled()) { return; }
 
         isEditorScrolling = true;

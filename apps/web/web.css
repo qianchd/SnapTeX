@@ -5,9 +5,46 @@ body {
 }
 
 :root {
-    --snaptex-web-editor-width: 42vw;
-    --vscode-editor-background: #fbfaf7;
-    --vscode-editor-foreground: #1f2328;
+    --snaptex-web-editor-width: 60vw;
+    --snaptex-web-min-editor-width: 280px;
+    --snaptex-web-min-preview-width: 360px;
+    --snaptex-web-sidebar-width: 250px;
+    --snaptex-web-splitter-width: 3px;
+    --snaptex-web-topbar-height: 38px;
+    --snaptex-preview-font-min: 12px;
+    --snaptex-preview-font-max: 40px;
+    --snaptex-preview-font-scale: 2.35;
+    --snaptex-shell-bg: #f3f4f6;
+    --snaptex-ui-fg: #1f2328;
+    --snaptex-toolbar-bg: #f8fafc;
+    --snaptex-panel-bg: #f8fafc;
+    --snaptex-editor-bg: #ffffff;
+    --snaptex-editor-fg: #111827;
+    --snaptex-preview-bg: #fbfaf7;
+    --snaptex-border: #d4d4d8;
+    --snaptex-subtle-border: #e5e7eb;
+    --snaptex-muted: #64748b;
+    --snaptex-editor-active-line-bg: #fafafa;
+    --snaptex-button-fg: #1f2937;
+    --snaptex-hover-bg: #e5e7eb;
+    --snaptex-active-bg: #dbeafe;
+    --snaptex-active-fg: #1d4ed8;
+    --snaptex-warning-bg: #fff7ed;
+    --snaptex-warning-border: #fed7aa;
+    --snaptex-warning-fg: #9a3412;
+    --snaptex-cm-keyword: #c026d3;
+    --snaptex-cm-atom: #dc2626;
+    --snaptex-cm-operator: #db2777;
+    --snaptex-cm-bracket: #0f172a;
+    --snaptex-cm-string: #16a34a;
+    --snaptex-cm-variable: #ea580c;
+    --snaptex-cm-macro: #2563eb;
+    --snaptex-cm-label: #0891b2;
+    --snaptex-cm-comment: #64748b;
+    --snaptex-cm-meta: #7c3aed;
+    --snaptex-cm-invalid: #ef4444;
+    --vscode-editor-background: var(--snaptex-preview-bg);
+    --vscode-editor-foreground: var(--snaptex-ui-fg);
     --vscode-textLink-foreground: #2563eb;
     --vscode-textLink-activeForeground: #1d4ed8;
     --vscode-scrollbarSlider-background: rgba(88, 88, 88, 0.35);
@@ -15,103 +52,300 @@ body {
     --vscode-scrollbarSlider-activeBackground: rgba(88, 88, 88, 0.62);
 }
 
+body[data-theme="dark"] {
+    --snaptex-shell-bg: #111827;
+    --snaptex-ui-fg: #e5e7eb;
+    --snaptex-toolbar-bg: #172033;
+    --snaptex-panel-bg: #111827;
+    --snaptex-editor-bg: #0f172a;
+    --snaptex-editor-fg: #e5e7eb;
+    --snaptex-preview-bg: #16181f;
+    --snaptex-border: #334155;
+    --snaptex-subtle-border: #253247;
+    --snaptex-muted: #94a3b8;
+    --snaptex-editor-active-line-bg: #141f31;
+    --snaptex-button-fg: #f8fafc;
+    --snaptex-hover-bg: #263246;
+    --snaptex-active-bg: #1e3a8a;
+    --snaptex-active-fg: #bfdbfe;
+    --snaptex-warning-bg: #422006;
+    --snaptex-warning-border: #92400e;
+    --snaptex-warning-fg: #fed7aa;
+    --snaptex-cm-keyword: #ff5cf4;
+    --snaptex-cm-atom: #fb7185;
+    --snaptex-cm-operator: #f472b6;
+    --snaptex-cm-bracket: #e2e8f0;
+    --snaptex-cm-string: #4ade80;
+    --snaptex-cm-variable: #fbbf24;
+    --snaptex-cm-macro: #60a5fa;
+    --snaptex-cm-label: #22d3ee;
+    --snaptex-cm-comment: #94a3b8;
+    --snaptex-cm-meta: #a78bfa;
+    --snaptex-cm-invalid: #f87171;
+}
+
+body[data-theme="blue"] {
+    --snaptex-shell-bg: #eaf4ff;
+    --snaptex-ui-fg: #10233f;
+    --snaptex-toolbar-bg: #d9ebff;
+    --snaptex-panel-bg: #eef7ff;
+    --snaptex-editor-bg: #ffffff;
+    --snaptex-preview-bg: #f7fbff;
+    --snaptex-border: #9cc7f7;
+    --snaptex-subtle-border: #c9def8;
+    --snaptex-editor-active-line-bg: #f3f9ff;
+    --snaptex-hover-bg: #cfe5ff;
+    --snaptex-active-bg: #b7d7ff;
+    --snaptex-active-fg: #064ea7;
+}
+
+body[data-theme="rose"] {
+    --snaptex-shell-bg: #fff1f5;
+    --snaptex-ui-fg: #3f1024;
+    --snaptex-toolbar-bg: #ffe4ec;
+    --snaptex-panel-bg: #fff7fa;
+    --snaptex-editor-bg: #ffffff;
+    --snaptex-preview-bg: #fffafb;
+    --snaptex-border: #f9a8c1;
+    --snaptex-subtle-border: #ffd0dd;
+    --snaptex-editor-active-line-bg: #fff9fb;
+    --snaptex-hover-bg: #ffd6e3;
+    --snaptex-active-bg: #fecdd3;
+    --snaptex-active-fg: #be123c;
+}
+
 body {
-    background: #f5f5f2;
+    background: var(--snaptex-shell-bg);
     box-sizing: border-box;
     max-width: none;
     padding: 0;
-    color: #1f2328;
-    font-family: "Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif;
+    color: var(--snaptex-ui-fg);
+    font-family: "Segoe UI", Arial, sans-serif;
     font-size: 16px;
-    line-height: 1.25;
+    line-height: 1.35;
     text-align: initial;
 }
 
 #app-shell {
     display: grid;
-    grid-template-columns: minmax(280px, var(--snaptex-web-editor-width)) 6px minmax(0, 1fr);
+    grid-template-rows: minmax(var(--snaptex-web-topbar-height), auto) minmax(0, 1fr);
     min-height: 100vh;
 }
 
+#workspace {
+    display: grid;
+    grid-template-columns: var(--snaptex-web-sidebar-width) minmax(var(--snaptex-web-min-editor-width), var(--snaptex-web-editor-width)) var(--snaptex-web-splitter-width) minmax(0, 1fr);
+    grid-template-areas: "explorer editor splitter preview";
+    align-items: start;
+    min-height: calc(100vh - var(--snaptex-web-topbar-height));
+}
+
+body[data-explorer-collapsed="true"] {
+    --snaptex-web-sidebar-width: 0px;
+}
+
+#explorer-panel,
 #editor-pane,
 #preview-pane {
     min-width: 0;
     min-height: 0;
 }
 
-#editor-pane {
+#web-toolbar {
     position: sticky;
     top: 0;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    border-right: 1px solid #d7d7d2;
-    background: #ffffff;
-}
-
-#web-toolbar {
-    display: flex;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: max-content minmax(160px, 1fr) max-content;
     align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
-    border-bottom: 1px solid #d7d7d2;
-    background: #f8f8f5;
-    font-family: "Segoe UI", Arial, sans-serif;
+    gap: 12px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--snaptex-border);
+    background: var(--snaptex-toolbar-bg);
+    color: var(--snaptex-ui-fg);
     font-size: 13px;
 }
 
-#web-toolbar button {
-    border: 1px solid #c7c7c1;
+.toolbar-group {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.toolbar-actions {
+    justify-content: flex-end;
+}
+
+.toolbar-paths {
+    color: var(--snaptex-muted);
+}
+
+#web-toolbar button,
+#settings-menu button {
+    border: 1px solid transparent;
     border-radius: 4px;
-    background: #ffffff;
-    color: #1f2328;
+    background: transparent;
+    color: var(--snaptex-button-fg);
     cursor: pointer;
     font: inherit;
     padding: 4px 8px;
 }
 
-#web-toolbar button:hover {
-    background: #eeeeea;
+#web-toolbar button:hover,
+#web-toolbar button[aria-expanded="true"],
+#settings-menu label:hover {
+    background: var(--snaptex-hover-bg);
 }
 
-#project-status {
+#web-toolbar button:disabled {
+    color: #9ca3af;
+    cursor: default;
+}
+
+#web-toolbar button:disabled:hover {
+    background: transparent;
+}
+
+#project-status,
+#active-path-label,
+#root-path-label {
     min-width: 0;
     overflow: hidden;
-    color: #5f6368;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-#project-files {
-    display: flex;
-    flex: 0 0 auto;
+#active-path-label {
+    color: var(--snaptex-editor-fg);
+    font-weight: 600;
+}
+
+#root-path-label {
+    padding-left: 8px;
+    border-left: 1px solid var(--snaptex-border);
+}
+
+#project-status {
+    max-width: 34vw;
+    color: var(--snaptex-muted);
+}
+
+#settings-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 10px;
+    display: grid;
     gap: 4px;
-    overflow-x: auto;
-    padding: 6px 8px;
-    border-bottom: 1px solid #e2e2dd;
-    background: #ffffff;
-    font-family: "Segoe UI", Arial, sans-serif;
+    min-width: 190px;
+    padding: 6px;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 6px;
+    background: var(--snaptex-panel-bg);
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+}
+
+#settings-menu[hidden] {
+    display: none;
+}
+
+#settings-menu label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 5px 6px;
+}
+
+.settings-section {
+    display: grid;
+    gap: 2px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--snaptex-subtle-border);
+}
+
+#settings-menu .setting-row {
+    justify-content: space-between;
+}
+
+#settings-menu input[type="number"],
+#settings-menu select {
+    width: 96px;
+    box-sizing: border-box;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-editor-bg);
+    color: var(--snaptex-editor-fg);
+    font: inherit;
+    padding: 3px 5px;
+}
+
+#explorer-panel {
+    grid-area: explorer;
+    position: sticky;
+    top: var(--snaptex-web-topbar-height);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--snaptex-web-topbar-height));
+    overflow: hidden;
+    border-right: 1px solid var(--snaptex-border);
+    background: var(--snaptex-panel-bg);
+}
+
+body[data-explorer-collapsed="true"] #explorer-panel {
+    display: none;
+}
+
+.panel-title {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    height: 34px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--snaptex-subtle-border);
+    color: var(--snaptex-muted);
     font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+#editor-pane {
+    grid-area: editor;
+    position: sticky;
+    top: var(--snaptex-web-topbar-height);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--snaptex-web-topbar-height));
+    border-right: 1px solid var(--snaptex-border);
+    background: var(--snaptex-editor-bg);
+}
+
+#project-files {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 6px 4px;
+    font-size: 13px;
 }
 
 #project-files:empty {
-    display: none;
+    flex: 0 0 auto;
 }
 
 #project-diagnostics {
     display: none;
     flex: 0 0 auto;
-    max-height: 84px;
+    max-height: 120px;
     overflow: auto;
-    padding: 6px 10px;
-    border-bottom: 1px solid #f3d2b5;
-    background: #fff7ed;
-    color: #9a3412;
-    font-family: "Segoe UI", Arial, sans-serif;
+    padding: 8px 12px;
+    border-top: 1px solid var(--snaptex-warning-border);
+    background: var(--snaptex-warning-bg);
+    color: var(--snaptex-warning-fg);
     font-size: 12px;
 }
 
-#project-diagnostics:not(:empty) {
+body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     display: block;
 }
 
@@ -120,86 +354,102 @@ body {
     padding-left: 18px;
 }
 
-#project-files button {
-    border: 1px solid transparent;
-    border-radius: 4px;
-    background: transparent;
-    color: #374151;
-    cursor: pointer;
-    font: inherit;
-    overflow: hidden;
-    padding: 3px 7px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-#project-files button:hover {
-    background: #f1f5f9;
-}
-
-.project-file-entry {
-    display: inline-flex;
+.project-tree-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) max-content;
     align-items: center;
-    gap: 2px;
-    max-width: 300px;
-    border: 1px solid transparent;
-    border-radius: 5px;
+    gap: 4px;
+    min-height: 26px;
+    border-radius: 4px;
+    color: var(--snaptex-ui-fg);
 }
 
-.project-file-entry[data-root="true"] {
-    border-color: #d1d5db;
-    background: #f8fafc;
+.project-tree-row:hover {
+    background: var(--snaptex-hover-bg);
 }
 
-.project-file-entry[data-dirty="true"] {
-    background: #fff7ed;
+.project-tree-row[data-active="true"] {
+    background: var(--snaptex-active-bg);
+    color: var(--snaptex-active-fg);
 }
 
-.project-file-open {
-    max-width: 220px;
-}
-
-.project-file-entry[data-dirty="true"] .project-file-open::after {
+.project-tree-row[data-dirty="true"] .project-file-name::after {
     content: " *";
     color: #b45309;
     font-weight: 700;
 }
 
-.project-file-open[data-active="true"] {
-    border-color: #bfdbfe;
-    background: #dbeafe;
-    color: #1d4ed8;
+.project-tree-row[data-root="true"] {
+    font-weight: 600;
 }
 
-.project-root-button {
-    flex: 0 0 auto;
-    color: #64748b;
+.project-tree-row button {
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 2px 4px;
+}
+
+.project-tree-row button:hover {
+    background: rgba(148, 163, 184, 0.22);
+}
+
+.project-folder-toggle {
+    width: 18px;
+    text-align: center;
+}
+
+.project-file-open,
+.project-folder-label {
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.project-folder-label {
+    color: var(--snaptex-muted);
+    font-weight: 600;
+}
+
+.project-file-badge {
+    padding-right: 6px;
+    color: var(--snaptex-muted);
     font-size: 11px;
 }
 
-.project-root-button:disabled {
-    cursor: default;
-    opacity: 0.8;
+.project-file-badge:empty {
+    display: none;
 }
 
 #splitter {
+    grid-area: splitter;
     position: sticky;
-    top: 0;
+    top: var(--snaptex-web-topbar-height);
     z-index: 2;
-    height: 100vh;
+    height: calc(100vh - var(--snaptex-web-topbar-height));
     cursor: col-resize;
-    background: #d7d7d2;
+    background: var(--snaptex-border);
     transition: background 120ms ease;
 }
 
 #splitter:hover,
 body.is-resizing-split #splitter {
-    background: #9ca3af;
+    background: var(--snaptex-muted);
 }
 
 body.is-resizing-split {
     cursor: col-resize;
     user-select: none;
+}
+
+body.is-resizing-split #editor-pane,
+body.is-resizing-split #preview-pane {
+    pointer-events: none;
 }
 
 #editor {
@@ -209,16 +459,36 @@ body.is-resizing-split {
 
 #editor .cm-editor {
     height: 100%;
+    background: var(--snaptex-editor-bg);
+    color: var(--snaptex-editor-fg);
     font-size: 14px;
+    font-family: Consolas, "Cascadia Code", "Courier New", monospace;
+}
+
+#editor .cm-gutters {
+    background: var(--snaptex-panel-bg);
+    color: var(--snaptex-muted);
+    border-right: 1px solid var(--snaptex-subtle-border);
+}
+
+#editor .cm-activeLine,
+#editor .cm-activeLineGutter {
+    background: var(--snaptex-editor-active-line-bg);
+}
+
+#editor .cm-cursor {
+    border-left-color: var(--snaptex-editor-fg);
 }
 
 #preview-pane {
-    background: #fbfaf7;
+    grid-area: preview;
+    background: var(--snaptex-preview-bg);
+    font-family: "Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif;
     container-type: inline-size;
 }
 
 #content-root {
-    --base-font-size: clamp(12px, 2.35vw, 40px);
+    --base-font-size: clamp(var(--snaptex-preview-font-min), calc(var(--snaptex-preview-font-scale) * 1vw), var(--snaptex-preview-font-max));
 
     max-width: 920px;
     margin: 0 auto;
@@ -230,14 +500,44 @@ body.is-resizing-split {
 
 @supports (font-size: 1cqw) {
     #content-root {
-        --base-font-size: clamp(12px, 2.35cqw, 40px);
+        --base-font-size: clamp(var(--snaptex-preview-font-min), calc(var(--snaptex-preview-font-scale) * 1cqw), var(--snaptex-preview-font-max));
     }
 }
 
+body.is-resizing-split #content-root {
+    --base-font-size: var(--snaptex-web-resize-preview-font-size, clamp(var(--snaptex-preview-font-min), calc(var(--snaptex-preview-font-scale) * 1vw), var(--snaptex-preview-font-max)));
+}
+
 @media (max-width: 820px) {
-    #app-shell {
+    #web-toolbar {
         grid-template-columns: 1fr;
+        height: auto;
+        min-height: var(--snaptex-web-topbar-height);
+        padding: 6px 8px;
+    }
+
+    #workspace {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 42vh 58vh;
+        grid-template-areas:
+            "explorer"
+            "editor"
+            "preview";
+    }
+
+    body[data-explorer-collapsed="true"] #workspace {
         grid-template-rows: 42vh 58vh;
+        grid-template-areas:
+            "editor"
+            "preview";
+    }
+
+    #explorer-panel {
+        position: static;
+        height: auto;
+        max-height: 34vh;
+        border-right: 0;
+        border-bottom: 1px solid var(--snaptex-border);
     }
 
     #splitter {
@@ -248,6 +548,10 @@ body.is-resizing-split {
         position: static;
         height: 42vh;
         border-right: 0;
-        border-bottom: 1px solid #d7d7d2;
+        border-bottom: 1px solid var(--snaptex-border);
+    }
+
+    #project-status {
+        max-width: none;
     }
 }

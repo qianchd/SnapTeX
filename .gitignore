@@ -1,5 +1,6 @@
 out
 dist
+dist-web
 node_modules
 media/vendor/
 media/webview-main.js
