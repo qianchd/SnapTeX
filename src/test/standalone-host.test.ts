@@ -6,8 +6,13 @@ import { StandaloneHost } from '../../apps/standalone/src/app';
 import type { BrowserWritableFileHandle } from '../../apps/standalone/src/browser-file-provider';
 import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage } from '../webview-messages';
 
+function normalizeEditorText(text: string): string {
+    return text.replace(/\r\n?/g, '\n');
+}
+
 class TestEditorView {
     public selectionAnchor = -1;
+    public scrollEffects = 0;
 
     constructor(private text = '') {}
 
@@ -20,18 +25,21 @@ class TestEditorView {
         };
     }
 
-    dispatch(update: { changes?: { from: number; to: number; insert: string }; selection?: { anchor: number } }) {
+    dispatch(update: { changes?: { from: number; to: number; insert: string }; selection?: { anchor: number }; effects?: unknown }) {
         if (update.changes) {
             const { from, to, insert } = update.changes;
-            this.text = `${this.text.slice(0, from)}${insert}${this.text.slice(to)}`;
+            this.text = normalizeEditorText(`${this.text.slice(0, from)}${insert}${this.text.slice(to)}`);
         }
         if (update.selection) {
             this.selectionAnchor = update.selection.anchor;
         }
+        if (update.effects) {
+            this.scrollEffects += 1;
+        }
     }
 
     replaceText(text: string) {
-        this.text = text;
+        this.text = normalizeEditorText(text);
     }
 }
 
@@ -113,6 +121,34 @@ suite('StandaloneHost', () => {
             assert.equal(host.isDirty('/chapter.tex'), false);
             assert.match(html, /Updated included paragraph/);
             assert.match(html, /Root paragraph/);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('keeps opened files clean until the editor content changes', async () => {
+        const editor = new TestEditorView();
+        const messages: ExtensionToWebviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject([
+                { path: '/main.tex', readText: async () => '\\input{chapter}\r\n' },
+                { path: '/chapter.tex', readText: async () => 'Original\r\nchapter.' }
+            ], '/main.tex');
+            assert.equal(host.isDirty('/main.tex'), false);
+
+            await host.openEditorFile('/chapter.tex');
+            host.handleEditorUpdate();
+            assert.equal(host.isDirty('/chapter.tex'), false);
+
+            editor.replaceText('Changed chapter.');
+            host.handleEditorUpdate();
+            assert.equal(host.isDirty('/chapter.tex'), true);
+
+            await host.saveCurrentText();
+            assert.equal(host.isDirty('/chapter.tex'), false);
         } finally {
             restoreWindow();
         }
@@ -295,6 +331,100 @@ suite('StandaloneHost', () => {
             assert.doesNotMatch(response.anchor ?? '', /\\textbf/);
             assert.equal(typeof response.index, 'number');
             assert.equal(typeof response.ratio, 'number');
+
+            host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.', 0.5, false);
+            const manualResponse = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock && message.auto === false);
+            assert.ok(manualResponse && manualResponse.command === ExtensionToWebviewCommand.ScrollToBlock);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('applies standalone preview settings', async () => {
+        const editor = new TestEditorView();
+        const messages: ExtensionToWebviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        let scheduledRenders = 0;
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', () => {
+            scheduledRenders += 1;
+        }, () => undefined, {
+            livePreview: false,
+            autoScrollSync: false,
+            autoScrollDelayMs: 250,
+            debugMemory: true,
+            virtualMode: false
+        });
+
+        try {
+            await host.loadProject([{
+                path: '/main.tex',
+                text: [
+                    '\\begin{document}',
+                    'Root paragraph.',
+                    '\\end{document}'
+                ].join('\n')
+            }], '/main.tex');
+
+            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            const config = messages.find(message => message.command === ExtensionToWebviewCommand.Config);
+            assert.ok(config && config.command === ExtensionToWebviewCommand.Config);
+            assert.equal(config.config.autoScrollDelay, 250);
+            assert.equal(config.config.debugMemory, true);
+            assert.equal(config.config.virtualMode, false);
+
+            editor.replaceText('Changed paragraph.');
+            host.handleEditorUpdate();
+            assert.equal(scheduledRenders, 0);
+
+            host.syncEditorSelection(1, 0, 'Changed paragraph.');
+            assert.equal(messages.some(message => message.command === ExtensionToWebviewCommand.ScrollToBlock), false);
+
+            host.updateSettings({ livePreview: true, autoScrollSync: true });
+            host.handleEditorUpdate();
+            assert.equal(scheduledRenders, 1);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('syncs preview scroll positions back to the editor', async () => {
+        const editor = new TestEditorView();
+        const messages: ExtensionToWebviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject([
+                {
+                    path: '/main.tex',
+                    text: [
+                        '\\begin{document}',
+                        'Root paragraph.',
+                        '\\input{chapter}',
+                        '\\end{document}'
+                    ].join('\n')
+                },
+                {
+                    path: '/chapter.tex',
+                    text: [
+                        'Included first paragraph.',
+                        '',
+                        'Included second paragraph with \\textbf{sync anchor}.'
+                    ].join('\n')
+                }
+            ], '/main.tex');
+
+            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            await host.openEditorFile('/chapter.tex');
+            host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
+            const scroll = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock);
+            assert.ok(scroll && scroll.command === ExtensionToWebviewCommand.ScrollToBlock);
+
+            await host.openEditorFile('/main.tex');
+            await host.syncPreviewScroll(scroll.index, scroll.ratio);
+
+            assert.equal(host.getActivePath(), '/chapter.tex');
+            assert.ok(editor.scrollEffects > 0);
         } finally {
             restoreWindow();
         }

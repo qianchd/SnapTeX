@@ -9,29 +9,75 @@
     <title>SnapTeX Web Preview</title>
 </head>
 <body
+    data-explorer-collapsed="true"
     data-tikz-jax-js-uri="/media/vendor/tikzjax/tikzjax.js"
     data-tikz-jax-css-uri="/media/vendor/tikzjax/fonts.css"
     data-pdf-js-uri="/media/vendor/pdfjs/pdf.mjs"
     data-pdf-worker-uri="/media/vendor/pdfjs/pdf.worker.mjs"
 >
     <main id="app-shell">
-        <section id="editor-pane" aria-label="LaTeX editor">
-            <div id="web-toolbar" aria-label="Project controls">
+        <header id="web-toolbar" aria-label="Project controls">
+            <div class="toolbar-group">
+                <button id="toggle-explorer-button" type="button" aria-expanded="false" aria-controls="explorer-panel">Explorer</button>
                 <button id="open-file-button" type="button">Open TeX</button>
                 <button id="open-folder-button" type="button">Open Folder</button>
                 <button id="save-button" type="button">Save</button>
+            </div>
+            <div class="toolbar-group toolbar-paths" aria-live="polite">
+                <span id="active-path-label">main.tex</span>
+                <span id="root-path-label">root: main.tex</span>
+            </div>
+            <div class="toolbar-group toolbar-actions">
+                <button id="set-root-button" type="button">Set Root</button>
+                <button id="settings-button" type="button" aria-expanded="false" aria-controls="settings-menu">Settings</button>
                 <span id="project-status">Demo document</span>
             </div>
-            <div id="project-files" aria-label="Project files"></div>
-            <div id="project-diagnostics" aria-live="polite"></div>
-            <div id="editor"></div>
-            <input id="open-file-input" type="file" accept=".tex" hidden>
-            <input id="open-folder-input" type="file" webkitdirectory multiple hidden>
-        </section>
-        <div id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor and preview panes"></div>
-        <section id="preview-pane" aria-label="SnapTeX preview">
-            <div id="content-root"></div>
-        </section>
+            <div id="settings-menu" hidden>
+                <div class="settings-section">
+                    <label><input id="show-explorer-toggle" type="checkbox"> Explorer</label>
+                    <label><input id="show-diagnostics-toggle" type="checkbox" checked> Diagnostics</label>
+                </div>
+                <div class="settings-section">
+                    <label><input id="live-preview-toggle" type="checkbox" checked> Live preview</label>
+                    <label><input id="auto-scroll-toggle" type="checkbox" checked> Auto scroll sync</label>
+                    <label><input id="virtual-mode-toggle" type="checkbox" checked> Virtual mode</label>
+                    <label><input id="debug-memory-toggle" type="checkbox"> Debug memory</label>
+                </div>
+                <label class="setting-row">
+                    <span>Render delay</span>
+                    <input id="render-delay-input" type="number" min="0" max="2000" step="25" value="150">
+                </label>
+                <label class="setting-row">
+                    <span>Scroll delay</span>
+                    <input id="auto-scroll-delay-input" type="number" min="0" max="2000" step="25" value="100">
+                </label>
+                <label class="setting-row">
+                    <span>Theme</span>
+                    <select id="theme-select">
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                        <option value="blue">Blue</option>
+                        <option value="rose">Rose</option>
+                    </select>
+                </label>
+            </div>
+        </header>
+        <div id="workspace">
+            <aside id="explorer-panel" aria-label="Project explorer">
+                <div class="panel-title">Explorer</div>
+                <div id="project-files" role="tree" aria-label="Project files"></div>
+                <div id="project-diagnostics" aria-live="polite"></div>
+            </aside>
+            <section id="editor-pane" aria-label="LaTeX editor">
+                <div id="editor"></div>
+            </section>
+            <div id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor and preview panes"></div>
+            <section id="preview-pane" aria-label="SnapTeX preview">
+                <div id="content-root"></div>
+            </section>
+        </div>
+        <input id="open-file-input" type="file" accept=".tex" hidden>
+        <input id="open-folder-input" type="file" webkitdirectory multiple hidden>
     </main>
     <script>
         window.snaptexPreviewMessageQueue = [];

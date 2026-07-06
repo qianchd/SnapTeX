@@ -386,15 +386,33 @@ const previewBridge = getPreviewBridge();
             });
         }
 
+        getDefaultBounds() {
+            const host = document.getElementById('preview-pane') || document.getElementById('content-root');
+            const rect = host?.getBoundingClientRect();
+            if (rect && rect.width > 0) {
+                return rect;
+            }
+            return { left: 0, right: window.innerWidth, width: window.innerWidth };
+        }
+
         positionTooltip(linkElement) {
             const linkRect = linkElement.getBoundingClientRect();
             const viewportHeight = window.innerHeight;
             const margin = 15;
+            const bounds = this.getDefaultBounds();
+            const maxWidth = Math.max(300, bounds.width - margin * 2);
 
             const isTopHalf = linkRect.top < (viewportHeight / 2);
+            this.element.style.maxWidth = `${maxWidth}px`;
+            this.element.style.left = `${Math.max(
+                bounds.left + margin,
+                Math.min(linkRect.left, bounds.right - Math.min(this.element.offsetWidth || maxWidth, maxWidth) - margin)
+            )}px`;
+            this.element.style.right = 'auto';
 
             if (isTopHalf) {
                 this.element.style.top = `${linkRect.bottom + margin}px`;
+                this.element.style.bottom = '';
             } else {
                 const bottomDist = viewportHeight - linkRect.top + margin;
                 this.element.style.bottom = `${bottomDist}px`;

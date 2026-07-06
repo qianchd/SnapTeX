@@ -1,6 +1,7 @@
 import type { Extension } from '@codemirror/state';
 import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
-import { StreamLanguage, type StreamParser } from '@codemirror/language';
+import { HighlightStyle, StreamLanguage, syntaxHighlighting, type StreamParser } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 
 const { stex } = require('@codemirror/legacy-modes/mode/stex') as { stex: StreamParser<unknown> };
 
@@ -17,6 +18,20 @@ const REF_COMMANDS = ['ref', 'eqref', 'pageref', 'autoref', 'cref', 'Cref'];
 const CITE_COMMANDS = ['cite', 'citep', 'citet', 'citeyear', 'citeauthor', 'parencite', 'textcite'];
 const INPUT_COMMANDS = ['input', 'include'];
 const FILE_COMMANDS = [...INPUT_COMMANDS, 'includegraphics'];
+
+const snaptexLatexHighlightStyle = HighlightStyle.define([
+    { tag: tags.keyword, color: 'var(--snaptex-cm-keyword)', fontWeight: '700' },
+    { tag: tags.atom, color: 'var(--snaptex-cm-atom)', fontWeight: '700' },
+    { tag: tags.operator, color: 'var(--snaptex-cm-operator)', fontWeight: '700' },
+    { tag: tags.bracket, color: 'var(--snaptex-cm-bracket)' },
+    { tag: tags.string, color: 'var(--snaptex-cm-string)' },
+    { tag: tags.variableName, color: 'var(--snaptex-cm-variable)' },
+    { tag: tags.macroName, color: 'var(--snaptex-cm-macro)', fontWeight: '700' },
+    { tag: tags.labelName, color: 'var(--snaptex-cm-label)' },
+    { tag: tags.comment, color: 'var(--snaptex-cm-comment)', fontStyle: 'italic' },
+    { tag: tags.meta, color: 'var(--snaptex-cm-meta)' },
+    { tag: tags.invalid, color: 'var(--snaptex-cm-invalid)', textDecoration: 'underline wavy var(--snaptex-cm-invalid)' }
+]);
 
 function uniqueSorted(values: readonly string[]): string[] {
     return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -93,6 +108,7 @@ export function snaptexLatexCompletionSource(provider: LatexCompletionDataProvid
 export function createLatexEditorExtensions(provider: LatexCompletionDataProvider): Extension[] {
     return [
         StreamLanguage.define(stex),
+        syntaxHighlighting(snaptexLatexHighlightStyle),
         autocompletion({
             override: [snaptexLatexCompletionSource(provider)]
         })

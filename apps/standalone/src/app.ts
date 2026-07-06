@@ -20,6 +20,7 @@ export interface StandaloneAppOptions {
     editorParent: HTMLElement;
     initialText: string;
     rootPath?: string;
+    settings?: Partial<StandalonePreviewSettings>;
     onStateChange?: (host: StandaloneHost) => void;
 }
 
@@ -29,13 +30,31 @@ export interface StandaloneSaveResult {
     wroteToSource: boolean;
 }
 
-function debounce(callback: () => void, delayMs: number): () => void {
+export interface StandalonePreviewSettings {
+    livePreview: boolean;
+    autoScrollSync: boolean;
+    renderDelayMs: number;
+    autoScrollDelayMs: number;
+    virtualMode: boolean;
+    debugMemory: boolean;
+}
+
+export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
+    livePreview: true,
+    autoScrollSync: true,
+    renderDelayMs: 150,
+    autoScrollDelayMs: 100,
+    virtualMode: true,
+    debugMemory: false
+};
+
+function debounce(callback: () => void, delayMs: number | (() => number)): () => void {
     let timer: number | undefined;
     return () => {
         if (timer !== undefined) {
             window.clearTimeout(timer);
         }
-        timer = window.setTimeout(callback, delayMs);
+        timer = window.setTimeout(callback, typeof delayMs === 'function' ? delayMs() : delayMs);
     };
 }
 
@@ -54,6 +73,10 @@ function lineStartOffset(text: string, line: number): number {
     return offset;
 }
 
+function normalizeEditorText(text: string): string {
+    return text.replace(/\r\n?/g, '\n');
+}
+
 /**
  * Shared browser/WebView host for the standalone SnapTeX preview.
  */
@@ -68,17 +91,21 @@ export class StandaloneHost {
     private projectPaths: string[] = [];
     private labels: string[] = [];
     private previewReady = false;
-    private suppressNextEditorUpdate = false;
+    private programmaticEditorText: string | undefined;
     private suppressNextSelectionSync = false;
+    private suppressEditorToPreviewUntil = 0;
+    private settings: StandalonePreviewSettings;
 
     constructor(
         private readonly editorView: EditorView,
         rootPath: string = '/main.tex',
         private readonly scheduleRender: () => void = () => undefined,
-        private readonly onStateChange: () => void = () => undefined
+        private readonly onStateChange: () => void = () => undefined,
+        settings: Partial<StandalonePreviewSettings> = {}
     ) {
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
+        this.settings = { ...DEFAULT_STANDALONE_PREVIEW_SETTINGS, ...settings };
     }
 
     start() {
@@ -139,6 +166,26 @@ export class StandaloneHost {
         return [...this.diagnostics];
     }
 
+    getSettings(): StandalonePreviewSettings {
+        return { ...this.settings };
+    }
+
+    updateSettings(settings: Partial<StandalonePreviewSettings>) {
+        const previousVirtualMode = this.settings.virtualMode;
+        const previousLivePreview = this.settings.livePreview;
+        this.settings = { ...this.settings, ...settings };
+        if (this.previewReady) {
+            this.postPreviewConfig();
+            if (previousVirtualMode !== this.settings.virtualMode) {
+                this.updateService.resetState();
+            }
+            if (previousVirtualMode !== this.settings.virtualMode || (!previousLivePreview && this.settings.livePreview)) {
+                void this.renderCurrentText();
+            }
+        }
+        this.notifyStateChanged();
+    }
+
     getLatexCompletionData(): LatexCompletionData {
         return {
             labels: this.labels,
@@ -149,12 +196,15 @@ export class StandaloneHost {
     }
 
     private replaceEditorText(text: string) {
-        if (this.editorView.state.doc.toString() !== text) {
-            this.suppressNextEditorUpdate = true;
-            this.editorView.dispatch({
-                changes: { from: 0, to: this.editorView.state.doc.length, insert: text }
-            });
+        const editorText = normalizeEditorText(text);
+        if (this.editorView.state.doc.toString() === editorText) {
+            this.programmaticEditorText = undefined;
+            return;
         }
+        this.programmaticEditorText = editorText;
+        this.editorView.dispatch({
+            changes: { from: 0, to: this.editorView.state.doc.length, insert: editorText }
+        });
     }
 
     private persistActiveEditorText() {
@@ -164,14 +214,14 @@ export class StandaloneHost {
     }
 
     private markSaved(path: string, text: string) {
-        this.savedTexts.set(path, text);
+        this.savedTexts.set(path, normalizeEditorText(text));
         this.updateDirtyState(path, text);
     }
 
     private updateDirtyState(path: string, text: string) {
         const wasDirty = this.dirtyPaths.has(path);
         const savedText = this.savedTexts.get(path);
-        const isDirty = savedText !== undefined && text !== savedText;
+        const isDirty = savedText !== undefined && normalizeEditorText(text) !== savedText;
         if (isDirty) {
             this.dirtyPaths.add(path);
         } else {
@@ -197,7 +247,10 @@ export class StandaloneHost {
         };
     }
 
-    syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5) {
+    syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5, auto = true) {
+        if (auto && !this.settings.autoScrollSync) {
+            return;
+        }
         if (!this.previewReady) {
             return;
         }
@@ -212,9 +265,17 @@ export class StandaloneHost {
             index: syncData.index,
             ratio: syncData.ratio,
             anchor: getSyncAnchorContext(lineText ?? lineAt(this.editorView.state.doc.toString(), line), character),
-            auto: true,
+            auto,
             viewRatio
         });
+    }
+
+    shouldSuppressEditorToPreview(): boolean {
+        return Date.now() < this.suppressEditorToPreviewUntil;
+    }
+
+    private suppressEditorToPreview(durationMs = 500) {
+        this.suppressEditorToPreviewUntil = Math.max(this.suppressEditorToPreviewUntil, Date.now() + durationMs);
     }
 
     consumeSelectionSyncSuppression(): boolean {
@@ -246,33 +307,55 @@ export class StandaloneHost {
         const line = Math.max(0, targetLine);
         const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, line));
         this.suppressNextSelectionSync = true;
+        this.suppressEditorToPreview();
         this.editorView.dispatch({
             selection: { anchor: position },
             effects: EditorView.scrollIntoView(position, { y: viewRatio < 0.35 ? 'start' : viewRatio > 0.65 ? 'end' : 'center' })
         });
     }
 
-    handleEditorUpdate() {
-        if (this.suppressNextEditorUpdate) {
-            this.suppressNextEditorUpdate = false;
+    async syncPreviewScroll(index: number, ratio: number) {
+        if (!this.settings.autoScrollSync) {
             return;
         }
+
+        const source = this.updateService.getSourceSyncData(index, ratio);
+        if (!source) {
+            return;
+        }
+
+        const targetPath = normalizeBrowserPath(source.file);
+        if (targetPath !== this.activeUri.path) {
+            await this.openEditorFile(targetPath);
+        }
+
+        const text = this.editorView.state.doc.toString();
+        const line = Math.max(0, source.line);
+        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, line));
+        this.suppressEditorToPreview();
+        this.editorView.dispatch({
+            effects: EditorView.scrollIntoView(position, { y: 'center' })
+        });
+    }
+
+    handleEditorUpdate() {
+        const text = this.editorView.state.doc.toString();
+        if (this.programmaticEditorText === text) {
+            this.programmaticEditorText = undefined;
+            return;
+        }
+        this.programmaticEditorText = undefined;
         this.persistActiveEditorText();
-        this.scheduleRender();
+        if (this.settings.livePreview) {
+            this.scheduleRender();
+        }
     }
 
     handlePreviewMessage(message: WebviewToExtensionMessage) {
         switch (message.command) {
             case WebviewToExtensionCommand.WebviewLoaded:
                 this.previewReady = true;
-                this.postToPreview({
-                    command: ExtensionToWebviewCommand.Config,
-                    config: {
-                        autoScrollDelay: 100,
-                        debugMemory: false,
-                        virtualMode: true
-                    }
-                });
+                this.postPreviewConfig();
                 void this.renderCurrentText();
                 break;
             case WebviewToExtensionCommand.RequestBlockHtml:
@@ -285,6 +368,7 @@ export class StandaloneHost {
                 void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio);
                 break;
             case WebviewToExtensionCommand.SyncScroll:
+                void this.syncPreviewScroll(message.index, message.ratio);
                 break;
         }
     }
@@ -297,7 +381,7 @@ export class StandaloneHost {
         this.persistActiveEditorText();
         const rootText = await this.fileProvider.read(this.rootUri);
         const payload = await this.updateService.render(this.rootUri, rootText, {
-            deferFullHtml: true,
+            deferFullHtml: this.settings.virtualMode,
             transformHtml: html => this.fixHtmlPaths(html)
         });
 
@@ -354,6 +438,17 @@ export class StandaloneHost {
         window.postMessage(message, window.location.origin);
     }
 
+    private postPreviewConfig() {
+        this.postToPreview({
+            command: ExtensionToWebviewCommand.Config,
+            config: {
+                autoScrollDelay: this.settings.autoScrollDelayMs,
+                debugMemory: this.settings.debugMemory,
+                virtualMode: this.settings.virtualMode
+            }
+        });
+    }
+
     private replaceDiagnostics(messages: readonly string[]) {
         const previous = this.getDiagnostics().join('\n');
         this.diagnostics.clear();
@@ -376,13 +471,62 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     let host: StandaloneHost | undefined;
     const scheduleRender = debounce(() => {
         void host?.renderCurrentText();
-    }, 150);
-    let pendingSelection: { line: number; character: number; text: string } | undefined;
+    }, () => host?.getSettings().renderDelayMs ?? DEFAULT_STANDALONE_PREVIEW_SETTINGS.renderDelayMs);
+    let activeCursorScreenRatio = 0.5;
+    let pendingSelection: { line: number; character: number; text: string; auto: boolean } | undefined;
     const scheduleSelectionSync = debounce(() => {
-        if (pendingSelection) {
-            host?.syncEditorSelection(pendingSelection.line, pendingSelection.character, pendingSelection.text);
+        if (pendingSelection && !host?.shouldSuppressEditorToPreview()) {
+            host?.syncEditorSelection(
+                pendingSelection.line,
+                pendingSelection.character,
+                pendingSelection.text,
+                activeCursorScreenRatio,
+                pendingSelection.auto
+            );
         }
-    }, 100);
+    }, () => host?.getSettings().autoScrollDelayMs ?? DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs);
+
+    const scheduleEditorSelectionSync = (view: EditorView, auto: boolean) => {
+        if (host?.shouldSuppressEditorToPreview()) {
+            pendingSelection = undefined;
+            return;
+        }
+        const selection = view.state.selection.main;
+        const line = view.state.doc.lineAt(selection.head);
+        pendingSelection = {
+            line: line.number - 1,
+            character: selection.head - line.from,
+            text: line.text,
+            auto
+        };
+        scheduleSelectionSync();
+    };
+
+    const updateCursorScreenRatio = (view: EditorView) => {
+        const selection = view.state.selection.main;
+        const coords = view.coordsAtPos(selection.head);
+        const rect = view.scrollDOM.getBoundingClientRect();
+        if (!coords || rect.height <= 0) {
+            return;
+        }
+        activeCursorScreenRatio = Math.max(0.1, Math.min(0.9, (coords.top - rect.top) / rect.height));
+    };
+
+    const scheduleEditorScrollSync = (view: EditorView) => {
+        if (host?.shouldSuppressEditorToPreview()) {
+            pendingSelection = undefined;
+            return;
+        }
+        const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop + view.scrollDOM.clientHeight * activeCursorScreenRatio);
+        const line = view.state.doc.lineAt(block.from);
+        pendingSelection = {
+            line: line.number - 1,
+            character: 0,
+            text: line.text,
+            auto: true
+        };
+        scheduleSelectionSync();
+    };
 
     const editorView = new EditorView({
         parent: options.editorParent,
@@ -390,7 +534,18 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
             doc: options.initialText,
             extensions: [
                 basicSetup,
-                keymap.of([indentWithTab]),
+                keymap.of([
+                    {
+                        key: 'Ctrl-Alt-m',
+                        mac: 'Cmd-Alt-m',
+                        run(view) {
+                            updateCursorScreenRatio(view);
+                            scheduleEditorSelectionSync(view, false);
+                            return true;
+                        }
+                    },
+                    indentWithTab
+                ]),
                 EditorView.lineWrapping,
                 createLatexEditorExtensions(() => host?.getLatexCompletionData() ?? {
                     labels: [],
@@ -407,14 +562,13 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                             pendingSelection = undefined;
                             return;
                         }
-                        const selection = update.state.selection.main;
-                        const line = update.state.doc.lineAt(selection.head);
-                        pendingSelection = {
-                            line: line.number - 1,
-                            character: selection.head - line.from,
-                            text: line.text
-                        };
-                        scheduleSelectionSync();
+                        updateCursorScreenRatio(update.view);
+                        scheduleEditorSelectionSync(update.view, true);
+                    }
+                }),
+                EditorView.domEventHandlers({
+                    scroll: (_event, view) => {
+                        scheduleEditorScrollSync(view);
                     }
                 })
             ]
@@ -425,7 +579,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
         if (host) {
             options.onStateChange?.(host);
         }
-    });
+    }, options.settings);
     host.start();
     return host;
 }
