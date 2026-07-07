@@ -53,7 +53,7 @@ function option(label: string, type: Completion['type']): Completion {
 }
 
 function pathOptions(paths: readonly string[], command: string): Completion[] {
-    const texOnly = command === 'input' || command === 'include';
+    const texOnly = INPUT_COMMANDS.includes(command);
     return uniqueSorted(paths)
         .map(path => path.replace(/^\//, ''))
         .filter(path => texOnly ? /\.tex$/i.test(path) : /\.(?:pdf|png|jpe?g|gif|svg|webp|bmp)$/i.test(path))

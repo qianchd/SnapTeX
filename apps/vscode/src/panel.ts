@@ -260,11 +260,8 @@ export class TexPreviewPanel {
     private async handlePdfRequest(message: RequestPdfMessage) {
         if (!this._sourceUri) {return;}
 
-        const requestId = message.id;
         const fail = (error: string) => {
-            if (requestId) {
-                this.postMessage({ command: ExtensionToWebviewCommand.PdfUri, id: requestId, error });
-            }
+            this.postMessage({ command: ExtensionToWebviewCommand.PdfUri, id: message.id, error });
         };
 
         const cleanPath = normalizePdfRequestPath(message.path);
@@ -286,7 +283,7 @@ export class TexPreviewPanel {
                 const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
                     command: ExtensionToWebviewCommand.PdfUri,
-                    id: requestId,
+                    id: message.id,
                     uri: webviewUri.toString(),
                     path: cleanPath
                 });
