@@ -2,15 +2,11 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
-## Unreleased
-- **Added**: Added a standalone browser-hosted SnapTeX app built on CodeMirror, reusing the shared parser, renderer, preview runtime, virtualization, TikZ, PDF, and KaTeX asset paths outside VS Code.
-- **Added**: Added browser project support with multi-file loading, lazy text/resource reads, image/PDF resource resolution, project diagnostics, file switching, preview-root switching, dirty-file tracking, and File System Access save support with download fallback.
-- **Added**: Added CodeMirror LaTeX editing assistance, including syntax highlighting plus completions for labels, citations, project paths, and user macros.
-- **Added**: Added bidirectional editor/preview synchronization for the standalone web app, including cursor-to-preview sync, preview double-click/scroll sync back to the editor, and `Ctrl+S` / `Cmd+S` file saving.
-- **Added**: Added static PWA packaging for SnapTeX Web, including a `dist-web` build, PWA manifest, service-worker offline cache, local static serving, and GitHub Pages deployment workflow.
-- **Changed**: Refactored the VS Code host under `apps/vscode` and extracted host-neutral preview update and browser file-provider pieces so VS Code, standalone web, and future Android wrappers can share the core preview pipeline.
-- **Changed**: Refined the standalone web UI with a collapsible explorer, top toolbar settings, theme controls, resizable editor/preview panes, a default 40% preview width, cleaner current-file display, lighter active-line highlighting, and preview-area-default tooltip placement.
-- **Fixed**: Prevented CRLF files opened through browser folder loading from being marked dirty until the user actually edits them, and cleared the dirty marker after save.
+## [0.7.0] - 2026-07-07
+- **Changed**: Refactored the VS Code host under `apps/vscode` while preserving the existing VS Code preview workflow.
+- **Changed**: Reused the shared preview update pipeline in the VS Code extension.
+- **Fixed**: Aligned preview tooltips with the VS Code preview pane.
+- **Fixed**: Improved VSIX packaging so web/PWA build artifacts are not included in extension packages.
 
 ## [0.6.5] - 2026-07-03
 - **Changed**: Reduced initial preview work in virtual mode by shrinking the first-load and normal block mount windows, improving long-document first-open speed and lowering peak webview memory usage.
