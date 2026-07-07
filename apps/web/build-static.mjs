@@ -10,12 +10,13 @@ const staticFiles = [
     ['demo', 'demo'],
     ['media/vendor', 'media/vendor'],
     ['media/icon.png', 'media/icon.png'],
+    ['media/icon-192.png', 'media/icon-192.png'],
+    ['media/icon-512.png', 'media/icon-512.png'],
     ['media/preview-style.css', 'media/preview-style.css'],
     ['media/webview-main.js', 'media/webview-main.js'],
     ['media/webview-pdf.js', 'media/webview-pdf.js'],
     ['apps/web/web.css', 'web.css'],
-    ['apps/web/dist/web-main.js', 'web-main.js'],
-    ['apps/web/manifest.webmanifest', 'manifest.webmanifest']
+    ['apps/web/dist/web-main.js', 'web-main.js']
 ];
 
 function copyPath(source, destination) {
@@ -34,17 +35,17 @@ function readSourceIndex(root) {
     return readFileSync(join(root, 'apps/web/index.html'), 'utf8');
 }
 
+function makeStaticManifest(source) {
+    return source.replaceAll('"/media/', '"media/');
+}
+
 function makeStaticIndex(source) {
     return source
         .replaceAll('href="/media/icon.png"', 'href="media/icon.png"')
+        .replaceAll('href="/apps/web/manifest.webmanifest"', 'href="manifest.webmanifest"')
         .replaceAll('href="/media/vendor/katex/katex.min.css"', 'href="media/vendor/katex/katex.min.css"')
         .replaceAll('href="/media/preview-style.css"', 'href="media/preview-style.css"')
         .replaceAll('href="/apps/web/web.css"', 'href="web.css"')
-        .replace('</head>', [
-            '    <link rel="manifest" href="manifest.webmanifest">',
-            '    <meta name="theme-color" content="#2563eb">',
-            '</head>'
-        ].join('\n'))
         .replaceAll('data-tikz-jax-js-uri="/media/vendor/tikzjax/tikzjax.js"', 'data-tikz-jax-js-uri="media/vendor/tikzjax/tikzjax.js"')
         .replaceAll('data-tikz-jax-css-uri="/media/vendor/tikzjax/fonts.css"', 'data-tikz-jax-css-uri="media/vendor/tikzjax/fonts.css"')
         .replaceAll('data-pdf-js-uri="/media/vendor/pdfjs/pdf.mjs"', 'data-pdf-js-uri="media/vendor/pdfjs/pdf.mjs"')
@@ -129,6 +130,7 @@ export function buildStaticWeb(options = {}) {
     }
 
     writeFileSync(join(outDir, 'index.html'), makeStaticIndex(readSourceIndex(root)));
+    writeFileSync(join(outDir, 'manifest.webmanifest'), makeStaticManifest(readFileSync(join(root, 'apps/web/manifest.webmanifest'), 'utf8')));
     writeFileSync(join(outDir, '.nojekyll'), '');
     const assets = listFiles(outDir).filter(asset => asset !== 'service-worker.js');
     writeFileSync(join(outDir, 'service-worker.js'), serviceWorkerSource(cacheNameFor(outDir, assets), assets));
