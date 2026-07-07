@@ -1,7 +1,7 @@
-import type { WebviewToExtensionMessage } from '../webview-messages';
+import type { PreviewToHostMessage } from '../preview-messages';
 
 export interface PreviewBridge {
-    postMessage(message: WebviewToExtensionMessage): void;
+    postMessage(message: PreviewToHostMessage): void;
 }
 
 declare global {

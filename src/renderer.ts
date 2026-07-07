@@ -21,8 +21,8 @@ interface BlockSnapshot extends RenderedBlockMeta {
  *
  * SmartRenderer owns the preview-side document model snapshot: block hashes,
  * source-line mapping, label numbering, citation state, and the Markdown
- * protection pass. It is deliberately stateless with respect to VS Code APIs;
- * panel.ts handles I/O and webview transport.
+ * protection pass. It is deliberately stateless with respect to host APIs;
+ * apps/* hosts handle I/O and preview transport.
  */
 export class SmartRenderer {
     private lastBlocks: BlockSnapshot[] = [];

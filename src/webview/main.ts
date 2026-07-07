@@ -3,7 +3,7 @@
 import { CoalescingTaskScheduler } from './scheduler';
 import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
-import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
+import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
 const previewBridge = getPreviewBridge();
     const PDF_RENDER_MARGIN_VH = 130;
@@ -471,7 +471,7 @@ const previewBridge = getPreviewBridge();
 
             this.initPdfObserver();
             this.bindEvents();
-            previewBridge.postMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLoaded });
         }
 
         bindEvents() {
@@ -497,19 +497,19 @@ const previewBridge = getPreviewBridge();
         onMessage(event) {
             const { command, payload } = event.data;
             switch (command) {
-                case ExtensionToWebviewCommand.Update:
+                case HostToPreviewCommand.Update:
                     this.handleUpdate(payload);
                     break;
 
-                case ExtensionToWebviewCommand.ScrollToBlock:
+                case HostToPreviewCommand.ScrollToBlock:
                     this.handleScrollCommand(event.data);
                     break;
 
-                case ExtensionToWebviewCommand.BlockHtml:
+                case HostToPreviewCommand.BlockHtml:
                     this.handleBlockHtml(event.data);
                     break;
 
-                case ExtensionToWebviewCommand.Config:
+                case HostToPreviewCommand.Config:
                     if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
                         this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
                     }
@@ -904,7 +904,7 @@ const previewBridge = getPreviewBridge();
                 callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
             });
             this.debugStats.blockHtmlRequestsSent += 1;
-            previewBridge.postMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash });
+            previewBridge.postMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash });
             return true;
         }
 
@@ -1092,7 +1092,7 @@ const previewBridge = getPreviewBridge();
                         const offset = viewCenter - rect.top;
                         ratio = Math.max(0, Math.min(1, offset / rect.height));
                     }
-                    previewBridge.postMessage({ command: WebviewToExtensionCommand.SyncScroll, index: index, ratio: ratio });
+                    previewBridge.postMessage({ command: PreviewToHostCommand.SyncScroll, index: index, ratio: ratio });
                     break;
                 }
             }
@@ -1132,7 +1132,7 @@ const previewBridge = getPreviewBridge();
                         }
                     }
                     previewBridge.postMessage({
-                        command: WebviewToExtensionCommand.RevealLine,
+                        command: PreviewToHostCommand.RevealLine,
                         index: parseInt(index),
                         ratio,
                         anchors,

@@ -18,6 +18,8 @@ This file tracks the current migration from a VS Code-only extension to a shared
 
 - [x] VS Code host code lives in `apps/vscode/src`.
 - [x] Shared parser/renderer/update pipeline is usable outside VS Code.
+- [x] Extension build entry uses `apps/vscode/src/extension.ts`.
+- [x] Production `src/` code has no runtime `vscode` dependency.
 - [x] Shared preview runtime uses a host bridge instead of direct `acquireVsCodeApi()`.
 - [x] Shared preview HTML template is host-filled.
 - [x] Browser `FileProvider` supports lazy text reads and blob resource URLs.
@@ -25,6 +27,14 @@ This file tracks the current migration from a VS Code-only extension to a shared
 - [x] Web shell can render text, math, images, PDF placeholders, and TikZ.
 - [x] Web shell has a real TikZJax asset smoke test.
 - [x] Web shell has a minimal multi-file editing loop.
+
+## Architecture Boundary Cleanup
+
+- [x] Keep VS Code API imports under `apps/vscode/src`.
+- [x] Keep browser project loading helpers under `apps/standalone/src`.
+- [x] Use host-neutral preview protocol names (`PreviewToHost` / `HostToPreview`).
+- [ ] Gradually remove `@ts-nocheck` from preview runtime modules.
+- [ ] Split large rule/runtime files only where it reduces coupling or exposes a clearer extension point.
 
 ## Milestone 1: Web Project Editing Loop
 

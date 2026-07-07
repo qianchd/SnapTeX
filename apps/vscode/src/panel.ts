@@ -6,14 +6,14 @@ import type { PreviewUpdateService } from '../../../src/preview-update-service';
 import type { RenderPayload } from '../../../src/types';
 import {
     assertNever,
-    ExtensionToWebviewCommand,
-    isWebviewToExtensionMessage,
-    WebviewToExtensionCommand,
-    type ExtensionToWebviewMessage,
+    HostToPreviewCommand,
+    isPreviewToHostMessage,
+    PreviewToHostCommand,
+    type HostToPreviewMessage,
     type RequestBlockHtmlMessage,
     type RequestPdfMessage,
     type RevealLineMessage
-} from '../../../src/webview-messages';
+} from '../../../src/preview-messages';
 
 function logHostMemory(label: string) {
     if (!isDebugMemoryEnabled()) {
@@ -196,28 +196,28 @@ export class TexPreviewPanel {
 
         this._panel.webview.onDidReceiveMessage(
             async message => {
-                if (!isWebviewToExtensionMessage(message)) {
+                if (!isPreviewToHostMessage(message)) {
                     console.warn('[SnapTeX] Ignoring malformed webview message.');
                     return;
                 }
 
                 switch (message.command) {
-                    case WebviewToExtensionCommand.WebviewLoaded:
+                    case PreviewToHostCommand.PreviewLoaded:
                         console.log('[SnapTeX] Webview reloaded.');
                         this._webviewReady = true;
                         this._updateService.resetState();
                         void this.update(this._pendingRootUri);
                         break;
-                    case WebviewToExtensionCommand.RevealLine:
+                    case PreviewToHostCommand.RevealLine:
                         this.handleRevealLine(message);
                         break;
-                    case WebviewToExtensionCommand.SyncScroll:
+                    case PreviewToHostCommand.SyncScroll:
                         vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
                         break;
-                    case WebviewToExtensionCommand.RequestPdf:
+                    case PreviewToHostCommand.RequestPdf:
                         await this.handlePdfRequest(message);
                         break;
-                    case WebviewToExtensionCommand.RequestBlockHtml:
+                    case PreviewToHostCommand.RequestBlockHtml:
                         this.handleBlockHtmlRequest(message);
                         break;
                     default:
@@ -261,7 +261,7 @@ export class TexPreviewPanel {
         if (!this._sourceUri) {return;}
 
         const fail = (error: string) => {
-            this.postMessage({ command: ExtensionToWebviewCommand.PdfUri, id: message.id, error });
+            this.postMessage({ command: HostToPreviewCommand.PdfUri, id: message.id, error });
         };
 
         const cleanPath = normalizePdfRequestPath(message.path);
@@ -282,7 +282,7 @@ export class TexPreviewPanel {
             if (await this._fileProvider.exists(pdfUri)) {
                 const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
-                    command: ExtensionToWebviewCommand.PdfUri,
+                    command: HostToPreviewCommand.PdfUri,
                     id: message.id,
                     uri: webviewUri.toString(),
                     path: cleanPath
@@ -323,22 +323,22 @@ export class TexPreviewPanel {
 
         const block = this._updateService.renderBlockByIndex(index);
         if (!block) {
-            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, error: 'Block not found' });
+            this.postMessage({ command: HostToPreviewCommand.BlockHtml, id, index, error: 'Block not found' });
             return;
         }
 
         if (requestedHash && block.hash !== requestedHash) {
-            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: block.hash, error: 'Block hash changed' });
+            this.postMessage({ command: HostToPreviewCommand.BlockHtml, id, index, hash: block.hash, error: 'Block hash changed' });
             return;
         }
 
         if (block.html === undefined) {
-            this.postMessage({ command: ExtensionToWebviewCommand.BlockHtml, id, index, hash: block.hash, error: 'Block not found' });
+            this.postMessage({ command: HostToPreviewCommand.BlockHtml, id, index, hash: block.hash, error: 'Block not found' });
             return;
         }
 
         this.postMessage({
-            command: ExtensionToWebviewCommand.BlockHtml,
+            command: HostToPreviewCommand.BlockHtml,
             id,
             index,
             hash: block.hash,
@@ -346,14 +346,14 @@ export class TexPreviewPanel {
         });
     }
 
-    public postMessage(message: ExtensionToWebviewMessage) {
+    public postMessage(message: HostToPreviewMessage) {
         this._panel.webview.postMessage(message);
     }
 
     private postWebviewConfig() {
         const config = vscode.workspace.getConfiguration('snaptex');
         this.postMessage({
-            command: ExtensionToWebviewCommand.Config,
+            command: HostToPreviewCommand.Config,
             config: {
                 autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
                 debugMemory: config.get<boolean>('debugMemory', false),
@@ -367,7 +367,7 @@ export class TexPreviewPanel {
     }
 
     /**
-     * Queues and serializes preview updates. The webview must send WebviewLoaded
+     * Queues and serializes preview updates. The webview must send PreviewLoaded
      * before parsing begins, which avoids blank previews during VS Code startup.
      */
     public async update(rootUri?: vscode.Uri) {
@@ -435,7 +435,7 @@ export class TexPreviewPanel {
         });
         text = "";
         logPayloadStats('before postMessage', payload);
-        this.postMessage({ command: ExtensionToWebviewCommand.Update, payload });
+        this.postMessage({ command: HostToPreviewCommand.Update, payload });
         logHostMemory('after postMessage');
     }
 
