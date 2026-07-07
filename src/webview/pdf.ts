@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* eslint-disable curly */
-import { ExtensionToWebviewCommand, WebviewToExtensionCommand } from '../webview-messages';
+import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
 
 const previewBridge = getPreviewBridge();
@@ -12,7 +12,7 @@ const previewBridge = getPreviewBridge();
     /**
      * Handles PDF.js loading and canvas rendering inside the webview.
      *
-     * The extension host validates paths and returns webview-safe URIs; this
+     * The preview host validates paths and returns runtime-safe URIs; this
      * module only consumes those URIs and paints the first page into canvases.
      */
     function ensurePdfRuntimeReady() {
@@ -58,7 +58,7 @@ const previewBridge = getPreviewBridge();
 
     window.addEventListener('message', event => {
         const msg = event.data;
-        if (msg.command === ExtensionToWebviewCommand.PdfUri) {
+        if (msg.command === HostToPreviewCommand.PdfUri) {
             if (msg.error || !msg.uri) {
                 renderPdfError(msg.id, msg.error || 'Error loading PDF');
             } else {
@@ -139,7 +139,7 @@ const previewBridge = getPreviewBridge();
         canvas.setAttribute('data-requested', 'true');
 
         previewBridge.postMessage({
-            command: WebviewToExtensionCommand.RequestPdf,
+            command: PreviewToHostCommand.RequestPdf,
             id: canvasId,
             path: path
         });

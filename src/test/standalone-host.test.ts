@@ -4,7 +4,7 @@ import * as assert from 'assert';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
 import type { BrowserWritableFileHandle } from '../../apps/standalone/src/browser-file-provider';
-import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage } from '../webview-messages';
+import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage } from '../preview-messages';
 
 function normalizeEditorText(text: string): string {
     return text.replace(/\r\n?/g, '\n');
@@ -54,13 +54,13 @@ function createWritableHandle(writeText: (text: string) => void): BrowserWritabl
     };
 }
 
-function installWindow(messages: ExtensionToWebviewMessage[]) {
+function installWindow(messages: HostToPreviewMessage[]) {
     const testGlobal = globalThis as unknown as { window: unknown };
     const previousWindow = testGlobal.window;
     testGlobal.window = {
         location: { origin: 'http://snaptex.test' },
         snaptexPreviewMessageQueue: [],
-        postMessage(message: ExtensionToWebviewMessage) {
+        postMessage(message: HostToPreviewMessage) {
             messages.push(message);
         }
     } as unknown as Window;
@@ -69,18 +69,18 @@ function installWindow(messages: ExtensionToWebviewMessage[]) {
     };
 }
 
-function requestBlockHtml(host: StandaloneHost, messages: ExtensionToWebviewMessage[], index = 0): string {
+function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMessage[], index = 0): string {
     const id = `block-${messages.length}`;
-    host.handlePreviewMessage({ command: WebviewToExtensionCommand.RequestBlockHtml, id, index, hash: '' });
-    const response = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.BlockHtml && message.id === id);
-    assert.ok(response && response.command === ExtensionToWebviewCommand.BlockHtml);
+    host.handlePreviewMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash: '' });
+    const response = [...messages].reverse().find(message => message.command === HostToPreviewCommand.BlockHtml && message.id === id);
+    assert.ok(response && response.command === HostToPreviewCommand.BlockHtml);
     return response.html ?? '';
 }
 
 suite('StandaloneHost', () => {
     test('switches active files while rendering from the project root', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const written = new Map<string, string>();
         const host = new StandaloneHost(editor as unknown as EditorView);
@@ -104,7 +104,7 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.handleEditorUpdate();
             editor.replaceText('Updated included paragraph.');
@@ -128,7 +128,7 @@ suite('StandaloneHost', () => {
 
     test('keeps opened files clean until the editor content changes', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
 
@@ -156,7 +156,7 @@ suite('StandaloneHost', () => {
 
     test('changes preview root without changing the active editor file', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
 
@@ -185,7 +185,7 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             editor.replaceText('Unsaved included paragraph.');
             await host.setPreviewRoot('/appendix.tex');
@@ -206,7 +206,7 @@ suite('StandaloneHost', () => {
 
     test('reloads a project with fresh root, active file, and dirty state', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
 
@@ -226,7 +226,7 @@ suite('StandaloneHost', () => {
                 }
             ], '/old/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/old/chapter.tex');
             host.handleEditorUpdate();
             editor.replaceText('Unsaved old paragraph.');
@@ -256,7 +256,7 @@ suite('StandaloneHost', () => {
 
     test('reports missing project dependencies', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
 
@@ -277,10 +277,10 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.renderCurrentText();
             requestBlockHtml(host, messages);
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.RequestPdf, id: 'pdf-1', path: 'missing-doc.pdf' });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.RequestPdf, id: 'pdf-1', path: 'missing-doc.pdf' });
 
             assert.deepEqual(host.getDiagnostics(), [
                 'Missing input file: /missing-chapter.tex',
@@ -295,7 +295,7 @@ suite('StandaloneHost', () => {
 
     test('syncs the active editor selection to the root preview', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
 
@@ -320,12 +320,12 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
 
-            const response = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock);
-            assert.ok(response && response.command === ExtensionToWebviewCommand.ScrollToBlock);
+            const response = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock);
+            assert.ok(response && response.command === HostToPreviewCommand.ScrollToBlock);
             assert.equal(response.auto, true);
             assert.match(response.anchor ?? '', /sync anchor/);
             assert.doesNotMatch(response.anchor ?? '', /\\textbf/);
@@ -333,8 +333,8 @@ suite('StandaloneHost', () => {
             assert.equal(typeof response.ratio, 'number');
 
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.', 0.5, false);
-            const manualResponse = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock && message.auto === false);
-            assert.ok(manualResponse && manualResponse.command === ExtensionToWebviewCommand.ScrollToBlock);
+            const manualResponse = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock && message.auto === false);
+            assert.ok(manualResponse && manualResponse.command === HostToPreviewCommand.ScrollToBlock);
         } finally {
             restoreWindow();
         }
@@ -342,7 +342,7 @@ suite('StandaloneHost', () => {
 
     test('applies standalone preview settings', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         let scheduledRenders = 0;
         const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', () => {
@@ -365,9 +365,9 @@ suite('StandaloneHost', () => {
                 ].join('\n')
             }], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
-            const config = messages.find(message => message.command === ExtensionToWebviewCommand.Config);
-            assert.ok(config && config.command === ExtensionToWebviewCommand.Config);
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            const config = messages.find(message => message.command === HostToPreviewCommand.Config);
+            assert.ok(config && config.command === HostToPreviewCommand.Config);
             assert.equal(config.config.autoScrollDelay, 250);
             assert.equal(config.config.debugMemory, true);
             assert.equal(config.config.virtualMode, false);
@@ -377,7 +377,7 @@ suite('StandaloneHost', () => {
             assert.equal(scheduledRenders, 0);
 
             host.syncEditorSelection(1, 0, 'Changed paragraph.');
-            assert.equal(messages.some(message => message.command === ExtensionToWebviewCommand.ScrollToBlock), false);
+            assert.equal(messages.some(message => message.command === HostToPreviewCommand.ScrollToBlock), false);
 
             host.updateSettings({ livePreview: true, autoScrollSync: true });
             host.handleEditorUpdate();
@@ -389,7 +389,7 @@ suite('StandaloneHost', () => {
 
     test('syncs preview scroll positions back to the editor', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
 
@@ -414,11 +414,11 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
-            const scroll = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock);
-            assert.ok(scroll && scroll.command === ExtensionToWebviewCommand.ScrollToBlock);
+            const scroll = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock);
+            assert.ok(scroll && scroll.command === HostToPreviewCommand.ScrollToBlock);
 
             await host.openEditorFile('/main.tex');
             await host.syncPreviewScroll(scroll.index, scroll.ratio);
@@ -432,7 +432,7 @@ suite('StandaloneHost', () => {
 
     test('reveals preview double-click locations in the active editor', async () => {
         const editor = new TestEditorView();
-        const messages: ExtensionToWebviewMessage[] = [];
+        const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
         const chapterText = [
@@ -458,11 +458,11 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
-            const scroll = [...messages].reverse().find(message => message.command === ExtensionToWebviewCommand.ScrollToBlock);
-            assert.ok(scroll && scroll.command === ExtensionToWebviewCommand.ScrollToBlock);
+            const scroll = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock);
+            assert.ok(scroll && scroll.command === HostToPreviewCommand.ScrollToBlock);
 
             await host.openEditorFile('/main.tex');
             await host.revealPreviewLocation(scroll.index, scroll.ratio, ['sync anchor']);

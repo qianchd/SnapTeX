@@ -7,12 +7,12 @@ import { createLatexEditorExtensions, type LatexCompletionData } from './editor-
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { SmartRenderer } from '../../../src/renderer';
 import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext } from '../../../src/utils';
-import { ExtensionToWebviewCommand, WebviewToExtensionCommand, type ExtensionToWebviewMessage, type WebviewToExtensionMessage } from '../../../src/webview-messages';
+import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
 declare global {
     interface Window {
         snaptexStandaloneHost?: StandaloneHost;
-        snaptexPreviewMessageQueue?: WebviewToExtensionMessage[];
+        snaptexPreviewMessageQueue?: PreviewToHostMessage[];
     }
 }
 
@@ -261,7 +261,7 @@ export class StandaloneHost {
         }
 
         this.postToPreview({
-            command: ExtensionToWebviewCommand.ScrollToBlock,
+            command: HostToPreviewCommand.ScrollToBlock,
             index: syncData.index,
             ratio: syncData.ratio,
             anchor: getSyncAnchorContext(lineText ?? lineAt(this.editorView.state.doc.toString(), line), character),
@@ -355,23 +355,23 @@ export class StandaloneHost {
         }
     }
 
-    handlePreviewMessage(message: WebviewToExtensionMessage) {
+    handlePreviewMessage(message: PreviewToHostMessage) {
         switch (message.command) {
-            case WebviewToExtensionCommand.WebviewLoaded:
+            case PreviewToHostCommand.PreviewLoaded:
                 this.previewReady = true;
                 this.postPreviewConfig();
                 void this.renderCurrentText();
                 break;
-            case WebviewToExtensionCommand.RequestBlockHtml:
+            case PreviewToHostCommand.RequestBlockHtml:
                 this.handleBlockHtmlRequest(message.id, message.index, message.hash);
                 break;
-            case WebviewToExtensionCommand.RequestPdf:
+            case PreviewToHostCommand.RequestPdf:
                 this.handlePdfRequest(message.id, message.path);
                 break;
-            case WebviewToExtensionCommand.RevealLine:
+            case PreviewToHostCommand.RevealLine:
                 void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio);
                 break;
-            case WebviewToExtensionCommand.SyncScroll:
+            case PreviewToHostCommand.SyncScroll:
                 void this.syncPreviewScroll(message.index, message.ratio);
                 break;
         }
@@ -391,13 +391,13 @@ export class StandaloneHost {
 
         this.labels = Object.keys(payload.numbering.labels).sort((a, b) => a.localeCompare(b));
         this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));
-        this.postToPreview({ command: ExtensionToWebviewCommand.Update, payload });
+        this.postToPreview({ command: HostToPreviewCommand.Update, payload });
     }
 
     private handleBlockHtmlRequest(id: string, index: number, hash: string) {
         const rendered = this.updateService.renderBlockByIndex(index);
         this.postToPreview({
-            command: ExtensionToWebviewCommand.BlockHtml,
+            command: HostToPreviewCommand.BlockHtml,
             id,
             index,
             hash: rendered?.hash ?? hash,
@@ -409,7 +409,7 @@ export class StandaloneHost {
     private handlePdfRequest(id: string, path: string) {
         const pathText = decodeHtmlAttribute(path);
         if (!pathText.toLowerCase().endsWith('.pdf')) {
-            this.postToPreview({ command: ExtensionToWebviewCommand.PdfUri, id, error: 'Invalid PDF path' });
+            this.postToPreview({ command: HostToPreviewCommand.PdfUri, id, error: 'Invalid PDF path' });
             return;
         }
 
@@ -419,8 +419,8 @@ export class StandaloneHost {
             this.addDiagnostic(`Missing PDF: ${pathText}`);
         }
         this.postToPreview(url
-            ? { command: ExtensionToWebviewCommand.PdfUri, id, path: pathText, uri: url }
-            : { command: ExtensionToWebviewCommand.PdfUri, id, path: pathText, error: 'PDF not found' });
+            ? { command: HostToPreviewCommand.PdfUri, id, path: pathText, uri: url }
+            : { command: HostToPreviewCommand.PdfUri, id, path: pathText, error: 'PDF not found' });
     }
 
     private fixHtmlPaths(html: string): string {
@@ -438,13 +438,13 @@ export class StandaloneHost {
         return this.fileProvider.resolve(this.fileProvider.dir(this.rootUri), relativePath);
     }
 
-    private postToPreview(message: ExtensionToWebviewMessage) {
+    private postToPreview(message: HostToPreviewMessage) {
         window.postMessage(message, window.location.origin);
     }
 
     private postPreviewConfig() {
         this.postToPreview({
-            command: ExtensionToWebviewCommand.Config,
+            command: HostToPreviewCommand.Config,
             config: {
                 autoScrollDelay: this.settings.autoScrollDelayMs,
                 debugMemory: this.settings.debugMemory,

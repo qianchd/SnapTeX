@@ -2,7 +2,7 @@
 
 import * as assert from 'assert';
 import { getPreviewBridge, type PreviewBridge } from '../webview/bridge';
-import { WebviewToExtensionCommand, type WebviewToExtensionMessage } from '../webview-messages';
+import { PreviewToHostCommand, type PreviewToHostMessage } from '../preview-messages';
 
 suite('Preview bridge', () => {
     let previousWindow: unknown;
@@ -20,13 +20,13 @@ suite('Preview bridge', () => {
     });
 
     test('uses a host-provided bridge when available', () => {
-        const sent: WebviewToExtensionMessage[] = [];
+        const sent: PreviewToHostMessage[] = [];
         const bridge: PreviewBridge = { postMessage: message => sent.push(message) };
         (globalThis as { window?: unknown }).window = { snaptexPreviewBridge: bridge };
 
-        getPreviewBridge().postMessage({ command: WebviewToExtensionCommand.WebviewLoaded });
+        getPreviewBridge().postMessage({ command: PreviewToHostCommand.PreviewLoaded });
 
-        assert.deepEqual(sent, [{ command: WebviewToExtensionCommand.WebviewLoaded }]);
+        assert.deepEqual(sent, [{ command: PreviewToHostCommand.PreviewLoaded }]);
     });
 
     test('fails clearly when the host bridge is missing', () => {

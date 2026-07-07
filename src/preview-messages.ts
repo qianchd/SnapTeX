@@ -1,20 +1,20 @@
 import type { RenderPayload } from './types';
 
 /**
- * Typed message contract between the extension host and the webview.
+ * Typed message contract between a preview host and the preview runtime.
  *
- * panel.ts validates incoming webview messages with isWebviewToExtensionMessage
- * before dispatching commands. Outgoing messages are typed at compile time.
+ * Hosts validate incoming preview messages with isPreviewToHostMessage before
+ * dispatching commands. Outgoing messages are typed at compile time.
  */
-export const WebviewToExtensionCommand = {
-    WebviewLoaded: 'webviewLoaded',
+export const PreviewToHostCommand = {
+    PreviewLoaded: 'previewLoaded',
     RevealLine: 'revealLine',
     SyncScroll: 'syncScroll',
     RequestPdf: 'requestPdf',
     RequestBlockHtml: 'requestBlockHtml'
 } as const;
 
-export const ExtensionToWebviewCommand = {
+export const HostToPreviewCommand = {
     Update: 'update',
     ScrollToBlock: 'scrollToBlock',
     PdfUri: 'pdfUri',
@@ -22,12 +22,12 @@ export const ExtensionToWebviewCommand = {
     Config: 'config'
 } as const;
 
-interface WebviewLoadedMessage {
-    command: typeof WebviewToExtensionCommand.WebviewLoaded;
+interface PreviewLoadedMessage {
+    command: typeof PreviewToHostCommand.PreviewLoaded;
 }
 
 export interface RevealLineMessage {
-    command: typeof WebviewToExtensionCommand.RevealLine;
+    command: typeof PreviewToHostCommand.RevealLine;
     index: number;
     ratio: number;
     anchors?: string[];
@@ -35,38 +35,38 @@ export interface RevealLineMessage {
 }
 
 interface SyncScrollMessage {
-    command: typeof WebviewToExtensionCommand.SyncScroll;
+    command: typeof PreviewToHostCommand.SyncScroll;
     index: number;
     ratio: number;
 }
 
 export interface RequestPdfMessage {
-    command: typeof WebviewToExtensionCommand.RequestPdf;
+    command: typeof PreviewToHostCommand.RequestPdf;
     id: string;
     path: string;
 }
 
 export interface RequestBlockHtmlMessage {
-    command: typeof WebviewToExtensionCommand.RequestBlockHtml;
+    command: typeof PreviewToHostCommand.RequestBlockHtml;
     id: string;
     index: number;
     hash: string;
 }
 
-export type WebviewToExtensionMessage =
-    | WebviewLoadedMessage
+export type PreviewToHostMessage =
+    | PreviewLoadedMessage
     | RevealLineMessage
     | SyncScrollMessage
     | RequestPdfMessage
     | RequestBlockHtmlMessage;
 
 interface UpdateMessage {
-    command: typeof ExtensionToWebviewCommand.Update;
+    command: typeof HostToPreviewCommand.Update;
     payload: RenderPayload;
 }
 
 interface ScrollToBlockMessage {
-    command: typeof ExtensionToWebviewCommand.ScrollToBlock;
+    command: typeof HostToPreviewCommand.ScrollToBlock;
     index: number;
     ratio: number;
     anchor?: string;
@@ -75,7 +75,7 @@ interface ScrollToBlockMessage {
 }
 
 interface PdfUriMessage {
-    command: typeof ExtensionToWebviewCommand.PdfUri;
+    command: typeof HostToPreviewCommand.PdfUri;
     id: string;
     uri?: string;
     path?: string;
@@ -83,7 +83,7 @@ interface PdfUriMessage {
 }
 
 interface BlockHtmlMessage {
-    command: typeof ExtensionToWebviewCommand.BlockHtml;
+    command: typeof HostToPreviewCommand.BlockHtml;
     id: string;
     index: number;
     hash?: string;
@@ -92,7 +92,7 @@ interface BlockHtmlMessage {
 }
 
 interface ConfigMessage {
-    command: typeof ExtensionToWebviewCommand.Config;
+    command: typeof HostToPreviewCommand.Config;
     config: {
         autoScrollDelay: number;
         debugMemory: boolean;
@@ -100,7 +100,7 @@ interface ConfigMessage {
     };
 }
 
-export type ExtensionToWebviewMessage =
+export type HostToPreviewMessage =
     | UpdateMessage
     | ScrollToBlockMessage
     | PdfUriMessage
@@ -115,26 +115,26 @@ function isOptionalType(value: unknown, type: 'string' | 'number'): boolean {
     return value === undefined || typeof value === type;
 }
 
-export function isWebviewToExtensionMessage(value: unknown): value is WebviewToExtensionMessage {
+export function isPreviewToHostMessage(value: unknown): value is PreviewToHostMessage {
     if (!isRecord(value) || typeof value.command !== 'string') {
         return false;
     }
 
     switch (value.command) {
-        case WebviewToExtensionCommand.WebviewLoaded:
+        case PreviewToHostCommand.PreviewLoaded:
             return true;
-        case WebviewToExtensionCommand.RevealLine:
+        case PreviewToHostCommand.RevealLine:
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number'
                 && (value.anchors === undefined || (Array.isArray(value.anchors) && value.anchors.every(anchor => typeof anchor === 'string')))
                 && isOptionalType(value.viewRatio, 'number');
-        case WebviewToExtensionCommand.SyncScroll:
+        case PreviewToHostCommand.SyncScroll:
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number';
-        case WebviewToExtensionCommand.RequestPdf:
+        case PreviewToHostCommand.RequestPdf:
             return typeof value.id === 'string'
                 && typeof value.path === 'string';
-        case WebviewToExtensionCommand.RequestBlockHtml:
+        case PreviewToHostCommand.RequestBlockHtml:
             return typeof value.id === 'string'
                 && typeof value.index === 'number'
                 && typeof value.hash === 'string';

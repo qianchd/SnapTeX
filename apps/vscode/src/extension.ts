@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { SmartRenderer } from '../../../src/renderer';
 import { TexPreviewPanel } from './panel';
 import { findNearestSyncAnchorLine, getSyncAnchorContext, normalizeUri } from '../../../src/utils';
-import { ExtensionToWebviewCommand } from '../../../src/webview-messages';
+import { HostToPreviewCommand } from '../../../src/preview-messages';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { VscodeFileProvider } from './vscode-file-provider';
 
@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         suppressPreviewToTextUntil = Date.now() + getSyncSuppressionDuration();
         TexPreviewPanel.currentPanel.postMessage({
-            command: ExtensionToWebviewCommand.ScrollToBlock, index, ratio, anchor, auto: isAutoScroll, viewRatio
+            command: HostToPreviewCommand.ScrollToBlock, index, ratio, anchor, auto: isAutoScroll, viewRatio
         });
     };
 
