@@ -106,6 +106,7 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, '/media/icon-512.png');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
             assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
+            assert.doesNotMatch(serviceWorker, /\.nojekyll/);
             assert.match(serviceWorker, /\.\/index\.html/);
             assert.match(serviceWorker, /\.\/media\/icon-512\.png/);
             assert.match(serviceWorker, /\.\/demo\/main\.tex/);
