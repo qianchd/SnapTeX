@@ -1,9 +1,9 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import type { Server } from 'http';
-import { join, resolve } from 'path';
+import { basename, join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
 
@@ -62,6 +62,8 @@ suite('Standalone web assets', () => {
         this.timeout(10000);
         const root = repoRoot();
         const outDir = mkdtempSync(join(tmpdir(), 'snaptex-web-'));
+        const outsideAsset = resolve(outDir, '..', `${basename(outDir)}-outside.txt`);
+        writeFileSync(outsideAsset, 'outside');
         const buildModule = await import(pathToFileURL(resolve(root, 'apps/web/build-static.mjs')).href) as StaticBuildModule;
         const serverModule = await import(pathToFileURL(resolve(root, 'apps/web/server.mjs')).href) as WebServerModule;
         const build = buildModule.buildStaticWeb({ root, outDir });
@@ -74,24 +76,21 @@ suite('Standalone web assets', () => {
             const tikzCssUri = readDataAttribute(indexHtml, 'tikz-jax-css-uri');
             const tikzBaseUri = tikzJaxUri.replace(/\/tikzjax\.js$/, '');
 
-            assert.ok(build.assets.includes('index.html'));
-            assert.ok(build.assets.includes('manifest.webmanifest'));
-            assert.ok(build.assets.includes('demo/main.tex'));
-            assert.ok(build.assets.includes('demo/sections/project-editing.tex'));
-            assert.ok(build.assets.includes('demo/sample.bib'));
-            assert.ok(build.assets.includes('demo/frog.jpg'));
-            assert.ok(build.assets.includes('media/favicon.ico'));
-            assert.ok(build.assets.includes('media/icon-32.png'));
-            assert.ok(build.assets.includes('media/icon.png'));
-            assert.ok(build.assets.includes('media/icon-192.png'));
-            assert.ok(build.assets.includes('media/icon-512.png'));
-            assert.ok(build.assets.includes('media/vendor/tikzjax/tex.wasm.gz'));
+            for (const asset of [
+                'index.html', 'manifest.webmanifest',
+                'demo/main.tex', 'demo/sections/project-editing.tex', 'demo/sample.bib', 'demo/frog.jpg',
+                'media/favicon.ico', 'media/icon-32.png', 'media/icon.png', 'media/icon-192.png', 'media/icon-512.png',
+                'media/vendor/tikzjax/tex.wasm.gz'
+            ]) {
+                assert.ok(build.assets.includes(asset), `Missing static asset: ${asset}`);
+            }
             assert.match(indexHtml, /href="manifest\.webmanifest"/);
             assert.match(indexHtml, /href="media\/favicon\.ico"/);
             assert.match(indexHtml, /href="media\/icon-32\.png"/);
             assert.match(indexHtml, /href="media\/icon-192\.png"/);
             assert.match(indexHtml, /src="media\/icon\.png"/);
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
+            assert.equal((await fetch(new URL(`/%2e%2e/${basename(outsideAsset)}`, baseUrl))).status, 404);
 
             assert.match(await fetchText(baseUrl, '/demo/main.tex'), /\\input\{sections\/project-editing\}/);
             await fetchText(baseUrl, '/demo/sections/project-editing.tex');
@@ -113,11 +112,12 @@ suite('Standalone web assets', () => {
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
             assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
             assert.doesNotMatch(serviceWorker, /\.nojekyll/);
-            assert.match(serviceWorker, /\.\/index\.html/);
-            assert.match(serviceWorker, /\.\/media\/favicon\.ico/);
-            assert.match(serviceWorker, /\.\/media\/icon-512\.png/);
-            assert.match(serviceWorker, /\.\/demo\/main\.tex/);
-            assert.match(serviceWorker, /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz/);
+            for (const source of [
+                /\.\/index\.html/, /\.\/media\/favicon\.ico/, /\.\/media\/icon-512\.png/,
+                /\.\/demo\/main\.tex/, /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz/
+            ]) {
+                assert.match(serviceWorker, source);
+            }
             await fetchText(baseUrl, tikzJaxUri);
             await fetchText(baseUrl, tikzCssUri);
             await fetchText(baseUrl, `${tikzBaseUri}/run-tex.js`);
@@ -127,6 +127,7 @@ suite('Standalone web assets', () => {
         } finally {
             await closeServer(server);
             rmSync(outDir, { recursive: true, force: true });
+            rmSync(outsideAsset, { force: true });
         }
     });
 

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -25,11 +25,15 @@ function defaultIndexPath(root) {
     return root === repoRoot ? '/apps/web/index.html' : '/index.html';
 }
 
-function resolveRequestPath(root, url, port = defaultPort, indexPath = defaultIndexPath(root)) {
-    const parsed = new URL(url, `http://localhost:${port}`);
-    const pathname = parsed.pathname === '/' ? indexPath : parsed.pathname;
-    const filePath = normalize(join(root, decodeURIComponent(pathname)));
-    return filePath.startsWith(root) ? filePath : undefined;
+function resolveRequestPath(root, url, indexPath = defaultIndexPath(root)) {
+    try {
+        const parsed = new URL(url, 'http://localhost');
+        const pathname = parsed.pathname === '/' ? indexPath : parsed.pathname;
+        const filePath = resolve(root, decodeURIComponent(pathname).replace(/^\/+/, ''));
+        return filePath === root || filePath.startsWith(`${root}${sep}`) ? filePath : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 export function createSnapTeXWebServer(options = {}) {
@@ -37,7 +41,7 @@ export function createSnapTeXWebServer(options = {}) {
     const port = Number(options.port ?? defaultPort);
     const indexPath = options.indexPath ?? defaultIndexPath(root);
     return createServer((request, response) => {
-        const filePath = resolveRequestPath(root, request.url ?? '/', port, indexPath);
+        const filePath = resolveRequestPath(root, request.url ?? '/', indexPath);
         if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
             response.writeHead(404);
             response.end('Not found');

@@ -76,7 +76,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         this.files.set(normalizedPath, {
             text: file.text,
             readText: file.readText,
-            blob: file.blob ?? (file.text === undefined ? undefined : new Blob([file.text], { type: 'text/plain' })),
+            blob: file.blob,
             resourceUrl: file.resourceUrl,
             handle: file.handle ?? existing?.handle,
             mtime: this.version++
@@ -84,18 +84,13 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
     }
 
     setFile(uri: BrowserUri, text: string, handle?: BrowserWritableFileHandle) {
-        this.setFileText(uri.path, text, handle);
-    }
-
-    setFileText(path: string, text: string, handle?: BrowserWritableFileHandle) {
-        const normalizedPath = normalizeBrowserPath(path);
+        const normalizedPath = uri.path;
         const existing = this.files.get(normalizedPath);
         if (existing?.objectUrl) {
             this.revokeObjectUrl(existing.objectUrl);
         }
         this.files.set(normalizedPath, {
             text,
-            blob: new Blob([text], { type: 'text/plain' }),
             handle: handle ?? existing?.handle,
             mtime: this.version++
         });
@@ -140,7 +135,6 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             throw new Error(`Missing browser file: ${uri.path}`);
         }
         file.text = await file.readText();
-        file.blob ??= new Blob([file.text], { type: 'text/plain' });
         return file.text;
     }
 

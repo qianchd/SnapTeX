@@ -1,6 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import { chooseRootPath, isProjectFile, projectTextPaths } from '../../apps/standalone/src/browser-project';
 import { BrowserFileProvider, BrowserUri, normalizeBrowserPath, type BrowserWritableFileHandle } from '../../apps/standalone/src/browser-file-provider';
 import { PreviewUpdateService } from '../preview-update-service';
 import { SmartRenderer } from '../renderer';
@@ -13,6 +14,24 @@ suite('BrowserFileProvider', () => {
         assert.equal(normalizeBrowserPath('project/sections/../main.tex'), '/project/main.tex');
         assert.equal(provider.dir(rootUri).path, '/project');
         assert.equal(provider.resolve(provider.dir(rootUri), 'sections/intro.tex').path, '/project/sections/intro.tex');
+    });
+
+    test('selects browser project roots and text files with shared project helpers', () => {
+        const files = [
+            { path: '/project/sections/intro.tex', text: 'Intro' },
+            { path: '/project/root.tex', text: 'Root' },
+            { path: '/project/main.tex', text: 'Main' },
+            { path: '/project/figure.png', blob: new Blob(['image']) }
+        ];
+
+        assert.equal(chooseRootPath(files), '/project/main.tex');
+        assert.deepEqual(projectTextPaths(files), [
+            '/project/main.tex',
+            '/project/root.tex',
+            '/project/sections/intro.tex'
+        ]);
+        assert.equal(isProjectFile('/project/figure.png'), true);
+        assert.equal(isProjectFile('/project/build.aux'), false);
     });
 
     test('stores project files and writes back through browser handles', async () => {
@@ -60,6 +79,9 @@ suite('BrowserFileProvider', () => {
         assert.equal(await provider.read(uri), 'Lazy paragraph.');
         assert.equal((await provider.stat(uri)).mtime, beforeRead.mtime);
         assert.equal(reads, 1);
+        assert.equal(provider.getResourceUrl(uri, () => {
+            throw new Error('Text files should not create resource URLs.');
+        }), undefined);
     });
 
     test('stores binary project resources as cached object URLs', async () => {

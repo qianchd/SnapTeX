@@ -284,10 +284,10 @@ export class StandaloneHost {
         return suppressed;
     }
 
-    async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5) {
+    private async openSourceForPreview(index: number, ratio: number) {
         const source = this.updateService.getSourceSyncData(index, ratio);
         if (!source) {
-            return;
+            return undefined;
         }
 
         const targetPath = normalizeBrowserPath(source.file);
@@ -295,7 +295,19 @@ export class StandaloneHost {
             await this.openEditorFile(targetPath);
         }
 
-        const text = this.editorView.state.doc.toString();
+        return {
+            source,
+            text: this.editorView.state.doc.toString()
+        };
+    }
+
+    async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5) {
+        const target = await this.openSourceForPreview(index, ratio);
+        if (!target) {
+            return;
+        }
+
+        const { source, text } = target;
         let targetLine = source.line;
         if (anchors.length > 0) {
             const lines = text.split(/\r?\n/);
@@ -304,8 +316,7 @@ export class StandaloneHost {
             targetLine = findNearestSyncAnchorLine(anchors, startLine, endLine, targetLine, line => lines[line] ?? '') ?? targetLine;
         }
 
-        const line = Math.max(0, targetLine);
-        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, line));
+        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, Math.max(0, targetLine)));
         this.suppressNextSelectionSync = true;
         this.suppressEditorToPreview();
         this.editorView.dispatch({
@@ -319,19 +330,12 @@ export class StandaloneHost {
             return;
         }
 
-        const source = this.updateService.getSourceSyncData(index, ratio);
-        if (!source) {
+        const target = await this.openSourceForPreview(index, ratio);
+        if (!target) {
             return;
         }
 
-        const targetPath = normalizeBrowserPath(source.file);
-        if (targetPath !== this.activeUri.path) {
-            await this.openEditorFile(targetPath);
-        }
-
-        const text = this.editorView.state.doc.toString();
-        const line = Math.max(0, source.line);
-        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, line));
+        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(target.text, Math.max(0, target.source.line)));
         this.suppressEditorToPreview();
         this.editorView.dispatch({
             effects: EditorView.scrollIntoView(position, { y: 'center' })
@@ -402,8 +406,8 @@ export class StandaloneHost {
         });
     }
 
-    private handlePdfRequest(id: string, path: unknown) {
-        const pathText = typeof path === 'string' ? decodeHtmlAttribute(path) : '';
+    private handlePdfRequest(id: string, path: string) {
+        const pathText = decodeHtmlAttribute(path);
         if (!pathText.toLowerCase().endsWith('.pdf')) {
             this.postToPreview({ command: ExtensionToWebviewCommand.PdfUri, id, error: 'Invalid PDF path' });
             return;

@@ -1,22 +1,20 @@
-import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost } from '../../standalone/src/app';
-import { normalizeBrowserPath, type BrowserProjectFile, type BrowserWritableFileHandle } from '../../standalone/src/browser-file-provider';
+import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
+import {
+    chooseRootPath,
+    fileInputPath,
+    isProjectFile,
+    isTexFile,
+    projectFileFromFile,
+    projectFileFromHandle,
+    projectTextPaths,
+    readDirectoryHandle,
+    type BrowserDirectoryHandle,
+    type BrowserFileHandle
+} from '../../standalone/src/browser-project';
+import { normalizeBrowserPath, type BrowserProjectFile } from '../../standalone/src/browser-file-provider';
 
 const RESIZE_WIDTH_STEP_PX = 10;
 const RESIZE_FRAME_INTERVAL_MS = 30;
-const PROJECT_TEXT_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|txt)$/i;
-const PROJECT_RESOURCE_FILE_PATTERN = /\.(?:pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
-
-interface BrowserFileHandle extends BrowserWritableFileHandle {
-    kind: 'file';
-    name: string;
-    getFile(): Promise<File>;
-}
-
-interface BrowserDirectoryHandle {
-    kind: 'directory';
-    name: string;
-    values(): AsyncIterable<BrowserFileHandle | BrowserDirectoryHandle>;
-}
 
 interface BrowserFilePickerWindow extends Window {
     showOpenFilePicker?: (options?: {
@@ -30,6 +28,8 @@ let currentProjectTextPaths: string[] = [];
 let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
 type WebTheme = 'light' | 'dark' | 'blue' | 'rose';
+type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
+type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
 
 interface ProjectTreeNode {
     name: string;
@@ -169,35 +169,8 @@ function setStatus(message: string): void {
     }
 }
 
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 function reportFailure(action: string, error: unknown): void {
-    setStatus(`${action} failed: ${errorMessage(error)}`);
-}
-
-function isProjectTextFile(path: string): boolean {
-    return PROJECT_TEXT_FILE_PATTERN.test(path);
-}
-
-function isProjectFile(path: string): boolean {
-    return isProjectTextFile(path) || PROJECT_RESOURCE_FILE_PATTERN.test(path);
-}
-
-function chooseRootPath(files: readonly BrowserProjectFile[]): string | undefined {
-    const texPaths = files.map(file => file.path).filter(path => /\.tex$/i.test(path));
-    return texPaths.find(path => /\/main\.tex$/i.test(path))
-        ?? texPaths.find(path => /\/root\.tex$/i.test(path))
-        ?? texPaths[0];
-}
-
-function projectTextPaths(files: readonly BrowserProjectFile[]): string[] {
-    return files
-        .map(file => file.path)
-        .map(normalizeBrowserPath)
-        .filter(isProjectTextFile)
-        .sort((a, b) => a.localeCompare(b));
+    setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 function expandFoldersFromPaths(paths: readonly string[]): void {
@@ -209,52 +182,6 @@ function expandFoldersFromPaths(paths: readonly string[]): void {
             expandedFolders.add(currentPath);
         }
     }
-}
-
-function isTexFile(path: string): boolean {
-    return /\.tex$/i.test(path);
-}
-
-async function projectFileFromFile(file: File, path: string, handle?: BrowserFileHandle): Promise<BrowserProjectFile> {
-    const projectFile: BrowserProjectFile = {
-        path,
-        blob: file,
-        handle
-    };
-    if (isProjectTextFile(path)) {
-        projectFile.readText = () => file.text();
-    }
-    return projectFile;
-}
-
-async function projectFileFromHandle(handle: BrowserFileHandle, path: string): Promise<BrowserProjectFile> {
-    if (isProjectTextFile(path)) {
-        return {
-            path,
-            handle,
-            readText: async () => (await handle.getFile()).text()
-        };
-    }
-    return projectFileFromFile(await handle.getFile(), path, handle);
-}
-
-function fileInputPath(file: File): string {
-    return `/${(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}`;
-}
-
-async function readDirectoryHandle(directory: BrowserDirectoryHandle, prefix = ''): Promise<BrowserProjectFile[]> {
-    const files: BrowserProjectFile[] = [];
-    for await (const entry of directory.values()) {
-        const path = `${prefix}/${entry.name}`;
-        if (entry.kind === 'directory') {
-            files.push(...await readDirectoryHandle(entry, path));
-            continue;
-        }
-        if (isProjectFile(path)) {
-            files.push(await projectFileFromHandle(entry, path));
-        }
-    }
-    return files;
 }
 
 async function loadProject(host: StandaloneHost, files: readonly BrowserProjectFile[]): Promise<void> {
@@ -276,10 +203,6 @@ function renderProjectState(host: StandaloneHost): void {
     renderChromeState(host);
     renderProjectFiles(host, currentProjectTextPaths);
     renderProjectDiagnostics(host);
-}
-
-function basename(path: string): string {
-    return path.split('/').filter(Boolean).pop() ?? path;
 }
 
 function setText(id: string, text: string): void {
@@ -486,13 +409,10 @@ async function saveActiveFile(host: StandaloneHost): Promise<void> {
     setStatus(`Downloaded ${result.path}`);
 }
 
-function isSaveShortcut(event: KeyboardEvent): boolean {
-    return (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's';
-}
-
 function bindSaveShortcut(host: StandaloneHost): void {
     document.addEventListener('keydown', event => {
-        if (!isSaveShortcut(event)) {
+        const isSave = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's';
+        if (!isSave) {
             return;
         }
         event.preventDefault();
@@ -571,16 +491,6 @@ function syncSettingsControls(host: StandaloneHost): void {
     if (autoScrollDelayInput) { setInputValue(autoScrollDelayInput, settings.autoScrollDelayMs); }
 }
 
-function setSettingsOpen(open: boolean): void {
-    const button = document.getElementById('settings-button');
-    const menu = document.getElementById('settings-menu');
-    if (!button || !menu) {
-        return;
-    }
-    button.setAttribute('aria-expanded', String(open));
-    menu.hidden = !open;
-}
-
 function bindProjectControls(host: StandaloneHost): void {
     const toggleExplorerButton = document.getElementById('toggle-explorer-button');
     const openFileButton = document.getElementById('open-file-button');
@@ -588,6 +498,7 @@ function bindProjectControls(host: StandaloneHost): void {
     const saveButton = document.getElementById('save-button');
     const setRootButton = document.getElementById('set-root-button');
     const settingsButton = document.getElementById('settings-button');
+    const settingsMenu = document.getElementById('settings-menu');
     const showExplorerToggle = document.getElementById('show-explorer-toggle') as HTMLInputElement | null;
     const showDiagnosticsToggle = document.getElementById('show-diagnostics-toggle') as HTMLInputElement | null;
     const livePreviewToggle = document.getElementById('live-preview-toggle') as HTMLInputElement | null;
@@ -599,9 +510,19 @@ function bindProjectControls(host: StandaloneHost): void {
     const themeSelect = document.getElementById('theme-select') as HTMLSelectElement | null;
     const openFileInput = document.getElementById('open-file-input') as HTMLInputElement | null;
     const openFolderInput = document.getElementById('open-folder-input') as HTMLInputElement | null;
-    if (!toggleExplorerButton || !openFileButton || !openFolderButton || !saveButton || !setRootButton || !settingsButton || !showExplorerToggle || !showDiagnosticsToggle || !livePreviewToggle || !autoScrollToggle || !virtualModeToggle || !debugMemoryToggle || !renderDelayInput || !autoScrollDelayInput || !themeSelect || !openFileInput || !openFolderInput) {
+    if (!toggleExplorerButton || !openFileButton || !openFolderButton || !saveButton || !setRootButton || !settingsButton || !settingsMenu || !showExplorerToggle || !showDiagnosticsToggle || !livePreviewToggle || !autoScrollToggle || !virtualModeToggle || !debugMemoryToggle || !renderDelayInput || !autoScrollDelayInput || !themeSelect || !openFileInput || !openFolderInput) {
         throw new Error('Missing web project controls.');
     }
+    const setSettingsOpen = (open: boolean): void => {
+        settingsButton.setAttribute('aria-expanded', String(open));
+        settingsMenu.hidden = !open;
+    };
+    const bindToggleSetting = (input: HTMLInputElement, setting: BooleanPreviewSetting): void => {
+        input.addEventListener('change', () => host.updateSettings({ [setting]: input.checked } as Partial<StandalonePreviewSettings>));
+    };
+    const bindNumberSetting = (input: HTMLInputElement, setting: NumberPreviewSetting, fallback: number): void => {
+        input.addEventListener('change', () => host.updateSettings({ [setting]: readClampedNumber(input, fallback) } as Partial<StandalonePreviewSettings>));
+    };
 
     toggleExplorerButton.addEventListener('click', () => {
         setExplorerCollapsed(!explorerCollapsed);
@@ -628,34 +549,18 @@ function bindProjectControls(host: StandaloneHost): void {
     showDiagnosticsToggle.addEventListener('change', () => {
         setDiagnosticsVisible(showDiagnosticsToggle.checked);
     });
-    livePreviewToggle.addEventListener('change', () => {
-        host.updateSettings({ livePreview: livePreviewToggle.checked });
-    });
-    autoScrollToggle.addEventListener('change', () => {
-        host.updateSettings({ autoScrollSync: autoScrollToggle.checked });
-    });
-    virtualModeToggle.addEventListener('change', () => {
-        host.updateSettings({ virtualMode: virtualModeToggle.checked });
-    });
-    debugMemoryToggle.addEventListener('change', () => {
-        host.updateSettings({ debugMemory: debugMemoryToggle.checked });
-    });
-    renderDelayInput.addEventListener('change', () => {
-        host.updateSettings({
-            renderDelayMs: readClampedNumber(renderDelayInput, DEFAULT_STANDALONE_PREVIEW_SETTINGS.renderDelayMs)
-        });
-    });
-    autoScrollDelayInput.addEventListener('change', () => {
-        host.updateSettings({
-            autoScrollDelayMs: readClampedNumber(autoScrollDelayInput, DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs)
-        });
-    });
+    bindToggleSetting(livePreviewToggle, 'livePreview');
+    bindToggleSetting(autoScrollToggle, 'autoScrollSync');
+    bindToggleSetting(virtualModeToggle, 'virtualMode');
+    bindToggleSetting(debugMemoryToggle, 'debugMemory');
+    bindNumberSetting(renderDelayInput, 'renderDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.renderDelayMs);
+    bindNumberSetting(autoScrollDelayInput, 'autoScrollDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs);
     themeSelect.addEventListener('change', () => {
         setTheme(themeSelect.value as WebTheme);
     });
     document.addEventListener('click', event => {
         const target = event.target as Node | null;
-        if (target && !settingsButton.contains(target) && !document.getElementById('settings-menu')?.contains(target)) {
+        if (target && !settingsButton.contains(target) && !settingsMenu.contains(target)) {
             setSettingsOpen(false);
         }
     });
@@ -663,17 +568,16 @@ function bindProjectControls(host: StandaloneHost): void {
     openFileInput.addEventListener('change', () => {
         const file = openFileInput.files?.[0];
         if (file) {
-            projectFileFromFile(file, `/${file.name}`)
-                .then(projectFile => loadProject(host, [projectFile]))
+            loadProject(host, [projectFileFromFile(file, `/${file.name}`)])
                 .catch(error => reportFailure('Open', error));
         }
         openFileInput.value = '';
     });
     openFolderInput.addEventListener('change', () => {
         const files = Array.from(openFolderInput.files ?? [])
-            .filter(file => isProjectFile(fileInputPath(file)));
-        Promise.all(files.map(file => projectFileFromFile(file, fileInputPath(file))))
-            .then(projectFiles => loadProject(host, projectFiles))
+            .map(file => ({ file, path: fileInputPath(file) }))
+            .filter(({ path }) => isProjectFile(path));
+        loadProject(host, files.map(({ file, path }) => projectFileFromFile(file, path)))
             .catch(error => reportFailure('Open', error));
         openFolderInput.value = '';
     });
