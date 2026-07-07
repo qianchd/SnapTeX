@@ -81,7 +81,10 @@ suite('Standalone web assets', () => {
             assert.ok(build.assets.includes('demo/sample.bib'));
             assert.ok(build.assets.includes('demo/frog.jpg'));
             assert.ok(build.assets.includes('media/icon.png'));
+            assert.ok(build.assets.includes('media/icon-192.png'));
+            assert.ok(build.assets.includes('media/icon-512.png'));
             assert.ok(build.assets.includes('media/vendor/tikzjax/tex.wasm.gz'));
+            assert.match(indexHtml, /href="manifest\.webmanifest"/);
             assert.match(indexHtml, /href="media\/icon\.png"/);
             assert.match(indexHtml, /src="media\/icon\.png"/);
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
@@ -90,10 +93,21 @@ suite('Standalone web assets', () => {
             await fetchText(baseUrl, '/demo/sections/project-editing.tex');
             await fetchText(baseUrl, '/demo/sample.bib');
             await fetchBytes(baseUrl, '/demo/frog.jpg');
-            await fetchText(baseUrl, '/manifest.webmanifest');
+            const manifest = JSON.parse(await fetchText(baseUrl, '/manifest.webmanifest'));
+            assert.deepEqual(
+                manifest.icons.map((icon: { src: string; sizes: string }) => [icon.src, icon.sizes]),
+                [
+                    ['media/icon-192.png', '192x192'],
+                    ['media/icon-512.png', '512x512'],
+                    ['media/icon.png', '2152x2183']
+                ]
+            );
+            await fetchBytes(baseUrl, '/media/icon-192.png');
+            await fetchBytes(baseUrl, '/media/icon-512.png');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
             assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
             assert.match(serviceWorker, /\.\/index\.html/);
+            assert.match(serviceWorker, /\.\/media\/icon-512\.png/);
             assert.match(serviceWorker, /\.\/demo\/main\.tex/);
             assert.match(serviceWorker, /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz/);
             await fetchText(baseUrl, tikzJaxUri);
