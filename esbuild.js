@@ -6,6 +6,7 @@ const ROOT = __dirname;
 const MEDIA_VENDOR = path.join(ROOT, "media", "vendor");
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
+const buildTarget = process.argv.find(arg => arg.startsWith('--target='))?.split('=')[1] || 'all';
 
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) {
@@ -296,12 +297,16 @@ function browserBuildOptions(entryPoint, outfile, globalName, problemMatcher) {
 
 function buildOptions() {
     const problemMatcher = createProblemMatcherPlugin();
-    return [
-        extensionBuildOptions(problemMatcher),
-        browserBuildOptions("src/webview/main.ts", "media/webview-main.js", "SnapTeXWebview", problemMatcher),
-        browserBuildOptions("src/webview/pdf.ts", "media/webview-pdf.js", "SnapTeXPdfRuntime", problemMatcher),
-        browserBuildOptions("apps/web/src/main.ts", "apps/web/dist/web-main.js", "SnapTeXStandaloneWeb", problemMatcher)
-    ];
+    const options = [];
+    if (buildTarget === 'all' || buildTarget === 'vscode') {
+        options.push(extensionBuildOptions(problemMatcher));
+        options.push(browserBuildOptions("src/webview/main.ts", "media/webview-main.js", "SnapTeXWebview", problemMatcher));
+        options.push(browserBuildOptions("src/webview/pdf.ts", "media/webview-pdf.js", "SnapTeXPdfRuntime", problemMatcher));
+    }
+    if (buildTarget === 'all' || buildTarget === 'web') {
+        options.push(browserBuildOptions("apps/web/src/main.ts", "apps/web/dist/web-main.js", "SnapTeXStandaloneWeb", problemMatcher));
+    }
+    return options;
 }
 
 async function main() {
