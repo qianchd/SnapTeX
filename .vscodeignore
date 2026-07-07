@@ -6,8 +6,6 @@ src/**
 .gitignore
 .yarnrc
 esbuild.js
-apps/standalone/**
-apps/web/**
 media/demo/*.gif
 **/tsconfig.json
 **/eslint.config.mjs
@@ -16,3 +14,10 @@ media/demo/*.gif
 **/.vscode-test.*
 .conda
 !node_modules\@iktakahiro\markdown-it-katex\node_modules\katex\dist
+dist-web/**
+apps/**
+demo/**
+.github/**
+todo.md
+media/favicon.ico
+media/icon-*.png
