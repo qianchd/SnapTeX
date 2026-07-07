@@ -80,12 +80,16 @@ suite('Standalone web assets', () => {
             assert.ok(build.assets.includes('demo/sections/project-editing.tex'));
             assert.ok(build.assets.includes('demo/sample.bib'));
             assert.ok(build.assets.includes('demo/frog.jpg'));
+            assert.ok(build.assets.includes('media/favicon.ico'));
+            assert.ok(build.assets.includes('media/icon-32.png'));
             assert.ok(build.assets.includes('media/icon.png'));
             assert.ok(build.assets.includes('media/icon-192.png'));
             assert.ok(build.assets.includes('media/icon-512.png'));
             assert.ok(build.assets.includes('media/vendor/tikzjax/tex.wasm.gz'));
             assert.match(indexHtml, /href="manifest\.webmanifest"/);
-            assert.match(indexHtml, /href="media\/icon\.png"/);
+            assert.match(indexHtml, /href="media\/favicon\.ico"/);
+            assert.match(indexHtml, /href="media\/icon-32\.png"/);
+            assert.match(indexHtml, /href="media\/icon-192\.png"/);
             assert.match(indexHtml, /src="media\/icon\.png"/);
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
 
@@ -95,19 +99,22 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, '/demo/frog.jpg');
             const manifest = JSON.parse(await fetchText(baseUrl, '/manifest.webmanifest'));
             assert.deepEqual(
-                manifest.icons.map((icon: { src: string; sizes: string }) => [icon.src, icon.sizes]),
+                manifest.icons.map((icon: { src: string; sizes: string; purpose: string }) => [icon.src, icon.sizes, icon.purpose]),
                 [
-                    ['media/icon-192.png', '192x192'],
-                    ['media/icon-512.png', '512x512'],
-                    ['media/icon.png', '2152x2183']
+                    ['media/icon-192.png', '192x192', 'any'],
+                    ['media/icon-512.png', '512x512', 'any']
                 ]
             );
+            const favicon = await fetchOk(baseUrl, '/media/favicon.ico');
+            assert.match(favicon.headers.get('content-type') ?? '', /image\/x-icon/);
+            await fetchBytes(baseUrl, '/media/icon-32.png');
             await fetchBytes(baseUrl, '/media/icon-192.png');
             await fetchBytes(baseUrl, '/media/icon-512.png');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
             assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
             assert.doesNotMatch(serviceWorker, /\.nojekyll/);
             assert.match(serviceWorker, /\.\/index\.html/);
+            assert.match(serviceWorker, /\.\/media\/favicon\.ico/);
             assert.match(serviceWorker, /\.\/media\/icon-512\.png/);
             assert.match(serviceWorker, /\.\/demo\/main\.tex/);
             assert.match(serviceWorker, /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz/);

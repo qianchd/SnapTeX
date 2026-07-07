@@ -9,6 +9,8 @@ const defaultOutDir = resolve(rootDir, 'dist-web');
 const staticFiles = [
     ['demo', 'demo'],
     ['media/vendor', 'media/vendor'],
+    ['media/favicon.ico', 'media/favicon.ico'],
+    ['media/icon-32.png', 'media/icon-32.png'],
     ['media/icon.png', 'media/icon.png'],
     ['media/icon-192.png', 'media/icon-192.png'],
     ['media/icon-512.png', 'media/icon-512.png'],
@@ -41,18 +43,9 @@ function makeStaticManifest(source) {
 
 function makeStaticIndex(source) {
     return source
-        .replaceAll('href="/media/icon.png"', 'href="media/icon.png"')
-        .replaceAll('href="/apps/web/manifest.webmanifest"', 'href="manifest.webmanifest"')
-        .replaceAll('href="/media/vendor/katex/katex.min.css"', 'href="media/vendor/katex/katex.min.css"')
-        .replaceAll('href="/media/preview-style.css"', 'href="media/preview-style.css"')
+        .replace(/\b(href|src|data-[\w-]+)="\/media\//g, '$1="media/')
+        .replace('href="/apps/web/manifest.webmanifest"', 'href="manifest.webmanifest"')
         .replaceAll('href="/apps/web/web.css"', 'href="web.css"')
-        .replaceAll('data-tikz-jax-js-uri="/media/vendor/tikzjax/tikzjax.js"', 'data-tikz-jax-js-uri="media/vendor/tikzjax/tikzjax.js"')
-        .replaceAll('data-tikz-jax-css-uri="/media/vendor/tikzjax/fonts.css"', 'data-tikz-jax-css-uri="media/vendor/tikzjax/fonts.css"')
-        .replaceAll('data-pdf-js-uri="/media/vendor/pdfjs/pdf.mjs"', 'data-pdf-js-uri="media/vendor/pdfjs/pdf.mjs"')
-        .replaceAll('data-pdf-worker-uri="/media/vendor/pdfjs/pdf.worker.mjs"', 'data-pdf-worker-uri="media/vendor/pdfjs/pdf.worker.mjs"')
-        .replaceAll('src="/media/icon.png"', 'src="media/icon.png"')
-        .replaceAll('src="/media/webview-main.js"', 'src="media/webview-main.js"')
-        .replaceAll('src="/media/webview-pdf.js"', 'src="media/webview-pdf.js"')
         .replaceAll('src="/apps/web/dist/web-main.js"', 'src="web-main.js"')
         .replace('</body>', [
             '    <script>',
