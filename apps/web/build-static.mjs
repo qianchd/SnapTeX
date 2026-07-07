@@ -132,7 +132,7 @@ export function buildStaticWeb(options = {}) {
     writeFileSync(join(outDir, 'index.html'), makeStaticIndex(readSourceIndex(root)));
     writeFileSync(join(outDir, 'manifest.webmanifest'), makeStaticManifest(readFileSync(join(root, 'apps/web/manifest.webmanifest'), 'utf8')));
     writeFileSync(join(outDir, '.nojekyll'), '');
-    const assets = listFiles(outDir).filter(asset => asset !== 'service-worker.js');
+    const assets = listFiles(outDir).filter(asset => asset !== 'service-worker.js' && !asset.startsWith('.'));
     writeFileSync(join(outDir, 'service-worker.js'), serviceWorkerSource(cacheNameFor(outDir, assets), assets));
     return { outDir, assets };
 }
