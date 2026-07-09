@@ -176,6 +176,13 @@ export function renderCaptionContent(captionText: string, renderer: RenderContex
     return renderer.renderInline(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
 }
 
+export function renderSubfigureWidthStyle(widthSpec: string): string {
+    const fraction = widthSpec.match(/([0-9]*\.?[0-9]+)\s*\\(?:textwidth|linewidth)/);
+    const percent = fraction ? Math.max(1, Math.min(100, Number((Number(fraction[1]) * 100).toFixed(3)))) : undefined;
+    const basis = percent ? `${percent}%` : '48%';
+    return `flex: 1 1 ${basis}; max-width: ${basis};`;
+}
+
 export function unwrapResizeboxAroundProtectedContent(text: string): string {
     return text.replace(
         /\\resizebox\s*\{[^{}]*\}\s*\{[^{}]*\}\s*\{\s*((?:XSNAP:[a-zA-Z0-9_-]+:\d+Y\s*)+)\}/g,

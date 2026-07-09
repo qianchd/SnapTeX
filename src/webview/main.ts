@@ -1419,7 +1419,7 @@ const previewBridge = getPreviewBridge();
                     const spans = blockEl.querySelectorAll('.sn-cnt[data-type="' + type + '"]');
                     spans.forEach((span, i) => { if (values[i]) span.textContent = values[i]; });
                 };
-                fill('eq', counts.eq); fill('fig', counts.fig); fill('tbl', counts.tbl);
+                fill('eq', counts.eq); fill('fig', counts.fig); fill('subfig', counts.subfig); fill('tbl', counts.tbl);
                 fill('alg', counts.alg); fill('sec', counts.sec); fill('thm', counts.thm);
             }
             if (labels) {

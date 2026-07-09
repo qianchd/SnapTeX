@@ -421,6 +421,86 @@ suite('PreviewUpdateService', () => {
         assert.doesNotMatch(html, /\[H\]/);
     });
 
+    test('renders subfigures in both backend modes', async () => {
+        const source = [
+            '\\begin{document}',
+            '\\begin{figure}[htbp]',
+            '\\centering',
+            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\centering',
+            '\\includegraphics[width=\\linewidth]{fig1.pdf}',
+            '\\caption{First figure}',
+            '\\label{fig:sub1}',
+            '\\end{subfigure}',
+            '\\hfill',
+            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\centering',
+            '\\includegraphics[width=\\linewidth]{fig2.pdf}',
+            '\\caption{Second figure}',
+            '\\label{fig:sub2}',
+            '\\end{subfigure}',
+            '\\caption{Two subfigures in one row.}',
+            '\\label{fig:two-subfigures}',
+            '\\end{figure}',
+            '',
+            '\\begin{figure}[htbp]',
+            '\\centering',
+            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\centering',
+            '\\includegraphics[width=\\linewidth]{fig1.pdf}',
+            '\\caption{First figure}',
+            '\\label{fig:sub1b}',
+            '\\end{subfigure}',
+            '\\hfill',
+            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\centering',
+            '\\includegraphics[width=\\linewidth]{fig2.pdf}',
+            '\\caption{Second figure}',
+            '\\label{fig:sub2b}',
+            '\\end{subfigure}',
+            '\\vspace{0.3cm}',
+            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\centering',
+            '\\includegraphics[width=\\linewidth]{fig3.pdf}',
+            '\\caption{Third figure}',
+            '\\label{fig:sub3}',
+            '\\end{subfigure}',
+            '\\hfill',
+            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\centering',
+            '\\includegraphics[width=\\linewidth]{fig4.pdf}',
+            '\\caption{Fourth figure}',
+            '\\label{fig:sub4}',
+            '\\end{subfigure}',
+            '\\caption{Four subfigures arranged in a $2 \\times 2$ layout.}',
+            '\\label{fig:four-subfigures}',
+            '\\end{figure}',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.equal((html.match(/class="latex-subfigure"/g) ?? []).length, 6);
+            assert.match(html, /class="latex-subfigure-grid"/);
+            assert.match(html, /class="subfigure-caption"[^>]*>\(<span class="sn-cnt" data-type="subfig"><\/span>\) First figure/);
+            assert.match(html, /class="subfigure-caption"[^>]*>\(<span class="sn-cnt" data-type="subfig"><\/span>\) Fourth figure/);
+            assert.match(html, /<strong>Figure <span class="sn-cnt" data-type="fig"><\/span>:<\/strong> Two subfigures in one row\./);
+            assert.match(html, /Four subfigures arranged in a/);
+            assert.match(html, /id="fig:sub1"/);
+            assert.match(html, /id="fig:four-subfigures"/);
+            assert.equal(payload.numbering.labels['fig:two-subfigures'], '1');
+            assert.equal(payload.numbering.labels['fig:sub1'], '1a');
+            assert.equal(payload.numbering.labels['fig:sub2'], '1b');
+            assert.equal(payload.numbering.labels['fig:four-subfigures'], '2');
+            assert.equal(payload.numbering.labels['fig:sub3'], '2c');
+            assert.equal(payload.numbering.labels['fig:sub4'], '2d');
+            assert.doesNotMatch(html, /\\(?:begin|end)\{subfigure\}|\\hfill|\\vspace|\[htbp\]/);
+        }
+    });
+
     test('renders AST-split color groups across display math and theorem environments', async () => {
         const service = new PreviewUpdateService(new MemoryFileProvider());
         const payload = await service.render(uri, [

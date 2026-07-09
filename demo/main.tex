@@ -11,6 +11,7 @@
 % Useful packages
 \usepackage{amsmath}
 \usepackage{graphicx}
+\usepackage{subcaption}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning}
 \usepackage{algorithm}
@@ -57,6 +58,64 @@ Note that your figure will automatically be placed in the most appropriate place
 \includegraphics[width=0.2\textwidth]{frog.jpg}
 \caption{This frog was uploaded via the file-tree menu.}
 \label{fig:frog}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{frog.jpg}
+        \caption{First frog}
+        \label{fig:subfrog1}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{frog.jpg}
+        \caption{Second frog}
+        \label{fig:subfrog2}
+    \end{subfigure}
+
+    \caption{Two subfigures in one row.}
+    \label{fig:two-subfigures}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{frog.jpg}
+        \caption{First frog}
+        \label{fig:subfrog3}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{frog.jpg}
+        \caption{Second frog}
+        \label{fig:subfrog4}
+    \end{subfigure}
+
+    \vspace{0.3cm}
+
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{frog.jpg}
+        \caption{Third frog}
+        \label{fig:subfrog5}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{frog.jpg}
+        \caption{Fourth frog}
+        \label{fig:subfrog6}
+    \end{subfigure}
+
+    \caption{Four subfigures arranged in a $2 \times 2$ layout.}
+    \label{fig:four-subfigures}
 \end{figure}
 
 \subsection{How to add Tables}
