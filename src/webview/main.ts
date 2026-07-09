@@ -433,6 +433,7 @@ const previewBridge = getPreviewBridge();
             this.isFirstLoad = true;
             this.lastScrollTime = 0;
             this.scrollCommandSeq = 0;
+            this.renderCompletionSeq = 0;
             this.previewLayoutSyncSuppressedUntil = 0;
             this.lastPreviewWidth = this.getPreviewWidth();
             this.virtualUpdateFrame = null;
@@ -561,6 +562,7 @@ const previewBridge = getPreviewBridge();
                 this.currentNumbering = payload.numbering;
             }
             if (payload.type === 'full') {
+                const renderSeq = ++this.renderCompletionSeq;
                 this.state = 'RENDERING';
                 this.deferHeavyPreviewWork = this.isFirstLoad && !!payload.blocks && this.virtualization.isEnabled();
                 const scrollState = this.saveScrollState();
@@ -575,12 +577,19 @@ const previewBridge = getPreviewBridge();
                 this.logDomStats('after full update');
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
-                        requestAnimationFrame(() => { this.onRenderComplete(scrollState); });
+                        requestAnimationFrame(() => { this.onRenderComplete(scrollState, renderSeq); });
                     });
                 });
             } else if (payload.type === 'patch') {
+                const renderSeq = ++this.renderCompletionSeq;
+                this.state = 'RENDERING';
+                this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
+                const scrollState = this.saveScrollState();
                 this.applyPatch(payload);
                 this.logDomStats('after patch update');
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => { this.onPatchComplete(scrollState, renderSeq); });
+                });
             }
             if (payload.numbering) {
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
@@ -1088,7 +1097,8 @@ const previewBridge = getPreviewBridge();
             });
         }
 
-        onRenderComplete(savedScrollState) {
+        onRenderComplete(savedScrollState, renderSeq) {
+            if (renderSeq !== this.renderCompletionSeq) return;
             const wasFirstLoad = this.isFirstLoad;
             const wasDeferringHeavyWork = this.deferHeavyPreviewWork;
             this.state = 'IDLE';
@@ -1107,6 +1117,17 @@ const previewBridge = getPreviewBridge();
                 this.scheduleHeavyPreviewWork();
             } else {
                 this.schedulePendingPdfRender();
+            }
+        }
+
+        onPatchComplete(savedScrollState, renderSeq) {
+            if (renderSeq !== this.renderCompletionSeq) return;
+            this.state = 'IDLE';
+            if (this.pendingScroll) {
+                this.executeScroll(this.pendingScroll);
+                this.pendingScroll = null;
+            } else {
+                this.restoreScrollState(savedScrollState);
             }
         }
 
