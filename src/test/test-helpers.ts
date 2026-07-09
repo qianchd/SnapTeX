@@ -7,7 +7,7 @@ import type { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
 import { BlockTextProvider, LatexCounterScanner } from '../scanner';
 import { AffiliationMetadata, AuthorMetadata, BlockTextSpan } from '../types';
-import { normalizeUri, stableHash } from '../utils';
+import { getBlockSpanText, normalizeUri, stableHash } from '../utils';
 
 export class MemoryFileProvider implements IFileProvider<vscode.Uri> {
     constructor(private readonly files: Map<string, string> = new Map()) {}
@@ -111,7 +111,7 @@ export function readFixture(name: string): string {
 }
 
 export function spanText(text: string, span: BlockTextSpan): string {
-    return text.slice(span.start, span.end);
+    return getBlockSpanText(text, span);
 }
 
 export function resultBlockTexts(result: DocumentParseResult): string[] {

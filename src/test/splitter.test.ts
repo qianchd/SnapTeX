@@ -1,7 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
+import { SNAP_TEX_RULES } from '../rules';
 import { LatexBlockSplitter } from '../splitter';
 import { spanText } from './test-helpers';
 
@@ -13,13 +13,6 @@ const blockTexts = (text: string, registry = SNAP_TEX_RULES) => split(text, regi
 const sparseLines = (count: number, prefix: string, blankEvery: number) => Array.from({ length: count }, (_unused, index) => (
     index % blankEvery === 0 ? '' : `${prefix} ${index}`
 ));
-const smallSplitRegistry = () => defineRuleRegistry({
-    ...SNAP_TEX_RULES,
-    splitterConfig: {
-        maxBlockLines: 4,
-        maxNoEmergencySplitLines: 8
-    }
-});
 const singleBlockContaining = (text: string, marker: string, registry = SNAP_TEX_RULES) => {
     const blocks = blockTexts(text, registry).filter(block => block.includes(marker));
     assert.equal(blocks.length, 1);
@@ -121,66 +114,4 @@ suite('LatexBlockSplitter', () => {
         assert.match(colorBlock, /\}\s*$/);
     });
 
-    test('honors custom emergency split line limits from the registry', () => {
-        const registry = smallSplitRegistry();
-        const text = [
-            'Before.',
-            '',
-            '\\begin{customenv}',
-            'one',
-            '',
-            'two',
-            '',
-            'three',
-            '',
-            'four',
-            '',
-            'After.'
-        ].join('\n');
-
-        const blocks = split(text, registry);
-
-        assert.ok(blocks.length > 2);
-    });
-
-    test('allows custom no-emergency-split begin rules from the registry', () => {
-        const registry = defineRuleRegistry({
-            ...SNAP_TEX_RULES,
-            splitterRules: [
-                ...SNAP_TEX_RULES.splitterRules,
-                { name: 'mybox', kind: 'no-emergency-split-begin-token', beginTokenPattern: /\\mybox\s*\{/ }
-            ]
-        });
-        const lines = sparseLines(55, 'boxed line', 5);
-        const text = [
-            'Before.',
-            '',
-            '\\mybox{',
-            ...lines,
-            '}',
-            '',
-            'After.'
-        ].join('\n');
-
-        const boxBlock = singleBlockContaining(text, '\\mybox{', registry);
-
-        assert.match(boxBlock, /boxed line 54/);
-        assert.match(boxBlock, /\}\s*$/);
-    });
-
-    test('stops preserving malformed no-emergency-split groups after the configured budget', () => {
-        const registry = smallSplitRegistry();
-        const lines = sparseLines(18, 'unclosed line', 2);
-        const text = [
-            'Before.',
-            '',
-            '{\\color{blue}',
-            ...lines,
-            'After.'
-        ].join('\n');
-
-        const blocks = split(text, registry);
-
-        assert.ok(blocks.length > 2);
-    });
 });

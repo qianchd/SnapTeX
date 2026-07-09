@@ -13,6 +13,8 @@ function normalizeEditorText(text: string): string {
 class TestEditorView {
     public selectionAnchor = -1;
     public scrollEffects = 0;
+    public lastEffects: unknown;
+    public scrollDOM = { scrollTop: 0, clientHeight: 100 };
 
     constructor(private text = '') {}
 
@@ -34,12 +36,22 @@ class TestEditorView {
             this.selectionAnchor = update.selection.anchor;
         }
         if (update.effects) {
+            this.lastEffects = update.effects;
             this.scrollEffects += 1;
         }
     }
 
     replaceText(text: string) {
         this.text = normalizeEditorText(text);
+    }
+
+    lineBlockAt(position: number) {
+        return { top: position + 200, height: 20 };
+    }
+
+    requestMeasure(request: { read: (view: EditorView) => unknown; write?: (measure: unknown, view: EditorView) => void }) {
+        const measure = request.read(this as unknown as EditorView);
+        request.write?.(measure, this as unknown as EditorView);
     }
 }
 
@@ -53,6 +65,8 @@ function createWritableHandle(writeText: (text: string) => void): BrowserWritabl
         }
     };
 }
+
+const flushAsync = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function installWindow(messages: HostToPreviewMessage[]) {
     const testGlobal = globalThis as unknown as { window: unknown };
@@ -69,9 +83,9 @@ function installWindow(messages: HostToPreviewMessage[]) {
     };
 }
 
-function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMessage[], index = 0): string {
+async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMessage[], index = 0): Promise<string> {
     const id = `block-${messages.length}`;
-    host.handlePreviewMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash: '' });
+    await host.handlePreviewMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash: '' });
     const response = [...messages].reverse().find(message => message.command === HostToPreviewCommand.BlockHtml && message.id === id);
     assert.ok(response && response.command === HostToPreviewCommand.BlockHtml);
     return response.html ?? '';
@@ -86,7 +100,7 @@ suite('StandaloneHost', () => {
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
-            await host.loadProject([
+            const rootPath = await host.loadProjectFiles([
                 {
                     path: '/main.tex',
                     text: [
@@ -102,9 +116,10 @@ suite('StandaloneHost', () => {
                     text: 'Original included paragraph.',
                     handle: createWritableHandle(text => written.set('/chapter.tex', text))
                 }
-            ], '/main.tex');
+            ]);
+            assert.equal(rootPath, '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.handleEditorUpdate();
             editor.replaceText('Updated included paragraph.');
@@ -112,7 +127,7 @@ suite('StandaloneHost', () => {
             assert.equal(host.isDirty('/chapter.tex'), true);
             await host.renderCurrentText();
             const saveResult = await host.saveCurrentText();
-            const html = requestBlockHtml(host, messages);
+            const html = await requestBlockHtml(host, messages);
 
             assert.equal(host.getRootPath(), '/main.tex');
             assert.equal(host.getActivePath(), '/chapter.tex');
@@ -158,7 +173,10 @@ suite('StandaloneHost', () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
-        const host = new StandaloneHost(editor as unknown as EditorView);
+        let stateChanges = 0;
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', () => undefined, () => {
+            stateChanges += 1;
+        });
 
         try {
             await host.loadProject([
@@ -185,20 +203,23 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             editor.replaceText('Unsaved included paragraph.');
+            host.handleEditorUpdate();
+            const beforeRootChangeStateChanges = stateChanges;
             await host.setPreviewRoot('/appendix.tex');
-            const appendixHtml = requestBlockHtml(host, messages);
+            const appendixHtml = await requestBlockHtml(host, messages);
 
             assert.equal(host.getRootPath(), '/appendix.tex');
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.equal(host.isDirty('/chapter.tex'), true);
+            assert.equal(stateChanges, beforeRootChangeStateChanges + 1);
             assert.match(appendixHtml, /Appendix root paragraph/);
             assert.doesNotMatch(appendixHtml, /Unsaved included paragraph/);
 
             await host.setPreviewRoot('/main.tex');
-            assert.match(requestBlockHtml(host, messages), /Unsaved included paragraph/);
+            assert.match(await requestBlockHtml(host, messages), /Unsaved included paragraph/);
         } finally {
             restoreWindow();
         }
@@ -226,7 +247,7 @@ suite('StandaloneHost', () => {
                 }
             ], '/old/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/old/chapter.tex');
             host.handleEditorUpdate();
             editor.replaceText('Unsaved old paragraph.');
@@ -248,7 +269,7 @@ suite('StandaloneHost', () => {
             assert.equal(host.getActivePath(), '/new/main.tex');
             assert.equal(host.isDirty('/old/chapter.tex'), false);
             assert.equal(host.isDirty('/new/main.tex'), false);
-            assert.match(requestBlockHtml(host, messages), /New root paragraph/);
+            assert.match(await requestBlockHtml(host, messages), /New root paragraph/);
         } finally {
             restoreWindow();
         }
@@ -277,10 +298,10 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.renderCurrentText();
-            requestBlockHtml(host, messages);
-            host.handlePreviewMessage({ command: PreviewToHostCommand.RequestPdf, id: 'pdf-1', path: 'missing-doc.pdf' });
+            await requestBlockHtml(host, messages);
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.RequestPdf, id: 'pdf-1', path: 'missing-doc.pdf' });
 
             assert.deepEqual(host.getDiagnostics(), [
                 'Missing input file: /missing-chapter.tex',
@@ -320,7 +341,7 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
 
@@ -332,7 +353,7 @@ suite('StandaloneHost', () => {
             assert.equal(typeof response.index, 'number');
             assert.equal(typeof response.ratio, 'number');
 
-            host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.', 0.5, false);
+            await host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.', 0.5, false);
             const manualResponse = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock && message.auto === false);
             assert.ok(manualResponse && manualResponse.command === HostToPreviewCommand.ScrollToBlock);
         } finally {
@@ -365,7 +386,7 @@ suite('StandaloneHost', () => {
                 ].join('\n')
             }], '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             const config = messages.find(message => message.command === HostToPreviewCommand.Config);
             assert.ok(config && config.command === HostToPreviewCommand.Config);
             assert.equal(config.config.autoScrollDelay, 250);
@@ -382,6 +403,56 @@ suite('StandaloneHost', () => {
             host.updateSettings({ livePreview: true, autoScrollSync: true });
             host.handleEditorUpdate();
             assert.equal(scheduledRenders, 1);
+
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
+            assert.equal(host.shouldSuppressEditorToPreview(), true);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('reloads the current root when backend mode changes', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', () => undefined, () => undefined, {
+            livePreview: false,
+            virtualMode: true,
+            backendMode: 'legacy'
+        });
+
+        try {
+            await host.loadProject([{
+                path: '/main.tex',
+                text: [
+                    '\\begin{document}',
+                    'Root paragraph.',
+                    '\\end{document}'
+                ].join('\n')
+            }], '/main.tex');
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await flushAsync();
+            const updateCount = messages.filter(message => message.command === HostToPreviewCommand.Update).length;
+
+            host.updateSettings({ backendMode: 'ast(experimental)' });
+            await flushAsync();
+            const updates = messages.filter(message => message.command === HostToPreviewCommand.Update);
+            const lastUpdate = updates[updates.length - 1];
+
+            assert.equal(updates.length, updateCount + 1);
+            assert.ok(lastUpdate && lastUpdate.command === HostToPreviewCommand.Update);
+            assert.ok(lastUpdate.payload.type === 'full');
+            assert.equal(lastUpdate.payload.resetPreviewState, true);
+
+            host.updateSettings({ backendMode: 'legacy' });
+            await flushAsync();
+            const switchedBackUpdates = messages.filter(message => message.command === HostToPreviewCommand.Update);
+            const switchedBackUpdate = switchedBackUpdates[switchedBackUpdates.length - 1];
+
+            assert.equal(switchedBackUpdates.length, updateCount + 2);
+            assert.ok(switchedBackUpdate && switchedBackUpdate.command === HostToPreviewCommand.Update);
+            assert.ok(switchedBackUpdate.payload.type === 'full');
+            assert.equal(switchedBackUpdate.payload.resetPreviewState, true);
         } finally {
             restoreWindow();
         }
@@ -414,7 +485,7 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
             const scroll = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock);
@@ -458,17 +529,19 @@ suite('StandaloneHost', () => {
                 }
             ], '/main.tex');
 
-            host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
             const scroll = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock);
             assert.ok(scroll && scroll.command === HostToPreviewCommand.ScrollToBlock);
 
             await host.openEditorFile('/main.tex');
-            await host.revealPreviewLocation(scroll.index, scroll.ratio, ['sync anchor']);
+            await host.revealPreviewLocation(scroll.index, scroll.ratio, ['sync anchor'], 0.25);
 
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.equal(editor.selectionAnchor, chapterText.indexOf('Included second paragraph'));
+            assert.equal(editor.scrollDOM.scrollTop, editor.selectionAnchor + 175);
+            assert.ok(editor.lastEffects);
         } finally {
             restoreWindow();
         }

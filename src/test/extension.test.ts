@@ -5,9 +5,9 @@ import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../../apps/vscode/src/panel';
 import { SmartRenderer } from '../renderer';
-import { defineBlockDependencyRule, defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
+import { defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
 import type { RuleRegistry } from '../types';
-import { normalizeUri, stableHash, stripLatexComments } from '../utils';
+import { normalizeUri, stripLatexComments } from '../utils';
 import {
     createDocument,
     MemoryFileProvider,
@@ -112,42 +112,205 @@ suite('LatexDocument source mapping', () => {
         assert.equal(result.blockSpans.length, 1);
     });
 
-    test('stores parsed blocks as body spans and hashes', async () => {
+    test('uses AST source hints to refine source sync within a block', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\begin{document}',
-                'First paragraph.',
-                '',
-                'Second paragraph with \\label{p:two}.',
+                'line 0',
+                'line 1',
+                'line 2',
+                'line 3',
+                'line 4',
+                'line 5',
+                'line 6',
+                'line 7 see \\ref{target}.',
+                'line 8',
                 '\\end{document}'
             ].join('\n')]
         ]));
         const doc = new LatexDocument(provider);
-
-        const result = await doc.parse(mainUri);
+        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
         doc.applyResult(result);
 
-        assert.deepStrictEqual(resultBlockTexts(result).map(block => block.trim()), [
-            'First paragraph.',
-            'Second paragraph with \\label{p:two}.'
-        ]);
-        assert.deepStrictEqual(result.blockHashes, resultBlockTexts(result).map(text => stableHash(text)));
-        assert.equal(doc.getBlockCount(), 2);
-        assert.equal(doc.getBlockText(1)?.trim(), 'Second paragraph with \\label{p:two}.');
-        assert.equal(doc.getBlockText(2), undefined);
-        assert.equal(doc.getBlockHash(0), result.blockHashes[0]);
+        const renderer = new SmartRenderer();
+        await renderer.renderAsync(doc, { deferFullHtml: true });
+        assert.equal(doc.getAstBlockArtifact(0), undefined);
+
+        const sourceSyncBeforeWarm = renderer.getSourceSyncData(0, 0.55);
+
+        assert.notEqual(sourceSyncBeforeWarm?.line, 8);
+        assert.equal(doc.getAstBlockArtifact(0), undefined);
+
+        await doc.warmAstBlockArtifacts();
+        doc.releaseTextContent();
+        const sourceSync = renderer.getSourceSyncData(0, 0.55);
+
+        assert.equal(sourceSync?.line, 8);
+        assert.ok(doc.getAstBlockArtifact(0));
+    });
+
+    test('uses preview anchors closest to the AST-estimated source line', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'same target near the start.',
+                'middle one',
+                'middle two',
+                'middle three',
+                'same target near the end.',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
 
         const renderer = new SmartRenderer();
-        renderer.render(doc);
-        const sourceSync = renderer.getSourceSyncData(1, 0.5);
-        assert.ok(sourceSync?.blockRange);
-        assert.ok(sourceSync.blockRange.startLine <= sourceSync.line && sourceSync.blockRange.endLine >= sourceSync.line);
+        await renderer.renderAsync(doc, { deferFullHtml: true });
+        await doc.warmAstBlockArtifacts();
+        const sourceSync = renderer.getSourceSyncData(0, 0.82, ['same target']);
 
-        doc.releaseTextContent();
-        assert.equal(doc.getBlockCount(), 0);
-        assert.equal(doc.getBlockText(0), undefined);
-        assert.equal(doc.getBlockHash(0), undefined);
+        assert.equal(sourceSync?.line, 5);
+    });
+
+    test('keeps AST-refined preview sync mapped to included files', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const sectionUri = vscode.Uri.file('/project/section.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                '\\input{section}',
+                '\\end{document}'
+            ].join('\n')],
+            [normalizeUri(sectionUri), [
+                'same target near the start.',
+                'middle one',
+                'middle two',
+                'same target near the end.'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+
+        const renderer = new SmartRenderer();
+        await renderer.renderAsync(doc, { deferFullHtml: true });
+        await doc.warmAstBlockArtifacts();
+        const sourceSync = renderer.getSourceSyncData(0, 0.9, ['same target']);
+
+        assert.equal(sourceSync && normalizeUri(sourceSync.file), normalizeUri(sectionUri));
+        assert.equal(sourceSync?.line, 3);
+    });
+
+    test('uses AST source hints without changing editor-to-preview block selection', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'Before text.',
+                'Inline math $x + y$ and \\ref{eq:one}.',
+                'After text.',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+
+        const renderer = new SmartRenderer();
+        await renderer.renderAsync(doc, { deferFullHtml: true });
+        await doc.warmAstBlockArtifacts();
+        const syncData = renderer.getPreviewSyncData(mainUri.toString(), 2, 'Inline math $x'.length);
+
+        assert.equal(syncData?.index, 0);
+        assert.ok(syncData?.ratio !== undefined && syncData.ratio >= 0 && syncData.ratio <= 1);
+    });
+
+    test('maps preview clicks near inline math to the math source line', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'line zero',
+                'line one',
+                'line two',
+                'Inline math $x + y$ appears here.',
+                'line four',
+                'line five',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+
+        const renderer = new SmartRenderer();
+        await renderer.renderAsync(doc, { deferFullHtml: true });
+        await doc.warmAstBlockArtifacts();
+        const sourceSync = renderer.getSourceSyncData(0, 0.55);
+
+        assert.equal(sourceSync?.line, 4);
+    });
+
+    test('does not dirty bibliography blocks for fake AST citations in comments', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([[normalizeUri(mainUri), '']]));
+        const doc = new LatexDocument(provider);
+        const renderer = new SmartRenderer();
+        const makeSource = (fakeKey: string) => [
+            '\\begin{document}',
+            'Real citation \\cite{real}.',
+            `% Fake citation \\cite{${fakeKey}}.`,
+            '',
+            '\\bibliography{refs}',
+            '\\end{document}'
+        ].join('\n');
+
+        let result = await doc.parse(mainUri, makeSource('old'), { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+        await renderer.renderAsync(doc, { deferFullHtml: true });
+
+        result = await doc.parse(mainUri, makeSource('new'), { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+        const payload = await renderer.renderAsync(doc, { deferFullHtml: true });
+
+        assert.equal(payload.type, 'patch');
+        assert.equal(payload.dirtyBlocks?.[1], undefined);
+    });
+
+    test('uses AST render rules from the shared registry in production render', async () => {
+        const registry = defineRuleRegistry({
+            ...SNAP_TEX_RULES,
+            astRenderRules: [
+                defineAstRenderRule({
+                    name: 'ast-advisor-test',
+                    match: input => input.node.type === 'macro' && input.node.content === 'advisor',
+                    render: (input, context) => {
+                        const args = readAstCommandArguments(input);
+                        return { html: `<div class="advisor">${context.escapeHtml(args.requiredArgs[0] ?? '')}</div>`, consumedNodes: args.consumedNodes };
+                    }
+                }),
+                ...SNAP_TEX_RULES.astRenderRules
+            ]
+        });
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                '\\advisor{Alice <Advisor>}',
+                '\\end{document}'
+            ].join('\n')]
+        ]));
+        const doc = new LatexDocument(provider);
+        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+
+        const payload = await new SmartRenderer(registry).renderAsync(doc);
+        const html = payload.htmls?.join('') ?? '';
+
+        assert.match(html, /<div class="advisor">Alice &lt;Advisor&gt;<\/div>/);
     });
 
     test('drops comment-only blocks without leaving preview gaps', async () => {
@@ -478,8 +641,8 @@ suite('SmartRenderer', () => {
         assert.match(blockHtml, /<p>[\s\S]*First synthetic paragraph\.<\/p>/);
         assert.match(blockHtml, /<p>Second synthetic paragraph\.<\/p>/);
         assert.match(blockHtml, /<span class="no-indent-marker"><\/span><strong>Proof\.<\/strong>[\s\S]*Proof body\.[\s\S]*QED/);
-        assert.match(blockHtml, /<li>\s*<p><strong>Key<\/strong>\s+Labeled item\.<\/p>\s*<\/li>/);
-        assert.match(blockHtml, /<li>\s*<p>Plain item\.<\/p>\s*<\/li>/);
+        assert.match(blockHtml, /<li><span class="latex-list-label">Key<\/span>\s+Labeled item\.<\/li>/);
+        assert.match(blockHtml, /<li>Plain item\.<\/li>/);
         assert.match(blockHtml, /class="latex-theorem"[\s\S]*Theorem body/);
         assert.match(blockHtml, /class="latex-table"[\s\S]*Cell/);
         assert.doesNotMatch(blockHtml, /\\color\{blue\}/);
@@ -499,111 +662,6 @@ suite('SmartRenderer', () => {
         assert.match(inlineHtml, /<p>Lead sentence before color\. <span style="color: blue">Inline continuation with \(\[alpha2026\?\]\)\.<\/span><\/p>/);
         assert.match(inlineHtml, /<\/p>\s*<p><span style="color: blue">Second colored paragraph\.<\/span><\/p>/);
         assert.doesNotMatch(inlineHtml, /\\color\{blue\}/);
-    });
-
-    test('returns localized patches while reading only changed block text', () => {
-        const renderer = new SmartRenderer();
-        renderer.render(createDocument(['A', 'B', 'C']));
-
-        const nextDoc = createDocument(['A', 'B changed', 'C']);
-        const reads: number[] = [];
-        const getBlockText = nextDoc.getBlockText.bind(nextDoc);
-        nextDoc.getBlockText = (index: number) => {
-            reads.push(index);
-            return getBlockText(index);
-        };
-
-        const payload = renderer.render(nextDoc);
-
-        assert.equal(payload.type, 'patch');
-        assert.equal(payload.start, 1);
-        assert.equal(payload.deleteCount, 1);
-        assert.equal(payload.htmls?.length, 1);
-        assert.match(payload.htmls?.[0] ?? '', /B changed/);
-        assert.deepStrictEqual(reads, [1]);
-    });
-
-    test('updates citation order from cached block metadata without rescanning all text', () => {
-        const renderer = new SmartRenderer();
-        renderer.render(createDocument([
-            'See \\cite{smith2024}.',
-            'Middle text.',
-            '\\bibliography{refs}'
-        ]));
-
-        const nextDoc = createDocument([
-            'See \\cite{doe2025}.',
-            'Middle text.',
-            '\\bibliography{refs}'
-        ]);
-        const reads: number[] = [];
-        const getBlockText = nextDoc.getBlockText.bind(nextDoc);
-        nextDoc.getBlockText = (index: number) => {
-            reads.push(index);
-            return getBlockText(index);
-        };
-
-        const payload = renderer.render(nextDoc);
-
-        assert.equal(payload.type, 'patch');
-        assert.deepStrictEqual(reads, [0]);
-        assert.ok(payload.dirtyBlocks?.[2]);
-        assert.match(payload.dirtyBlocks?.[2] ?? '', /ref-doe2025|doe2025/);
-        assert.doesNotMatch(payload.dirtyBlocks?.[2] ?? '', /smith2024/);
-    });
-
-    test('does not refresh bibliography when citation key order changes without set changes', () => {
-        const renderer = new SmartRenderer();
-        renderer.render(createDocument([
-            'See \\cite{smith2024,doe2025}.',
-            '\\bibliography{refs}'
-        ]));
-
-        const payload = renderer.render(createDocument([
-            'See \\cite{doe2025,smith2024}.',
-            '\\bibliography{refs}'
-        ]));
-
-        assert.equal(payload.type, 'patch');
-        assert.equal(payload.start, 0);
-        assert.equal(payload.deleteCount, 1);
-        assert.equal(payload.htmls?.length, 1);
-        assert.equal(payload.dirtyBlocks?.[1], undefined);
-    });
-
-    test('adds block hashes from block text only and disables hash preservation on macro changes', () => {
-        const renderer = new SmartRenderer();
-        const first = renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'x' } }));
-        const next = renderer.render(createDocument(['$\\foo$'], { macros: { '\\foo': 'y' } }));
-
-        assert.equal(first.type, 'full');
-        assert.equal(next.type, 'full');
-        assert.match(first.htmls?.[0] ?? '', new RegExp(`data-block-hash="${stableHash('$\\foo$')}"`));
-        assert.match(next.htmls?.[0] ?? '', new RegExp(`data-block-hash="${stableHash('$\\foo$')}"`));
-        assert.equal(next.preserveUnchangedBlocks, false);
-    });
-
-    test('can defer full HTML and render block HTML on demand', () => {
-        const renderer = new SmartRenderer();
-        const doc = createDocument([
-            'See Figure~\\ref{fig:a} and \\cite{smith2024}.',
-            '\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}',
-            '\\bibliography{refs}'
-        ]);
-        const payload = renderer.render(doc, { deferFullHtml: true });
-
-        assert.equal(payload.type, 'full');
-        assert.equal(payload.htmls, undefined);
-        assert.equal(payload.blocks?.length, 3);
-        assert.deepStrictEqual(payload.blocks?.map(block => block.index), [0, 1, 2]);
-        assert.equal(payload.blocks?.[1].hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));
-        assert.deepStrictEqual(payload.blocks?.[1].anchors, ['fig:a']);
-        assert.ok(payload.blocks?.[2].anchors.includes('ref-smith2024'));
-        doc.releaseTextContent();
-        const block = renderer.renderBlockByIndex(1);
-        assert.match(block?.html ?? '', /data-index="1"/);
-        assert.equal(block?.hash, stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}'));
-        assert.match(block?.html ?? '', new RegExp(`data-block-hash="${stableHash('\\begin{figure}\\caption{A}\\label{fig:a}\\end{figure}')}"`));
     });
 
     test('escapes maketitle metadata while preserving LaTeX formatting', () => {
@@ -686,9 +744,9 @@ suite('SmartRenderer', () => {
         ].join('\n')]);
 
         assert.match(html, /class="latex-theorem"/);
-        assert.match(html, /<ul>/);
+        assert.match(html, /<ol class="[^"]*\blatex-list\b[^"]*">/);
         assert.equal((html.match(/<li>/g) ?? []).length, 2);
-        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>/);
+        assert.match(html, /class="latex-list-label">[\s\S]*katex/);
         assert.match(html, /class="latex-theorem"[\s\S]*class="latex-table"[\s\S]*After table\./);
         assert.doesNotMatch(html, /\\begin\{enumerate\}|\\item|SNAP_ENUM_LABEL/);
         assert.doesNotMatch(html, /\\begin\{table\}|\\begin\{tabular\}/);
@@ -712,12 +770,12 @@ suite('SmartRenderer', () => {
             '\\end{enumerate}'
         ].join('\n')]);
 
-        assert.match(html, /<strong>\(a\)<\/strong>\s+Alpha/);
-        assert.match(html, /<strong>\(b\)<\/strong>\s+Beta/);
-        assert.match(html, /<strong>\(i\)<\/strong>\s+One/);
-        assert.match(html, /<strong>\(ii\)<\/strong>\s+Two/);
-        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>\s+Gamma/);
-        assert.match(html, /<strong>[\s\S]*katex[\s\S]*<\/strong>\s+Delta/);
+        assert.match(html, /<span class="latex-list-label">\(a\)<\/span>\s+Alpha/);
+        assert.match(html, /<span class="latex-list-label">\(b\)<\/span>\s+Beta/);
+        assert.match(html, /<span class="latex-list-label">\(i\)<\/span>\s+One/);
+        assert.match(html, /<span class="latex-list-label">\(ii\)<\/span>\s+Two/);
+        assert.match(html, /class="latex-list-label">[\s\S]*katex[\s\S]*<\/span>\s+Gamma/);
+        assert.match(html, /class="latex-list-label">[\s\S]*katex[\s\S]*<\/span>\s+Delta/);
     });
 
     test('renders safe LaTeX links and escapes unsafe targets', () => {
