@@ -8,13 +8,13 @@ import {
     escapeHtml,
     escapeHtmlAttribute,
     extractAndHideLabels,
+    formatEnumerateLabel,
     splitLatexCitationKeys,
     replaceLatexCommandCalls,
     resolveLatexStyles,
-    sanitizeHttpUrlForAttribute,
     stripLatexComments
 } from './utils';
-import { AffiliationMetadata, AuthorMetadata, BibEntry, BlockDependencyRule, MetadataExtractor, PreprocessRule, RenderContext, RuleRegistry, SplitterConfig, SplitterRule } from './types';
+import { BlockDependencyRule, PreprocessRule, RenderContext, RuleRegistry, SplitterConfig, SplitterRule } from './types';
 import { BibTexParser } from './bib';
 import {
     REGEX_STR,
@@ -26,22 +26,13 @@ import {
     R_THEBIBLIOGRAPHY,
     getTheoremDisplayName
 } from './patterns';
-import { createRefLink, createStyleHtmlProtector, renderMath } from './rule-helpers';
+import { createRefLink, createStyleHtmlProtector, renderBibliographyItemsHtml, renderExternalLinkHtml, renderInlineLatexHtml, renderMaketitleAuthorsHtml, renderMath, renderNumberedEquationHtml, renderReferenceLinksHtml } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
-
-function renderExternalLink(rawUrl: string, safeContent: string, className: string, renderer: RenderContext): string {
-    const safeHref = sanitizeHttpUrlForAttribute(rawUrl);
-
-    if (!safeHref) {
-        return renderer.protectHtml('link-text', safeContent);
-    }
-
-    return renderer.protectHtml(
-        'link',
-        `<a href="${safeHref}" class="latex-link ${className}" target="_blank" rel="noopener noreferrer">${safeContent}</a>`
-    );
-}
+import { DEFAULT_AST_RENDER_RULES } from './ast/rules/defaults';
+import type { AstRenderRule } from './ast/rules';
+export { readAstCommandArguments } from './ast/rules';
+export type { AstRenderContext, AstRenderInput, AstRenderResult, AstRenderRule } from './ast/rules';
 
 function replaceLatexLinkCommands(text: string, renderer: RenderContext): string {
     return replaceLatexCommandCalls(text, [
@@ -50,13 +41,19 @@ function replaceLatexLinkCommands(text: string, renderer: RenderContext): string
             requiredArgs: 2,
             render: call => {
                 const styledContent = resolveLatexStyles(call.requiredArgs[1].content, createStyleHtmlProtector(renderer));
-                return renderExternalLink(call.requiredArgs[0].content, escapeHtml(styledContent), 'latex-href', renderer);
+                const safeContent = escapeHtml(styledContent);
+                const linkHtml = renderExternalLinkHtml(call.requiredArgs[0].content, safeContent, 'latex-href');
+                return renderer.protectHtml(linkHtml ? 'link' : 'link-text', linkHtml ?? safeContent);
             }
         },
         {
             name: 'url',
             requiredArgs: 1,
-            render: call => renderExternalLink(call.requiredArgs[0].content, escapeHtml(call.requiredArgs[0].content.trim()), 'latex-url', renderer)
+            render: call => {
+                const safeContent = escapeHtml(call.requiredArgs[0].content.trim());
+                const linkHtml = renderExternalLinkHtml(call.requiredArgs[0].content, safeContent, 'latex-url');
+                return renderer.protectHtml(linkHtml ? 'link' : 'link-text', linkHtml ?? safeContent);
+            }
         }
     ]);
 }
@@ -66,6 +63,55 @@ interface CitationPart {
     key: string;
     author: string;
     year: string;
+}
+
+export function renderCitationHtml(
+    cmd: string,
+    keys: readonly string[],
+    options: { pre?: string; post?: string },
+    renderer: Pick<RenderContext, 'resolveCitation' | 'bibEntries'>
+): string {
+    const safePre = escapeHtml(options.pre ?? '');
+    const safePost = escapeHtml(options.post ?? '');
+    const parts: CitationPart[] = keys.map((key: string) => {
+        renderer.resolveCitation(key);
+        const entry = renderer.bibEntries.get(key);
+        if (!entry) { return { error: true, key, author: "unknown", year: "unknown" }; }
+        const author = BibTexParser.getShortAuthor(entry);
+        const year = escapeHtml(entry.fields.year || "unknown");
+        return { error: false, key, author, year };
+    });
+
+    const mkLink = (text: string, key: string) => {
+        const safeKey = escapeHtmlAttribute(key);
+        return `<a href="#ref-${safeKey}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
+    };
+    const renderYearText = (part: CitationPart, isLast: boolean) => {
+        if (part.error) { return `[${escapeHtml(part.key)}?]`; }
+        const suffix = isLast && safePost ? `, ${safePost}` : '';
+        return mkLink(`${part.year}${suffix}`, part.key);
+    };
+
+    if (cmd === 'citet') {
+        const formatted = parts.map((part, i) => {
+            const isLast = i === parts.length - 1;
+            if (part.error) { return renderYearText(part, isLast); }
+            return `${part.author} (${renderYearText(part, isLast)})`;
+        }).join(', ');
+        return safePre + formatted;
+    }
+
+    if (cmd === 'citeyear') {
+        return safePre + parts.map((part, i) => renderYearText(part, i === parts.length - 1)).join(', ');
+    }
+
+    let content = parts.map(part => {
+        if (part.error) { return `[${escapeHtml(part.key)}?]`; }
+        return mkLink(`${part.author}, ${part.year}`, part.key);
+    }).join('; ');
+    if (safePre) { content = safePre + content; }
+    if (safePost) { content = content + ', ' + safePost; }
+    return `(${content})`;
 }
 
 function replaceMathRefs(content: string, renderer: RenderContext): string {
@@ -83,10 +129,15 @@ export function defineBlockDependencyRule(rule: BlockDependencyRule): BlockDepen
     return rule;
 }
 
+export function defineAstRenderRule(rule: AstRenderRule): AstRenderRule {
+    return rule;
+}
+
 export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
     return {
         metadataExtractors: [...registry.metadataExtractors],
         renderRules: [...registry.renderRules].sort((a, b) => a.priority - b.priority),
+        astRenderRules: [...registry.astRenderRules],
         blockDependencyRules: [...registry.blockDependencyRules],
         splitterConfig: { ...registry.splitterConfig },
         splitterRules: [...registry.splitterRules]
@@ -104,8 +155,11 @@ export const DEFAULT_SPLITTER_CONFIG: SplitterConfig = {
 
 export const DEFAULT_SPLITTER_RULES: SplitterRule[] = [
     { name: 'ignored-environments', kind: 'ignored-env', envPattern: envPattern(`${REGEX_STR.SPLITTER_IGNORED}|appendices`) },
+    { name: 'transparent-containers', kind: 'transparent-env', envPattern: envPattern('appendices') },
+    { name: 'transparent-proof-containers', kind: 'transparent-env', envPattern: envPattern('proof'), preserveWrapper: true },
+    { name: 'transparent-list-containers', kind: 'transparent-env', envPattern: envPattern('itemize|enumerate'), preserveWrapper: true },
     { name: 'split-environments', kind: 'split-env', envPattern: envPattern(`${REGEX_STR.SPLITTER_MAJOR}|thebibliography|tikzpicture`, true) },
-    { name: 'tikz-and-bibliography', kind: 'no-emergency-split-env', envPattern: envPattern('thebibliography|tikzpicture') },
+    { name: 'list-tikz-and-bibliography', kind: 'no-emergency-split-env', envPattern: envPattern('itemize|enumerate|thebibliography|tikzpicture') },
     {
         name: 'long-brace-groups',
         kind: 'no-emergency-split-begin-token',
@@ -113,22 +167,6 @@ export const DEFAULT_SPLITTER_RULES: SplitterRule[] = [
     },
     { name: 'emergency-split-math-end', kind: 'emergency-split-end-env', envPattern: envPattern(REGEX_STR.MATH_ENVS, true) }
 ];
-
-function renderMetadataValue(value: string | undefined, renderer: RenderContext): string {
-    if (!value) { return ''; }
-    const lineBreakToken = renderer.protectHtml('meta-br', '<br/>');
-    let rendered = value.replace(/<br\s*\/?>/gi, lineBreakToken);
-    rendered = replaceLatexCommandCalls(rendered, {
-        name: 'footnote',
-        requiredArgs: 1,
-        render: () => ''
-    });
-    rendered = rendered.replace(/\\(?:and|And)\b/g, lineBreakToken);
-    rendered = rendered.replace(/\\\\/g, lineBreakToken);
-    rendered = rendered.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => renderMath(content.trim(), false, renderer));
-    rendered = resolveLatexStyles(rendered, createStyleHtmlProtector(renderer));
-    return escapeHtml(rendered);
-}
 
 /**
  * Complete custom metadata example.
@@ -145,35 +183,6 @@ export const EDITOR_METADATA_EXTRACTOR = {
             : {};
     }
 };
-
-function renderMaketitleAuthors(
-    authors: readonly AuthorMetadata[],
-    affiliations: readonly AffiliationMetadata[],
-    processMeta: (value: string | undefined) => string
-): string {
-    if (authors.length === 0) { return ''; }
-
-    const isPlainAuthorBlock = authors.length === 1
-        && authors[0].emails.length === 0
-        && authors[0].affiliationIds.length === 0
-        && affiliations.length === 0;
-    if (isPlainAuthorBlock) {
-        return `<div class="latex-author">${processMeta(authors[0].name)}</div>`;
-    }
-
-    const labelById = new Map(affiliations.map((affiliation, index) => [affiliation.id, String(index + 1)]));
-    const authorItems = authors.map(author => {
-        const labels = author.affiliationIds.map(id => labelById.get(id) ?? id).filter(Boolean);
-        const marker = labels.length > 0 ? `<sup>${escapeHtml(labels.join(','))}</sup>` : '';
-        const emailHtml = author.emails.length > 0
-            ? `<span class="latex-author-email">${author.emails.map(email => processMeta(email)).join(', ')}</span>`
-            : '';
-        return `<span class="latex-author-item">${processMeta(author.name)}${marker}${emailHtml}</span>`;
-    }).join('');
-    return `<div class="latex-author">${authorItems}</div>` + (affiliations.length > 0
-        ? `<div class="latex-affiliations">${affiliations.map((affiliation, index) => `<div><sup>${index + 1}</sup> ${processMeta(affiliation.text)}</div>`).join('')}</div>`
-        : '');
-}
 
 function abstractSentinel(content: string): string {
     const trimmed = content.trim();
@@ -197,49 +206,109 @@ function decodeEnumerateLabel(label: string): string {
         : label;
 }
 
-function indexToLetters(index: number): string {
-    let value = index;
-    let result = '';
-    while (value > 0) {
-        value--;
-        result = String.fromCharCode(97 + (value % 26)) + result;
-        value = Math.floor(value / 26);
-    }
-    return result;
-}
-
-function replaceCounterToken(template: string, token: '1' | 'i' | 'a', value: string): string | undefined {
-    if (token === '1') {
-        return template.includes('1') ? template.replace(/1/, value) : undefined;
-    }
-    const pattern = new RegExp(`(^|[^A-Za-z])${token}([^A-Za-z]|$)`);
-    return pattern.test(template)
-        ? template.replace(pattern, (_match, before, after) => `${before}${value}${after}`)
-        : undefined;
-}
-
-function formatEnumerateLabel(template: string, index: number): string {
-    return replaceCounterToken(template, '1', String(index))
-        ?? replaceCounterToken(template, 'i', toRoman(index, false))
-        ?? replaceCounterToken(template, 'a', indexToLetters(index))
-        ?? template;
-}
-
 function renderListLabel(label: string, renderer: RenderContext): string {
     const withMath = label.replace(/\$((?:\\.|[^\\$])*)\$/g, (_match, content) => renderMath(content, false, renderer));
     return escapeHtml(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
 }
 
-function renderBibliographyItems(items: Array<{ key: string; entry?: BibEntry }>, renderer: RenderContext): string {
-    let html = `<h2 class="latex-bibliography-header">References</h2><div class="latex-bibliography-list">`;
-    items.forEach(({ key, entry }) => {
-        const content = entry
-            ? BibTexParser.formatEntry(entry, renderer)
-            : `<span style="color:red">Bib entry '${escapeHtml(key)}' not found.</span>`;
-        const safeKey = escapeHtmlAttribute(key);
-        html += `<div class="bib-item" id="ref-${safeKey}" style="margin-bottom: 0.8em; padding-left: 2em; text-indent: -2em;">${content}</div>`;
-    });
-    return renderer.protectHtml('bib', html + `</div>`);
+function renderLatexListContent(content: string, renderer: RenderContext): string {
+    const nestedLists = renderLatexLists(content, renderer);
+    const styled = resolveLatexStyles(nestedLists, createStyleHtmlProtector(renderer));
+    return renderer.renderInline(styled.trim());
+}
+
+function renderLatexLists(text: string, renderer: RenderContext): string {
+    const beginRegex = /\\begin\{(itemize|enumerate)\}\s*(?:\[([^\]]*)\])?/g;
+    let result = "";
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = beginRegex.exec(text)) !== null) {
+        const end = findListEnvironmentEnd(text, beginRegex.lastIndex);
+        if (!end) {
+            continue;
+        }
+
+        result += text.slice(cursor, match.index);
+        result += renderer.protectHtml('list', renderLatexListHtml(
+            match[1] === 'enumerate' ? 'ol' : 'ul',
+            match[2] ? decodeEnumerateLabel(match[2]) : undefined,
+            text.slice(beginRegex.lastIndex, end.contentEnd),
+            renderer
+        ));
+        cursor = end.end;
+        beginRegex.lastIndex = cursor;
+    }
+
+    return result + text.slice(cursor);
+}
+
+function findListEnvironmentEnd(text: string, start: number): { contentEnd: number; end: number } | undefined {
+    const tokenRegex = /\\(begin|end)\{(itemize|enumerate)\}/g;
+    tokenRegex.lastIndex = start;
+    let depth = 1;
+    let match: RegExpExecArray | null;
+
+    while ((match = tokenRegex.exec(text)) !== null) {
+        depth += match[1] === 'begin' ? 1 : -1;
+        if (depth === 0) {
+            return { contentEnd: match.index, end: tokenRegex.lastIndex };
+        }
+    }
+
+    return undefined;
+}
+
+function renderLatexListHtml(
+    tagName: 'ul' | 'ol',
+    labelTemplate: string | undefined,
+    content: string,
+    renderer: RenderContext
+): string {
+    const items = splitLatexListItems(content);
+    if (items.length === 0) {
+        return '';
+    }
+
+    const itemHtml = items.map((item, index) => {
+        const rawLabel = item.label ?? (labelTemplate ? formatEnumerateLabel(labelTemplate, index + 1) : '');
+        const labelHtml = rawLabel ? `<span class="latex-list-label">${renderListLabel(rawLabel, renderer)}</span> ` : '';
+        return `<li>${labelHtml}${renderLatexListContent(item.content, renderer)}</li>`;
+    }).join('');
+    const className = labelTemplate || items.some(item => item.label) ? 'latex-list latex-list-custom-label' : 'latex-list';
+
+    return `<${tagName} class="${className}">${itemHtml}</${tagName}>`;
+}
+
+function splitLatexListItems(content: string): Array<{ label?: string; content: string }> {
+    const items: Array<{ label?: string; content: string }> = [];
+    const tokenRegex = /\\begin\{(?:itemize|enumerate)\}|\\end\{(?:itemize|enumerate)\}|\\item(?:\s*\[([^\]]*)\])?/g;
+    let depth = 0;
+    let current: { label?: string; start: number } | undefined;
+    let match: RegExpExecArray | null;
+
+    while ((match = tokenRegex.exec(content)) !== null) {
+        if (match[0].startsWith('\\begin')) {
+            depth++;
+            continue;
+        }
+        if (match[0].startsWith('\\end')) {
+            depth = Math.max(0, depth - 1);
+            continue;
+        }
+        if (depth > 0) {
+            continue;
+        }
+        if (current) {
+            items.push({ label: current.label, content: content.slice(current.start, match.index) });
+        }
+        current = { label: match[1] ? decodeEnumerateLabel(match[1]) : undefined, start: tokenRegex.lastIndex };
+    }
+
+    if (current) {
+        items.push({ label: current.label, content: content.slice(current.start) });
+    }
+    return items;
 }
 
 export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
@@ -334,12 +403,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 const hiddenLabels = hiddenHtml ? renderer.protectHtml('raw', hiddenHtml) : '';
                 let result = protectedTag + hiddenLabels;
                 if (eqNumHTML) {
-                    result = renderer.protectHtml('math-block', `<div class="equation-container" style="position: relative; width: 100%;">
-                                ${protectedTag}
-                                <span class="eq-no" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); pointer-events: none;">
-                                    ${eqNumHTML}
-                                </span>
-                            </div>${hiddenLabels}`);
+                    result = renderer.protectHtml('math-block', renderNumberedEquationHtml(protectedTag, eqNumHTML, hiddenLabels));
                 }
                 return result + (isFollowedByText ? renderer.protectHtml('raw', '<span class="no-indent-marker"></span>') : '');
             });
@@ -380,14 +444,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             });
 
             text = text.replace(R_REF, (_match, type, labels) => {
-                const htmlLinks = labels.split(',').map((label: string) => {
-                    label = label.trim();
-                    const safeLabel = escapeHtmlAttribute(label);
-                    return `<a href="#${safeLabel}" class="latex-link latex-ref sn-ref" data-key="${safeLabel}">?</a>`;
-                });
-                const joinedLinks = htmlLinks.join(', ');
-                const result = (type === 'eqref') ? `(${joinedLinks})` : joinedLinks;
-                return renderer.protectHtml('ref', result);
+                return renderer.protectHtml('ref', renderReferenceLinksHtml(labels.split(','), type === 'eqref' ? 'eqref' : 'ref'));
             });
             return text;
         }
@@ -403,51 +460,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 let post = '';
                 if (opt2 !== undefined) { pre = opt1 ? opt1 + ' ' : ''; post = opt2; }
                 else if (opt1 !== undefined) { post = opt1; }
-                const safePre = escapeHtml(pre);
-                const safePost = escapeHtml(post);
-
-                const parts: CitationPart[] = keyArray.map((key: string) => {
-                    renderer.resolveCitation(key);
-                    const entry = renderer.bibEntries.get(key);
-                    if (!entry) { return { error: true, key, author: "unknown", year: "unknown" }; }
-                    const author = BibTexParser.getShortAuthor(entry);
-                    const year = escapeHtml(entry.fields.year || "unknown");
-                    return { error: false, key, author, year };
-                });
-
-                const mkLink = (text: string, key: string) => {
-                    const safeKey = escapeHtmlAttribute(key);
-                    return `<a href="#ref-${safeKey}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
-                };
-                const renderYearText = (part: CitationPart, isLast: boolean) => {
-                    if (part.error) { return `[${escapeHtml(part.key)}?]`; }
-                    const suffix = isLast && safePost ? `, ${safePost}` : '';
-                    return mkLink(`${part.year}${suffix}`, part.key);
-                };
-
-                let finalHtml = "";
-                if (cmd === 'citet') {
-                    const formatted = parts.map((part, i) => {
-                        const isLast = i === parts.length - 1;
-                        if (part.error) { return renderYearText(part, isLast); }
-                        return `${part.author} (${renderYearText(part, isLast)})`;
-                    }).join(', ');
-                    finalHtml = safePre + formatted;
-                } else if (cmd === 'citeyear') {
-                    const formatted = parts.map((part, i) => renderYearText(part, i === parts.length - 1)).join(', ');
-                    finalHtml = safePre + formatted;
-                } else {
-                    const inner = parts.map((part) => {
-                        if (part.error) { return `[${escapeHtml(part.key)}?]`; }
-                        return mkLink(`${part.author}, ${part.year}`, part.key);
-                    }).join('; ');
-                    let content = inner;
-                    if (safePre) { content = safePre + content; }
-                    if (safePost) { content = content + ', ' + safePost; }
-                    finalHtml = `(${content})`;
-                }
-
-                return renderer.protectHtml('cite', finalHtml);
+                return renderer.protectHtml('cite', renderCitationHtml(cmd, keyArray, { pre, post }, renderer));
             });
             return text;
         }
@@ -461,7 +474,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             text = text.replace(new RegExp(R_THEBIBLIOGRAPHY, 'gi'), (_match, content) => {
                 const entries = Array.from(BibTexParser.parseBibItems(content).values());
                 return entries.length
-                    ? renderBibliographyItems(entries.map(entry => ({ key: entry.key, entry })), renderer)
+                    ? renderer.protectHtml('bib', renderBibliographyItemsHtml(entries.map(entry => ({ key: entry.key, entry })), renderer))
                     : '';
             });
             return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), () => {
@@ -477,7 +490,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                     return authA.localeCompare(authB);
                 });
 
-                return renderBibliographyItems(sortedKeys.map(key => ({ key, entry: renderer.bibEntries.get(key) })), renderer);
+                return renderer.protectHtml('bib', renderBibliographyItemsHtml(sortedKeys.map(key => ({ key, entry: renderer.bibEntries.get(key) })), renderer));
             });
         }
     },
@@ -560,10 +573,10 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
                 const metadata = renderer.metadata;
-                const processMeta = (value: string | undefined) => renderMetadataValue(value, renderer);
+                const processMeta = (value: string | undefined) => renderInlineLatexHtml(value, tex => renderMath(tex, false, renderer));
 
                 const safeTitle = processMeta(metadata?.title);
-                const safeAuthors = renderMaketitleAuthors(
+                const safeAuthors = renderMaketitleAuthorsHtml(
                     metadata?.authors ?? [],
                     metadata?.affiliations ?? [],
                     processMeta
@@ -635,33 +648,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
         name: 'lists',
         priority: 180,
-        apply: (text, renderer: RenderContext) => {
-            const listStack: Array<{ type: 'ul' | 'ol'; labelTemplate?: string; itemIndex: number }> = [];
-            return text.replace(/(\\begin\{(itemize|enumerate)\}(?:\[([^\]]*)\])?)|(\\end\{(?:itemize|enumerate)\})|(\\item(?:\[(.*?)\])?)/g, (match, pBegin, envName, beginLabel, pEnd, pItem, pLabel) => {
-                if (pBegin) {
-                    listStack.push({
-                        type: envName === 'itemize' ? 'ul' : 'ol',
-                        labelTemplate: beginLabel ? decodeEnumerateLabel(beginLabel) : undefined,
-                        itemIndex: 0
-                    });
-                    return '\n\n';
-                } else if (pEnd) {
-                    listStack.pop();
-                    return '\n\n';
-                } else if (pItem) {
-                    const depth = listStack.length;
-                    const indent = '  '.repeat(Math.max(0, depth - 1));
-                    const current = listStack[listStack.length - 1] || { type: 'ul' as const, itemIndex: 0 };
-                    current.itemIndex++;
-                    const rawLabel = pLabel
-                        ? pLabel
-                        : current.labelTemplate ? formatEnumerateLabel(current.labelTemplate, current.itemIndex) : '';
-                    if (rawLabel) { return `\n${indent}- **${renderListLabel(rawLabel, renderer)}** `; }
-                    return `\n${indent}${current.type === 'ul' ? '-' : '1.'} `;
-                }
-                return match;
-            });
-        }
+        apply: (text, renderer: RenderContext) => renderLatexLists(text, renderer)
     },
 
     {
@@ -676,8 +663,11 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
 export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
     {
         name: 'maketitle',
-        collect: ({ text, deps }) => {
-            if (!text.includes('\\maketitle')) { return []; }
+        collect: ({ text, artifact, deps }) => {
+            const hasMaketitle = artifact
+                ? artifact.metadata.macros.includes('maketitle')
+                : text.includes('\\maketitle');
+            if (!hasMaketitle) { return []; }
             return [
                 deps.metadata('title'),
                 deps.metadata('date'),
@@ -689,8 +679,11 @@ export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
     },
     {
         name: 'bibliography',
-        collect: ({ text, deps }) => {
-            if (!R_BIBLIOGRAPHY.test(text)) { return []; }
+        collect: ({ text, artifact, deps }) => {
+            const hasBibliography = artifact
+                ? artifact.metadata.macros.includes('bibliography')
+                : R_BIBLIOGRAPHY.test(text);
+            if (!hasBibliography) { return []; }
             return [deps.citedKeys()];
         }
     }
@@ -702,6 +695,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
         EDITOR_METADATA_EXTRACTOR
     ],
     renderRules: DEFAULT_RENDER_RULES,
+    astRenderRules: DEFAULT_AST_RENDER_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: DEFAULT_SPLITTER_RULES

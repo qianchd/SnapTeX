@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { SmartRenderer } from '../../../src/renderer';
 import { TexPreviewPanel } from './panel';
 import { findNearestSyncAnchorLine, getSyncAnchorContext, normalizeUri } from '../../../src/utils';
 import { HostToPreviewCommand } from '../../../src/preview-messages';
@@ -67,29 +66,31 @@ function areUrisEqual(uri1: vscode.Uri, uri2: vscode.Uri): boolean {
  * VS Code extension entry point.
  *
  * The extension owns command registration, editor-preview synchronization, and
- * preview panel lifecycle. Rendering and parsing are delegated to SmartRenderer
- * and TexPreviewPanel so this file stays focused on VS Code events.
+ * preview panel lifecycle. Rendering and parsing are delegated to
+ * PreviewUpdateService and TexPreviewPanel so this file stays focused on VS Code events.
  */
 export function activate(context: vscode.ExtensionContext) {
-    const renderer = new SmartRenderer();
     const fileProvider = new VscodeFileProvider();
-    const updateService = new PreviewUpdateService(fileProvider, renderer);
+    const updateService = new PreviewUpdateService(fileProvider);
 
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
         if (!TexPreviewPanel.currentPanel) {return;}
 
-        const syncData = renderer.getPreviewSyncData(editor.document.uri.toString(), targetLine);
+        const sourceUri = editor.document.uri.toString();
+        const syncData = updateService.getPreviewSyncData(sourceUri, targetLine, targetChar);
         if (!syncData) {
-            console.log(`[SnapTeX] Sync failed: No map found for ${editor.document.uri.toString()}`);
+            if (!isAutoScroll || updateService.isKnownFile(sourceUri)) {
+                console.log(`[SnapTeX] Sync failed: No map found for ${sourceUri}`);
+            }
             return;
         }
 
-        const { index, ratio } = syncData;
+        const { index, ratio, sourceStart, sourceEnd } = syncData;
         const anchor = getAnchorContext(editor.document, targetLine, targetChar);
 
         suppressPreviewToTextUntil = Date.now() + getSyncSuppressionDuration();
         TexPreviewPanel.currentPanel.postMessage({
-            command: HostToPreviewCommand.ScrollToBlock, index, ratio, anchor, auto: isAutoScroll, viewRatio
+            command: HostToPreviewCommand.ScrollToBlock, index, ratio, anchor, sourceStart, sourceEnd, auto: isAutoScroll, viewRatio
         });
     };
 
@@ -98,17 +99,23 @@ export function activate(context: vscode.ExtensionContext) {
         autoSyncTimer = undefined;
     };
 
+    const shouldSuppressTextToPreview = () => Date.now() < suppressTextToPreviewUntil;
+
     const scheduleAutoSyncToPreview = (
         editor: vscode.TextEditor,
         targetLine: number,
         viewRatio: number,
-        targetChar?: number
+        targetChar?: number,
+        delayMs: number = getAutoScrollDelay()
     ) => {
         clearPendingAutoSync();
         autoSyncTimer = setTimeout(() => {
             autoSyncTimer = undefined;
-            triggerSyncToPreview(editor, targetLine, true, viewRatio, targetChar);
-        }, getAutoScrollDelay());
+            if (shouldSuppressTextToPreview()) {
+                return;
+            }
+            void triggerSyncToPreview(editor, targetLine, true, viewRatio, targetChar);
+        }, delayMs);
     };
 
     /**
@@ -128,7 +135,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (currentRenderedUri) {
             if (areUrisEqual(activeUri, currentRenderedUri)) {
                 targetRoot = currentRenderedUri;
-            } else if (renderer.isKnownFile(activeUri.toString())) {
+            } else if (updateService.isKnownFile(activeUri.toString())) {
                 targetRoot = currentRenderedUri;
             } else {
                 if (!renderOnSwitch && !force) {
@@ -148,6 +155,26 @@ export function activate(context: vscode.ExtensionContext) {
         (force: boolean) => updatePreview(force),
         () => vscode.workspace.getConfiguration('snaptex').get<number>('delay', 200)
     );
+
+    const fullReloadPreview = () => {
+        const currentPanel = TexPreviewPanel.currentPanel;
+        if (!currentPanel) {
+            updateService.resetState();
+            return;
+        }
+        const rootUri = currentRenderedUri ?? vscode.window.activeTextEditor?.document.uri;
+        clearPendingAutoSync();
+        if (rootUri) {
+            currentRenderedUri = rootUri;
+        }
+        updateService.resetState();
+        void currentPanel.update(rootUri, { resetPreviewState: true });
+    };
+
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (!event.affectsConfiguration('snaptex.backendMode')) { return; }
+        fullReloadPreview();
+    }));
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {
         if (TexPreviewPanel.currentPanel) {
@@ -176,14 +203,15 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.syncToPreview', () => {
         const editor = vscode.window.activeTextEditor;
         clearPendingAutoSync();
-        if (editor) { triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character); }
+        if (editor) { void triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character); }
     }));
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchors: string[] = [], viewRatio: number = 0.5) => {
+        vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchors: string[] = [], viewRatio: number = 0.5, sourceStart?: number, sourceEnd?: number) => {
+            clearPendingAutoSync();
             suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
-            const sourceLoc = renderer.getSourceSyncData(index, ratio);
+            const sourceLoc = updateService.getSourceSyncData(index, ratio, anchors, sourceStart, sourceEnd);
             if (!sourceLoc) {return;}
 
             const targetUri = vscode.Uri.parse(sourceLoc.file);
@@ -229,9 +257,10 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAutoScrollSyncEnabled()) { return; }
         if (Date.now() < suppressPreviewToTextUntil) { return; }
 
+        clearPendingAutoSync();
         suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
-        const sourceLoc = renderer.getSourceSyncData(index, ratio);
+        const sourceLoc = updateService.getSourceSyncData(index, ratio);
         if (!sourceLoc) {return;}
 
         const targetUri = vscode.Uri.parse(sourceLoc.file);
@@ -244,6 +273,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
+    context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.previewLayoutChanged', () => {
+        clearPendingAutoSync();
+        const until = Date.now() + getSyncSuppressionDuration();
+        suppressTextToPreviewUntil = Math.max(suppressTextToPreviewUntil, until);
+        suppressPreviewToTextUntil = Math.max(suppressPreviewToTextUntil, until);
+    }));
+
     context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(e => {
         if (e.textEditor !== vscode.window.activeTextEditor || isEditorScrolling) {return;}
 
@@ -254,15 +290,23 @@ export function activate(context: vscode.ExtensionContext) {
             activeCursorScreenRatio = Math.max(0.1, Math.min(0.9, activeCursorScreenRatio));
         }
 
-        if (!TexPreviewPanel.currentPanel || Date.now() < suppressTextToPreviewUntil) { return; }
+        if (!TexPreviewPanel.currentPanel) { return; }
         if (!isAutoScrollSyncEnabled()) { return; }
+        if (shouldSuppressTextToPreview()) {
+            clearPendingAutoSync();
+            return;
+        }
 
         scheduleAutoSyncToPreview(e.textEditor, sel.line, activeCursorScreenRatio, sel.character);
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
-        if (!TexPreviewPanel.currentPanel || Date.now() < suppressTextToPreviewUntil) { return; }
+        if (!TexPreviewPanel.currentPanel) { return; }
         if (!isAutoScrollSyncEnabled()) { return; }
+        if (shouldSuppressTextToPreview()) {
+            clearPendingAutoSync();
+            return;
+        }
 
         isEditorScrolling = true;
         if (scrollEndTimer) {clearTimeout(scrollEndTimer);}

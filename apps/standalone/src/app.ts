@@ -1,12 +1,13 @@
 import { basicSetup, EditorView } from 'codemirror';
-import { EditorState } from '@codemirror/state';
-import { keymap } from '@codemirror/view';
+import { EditorState, StateEffect, StateField } from '@codemirror/state';
+import { Decoration, type DecorationSet, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri, normalizeBrowserPath, type BrowserProjectFile } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
+import { chooseRootPath, isProjectTextFile } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
-import { SmartRenderer } from '../../../src/renderer';
-import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext } from '../../../src/utils';
+import type { BackendMode } from '../../../src/types';
+import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
 declare global {
@@ -36,6 +37,7 @@ export interface StandalonePreviewSettings {
     renderDelayMs: number;
     autoScrollDelayMs: number;
     virtualMode: boolean;
+    backendMode: BackendMode;
     debugMemory: boolean;
 }
 
@@ -45,8 +47,24 @@ export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     renderDelayMs: 150,
     autoScrollDelayMs: 100,
     virtualMode: true,
+    backendMode: 'legacy',
     debugMemory: false
 };
+
+const flashEditorLineEffect = StateEffect.define<number | null>();
+const flashEditorLineField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update: (decorations, transaction) => {
+        for (const effect of transaction.effects) {
+            if (!effect.is(flashEditorLineEffect)) { continue; }
+            if (effect.value === null) { return Decoration.none; }
+            const line = transaction.state.doc.lineAt(effect.value);
+            return Decoration.set([Decoration.line({ class: 'snaptex-editor-jump-highlight' }).range(line.from)]);
+        }
+        return decorations.map(transaction.changes);
+    },
+    provide: field => EditorView.decorations.from(field)
+});
 
 function debounce(callback: () => void, delayMs: number | (() => number)): () => void {
     let timer: number | undefined;
@@ -56,21 +74,6 @@ function debounce(callback: () => void, delayMs: number | (() => number)): () =>
         }
         timer = window.setTimeout(callback, typeof delayMs === 'function' ? delayMs() : delayMs);
     };
-}
-
-function lineAt(text: string, line: number): string {
-    return text.split(/\r?\n/)[line] ?? '';
-}
-
-function lineStartOffset(text: string, line: number): number {
-    if (line <= 0) { return 0; }
-    let offset = 0;
-    for (let index = 0; index < line; index++) {
-        const next = text.indexOf('\n', offset);
-        if (next === -1) { return text.length; }
-        offset = next + 1;
-    }
-    return offset;
 }
 
 function normalizeEditorText(text: string): string {
@@ -84,7 +87,7 @@ export class StandaloneHost {
     private rootUri: BrowserUri;
     private activeUri: BrowserUri;
     private readonly fileProvider = new BrowserFileProvider();
-    private readonly updateService = new PreviewUpdateService(this.fileProvider, new SmartRenderer());
+    private readonly updateService = new PreviewUpdateService(this.fileProvider);
     private readonly savedTexts = new Map<string, string>();
     private readonly dirtyPaths = new Set<string>();
     private readonly diagnostics = new Set<string>();
@@ -94,6 +97,7 @@ export class StandaloneHost {
     private programmaticEditorText: string | undefined;
     private suppressNextSelectionSync = false;
     private suppressEditorToPreviewUntil = 0;
+    private editorFlashToken = 0;
     private settings: StandalonePreviewSettings;
 
     constructor(
@@ -112,7 +116,7 @@ export class StandaloneHost {
         window.snaptexStandaloneHost = this;
         const queued = window.snaptexPreviewMessageQueue ?? [];
         window.snaptexPreviewMessageQueue = [];
-        queued.forEach(message => this.handlePreviewMessage(message));
+        queued.forEach(message => void this.handlePreviewMessage(message));
     }
 
     async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
@@ -131,6 +135,15 @@ export class StandaloneHost {
         await this.renderCurrentText();
     }
 
+    async loadProjectFiles(files: readonly BrowserProjectFile[]): Promise<string | undefined> {
+        const rootPath = chooseRootPath(files);
+        if (!rootPath) {
+            return undefined;
+        }
+        await this.loadProject(files, rootPath);
+        return rootPath;
+    }
+
     async openEditorFile(path: string) {
         this.persistActiveEditorText();
         this.activeUri = new BrowserUri(path);
@@ -147,6 +160,7 @@ export class StandaloneHost {
         this.persistActiveEditorText();
         this.rootUri = new BrowserUri(path);
         this.updateService.resetState();
+        this.notifyStateChanged();
         await this.renderCurrentText();
     }
 
@@ -166,6 +180,10 @@ export class StandaloneHost {
         return [...this.diagnostics];
     }
 
+    getProjectTextPaths(): readonly string[] {
+        return this.projectPaths.filter(isProjectTextFile);
+    }
+
     getSettings(): StandalonePreviewSettings {
         return { ...this.settings };
     }
@@ -173,13 +191,15 @@ export class StandaloneHost {
     updateSettings(settings: Partial<StandalonePreviewSettings>) {
         const previousVirtualMode = this.settings.virtualMode;
         const previousLivePreview = this.settings.livePreview;
+        const previousBackendMode = this.settings.backendMode;
         this.settings = { ...this.settings, ...settings };
         if (this.previewReady) {
             this.postPreviewConfig();
-            if (previousVirtualMode !== this.settings.virtualMode) {
+            const backendModeChanged = previousBackendMode !== this.settings.backendMode;
+            if (previousVirtualMode !== this.settings.virtualMode || backendModeChanged) {
                 this.updateService.resetState();
             }
-            if (previousVirtualMode !== this.settings.virtualMode || (!previousLivePreview && this.settings.livePreview)) {
+            if (previousVirtualMode !== this.settings.virtualMode || backendModeChanged || (!previousLivePreview && this.settings.livePreview)) {
                 void this.renderCurrentText();
             }
         }
@@ -255,16 +275,20 @@ export class StandaloneHost {
             return;
         }
 
-        const syncData = this.updateService.getPreviewSyncData(this.activeUri.toString(), line);
+        const syncData = this.updateService.getPreviewSyncData(this.activeUri.toString(), line, character);
         if (!syncData) {
             return;
         }
 
+        const document = this.editorView.state.doc;
+        const anchorText = lineText ?? document.line(Math.max(1, Math.min(document.lines, line + 1))).text;
         this.postToPreview({
             command: HostToPreviewCommand.ScrollToBlock,
             index: syncData.index,
             ratio: syncData.ratio,
-            anchor: getSyncAnchorContext(lineText ?? lineAt(this.editorView.state.doc.toString(), line), character),
+            anchor: getSyncAnchorContext(anchorText, character),
+            sourceStart: syncData.sourceStart,
+            sourceEnd: syncData.sourceEnd,
             auto,
             viewRatio
         });
@@ -278,14 +302,28 @@ export class StandaloneHost {
         this.suppressEditorToPreviewUntil = Math.max(this.suppressEditorToPreviewUntil, Date.now() + durationMs);
     }
 
+    private scrollEditorPositionToViewRatio(position: number, viewRatio: number) {
+        const clampedRatio = Math.max(0, Math.min(1, viewRatio));
+        this.editorView.requestMeasure({
+            key: this,
+            read: view => ({
+                lineTop: view.lineBlockAt(position).top,
+                editorHeight: view.scrollDOM.clientHeight
+            }),
+            write: ({ lineTop, editorHeight }, view) => {
+                view.scrollDOM.scrollTop = Math.max(0, lineTop - editorHeight * clampedRatio);
+            }
+        });
+    }
+
     consumeSelectionSyncSuppression(): boolean {
         const suppressed = this.suppressNextSelectionSync;
         this.suppressNextSelectionSync = false;
         return suppressed;
     }
 
-    private async openSourceForPreview(index: number, ratio: number) {
-        const source = this.updateService.getSourceSyncData(index, ratio);
+    private async openSourceForPreview(index: number, ratio: number, anchors: readonly string[] = [], sourceStart?: number, sourceEnd?: number) {
+        const source = this.updateService.getSourceSyncData(index, ratio, anchors, sourceStart, sourceEnd);
         if (!source) {
             return undefined;
         }
@@ -301,8 +339,8 @@ export class StandaloneHost {
         };
     }
 
-    async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5) {
-        const target = await this.openSourceForPreview(index, ratio);
+    async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5, sourceStart?: number, sourceEnd?: number) {
+        const target = await this.openSourceForPreview(index, ratio, anchors, sourceStart, sourceEnd);
         if (!target) {
             return;
         }
@@ -316,13 +354,20 @@ export class StandaloneHost {
             targetLine = findNearestSyncAnchorLine(anchors, startLine, endLine, targetLine, line => lines[line] ?? '') ?? targetLine;
         }
 
-        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(text, Math.max(0, targetLine)));
+        const position = Math.min(this.editorView.state.doc.length, offsetAtLine(text, Math.max(0, targetLine)));
         this.suppressNextSelectionSync = true;
         this.suppressEditorToPreview();
         this.editorView.dispatch({
             selection: { anchor: position },
-            effects: EditorView.scrollIntoView(position, { y: viewRatio < 0.35 ? 'start' : viewRatio > 0.65 ? 'end' : 'center' })
+            effects: flashEditorLineEffect.of(position)
         });
+        this.scrollEditorPositionToViewRatio(position, viewRatio);
+        const token = ++this.editorFlashToken;
+        globalThis.setTimeout(() => {
+            if (token === this.editorFlashToken) {
+                this.editorView.dispatch({ effects: flashEditorLineEffect.of(null) });
+            }
+        }, 1200);
     }
 
     async syncPreviewScroll(index: number, ratio: number) {
@@ -335,7 +380,7 @@ export class StandaloneHost {
             return;
         }
 
-        const position = Math.min(this.editorView.state.doc.length, lineStartOffset(target.text, Math.max(0, target.source.line)));
+        const position = Math.min(this.editorView.state.doc.length, offsetAtLine(target.text, Math.max(0, target.source.line)));
         this.suppressEditorToPreview();
         this.editorView.dispatch({
             effects: EditorView.scrollIntoView(position, { y: 'center' })
@@ -355,7 +400,7 @@ export class StandaloneHost {
         }
     }
 
-    handlePreviewMessage(message: PreviewToHostMessage) {
+    async handlePreviewMessage(message: PreviewToHostMessage) {
         switch (message.command) {
             case PreviewToHostCommand.PreviewLoaded:
                 this.previewReady = true;
@@ -363,16 +408,19 @@ export class StandaloneHost {
                 void this.renderCurrentText();
                 break;
             case PreviewToHostCommand.RequestBlockHtml:
-                this.handleBlockHtmlRequest(message.id, message.index, message.hash);
+                await this.handleBlockHtmlRequest(message.id, message.index, message.hash);
                 break;
             case PreviewToHostCommand.RequestPdf:
                 this.handlePdfRequest(message.id, message.path);
                 break;
             case PreviewToHostCommand.RevealLine:
-                void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio);
+                void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio, message.sourceStart, message.sourceEnd);
                 break;
             case PreviewToHostCommand.SyncScroll:
                 void this.syncPreviewScroll(message.index, message.ratio);
+                break;
+            case PreviewToHostCommand.PreviewLayoutChanged:
+                this.suppressEditorToPreview(Math.max(500, this.settings.autoScrollDelayMs + 300));
                 break;
         }
     }
@@ -386,6 +434,7 @@ export class StandaloneHost {
         const rootText = await this.fileProvider.read(this.rootUri);
         const payload = await this.updateService.render(this.rootUri, rootText, {
             deferFullHtml: this.settings.virtualMode,
+            backendMode: this.settings.backendMode,
             transformHtml: html => this.fixHtmlPaths(html)
         });
 
@@ -394,8 +443,8 @@ export class StandaloneHost {
         this.postToPreview({ command: HostToPreviewCommand.Update, payload });
     }
 
-    private handleBlockHtmlRequest(id: string, index: number, hash: string) {
-        const rendered = this.updateService.renderBlockByIndex(index);
+    private async handleBlockHtmlRequest(id: string, index: number, hash: string) {
+        const rendered = await this.updateService.renderBlockByIndex(index);
         this.postToPreview({
             command: HostToPreviewCommand.BlockHtml,
             id,
@@ -454,10 +503,10 @@ export class StandaloneHost {
     }
 
     private replaceDiagnostics(messages: readonly string[]) {
-        const previous = this.getDiagnostics().join('\n');
+        const previous = [...this.diagnostics].join('\n');
         this.diagnostics.clear();
         messages.forEach(message => this.diagnostics.add(message));
-        if (previous !== this.getDiagnostics().join('\n')) {
+        if (previous !== [...this.diagnostics].join('\n')) {
             this.notifyStateChanged();
         }
     }
@@ -480,7 +529,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     let pendingSelection: { line: number; character: number; text: string; auto: boolean } | undefined;
     const scheduleSelectionSync = debounce(() => {
         if (pendingSelection && !host?.shouldSuppressEditorToPreview()) {
-            host?.syncEditorSelection(
+            void host?.syncEditorSelection(
                 pendingSelection.line,
                 pendingSelection.character,
                 pendingSelection.text,
@@ -551,6 +600,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                     indentWithTab
                 ]),
                 EditorView.lineWrapping,
+                flashEditorLineField,
                 createLatexEditorExtensions(() => host?.getLatexCompletionData() ?? {
                     labels: [],
                     citationKeys: [],
