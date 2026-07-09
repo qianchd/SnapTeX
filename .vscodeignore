@@ -6,6 +6,7 @@ src/**
 .gitignore
 .yarnrc
 esbuild.js
+CHANGELOG.repo.md
 media/demo/*.gif
 **/tsconfig.json
 **/eslint.config.mjs
@@ -18,6 +19,7 @@ dist-web/**
 apps/**
 demo/**
 .github/**
+docs/**
 todo.md
 media/favicon.ico
 media/icon-*.png
