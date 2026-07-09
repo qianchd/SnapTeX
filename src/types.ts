@@ -121,6 +121,7 @@ export interface RenderedBlockMeta {
 export interface BlockNumberingCounts {
     eq: string[];
     fig: string[];
+    subfig: string[];
     tbl: string[];
     alg: string[];
     sec: string[];

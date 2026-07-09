@@ -1,6 +1,6 @@
 import { PreprocessRule, RenderContext } from './types';
 import { escapeHtmlAttribute, extractAndHideLabels, findCommand, resolveLatexStyles } from './utils';
-import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
+import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, renderSubfigureWidthStyle, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 import { findFirstTabularEnvironment, renderLatexTabular, renderLatexTableInlineContent } from './latex-table';
 import { renderAlgorithmicList } from './latex-algorithm';
 
@@ -39,6 +39,41 @@ function extractRenderedCaption(content: string, renderer: RenderContext, config
     };
 }
 
+function extractRenderedPlainCaption(content: string, renderer: RenderContext, className: string, prefixHtml = ''): { content: string; captionHtml: string } {
+    const captionRes = findCommand(content, 'caption');
+    if (!captionRes) {
+        return { content, captionHtml: '' };
+    }
+
+    return {
+        content: content.substring(0, captionRes.start) + content.substring(captionRes.end),
+        captionHtml: `<div class="${className}">${prefixHtml}${renderCaptionContent(captionRes.content, renderer)}</div>`
+    };
+}
+
+function cleanFigureLayoutCommands(content: string): string {
+    return content
+        .replace(/\\centering\b/g, '')
+        .replace(/\\hfill\b/g, '')
+        .replace(/\\vspace\*?(?:\[[^\]]*\])?\s*\{[^{}]*\}/g, '');
+}
+
+function renderSubfigureEnvironment(widthSpec: string, content: string, renderer: RenderContext): string {
+    const { content: withoutCaption, captionHtml } = extractRenderedPlainCaption(content, renderer, 'subfigure-caption', '(<span class="sn-cnt" data-type="subfig"></span>) ');
+    const { cleanContent, hiddenHtml } = extractAndHideLabels(withoutCaption);
+    let body = cleanFigureLayoutCommands(cleanContent).trim();
+    body = unwrapResizeboxAroundProtectedContent(body);
+    body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (_imgMatch: string, imgPath: string) => renderIncludeGraphicsHtml(imgPath));
+    return `<div class="latex-subfigure" style="${renderSubfigureWidthStyle(widthSpec)}">${body}${captionHtml}${hiddenHtml}</div>`;
+}
+
+function renderSubfigureEnvironments(content: string, renderer: RenderContext): string {
+    return content.replace(
+        /\\begin\{subfigure\*?\}(?:\[[^\]]*\])?\s*\{([^{}]*)\}([\s\S]*?)\\end\{subfigure\*?\}/gi,
+        (_match, widthSpec: string, subfigureContent: string) => renderSubfigureEnvironment(widthSpec, subfigureContent, renderer)
+    );
+}
+
 /**
  * Converts LaTeX figure environments to protected HTML, preserving captions,
  * labels, local images, PDF canvases, and nested protected TikZ content.
@@ -49,16 +84,21 @@ export function createFigureRule(): PreprocessRule {
         priority: 120,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'figure', content => {
-                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, { className: 'figure-caption', label: 'Figure', counterType: 'fig' });
+                const withSubfigures = renderSubfigureEnvironments(content, renderer);
+                const hasSubfigures = withSubfigures.includes('class="latex-subfigure"');
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(withSubfigures, renderer, { className: 'figure-caption', label: 'Figure', counterType: 'fig' });
                 let body = extractedContent;
 
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(body);
                 body = cleanContent;
 
-                body = body.trim().replace(/\\centering/g, '');
+                body = cleanFigureLayoutCommands(body).trim();
                 body = unwrapResizeboxAroundProtectedContent(body);
 
                 body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (_imgMatch: string, imgPath: string) => renderIncludeGraphicsHtml(imgPath));
+                if (hasSubfigures) {
+                    body = `<div class="latex-subfigure-grid">${body}</div>`;
+                }
 
                 const finalHtml = `<div class="latex-figure" style="text-align: center; margin: 1em 0;">${body}${captionHtml}${hiddenHtml}</div>`;
                 return `\n\n${renderer.protectHtml('fig', finalHtml)}\n\n`;

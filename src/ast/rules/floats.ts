@@ -24,8 +24,10 @@ import {
     describeAlgorithmicCommand
 } from '../../latex-algorithm';
 import { renderLatexMakecellHtml } from '../../latex-table';
+import { renderSubfigureWidthStyle } from '../../rule-helpers';
 
 const FLOATS = new Set(['figure', 'figure*', 'table', 'table*', 'algorithm']);
+const SUBFIGURE_ENVS = new Set(['subfigure', 'subfigure*']);
 const TABULAR_ENVS = new Set(['tabular', 'tabular*', 'tabularx']);
 const TABLENOTES_ENVS = new Set(['tablenotes']);
 const ALGORITHMIC_ENVS = new Set(['algorithmic']);
@@ -33,6 +35,7 @@ const BOOKTABS_TABLE_MACROS = new Set(['toprule', 'midrule', 'bottomrule', 'cmid
 const RULE_TABLE_MACROS = new Set(['hline', 'cline']);
 const IGNORED_TABLE_MACROS = new Set([...BOOKTABS_TABLE_MACROS, ...RULE_TABLE_MACROS]);
 const TABLE_NOTE_LAYOUT_MACROS = new Set(['footnotesize', 'small', 'scriptsize', 'tiny']);
+const FLOAT_LAYOUT_MACROS = new Set(['centering', 'hfill', 'small', 'footnotesize']);
 
 function captionHtml(
     input: AstRenderInput,
@@ -58,6 +61,21 @@ function captionHtml(
     };
 }
 
+function plainCaptionHtml(input: AstRenderInput, contentNodes: readonly SnaptexAstNode[], className: string, prefixHtml = ''): { html: string; nodes: Set<SnaptexAstNode> } {
+    const nodes = new Set<SnaptexAstNode>();
+    const caption = contentNodes.find((node): node is SnaptexAstMacro => isMacroNode(node, 'caption'));
+    if (!caption) {
+        return { html: '', nodes };
+    }
+
+    nodes.add(caption);
+    const content = readRequiredMacroArgument(caption)?.content ?? [];
+    return {
+        html: `<div class="${className}">${prefixHtml}${input.renderChildren(content)}</div>`,
+        nodes
+    };
+}
+
 function findFirstMacro(nodes: readonly SnaptexAstNode[], name: string): SnaptexAstMacro | undefined {
     return findFirstNode(nodes, (node): node is SnaptexAstMacro => isMacroNode(node, name));
 }
@@ -72,12 +90,25 @@ function renderNestedLabels(input: AstRenderInput, nodes: readonly SnaptexAstNod
 }
 
 function visibleFloatChildren(nodes: readonly SnaptexAstNode[], omitted: Set<SnaptexAstNode>): SnaptexAstNode[] {
-    return nodes.filter(node => {
+    const visible: SnaptexAstNode[] = [];
+    for (let index = 0; index < nodes.length; index++) {
+        const node = nodes[index];
         if (omitted.has(node)) {
-            return false;
+            continue;
         }
-        return !(isMacroNode(node) && ['centering', 'small', 'footnotesize'].includes(node.content));
-    });
+        if (isMacroNode(node) && FLOAT_LAYOUT_MACROS.has(node.content)) {
+            continue;
+        }
+        if (isMacroNode(node, 'vspace')) {
+            const nextIndex = skipWhitespaceOrComments(nodes, index + 1);
+            if (isGroupNode(nodes[nextIndex])) {
+                index = nextIndex;
+            }
+            continue;
+        }
+        visible.push(node);
+    }
+    return visible;
 }
 
 function stripLeadingEnvironmentOption(nodes: readonly SnaptexAstNode[]): SnaptexAstNode[] {
@@ -355,7 +386,21 @@ function renderFigure(input: AstRenderInput): string {
     const content = stripLeadingEnvironmentOption(input.node.content as SnaptexAstNode[]);
     const caption = captionHtml(input, content, 'Figure', 'fig');
     const body = input.renderChildren(visibleFloatChildren(content, caption.nodes));
-    return `<div class="latex-figure" style="text-align: center; margin: 1em 0;">${body}${caption.html}</div>`;
+    const wrappedBody = body.includes('class="latex-subfigure"')
+        ? `<div class="latex-subfigure-grid">${body}</div>`
+        : body;
+    return `<div class="latex-figure" style="text-align: center; margin: 1em 0;">${wrappedBody}${caption.html}</div>`;
+}
+
+function renderSubfigure(input: AstRenderInput): string {
+    const rawContent = stripLeadingEnvironmentOption(input.node.content as SnaptexAstNode[]);
+    const widthCursor = skipWhitespaceOrComments(rawContent, 0);
+    const widthNode = rawContent[widthCursor];
+    const widthSpec = isGroupNode(widthNode) ? astNodesToText(widthNode.content) : '';
+    const content = isGroupNode(widthNode) ? rawContent.slice(widthCursor + 1) : rawContent;
+    const caption = plainCaptionHtml(input, content, 'subfigure-caption', '(<span class="sn-cnt" data-type="subfig"></span>) ');
+    const body = input.renderChildren(visibleFloatChildren(content, caption.nodes));
+    return `<div class="latex-subfigure" style="${renderSubfigureWidthStyle(widthSpec)}">${body}${caption.html}</div>`;
 }
 
 function renderTable(input: AstRenderInput): string {
@@ -500,6 +545,20 @@ export const AST_FLOAT_RULE: AstRenderRule = {
             return { html: renderTable(input) };
         }
         return { html: renderAlgorithm(input, context) };
+    }
+};
+
+export const AST_SUBFIGURE_RULE: AstRenderRule = {
+    name: 'ast-subfigure',
+    match: input => {
+        const envName = environmentName(input.node);
+        return Boolean(envName && SUBFIGURE_ENVS.has(envName));
+    },
+    render: input => {
+        if (!isEnvironmentNode(input.node) || !Array.isArray(input.node.content)) {
+            return undefined;
+        }
+        return { html: renderSubfigure(input) };
     }
 };
 

@@ -29,6 +29,7 @@ export type ScanToken =
     | { pos: number; kind: 'sec'; level: SectionLevel; label?: string }
     | { pos: number; kind: 'eq'; label?: string; labels?: string[]; tag?: string }
     | { pos: number; kind: 'float'; floatKind: FloatKind; label?: string; labels?: string[] }
+    | { pos: number; kind: 'subfloat'; floatKind: 'fig'; label?: string; labels?: string[] }
     | { pos: number; kind: 'thm'; envName: string; label?: string; labels?: string[] };
 
 export interface BlockScanSummary {
@@ -42,13 +43,14 @@ interface CounterState {
     subsubsec: number;
     eq: number;
     fig: number;
+    subfig: number;
     tbl: number;
     alg: number;
 }
 
 function createEmptyBlockNumbering(): BlockNumbering {
     return {
-        counts: { eq: [], fig: [], tbl: [], alg: [], sec: [], thm: [] }
+        counts: { eq: [], fig: [], subfig: [], tbl: [], alg: [], sec: [], thm: [] }
     };
 }
 
@@ -80,6 +82,17 @@ function formatSectionCounter(counters: CounterState): string {
     return value;
 }
 
+function formatSubfigureCounter(value: number): string {
+    let current = value;
+    let label = '';
+    while (current > 0) {
+        current--;
+        label = String.fromCharCode(97 + (current % 26)) + label;
+        current = Math.floor(current / 26);
+    }
+    return label || 'a';
+}
+
 export function floatKindFromEnvironment(type: string): FloatKind | undefined {
     const normalized = type.replace(/\*$/, '');
     if (normalized === 'figure') { return 'fig'; }
@@ -89,7 +102,7 @@ export function floatKindFromEnvironment(type: string): FloatKind | undefined {
 }
 
 export function buildScanResultFromSummaries(summaries: readonly BlockScanSummary[]): ScanResult {
-    const counters: CounterState = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, tbl: 0, alg: 0 };
+    const counters: CounterState = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, subfig: 0, tbl: 0, alg: 0 };
     const dynamicCounters: Record<string, number> = {};
     const labelMap: Record<string, string> = {};
     const results: BlockNumbering[] = [];
@@ -109,9 +122,17 @@ export function buildScanResultFromSummaries(summaries: readonly BlockScanSummar
                 assignLabels(labelMap, token, numStr);
             } else if (token.kind === 'float') {
                 counters[token.floatKind]++;
+                if (token.floatKind === 'fig') {
+                    counters.subfig = 0;
+                }
                 const numStr = String(counters[token.floatKind]);
                 blockRes.counts[token.floatKind].push(numStr);
                 assignLabels(labelMap, token, numStr);
+            } else if (token.kind === 'subfloat') {
+                counters.subfig++;
+                const suffix = formatSubfigureCounter(counters.subfig);
+                blockRes.counts.subfig.push(suffix);
+                assignLabels(labelMap, token, `${counters.fig}${suffix}`);
             } else {
                 dynamicCounters[token.envName] = (dynamicCounters[token.envName] ?? 0) + 1;
                 const numStr = String(dynamicCounters[token.envName]);
@@ -215,12 +236,16 @@ export class LatexCounterScanner implements LatexScanner {
         while ((match = floatRegex.exec(text)) !== null) {
             const floatKind = floatKindFromEnvironment(match[1]);
             if (!floatKind) { continue; }
+            const env = this.extractEnvInfo(text, match.index, match[1], floatKind === 'fig');
             tokens.push({
                 pos: match.index,
                 kind: 'float',
                 floatKind,
-                label: this.extractEnvInfo(text, match.index, match[1]).label
+                label: env.label
             });
+            if (floatKind === 'fig') {
+                tokens.push(...this.extractSubfigureTokens(env.block, match.index));
+            }
         }
 
         while ((match = thmRegex.exec(text)) !== null) {
@@ -242,15 +267,35 @@ export class LatexCounterScanner implements LatexScanner {
         return extractLatexLabelNames(sub)[0];
     }
 
-    private extractEnvInfo(text: string, startIdx: number, envName: string): { label?: string; tag?: string } {
+    private extractEnvInfo(text: string, startIdx: number, envName: string, omitSubfigures = false): { label?: string; tag?: string; block: string } {
         const sub = text.substring(startIdx);
         const endRegex = new RegExp(`\\\\end\\{${envName}\\*?\\}`);
         const endMatch = sub.match(endRegex);
         const limit = endMatch ? (endMatch.index! + endMatch[0].length) : sub.length;
         const block = sub.substring(0, limit);
-        const label = extractLatexLabelNames(block)[0];
+        const labelSource = omitSubfigures ? this.stripSubfigureEnvironments(block) : block;
+        const label = extractLatexLabelNames(labelSource)[0];
         const tag = block.match(/\\tag\*?\s*\{([^}]+)\}/)?.[1];
-        return { label, tag };
+        return { label, tag, block };
+    }
+
+    private stripSubfigureEnvironments(text: string): string {
+        return text.replace(/\\begin\{subfigure\*?\}(?:\[[^\]]*\])?\s*\{[^{}]*\}[\s\S]*?\\end\{subfigure\*?\}/gi, '');
+    }
+
+    private extractSubfigureTokens(block: string, basePos: number): ScanToken[] {
+        const tokens: ScanToken[] = [];
+        const regex = /\\begin\{subfigure\*?\}(?:\[[^\]]*\])?\s*\{[^{}]*\}[\s\S]*?\\end\{subfigure\*?\}/gi;
+        let match;
+        while ((match = regex.exec(block)) !== null) {
+            tokens.push({
+                pos: basePos + match.index,
+                kind: 'subfloat',
+                floatKind: 'fig',
+                label: extractLatexLabelNames(match[0])[0]
+            });
+        }
+        return tokens;
     }
 
 }
