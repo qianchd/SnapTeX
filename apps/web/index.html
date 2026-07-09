@@ -54,6 +54,13 @@
                     <label><input id="debug-memory-toggle" type="checkbox"> Debug memory</label>
                 </div>
                 <label class="setting-row">
+                    <span>Backend</span>
+                    <select id="backend-mode-select">
+                        <option value="legacy">Legacy</option>
+                        <option value="ast(experimental)">AST experimental</option>
+                    </select>
+                </label>
+                <label class="setting-row">
                     <span>Render delay</span>
                     <input id="render-delay-input" type="number" min="0" max="2000" step="25" value="150">
                 </label>

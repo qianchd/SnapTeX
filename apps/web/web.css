@@ -44,8 +44,6 @@ body {
     --snaptex-cm-comment: #64748b;
     --snaptex-cm-meta: #7c3aed;
     --snaptex-cm-invalid: #ef4444;
-    --vscode-editor-background: var(--snaptex-preview-bg);
-    --vscode-editor-foreground: var(--snaptex-ui-fg);
     --vscode-textLink-foreground: #2563eb;
     --vscode-textLink-activeForeground: #1d4ed8;
     --vscode-scrollbarSlider-background: rgba(88, 88, 88, 0.35);
@@ -116,6 +114,9 @@ body[data-theme="rose"] {
 }
 
 body {
+    --vscode-editor-background: var(--snaptex-preview-bg);
+    --vscode-editor-foreground: var(--snaptex-ui-fg);
+
     background: var(--snaptex-shell-bg);
     box-sizing: border-box;
     max-width: none;
@@ -517,6 +518,16 @@ body.is-resizing-split #preview-pane {
 #editor .cm-activeLine,
 #editor .cm-activeLineGutter {
     background: var(--snaptex-editor-active-line-bg);
+}
+
+@keyframes snaptex-editor-jump-flash {
+    0% { background: color-mix(in srgb, var(--snaptex-active-bg) 90%, transparent); }
+    45% { background: color-mix(in srgb, var(--snaptex-active-bg) 50%, transparent); }
+    100% { background: transparent; }
+}
+
+#editor .snaptex-editor-jump-highlight {
+    animation: snaptex-editor-jump-flash 1.2s ease-out;
 }
 
 #editor .cm-cursor {
