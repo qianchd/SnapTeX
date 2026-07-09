@@ -3,7 +3,7 @@
  */
 
 import { R_CITATION } from './patterns';
-import type { RenderContext, UriLike } from './types';
+import type { BlockTextSpan, RenderContext, UriLike } from './types';
 
 /**
  * Decodes common LaTeX accents to Unicode for citation and bibliography text.
@@ -84,13 +84,46 @@ export function sanitizeHttpUrlForAttribute(rawUrl: string): string | undefined 
     }
 }
 
-export function getSyncAnchorContext(lineText: string, char?: number): string {
-    const rawSnippet = (char !== undefined && char >= 0)
-        ? lineText.substring(Math.max(0, char - 20), Math.min(lineText.length, char + 30))
-        : lineText.substring(0, 60);
+function visibleSyncAnchorSegment(lineText: string, target: number): { start: number; end: number } {
+    let best = { start: 0, end: lineText.length };
+    let bestDistance = Infinity;
+    const consider = (start: number, end: number) => {
+        if (end <= start) { return; }
+        const distance = target < start ? start - target : target > end ? target - end : 0;
+        if (distance < bestDistance) {
+            best = { start, end };
+            bestDistance = distance;
+        }
+    };
 
-    const clean = rawSnippet.replace(/\\[a-zA-Z]+\*?\{?/g, ' ').replace(/[{}$%]/g, ' ').replace(/\s+/g, ' ').trim();
-    return clean.length >= 5 ? clean.substring(0, 40) : "";
+    const hidden = /\$\$.*?\$\$|\$(?:\\.|[^\\$])*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|%.*/g;
+    let segmentStart = 0;
+    for (const match of lineText.matchAll(hidden)) {
+        const start = match.index ?? 0;
+        consider(segmentStart, start);
+        segmentStart = start + match[0].length;
+        if (match[0].startsWith('%')) { break; }
+    }
+    consider(segmentStart, lineText.length);
+    return best;
+}
+
+export function getSyncAnchorContext(lineText: string, char?: number): string {
+    const target = Math.max(0, Math.min(lineText.length, char ?? 0));
+    const segment = visibleSyncAnchorSegment(lineText, target);
+    let start = Math.max(segment.start, target - 20);
+    let end = Math.min(segment.end, target + 50);
+    const earliestStart = Math.max(segment.start, start - 4);
+    while (start > earliestStart && /\S/.test(lineText[start - 1])) { start--; }
+    while (end < segment.end && /\S/.test(lineText[end])) { end++; }
+
+    const clean = lineText.substring(start, end)
+        .replace(/\\[a-zA-Z]+\*?/g, ' ')
+        .replace(/[{}$%]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 40);
+    return clean.length >= 5 ? clean : '';
 }
 
 export function findNearestSyncAnchorLine(
@@ -116,6 +149,31 @@ export function findNearestSyncAnchorLine(
     return undefined;
 }
 
+export function lineAtOffset(text: string, offset: number): number {
+    let line = 0;
+    const limit = Math.min(Math.max(0, offset), text.length);
+    for (let index = 0; index < limit; index++) {
+        if (text.charCodeAt(index) === 10) {
+            line++;
+        }
+    }
+    return line;
+}
+
+export function offsetAtLine(text: string, line: number): number {
+    if (line <= 0) { return 0; }
+    let currentLine = 0;
+    for (let index = 0; index < text.length; index++) {
+        if (text.charCodeAt(index) === 10) {
+            currentLine++;
+            if (currentLine >= line) {
+                return index + 1;
+            }
+        }
+    }
+    return text.length;
+}
+
 export function createHiddenLabelAnchor(labelName: string): string {
     const safeLabel = escapeHtmlAttribute(labelName);
     return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`;
@@ -139,14 +197,83 @@ const LATEX_STYLE_TAGS: Record<string, LatexStyleSpec> = {
     rm: ['<span style="font-family: serif;">', '</span>', 'font-family: serif'],
     underline: ['<u>', '</u>', 'text-decoration: underline']
 };
+const LATEX_TEXT_STYLE_COMMANDS = ['textbf', 'textit', 'emph', 'texttt', 'textsf', 'textrm', 'underline'];
 
 function startsAfterTextOnLine(source: string, offset: number): boolean {
     const lineStart = Math.max(source.lastIndexOf('\n', offset - 1), source.lastIndexOf('\r', offset - 1)) + 1;
     return source.slice(lineStart, offset).trim().length > 0;
 }
 
-function applyLatexStyleCommand(cmd: string, content: string, protectHtml: StyleHtmlProtector | undefined, startsAfterText: boolean): string {
-    return applyLatexStyle(LATEX_STYLE_TAGS[cmd], content, protectHtml, startsAfterText);
+function skipLatexInlineWhitespace(text: string, index: number): number {
+    while (text[index] === ' ' || text[index] === '\t') {
+        index++;
+    }
+    return index;
+}
+
+function renderLatexStyle(style: LatexStyleSpec, content: string, protectHtml: StyleHtmlProtector | undefined, source: string, offset: number): string {
+    return applyLatexStyle(style, resolveLatexStyles(content, protectHtml), protectHtml, startsAfterTextOnLine(source, offset));
+}
+
+function colorStyleSpec(color: string): LatexStyleSpec {
+    return [`<span style="color: ${color}">`, '</span>', `color: ${color}`];
+}
+
+function replaceStyleCommandGroups(text: string, protectHtml?: StyleHtmlProtector): string {
+    let result = '';
+    let cursor = 0;
+    let index = 0;
+
+    while (index < text.length) {
+        if (text[index] !== '{') {
+            index++;
+            continue;
+        }
+
+        const group = readLatexGroup(text, index, { skipWhitespace: false });
+        const replacement = group ? renderStyleCommandGroup(text, group, protectHtml) : undefined;
+        if (!group || replacement === undefined) {
+            index++;
+            continue;
+        }
+
+        result += text.slice(cursor, index) + replacement;
+        cursor = group.end;
+        index = group.end;
+    }
+
+    return result + text.slice(cursor);
+}
+
+function renderStyleCommandGroup(source: string, group: LatexGroup, protectHtml?: StyleHtmlProtector): string | undefined {
+    const innerStart = skipLatexWhitespace(group.content, 0);
+    const colorCall = readLatexCommandAt(group.content, innerStart, {
+        name: 'color',
+        requiredArgs: 1,
+        skipWhitespace: false
+    });
+    if (colorCall) {
+        const contentStart = skipLatexInlineWhitespace(group.content, colorCall.end);
+        return renderLatexStyle(
+            colorStyleSpec(colorCall.requiredArgs[0].content.trim()),
+            group.content.slice(contentStart),
+            protectHtml,
+            source,
+            group.start
+        );
+    }
+
+    for (const cmd of ['bf', 'it', 'sf', 'rm', 'tt']) {
+        const call = readLatexCommandAt(group.content, innerStart, {
+            name: cmd,
+            skipWhitespace: false
+        });
+        if (!call) { continue; }
+        const contentStart = skipLatexInlineWhitespace(group.content, call.end);
+        return renderLatexStyle(LATEX_STYLE_TAGS[cmd], group.content.slice(contentStart), protectHtml, source, group.start);
+    }
+
+    return undefined;
 }
 
 /**
@@ -160,22 +287,44 @@ export function resolveLatexTextTransforms(text: string): string {
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
 export function resolveLatexStyles(text: string, protectHtml?: StyleHtmlProtector): string {
-    text = text.replace(/\\(textbf|textit|emph|texttt|textsf|textrm|underline)\{((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content, offset, source) => {
-        return applyLatexStyleCommand(cmd, content, protectHtml, startsAfterTextOnLine(source, offset));
-    });
+    text = replaceLatexCommandCalls(text, [
+        ...LATEX_TEXT_STYLE_COMMANDS
+            .map(name => ({
+                name,
+                requiredArgs: 1,
+                render: (call: LatexCommandCall) => renderLatexStyle(
+                    LATEX_STYLE_TAGS[name],
+                    call.requiredArgs[0].content,
+                    protectHtml,
+                    text,
+                    call.start
+                )
+            })),
+        {
+            name: 'textcolor',
+            requiredArgs: 2,
+            render: call => renderLatexStyle(
+                colorStyleSpec(call.requiredArgs[0].content.trim()),
+                call.requiredArgs[1].content,
+                protectHtml,
+                text,
+                call.start
+            )
+        },
+        {
+            name: 'color',
+            requiredArgs: 2,
+            render: call => renderLatexStyle(
+                colorStyleSpec(call.requiredArgs[0].content.trim()),
+                call.requiredArgs[1].content,
+                protectHtml,
+                text,
+                call.start
+            )
+        }
+    ]);
 
-    text = text.replace(/\{\\(bf|it|sf|rm|tt)\s+((?:[^{}]|{[^{}]*})*)\}/g, (_match, cmd, content, offset, source) => {
-        return applyLatexStyleCommand(cmd, content, protectHtml, startsAfterTextOnLine(source, offset));
-    });
-
-    const applyColorStyle = (_match: string, color: string, content: string, offset: number, source: string) => {
-        return applyLatexStyle([`<span style="color: ${color}">`, '</span>', `color: ${color}`], content, protectHtml, startsAfterTextOnLine(source, offset));
-    };
-    text = text.replace(/\{\\color\{([a-zA-Z0-9]+)\}[ \t]*((?:[^{}]|{[^{}]*})*)\}/g, applyColorStyle);
-    text = text.replace(/\\color\{([a-zA-Z]+)\}\{([^}]*)\}/g, applyColorStyle);
-    text = text.replace(/\\textcolor\{([a-zA-Z0-9]+)\}\{((?:[^{}]|{[^{}]*})*)\}/g, applyColorStyle);
-
-    return text;
+    return replaceStyleCommandGroups(text, protectHtml);
 }
 
 /**
@@ -508,6 +657,38 @@ export function findCommand(text: string, tagName: string) {
     }
 
     return undefined;
+}
+
+export function getBlockSpanText(bodyText: string, span: BlockTextSpan): string {
+    return `${span.prefix ?? ''}${bodyText.slice(span.start, span.end)}${span.suffix ?? ''}`;
+}
+
+function indexToLetters(index: number): string {
+    let value = index;
+    let result = '';
+    while (value > 0) {
+        value--;
+        result = String.fromCharCode(97 + (value % 26)) + result;
+        value = Math.floor(value / 26);
+    }
+    return result;
+}
+
+function replaceCounterToken(template: string, token: '1' | 'i' | 'a', value: string): string | undefined {
+    if (token === '1') {
+        return template.includes('1') ? template.replace(/1/, value) : undefined;
+    }
+    const pattern = new RegExp(`(^|[^A-Za-z])${token}([^A-Za-z]|$)`);
+    return pattern.test(template)
+        ? template.replace(pattern, (_match, before, after) => `${before}${value}${after}`)
+        : undefined;
+}
+
+export function formatEnumerateLabel(template: string, index: number): string {
+    return replaceCounterToken(template, '1', String(index))
+        ?? replaceCounterToken(template, 'i', toRoman(index, false))
+        ?? replaceCounterToken(template, 'a', indexToLetters(index))
+        ?? template;
 }
 
 /**

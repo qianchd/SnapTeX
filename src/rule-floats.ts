@@ -2,6 +2,7 @@ import { PreprocessRule, RenderContext } from './types';
 import { escapeHtmlAttribute, extractAndHideLabels, findCommand, resolveLatexStyles } from './utils';
 import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 import { findFirstTabularEnvironment, renderLatexTabular, renderLatexTableInlineContent } from './latex-table';
+import { renderAlgorithmicList } from './latex-algorithm';
 
 interface FloatCaptionConfig {
     className: string;
@@ -12,6 +13,17 @@ interface FloatCaptionConfig {
 function replaceFloatEnvironment(text: string, envName: 'figure' | 'algorithm' | 'table', render: (content: string) => string): string {
     const pattern = new RegExp(`\\\\begin\\{${envName}(\\*?)\\}(?:\\[.*?\\])?([\\s\\S]*?)\\\\end\\{${envName}\\1\\}`, 'gi');
     return text.replace(pattern, (_match, _star, content) => render(content));
+}
+
+export function renderIncludeGraphicsHtml(imgPath: string): string {
+    const cleanPath = imgPath.trim();
+    const safePath = escapeHtmlAttribute(cleanPath);
+    const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
+
+    if (cleanPath.toLowerCase().endsWith('.pdf')) {
+        return `<canvas id="${canvasId}" data-req-path="${safePath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`;
+    }
+    return `<img src="LOCAL_IMG:${safePath}" style="max-width:100%; display:block; margin:0 auto;">`;
 }
 
 function extractRenderedCaption(content: string, renderer: RenderContext, config: FloatCaptionConfig): { content: string; captionHtml: string } {
@@ -46,16 +58,7 @@ export function createFigureRule(): PreprocessRule {
                 body = body.trim().replace(/\\centering/g, '');
                 body = unwrapResizeboxAroundProtectedContent(body);
 
-                body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (_imgMatch: string, imgPath: string) => {
-                    const cleanPath = imgPath.trim();
-                    const safePath = escapeHtmlAttribute(cleanPath);
-                    const canvasId = `pdf-${Math.random().toString(36).substr(2, 9)}`;
-
-                    if (cleanPath.toLowerCase().endsWith('.pdf')) {
-                        return `<canvas id="${canvasId}" data-req-path="${safePath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`;
-                    }
-                    return `<img src="LOCAL_IMG:${safePath}" style="max-width:100%; display:block; margin:0 auto;">`;
-                });
+                body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (_imgMatch: string, imgPath: string) => renderIncludeGraphicsHtml(imgPath));
 
                 const finalHtml = `<div class="latex-figure" style="text-align: center; margin: 1em 0;">${body}${captionHtml}${hiddenHtml}</div>`;
                 return `\n\n${renderer.protectHtml('fig', finalHtml)}\n\n`;
@@ -86,38 +89,9 @@ export function createAlgorithmRule(): PreprocessRule {
                     processedRegions.push({start: matchAlg.index, end: matchAlg.index + matchAlg[0].length});
                     const params = matchAlg[1] || '';
                     const rawBody = matchAlg[2];
-                    const showNumbers = params.includes('1');
-                    const listTag = showNumbers ? 'ol' : 'ul';
-                    const lines = rawBody.split('\n');
-                    let listItems = '';
-
-                    lines.forEach(line => {
-                        let trimmed = line.trim();
-                        if (!trimmed || trimmed.startsWith('%') || trimmed.startsWith('\\renewcommand') || trimmed.startsWith('\\setlength')) { return; }
-
-                        let prefixHtml = "";
-                        let contentToRender = trimmed;
-                        let isSpecialLine = false;
-                        if (trimmed.match(/^\\(Require|Ensure|Input|Output)/)) {
-                            const isInput = trimmed.match(/^\\(Require|Input)/);
-                            const label = isInput ? 'Input:' : 'Output:';
-                            prefixHtml = `<strong>${label}</strong> `;
-                            contentToRender = trimmed.replace(/^\\(Require|Ensure|Input|Output)\s*/, '');
-                            isSpecialLine = true;
-                        } else if (trimmed.match(/^\\State/)) {
-                            contentToRender = trimmed.replace(/^\\State\s*/, '');
-                            if (contentToRender.startsWith('{') && contentToRender.endsWith('}')) {
-                                contentToRender = contentToRender.substring(1, contentToRender.length - 1);
-                            }
-                        }
-
-                        contentToRender = resolveLatexStyles(contentToRender, createStyleHtmlProtector(renderer));
-                        const renderedContent = renderer.renderInline(contentToRender);
-                        const itemClass = isSpecialLine ? "alg-item alg-item-no-marker" : "alg-item";
-                        listItems += `<li class="${itemClass}">${prefixHtml}${renderedContent}</li>`;
+                    bodyHtml += renderAlgorithmicList(rawBody, params.includes('1'), source => {
+                        return renderer.renderInline(resolveLatexStyles(source, createStyleHtmlProtector(renderer)));
                     });
-
-                    bodyHtml += `<${listTag} class="alg-list">${listItems}</${listTag}>`;
                 }
 
                 let ignoredContent = "";

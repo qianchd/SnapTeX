@@ -1,4 +1,4 @@
-import { PreprocessRule, RenderContext } from './types';
+import type { PreambleData, PreprocessRule, RenderContext } from './types';
 import { escapeScriptRawText, extractAndHideLabels } from './utils';
 import { optimizeTikzPreviewSource } from './tikz-preview-optimizer';
 
@@ -151,6 +151,45 @@ function filterTikzGlobalForPicture(globalPreamble: string, pictureSource: strin
 }
 
 /**
+ * Builds the inert TikZJax container shared by legacy and AST renderers.
+ */
+export function renderTikzPictureHtml(options: string, content: string, metadata?: PreambleData): { html: string; hiddenHtml: string } {
+    const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
+    const macroMap = metadata?.tikzMacroMap || new Map();
+    const neededMacros = resolveDependencies(`${options}\n${cleanContent}`, macroMap);
+    const optimized = optimizeTikzPreviewSource({
+        globalPreamble: metadata?.tikzGlobal || "",
+        options,
+        content: cleanContent,
+        macroDefinitions: neededMacros
+    });
+    const opts = optimized.options ? `[${optimized.options}]` : '';
+    const globalPreamble = filterTikzGlobalForPicture(
+        optimized.globalPreamble,
+        `${opts}\n${optimized.content}\n${optimized.macroDefinitions}`
+    );
+    const fontConfig = `\\tikzset{every node/.append style={font=\\sffamily\\small}}\n`;
+
+    const fullCode = [
+        globalPreamble,
+        optimized.macroDefinitions,
+        fontConfig,
+        `\\begin{tikzpicture}${opts}`,
+        optimized.content,
+        `\\end{tikzpicture}`
+    ].join('\n');
+
+    return {
+        html: `<div class="tikz-container">
+                    <script type="text/snaptex-tikz" data-show-console="false">
+                        ${escapeScriptRawText(fullCode)}
+                    </script>
+                </div>`,
+        hiddenHtml
+    };
+}
+
+/**
  * Renders tikzpicture environments as inert TikZJax scripts.
  *
  * The rule prunes global TikZ library/style input to the current picture and
@@ -164,38 +203,8 @@ export function createTikzPictureRule(): PreprocessRule {
             const regex = /\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g;
 
             return text.replace(regex, (_match, options, content) => {
-                const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
-                const macroMap = renderer.metadata?.tikzMacroMap || new Map();
-                const neededMacros = resolveDependencies(`${options || ''}\n${cleanContent}`, macroMap);
-                const optimized = optimizeTikzPreviewSource({
-                    globalPreamble: renderer.metadata?.tikzGlobal || "",
-                    options: options || '',
-                    content: cleanContent,
-                    macroDefinitions: neededMacros
-                });
-                const opts = optimized.options ? `[${optimized.options}]` : '';
-                const globalPreamble = filterTikzGlobalForPicture(
-                    optimized.globalPreamble,
-                    `${opts}\n${optimized.content}\n${optimized.macroDefinitions}`
-                );
-                const fontConfig = `\\tikzset{every node/.append style={font=\\sffamily\\small}}\n`;
-
-                const fullCode = [
-                    globalPreamble,
-                    optimized.macroDefinitions,
-                    fontConfig,
-                    `\\begin{tikzpicture}${opts}`,
-                    optimized.content,
-                    `\\end{tikzpicture}`
-                ].join('\n');
-
-                const html = `<div class="tikz-container">
-                    <script type="text/snaptex-tikz" data-show-console="false">
-                        ${escapeScriptRawText(fullCode)}
-                    </script>
-                </div>`;
-
-                return renderer.protectHtml('tikz', html) + (hiddenHtml ? renderer.protectHtml('raw', hiddenHtml) : '');
+                const rendered = renderTikzPictureHtml(options || '', content, renderer.metadata);
+                return renderer.protectHtml('tikz', rendered.html) + (rendered.hiddenHtml ? renderer.protectHtml('raw', rendered.hiddenHtml) : '');
             });
         }
     };

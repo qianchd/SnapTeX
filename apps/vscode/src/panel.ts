@@ -214,6 +214,9 @@ export class TexPreviewPanel {
                     case PreviewToHostCommand.SyncScroll:
                         vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
                         break;
+                    case PreviewToHostCommand.PreviewLayoutChanged:
+                        vscode.commands.executeCommand('snaptex.internal.previewLayoutChanged');
+                        break;
                     case PreviewToHostCommand.RequestPdf:
                         await this.handlePdfRequest(message);
                         break;

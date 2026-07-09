@@ -10,6 +10,7 @@ export const PreviewToHostCommand = {
     PreviewLoaded: 'previewLoaded',
     RevealLine: 'revealLine',
     SyncScroll: 'syncScroll',
+    PreviewLayoutChanged: 'previewLayoutChanged',
     RequestPdf: 'requestPdf',
     RequestBlockHtml: 'requestBlockHtml'
 } as const;
@@ -31,6 +32,8 @@ export interface RevealLineMessage {
     index: number;
     ratio: number;
     anchors?: string[];
+    sourceStart?: number;
+    sourceEnd?: number;
     viewRatio?: number;
 }
 
@@ -38,6 +41,10 @@ interface SyncScrollMessage {
     command: typeof PreviewToHostCommand.SyncScroll;
     index: number;
     ratio: number;
+}
+
+interface PreviewLayoutChangedMessage {
+    command: typeof PreviewToHostCommand.PreviewLayoutChanged;
 }
 
 export interface RequestPdfMessage {
@@ -57,6 +64,7 @@ export type PreviewToHostMessage =
     | PreviewLoadedMessage
     | RevealLineMessage
     | SyncScrollMessage
+    | PreviewLayoutChangedMessage
     | RequestPdfMessage
     | RequestBlockHtmlMessage;
 
@@ -70,6 +78,8 @@ interface ScrollToBlockMessage {
     index: number;
     ratio: number;
     anchor?: string;
+    sourceStart?: number;
+    sourceEnd?: number;
     auto?: boolean;
     viewRatio?: number;
 }
@@ -127,10 +137,14 @@ export function isPreviewToHostMessage(value: unknown): value is PreviewToHostMe
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number'
                 && (value.anchors === undefined || (Array.isArray(value.anchors) && value.anchors.every(anchor => typeof anchor === 'string')))
+                && isOptionalType(value.sourceStart, 'number')
+                && isOptionalType(value.sourceEnd, 'number')
                 && isOptionalType(value.viewRatio, 'number');
         case PreviewToHostCommand.SyncScroll:
             return typeof value.index === 'number'
                 && typeof value.ratio === 'number';
+        case PreviewToHostCommand.PreviewLayoutChanged:
+            return true;
         case PreviewToHostCommand.RequestPdf:
             return typeof value.id === 'string'
                 && typeof value.path === 'string';

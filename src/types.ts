@@ -62,6 +62,8 @@ export interface BlockTextSpan {
     end: number;
     line: number;
     lineCount: number;
+    prefix?: string;
+    suffix?: string;
 }
 
 /**

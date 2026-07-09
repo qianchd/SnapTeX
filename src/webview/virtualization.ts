@@ -51,6 +51,11 @@ export class BlockVirtualizationController {
             return this.enabled;
         }
 
+        resetCaches() {
+            this.heightCache.clear();
+            this.htmlCache.clear();
+        }
+
         getBlockKey(element) {
             if (!element) return '';
             return element.getAttribute('data-block-hash') || element.getAttribute('data-index') || '';
@@ -426,11 +431,11 @@ export class BlockVirtualizationController {
             return shell;
         }
 
-        remapShellIndices(start, delta) {
+        remapShellIndicesFromDomPosition(startDomIndex, delta) {
             if (delta === 0) return;
-            this.getShells().forEach(shell => {
+            this.getShells().slice(startDomIndex).forEach(shell => {
                 const oldIdx = parseInt(shell.getAttribute('data-index'));
-                if (!isNaN(oldIdx) && oldIdx >= start) {
+                if (!isNaN(oldIdx)) {
                     shell.setAttribute('data-index', oldIdx + delta);
                     const block = this.getShellBlock(shell);
                     if (block) { block.setAttribute('data-index', oldIdx + delta); }
