@@ -3,7 +3,7 @@ import type { IFileProvider } from '../../../src/file-provider';
 import { decodeHtmlAttribute, getBasename, normalizeUri } from '../../../src/utils';
 import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
 import type { PreviewUpdateService } from '../../../src/preview-update-service';
-import type { RenderPayload } from '../../../src/types';
+import type { RenderPayload, BackendMode } from '../../../src/types';
 import {
     assertNever,
     HostToPreviewCommand,
@@ -65,6 +65,10 @@ function logPayloadStats(label: string, payload: RenderPayload) {
 
 export function getVirtualMode(config = vscode.workspace.getConfiguration('snaptex')): boolean {
     return config.get<boolean>('virtualMode', true);
+}
+
+function getBackendMode(config = vscode.workspace.getConfiguration('snaptex')): BackendMode {
+    return config.get<BackendMode>('backendMode', 'legacy') === 'ast(experimental)' ? 'ast(experimental)' : 'legacy';
 }
 
 export function normalizePdfRequestPath(input: unknown): string | undefined {
@@ -130,6 +134,7 @@ export class TexPreviewPanel {
     private _updateRunning = false;
     private _pendingRootUri: vscode.Uri | undefined;
     private _webviewReady = false;
+    private _forceResetPreviewState = false;
 
     public static createOrShow(
         extensionUri: vscode.Uri,
@@ -221,7 +226,7 @@ export class TexPreviewPanel {
                         await this.handlePdfRequest(message);
                         break;
                     case PreviewToHostCommand.RequestBlockHtml:
-                        this.handleBlockHtmlRequest(message);
+                        await this.handleBlockHtmlRequest(message);
                         break;
                     default:
                         assertNever(message);
@@ -252,7 +257,9 @@ export class TexPreviewPanel {
                 message.index,
                 message.ratio,
                 message.anchors,
-                message.viewRatio
+                message.viewRatio,
+                message.sourceStart,
+                message.sourceEnd
             );
         }
     }
@@ -315,7 +322,7 @@ export class TexPreviewPanel {
         });
     }
 
-    private handleBlockHtmlRequest(message: RequestBlockHtmlMessage) {
+    private async handleBlockHtmlRequest(message: RequestBlockHtmlMessage) {
         const id = message.id;
         const index = message.index;
         const requestedHash = message.hash;
@@ -324,7 +331,7 @@ export class TexPreviewPanel {
             return;
         }
 
-        const block = this._updateService.renderBlockByIndex(index);
+        const block = await this._updateService.renderBlockByIndex(index);
         if (!block) {
             this.postMessage({ command: HostToPreviewCommand.BlockHtml, id, index, error: 'Block not found' });
             return;
@@ -373,10 +380,13 @@ export class TexPreviewPanel {
      * Queues and serializes preview updates. The webview must send PreviewLoaded
      * before parsing begins, which avoids blank previews during VS Code startup.
      */
-    public async update(rootUri?: vscode.Uri) {
+    public async update(rootUri?: vscode.Uri, options: { resetPreviewState?: boolean } = {}) {
         const docUri = rootUri ?? this._pendingRootUri ?? this.resolveUpdateUri();
         if (!docUri) { return; }
 
+        if (options.resetPreviewState) {
+            this._forceResetPreviewState = true;
+        }
         this._pendingRootUri = docUri;
         if (!this._webviewReady) {
             return;
@@ -431,8 +441,12 @@ export class TexPreviewPanel {
         this.postWebviewConfig();
 
         const virtualizeBlocks = getVirtualMode();
+        const resetPreviewState = this._forceResetPreviewState;
+        this._forceResetPreviewState = false;
         const payload = await this._updateService.render(this._sourceUri, text, {
             deferFullHtml: virtualizeBlocks,
+            backendMode: getBackendMode(),
+            resetPreviewState,
             trace: logHostMemory,
             transformHtml: html => this.fixHtmlPaths(html)
         });
@@ -487,7 +501,7 @@ export class TexPreviewPanel {
                 'data-pdf-js-uri': pdfJsUri.toString(),
                 'data-pdf-worker-uri': pdfWorkerUri.toString()
             },
-            bridgeScript: '<script>window.snaptexPreviewBridge=acquireVsCodeApi();</script>',
+            bridgeScript: '<script>(()=>{const vscode=acquireVsCodeApi();window.snaptexPreviewBridge={postMessage:message=>vscode.postMessage(message)};})();</script>',
             scripts: [
                 webviewMainUri.toString(),
                 webviewPdfUri.toString()

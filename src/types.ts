@@ -1,3 +1,6 @@
+import type { AstBlockArtifact } from './ast/block-metadata';
+import type { AstRenderRule } from './ast/rules';
+
 export interface BibEntry {
     key: string;
     type: string;
@@ -66,6 +69,8 @@ export interface BlockTextSpan {
     suffix?: string;
 }
 
+export type BackendMode = 'legacy' | 'ast(experimental)';
+
 /**
  * Snapshot retained by the renderer for lazy block rendering after the parsed
  * document releases its transient body text.
@@ -93,6 +98,8 @@ export interface RenderDocumentView {
     getBlockCount(): number;
     getBlockText(index: number): string | undefined;
     getBlockHash(index: number): string | undefined;
+    getAstBlockArtifact(index: number): AstBlockArtifact | undefined;
+    setAstBlockArtifact(index: number, artifact: AstBlockArtifact): void;
     createTextSnapshot(): BlockTextSnapshot;
     getFlattenedLine(targetUriString: string, originalLine: number): number;
     getOriginalPosition(flatLine: number): SourceLocation | undefined;
@@ -100,6 +107,7 @@ export interface RenderDocumentView {
 
 export interface RenderOptions {
     deferFullHtml?: boolean;
+    resetPreviewState?: boolean;
 }
 
 export interface RenderedBlockMeta {
@@ -143,6 +151,7 @@ export type RenderPayload =
         deleteCount?: never;
         shift?: never;
         dirtyBlocks?: never;
+        resetPreviewState?: boolean;
         numbering: NumberingPayload;
     } & FullPayloadBody)
     | {
@@ -197,6 +206,7 @@ export interface DependencyHelpers {
 export interface BlockDependencyInput {
     text: string;
     index: number;
+    artifact?: AstBlockArtifact;
     deps: DependencyHelpers;
 }
 
@@ -212,6 +222,7 @@ export interface SplitterConfig {
 
 export type SplitterRule =
     | { name: string; kind: 'ignored-env'; envPattern: RegExp }
+    | { name: string; kind: 'transparent-env'; envPattern: RegExp; preserveWrapper?: boolean }
     | { name: string; kind: 'split-env'; envPattern: RegExp }
     | { name: string; kind: 'no-emergency-split-env'; envPattern: RegExp }
     | { name: string; kind: 'no-emergency-split-begin-token'; beginTokenPattern: RegExp }
@@ -234,6 +245,7 @@ export interface MetadataExtractor {
 export interface RuleRegistry {
     readonly metadataExtractors: readonly MetadataExtractor[];
     readonly renderRules: readonly PreprocessRule[];
+    readonly astRenderRules: readonly AstRenderRule[];
     readonly blockDependencyRules: readonly BlockDependencyRule[];
     readonly splitterConfig: SplitterConfig;
     readonly splitterRules: readonly SplitterRule[];

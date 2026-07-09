@@ -1,6 +1,9 @@
 import { BlockTextSpan, SplitterOptions, SplitterRule } from './types';
 import { scanLatexBraceBalance } from './utils';
 
+type SplitterEnvRule = Extract<SplitterRule, { envPattern: RegExp }>;
+type SplitterEnvRuleKind = SplitterEnvRule['kind'];
+
 function testPattern(pattern: RegExp, value: string): boolean {
     pattern.lastIndex = 0;
     const matched = pattern.test(value);
@@ -8,11 +11,21 @@ function testPattern(pattern: RegExp, value: string): boolean {
     return matched;
 }
 
-function matchesEnvRule(rules: readonly SplitterRule[], kind: SplitterRule['kind'], envName: string): boolean {
-    return rules.some(rule => rule.kind === kind && 'envPattern' in rule && testPattern(rule.envPattern, envName));
+export function findSplitterEnvRule<K extends SplitterEnvRuleKind>(
+    rules: readonly SplitterRule[],
+    kind: K,
+    envName: string
+): Extract<SplitterEnvRule, { kind: K }> | undefined {
+    return rules.find((rule): rule is Extract<SplitterEnvRule, { kind: K }> =>
+        rule.kind === kind && 'envPattern' in rule && testPattern(rule.envPattern, envName)
+    );
 }
 
-function matchesBeginTokenRule(rules: readonly SplitterRule[], buffer: string): boolean {
+export function matchesSplitterEnvRule(rules: readonly SplitterRule[], kind: SplitterEnvRuleKind, envName: string): boolean {
+    return findSplitterEnvRule(rules, kind, envName) !== undefined;
+}
+
+export function matchesSplitterBeginTokenRule(rules: readonly SplitterRule[], buffer: string): boolean {
     return rules.some(rule => rule.kind === 'no-emergency-split-begin-token' && testPattern(rule.beginTokenPattern, buffer));
 }
 
@@ -76,9 +89,9 @@ export class LatexBlockSplitter {
             const currentBufferLineCount = (currentBuffer.match(/\n/g) || []).length;
 
             const withinNoEmergencySplitBudget = currentBufferLineCount <= maxNoEmergencySplitLines;
-            const hasNoEmergencySplitBeginTokenInBuffer = withinNoEmergencySplitBudget && matchesBeginTokenRule(options.rules, currentBuffer);
+            const hasNoEmergencySplitBeginTokenInBuffer = withinNoEmergencySplitBudget && matchesSplitterBeginTokenRule(options.rules, currentBuffer);
             const isInsideNoEmergencySplitEnv = withinNoEmergencySplitBudget
-                && envStack.some(envName => matchesEnvRule(options.rules, 'no-emergency-split-env', envName));
+                && envStack.some(envName => matchesSplitterEnvRule(options.rules, 'no-emergency-split-env', envName));
             const isTrapped = currentBufferLineCount >= maxBlockLines
                 && !isInsideNoEmergencySplitEnv
                 && !hasNoEmergencySplitBeginTokenInBuffer;
@@ -116,11 +129,11 @@ export class LatexBlockSplitter {
                 }
             }
             else if (isBegin && beginName) {
-                const isIgnoredEnv = matchesEnvRule(options.rules, 'ignored-env', beginName);
+                const isIgnoredEnv = matchesSplitterEnvRule(options.rules, 'ignored-env', beginName);
 
                 if (!isIgnoredEnv) {
-                    const isMajorEnv = matchesEnvRule(options.rules, 'split-env', beginName);
-                    const beginsNoEmergencySplitEnv = matchesEnvRule(options.rules, 'no-emergency-split-env', beginName);
+                    const isMajorEnv = matchesSplitterEnvRule(options.rules, 'split-env', beginName);
+                    const beginsNoEmergencySplitEnv = matchesSplitterEnvRule(options.rules, 'no-emergency-split-env', beginName);
 
                     if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped && !beginsNoEmergencySplitEnv)) {
                         if (currentBuffer.trim().length > 0) {
@@ -134,7 +147,7 @@ export class LatexBlockSplitter {
                 currentLine += matchLines;
             }
             else if (isEnd && endName) {
-                const isIgnoredEnv = matchesEnvRule(options.rules, 'ignored-env', endName);
+                const isIgnoredEnv = matchesSplitterEnvRule(options.rules, 'ignored-env', endName);
                 if (!isIgnoredEnv) {
                     const idx = envStack.lastIndexOf(endName);
                     if (idx !== -1) { envStack = envStack.slice(0, idx); }
@@ -142,7 +155,7 @@ export class LatexBlockSplitter {
                 currentBuffer += fullMatch;
                 currentLine += matchLines;
 
-                const isEmergencySplitEndEnv = matchesEnvRule(options.rules, 'emergency-split-end-env', endName);
+                const isEmergencySplitEndEnv = matchesSplitterEnvRule(options.rules, 'emergency-split-end-env', endName);
                 if (isEmergencySplitEndEnv && isTrapped) {
                     if (currentBuffer.trim().length > 0) {
                         pushCurrentBlockAndStartAt(regex.lastIndex, currentLine, regex.lastIndex);

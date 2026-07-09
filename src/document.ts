@@ -1,16 +1,20 @@
 import type { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
-import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, DocumentDiagnostic, RenderDocumentView, UriLike } from './types';
+import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, DocumentDiagnostic, RenderDocumentView, BackendMode, UriLike } from './types';
 import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
-import { normalizeUri, scanLatexBraceBalance, stableHash, stripLatexComments } from './utils';
+import { extractAstBlockArtifact, type AstBlockArtifact } from './ast/block-metadata';
+import type { AstSplitSnapshot } from './ast/splitter';
+import { splitLatexWithAstIncremental } from './ast/splitter';
+import { getBlockSpanText, lineAtOffset, normalizeUri, scanLatexBraceBalance, stableHash, stripLatexComments } from './utils';
 
 export interface DocumentParseResult {
     bodyText: string;
     blockSpans: BlockTextSpan[];
     blockHashes: string[];
+    astBlockArtifacts?: Array<AstBlockArtifact | undefined>;
     filePool: string[];
     sourceFileIndices: Uint16Array;
     sourceLines: Int32Array;
@@ -33,6 +37,7 @@ interface FlattenOutput {
 
 interface ParseOptions {
     trace?: (label: string) => void;
+    backendMode?: BackendMode;
 }
 
 /**
@@ -46,6 +51,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     private bodyText: string = "";
     public blockSpans: BlockTextSpan[] = [];
     public blockHashes: string[] = [];
+    public astBlockArtifacts: Array<AstBlockArtifact | undefined> = [];
 
     public filePool: string[] = [];
     public sourceFileIndices: Uint16Array = new Uint16Array(0);
@@ -67,16 +73,26 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public rootDir: TUri | undefined;
 
     private bibCache: Map<string, BibCacheEntry> = new Map();
+    private astSplitSnapshot: AstSplitSnapshot | undefined;
+    private astSplitSnapshotKey: string | undefined;
+    private astArtifactGeneration = 0;
+    private astArtifactPromises = new Map<string, Promise<AstBlockArtifact | undefined>>();
 
     constructor(private fileProvider: IFileProvider<TUri>, private registry = SNAP_TEX_RULES) {}
 
     /**
      * Releases the transient body text after the renderer has taken a snapshot.
+     * Block hashes are kept as compact stale-write guards for lazy AST artifact
+     * updates; spans and text are no longer needed by the document after render.
      */
     public releaseTextContent() {
         this.bodyText = "";
         this.blockSpans = [];
-        this.blockHashes = [];
+    }
+
+    public cancelAstArtifactWarmup() {
+        this.astArtifactGeneration++;
+        this.astArtifactPromises.clear();
     }
 
     public getBlockCount(): number {
@@ -85,12 +101,83 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
     public getBlockText(index: number): string | undefined {
         const span = this.blockSpans[index];
-        if (!span) { return undefined; }
-        return this.bodyText.slice(span.start, span.end);
+        if (!span || this.bodyText.length === 0) { return undefined; }
+        return getBlockSpanText(this.bodyText, span);
     }
 
     public getBlockHash(index: number): string | undefined {
         return this.blockHashes[index];
+    }
+
+    public getAstBlockArtifact(index: number): AstBlockArtifact | undefined {
+        return this.astBlockArtifacts[index];
+    }
+
+    public setAstBlockArtifact(index: number, artifact: AstBlockArtifact): void {
+        if (this.blockHashes[index] === artifact.hash) {
+            this.astBlockArtifacts[index] = artifact;
+        }
+    }
+
+    private ensureAstBlockArtifact(
+        index: number,
+        text: string,
+        hash: string
+    ): Promise<AstBlockArtifact | undefined> {
+        const existing = this.astBlockArtifacts[index];
+        if (existing?.hash === hash) {
+            return Promise.resolve(existing);
+        }
+
+        const generation = this.astArtifactGeneration;
+        const key = `${index}:${hash}`;
+        const pending = this.astArtifactPromises.get(key);
+        if (pending) {
+            return pending;
+        }
+
+        const promise = extractAstBlockArtifact(text, hash)
+            .then(artifact => {
+                if (generation === this.astArtifactGeneration) {
+                    this.astBlockArtifacts[index] = artifact;
+                }
+                return artifact;
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                if (generation === this.astArtifactGeneration) {
+                    this.astArtifactPromises.delete(key);
+                }
+            });
+        this.astArtifactPromises.set(key, promise);
+        return promise;
+    }
+
+    public warmAstBlockArtifacts(): Promise<void> {
+        if (this.bodyText.length === 0 || this.blockSpans.length === 0 || this.blockHashes.length === 0) {
+            return Promise.resolve();
+        }
+
+        const generation = this.astArtifactGeneration;
+        const bodyText = this.bodyText;
+        const spans = [...this.blockSpans];
+        const hashes = [...this.blockHashes];
+        return this.warmAstBlockArtifactsSequential(generation, bodyText, spans, hashes);
+    }
+
+    public warmAstBlockArtifactsForIndices(indices: readonly number[]): Promise<void> {
+        if (indices.length === 0 || this.bodyText.length === 0 || this.blockSpans.length === 0 || this.blockHashes.length === 0) {
+            return Promise.resolve();
+        }
+
+        const generation = this.astArtifactGeneration;
+        const bodyText = this.bodyText;
+        const spans = [...this.blockSpans];
+        const hashes = [...this.blockHashes];
+        const sortedIndices = [...new Set(indices)]
+            .filter(index => index >= 0 && index < spans.length)
+            .sort((a, b) => a - b);
+        return this.warmAstBlockArtifactsSequential(generation, bodyText, spans, hashes, sortedIndices);
     }
 
     public createTextSnapshot(): BlockTextSnapshot {
@@ -101,9 +188,11 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     }
 
     public applyResult(result: DocumentParseResult) {
+        this.cancelAstArtifactWarmup();
         this.bodyText = result.bodyText;
         this.blockSpans = result.blockSpans;
         this.blockHashes = result.blockHashes;
+        this.astBlockArtifacts = result.astBlockArtifacts ?? [];
 
         this.filePool = result.filePool;
         this.sourceFileIndices = result.sourceFileIndices;
@@ -134,7 +223,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         let contentStartLineOffset = 0;
         const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
         if (rawDocMatch && rawDocMatch.index !== undefined) {
-            contentStartLineOffset = this.countNewlinesBefore(normalizedText, rawDocMatch.index + rawDocMatch[0].length);
+            contentStartLineOffset = lineAtOffset(normalizedText, rawDocMatch.index + rawDocMatch[0].length);
         }
 
         const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors);
@@ -152,10 +241,27 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         }
         options.trace?.('after body slice');
 
-        const rawBlockObjects = LatexBlockSplitter.split(bodyText, {
+        const useAstBackend = options.backendMode === 'ast(experimental)';
+        const splitterOptions = {
             config: this.registry.splitterConfig,
             rules: this.registry.splitterRules
-        });
+        };
+        const astSplitKey = entryUri.toString();
+        const astSplitResult = useAstBackend
+            ? await splitLatexWithAstIncremental(
+                bodyText,
+                splitterOptions,
+                this.astSplitSnapshotKey === astSplitKey ? this.astSplitSnapshot : undefined
+            )
+            : undefined;
+        const rawBlockObjects = astSplitResult?.spans ?? LatexBlockSplitter.split(bodyText, splitterOptions);
+        if (useAstBackend) {
+            this.astSplitSnapshot = { text: bodyText, spans: rawBlockObjects, coarseSpans: astSplitResult?.coarseSpans };
+            this.astSplitSnapshotKey = astSplitKey;
+        } else {
+            this.astSplitSnapshot = undefined;
+            this.astSplitSnapshotKey = undefined;
+        }
         options.trace?.('after split');
 
         const res: DocumentParseResult = {
@@ -173,25 +279,32 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         fileIndices.length = 0;
         lines.length = 0;
 
+        const previousArtifacts = useAstBackend
+            ? this.buildPreviousAstArtifactCache()
+            : undefined;
+        if (useAstBackend) {
+            res.astBlockArtifacts = [];
+        }
+
         for (const b of rawBlockObjects) {
-            const blockText = bodyText.slice(b.start, b.end);
+            const blockText = getBlockSpanText(bodyText, b);
             if (this.hasRenderableContent(blockText)) {
+                const hash = stableHash(blockText);
                 res.blockSpans.push(b);
-                res.blockHashes.push(stableHash(blockText));
+                res.blockHashes.push(hash);
+                if (res.astBlockArtifacts) {
+                    const cached = previousArtifacts?.get(hash);
+                    res.astBlockArtifacts.push(cached ?? (
+                        this.shouldBuildInitialAstArtifact(b)
+                            ? await extractAstBlockArtifact(blockText, hash)
+                            : undefined
+                    ));
+                }
             }
         }
         options.trace?.('after block hashes');
 
         return res;
-    }
-
-    private countNewlinesBefore(text: string, endExclusive: number): number {
-        let count = 0;
-        const limit = Math.min(endExclusive, text.length);
-        for (let index = 0; index < limit; index++) {
-            if (text.charCodeAt(index) === 10) { count++; }
-        }
-        return count;
     }
 
     private hasRenderableContent(text: string): boolean {
@@ -200,6 +313,53 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             .replace(/\\item(?:\[[^\]]*\])?/g, '');
 
         return withoutListStructure.trim().length > 0;
+    }
+
+    private shouldBuildInitialAstArtifact(span: BlockTextSpan): boolean {
+        return span.lineCount > this.registry.splitterConfig.maxBlockLines;
+    }
+
+    private async warmAstBlockArtifactsSequential(
+        generation: number,
+        bodyText: string,
+        spans: readonly BlockTextSpan[],
+        hashes: readonly string[],
+        indices?: readonly number[]
+    ) {
+        const warmIndex = async (index: number) => {
+            if (generation !== this.astArtifactGeneration) {
+                return false;
+            }
+            const hash = hashes[index];
+            const span = spans[index];
+            if (!hash || !span || this.astBlockArtifacts[index]?.hash === hash) {
+                return true;
+            }
+            await this.ensureAstBlockArtifact(index, getBlockSpanText(bodyText, span), hash);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            return true;
+        };
+
+        if (indices) {
+            for (const index of indices) {
+                if (!await warmIndex(index)) { return; }
+            }
+            return;
+        }
+
+        for (let index = 0; index < spans.length; index++) {
+            if (!await warmIndex(index)) { return; }
+        }
+    }
+
+    private buildPreviousAstArtifactCache(): Map<string, AstBlockArtifact> {
+        const cache = new Map<string, AstBlockArtifact>();
+        for (const artifact of this.astBlockArtifacts) {
+            if (artifact) {
+                cache.set(artifact.hash, artifact);
+            }
+        }
+        return cache;
     }
 
     private async loadAndFlatten(
