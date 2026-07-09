@@ -3,11 +3,11 @@ import { REGEX_STR } from './patterns';
 import { BlockNumberingCounts } from './types';
 import { extractLatexLabelNames, stableHash } from './utils';
 
-interface BlockNumbering {
+export interface BlockNumbering {
     counts: BlockNumberingCounts;
 }
 
-interface ScanResult {
+export interface ScanResult {
     blockNumbering: BlockNumbering[];
     labelMap: Record<string, string>;
 }
@@ -18,16 +18,20 @@ export interface BlockTextProvider {
     getBlockHash(index: number): string | undefined;
 }
 
-type SectionLevel = 'section' | 'subsection' | 'subsubsection' | 'paragraph' | 'subparagraph';
-type FloatKind = 'fig' | 'tbl' | 'alg';
+export interface LatexScanner {
+    scan(provider: BlockTextProvider): ScanResult;
+}
 
-type ScanToken =
+export type SectionLevel = 'section' | 'subsection' | 'subsubsection' | 'paragraph' | 'subparagraph';
+export type FloatKind = 'fig' | 'tbl' | 'alg';
+
+export type ScanToken =
     | { pos: number; kind: 'sec'; level: SectionLevel; label?: string }
-    | { pos: number; kind: 'eq'; label?: string; tag?: string }
-    | { pos: number; kind: 'float'; floatKind: FloatKind; label?: string }
-    | { pos: number; kind: 'thm'; envName: string; label?: string };
+    | { pos: number; kind: 'eq'; label?: string; labels?: string[]; tag?: string }
+    | { pos: number; kind: 'float'; floatKind: FloatKind; label?: string; labels?: string[] }
+    | { pos: number; kind: 'thm'; envName: string; label?: string; labels?: string[] };
 
-interface BlockScanSummary {
+export interface BlockScanSummary {
     hash: string;
     tokens: ScanToken[];
 }
@@ -42,6 +46,86 @@ interface CounterState {
     alg: number;
 }
 
+function createEmptyBlockNumbering(): BlockNumbering {
+    return {
+        counts: { eq: [], fig: [], tbl: [], alg: [], sec: [], thm: [] }
+    };
+}
+
+function assignLabels(labelMap: Record<string, string>, token: { label?: string; labels?: string[] }, value: string) {
+    const labels = token.labels ?? (token.label ? [token.label] : []);
+    labels.forEach(label => {
+        labelMap[label] = value;
+    });
+}
+
+function advanceSection(counters: CounterState, level: SectionLevel): string {
+    if (level === 'section') {
+        counters.sec++;
+        counters.subsec = 0;
+        counters.subsubsec = 0;
+    } else if (level === 'subsection') {
+        counters.subsec++;
+        counters.subsubsec = 0;
+    } else {
+        counters.subsubsec++;
+    }
+    return formatSectionCounter(counters);
+}
+
+function formatSectionCounter(counters: CounterState): string {
+    let value = `${counters.sec}`;
+    if (counters.subsec > 0) { value += `.${counters.subsec}`; }
+    if (counters.subsubsec > 0) { value += `.${counters.subsubsec}`; }
+    return value;
+}
+
+export function floatKindFromEnvironment(type: string): FloatKind | undefined {
+    const normalized = type.replace(/\*$/, '');
+    if (normalized === 'figure') { return 'fig'; }
+    if (normalized === 'table') { return 'tbl'; }
+    if (normalized === 'algorithm') { return 'alg'; }
+    return undefined;
+}
+
+export function buildScanResultFromSummaries(summaries: readonly BlockScanSummary[]): ScanResult {
+    const counters: CounterState = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, tbl: 0, alg: 0 };
+    const dynamicCounters: Record<string, number> = {};
+    const labelMap: Record<string, string> = {};
+    const results: BlockNumbering[] = [];
+
+    summaries.forEach(summary => {
+        const blockRes = createEmptyBlockNumbering();
+
+        for (const token of summary.tokens) {
+            if (token.kind === 'sec') {
+                const numStr = advanceSection(counters, token.level);
+                blockRes.counts.sec.push(numStr);
+                assignLabels(labelMap, token, numStr);
+            } else if (token.kind === 'eq') {
+                counters.eq++;
+                const numStr = token.tag ?? String(counters.eq);
+                blockRes.counts.eq.push(numStr);
+                assignLabels(labelMap, token, numStr);
+            } else if (token.kind === 'float') {
+                counters[token.floatKind]++;
+                const numStr = String(counters[token.floatKind]);
+                blockRes.counts[token.floatKind].push(numStr);
+                assignLabels(labelMap, token, numStr);
+            } else {
+                dynamicCounters[token.envName] = (dynamicCounters[token.envName] ?? 0) + 1;
+                const numStr = String(dynamicCounters[token.envName]);
+                blockRes.counts.thm.push(numStr);
+                assignLabels(labelMap, token, numStr);
+            }
+        }
+
+        results.push(blockRes);
+    });
+
+    return { blockNumbering: results, labelMap };
+}
+
 /**
  * Lightweight SnapTeX numbering scanner.
  *
@@ -51,12 +135,16 @@ interface CounterState {
  * unchanged blocks reuse their summaries while final numbers are recomputed from
  * the summaries in document order.
  */
-export class LatexCounterScanner {
+export class LatexCounterScanner implements LatexScanner {
     private summaries: BlockScanSummary[] = [];
+
+    public reset() {
+        this.summaries = [];
+    }
 
     public scan(provider: BlockTextProvider): ScanResult {
         const summaries = this.updateSummaries(provider);
-        return this.buildResult(summaries);
+        return buildScanResultFromSummaries(summaries);
     }
 
     private updateSummaries(provider: BlockTextProvider): BlockScanSummary[] {
@@ -125,7 +213,7 @@ export class LatexCounterScanner {
         }
 
         while ((match = floatRegex.exec(text)) !== null) {
-            const floatKind = this.toFloatKind(match[1]);
+            const floatKind = floatKindFromEnvironment(match[1]);
             if (!floatKind) { continue; }
             tokens.push({
                 pos: match.index,
@@ -149,67 +237,6 @@ export class LatexCounterScanner {
         return { hash, tokens };
     }
 
-    private buildResult(summaries: BlockScanSummary[]): ScanResult {
-        const counters: CounterState = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, tbl: 0, alg: 0 };
-        const dynamicCounters: Record<string, number> = {};
-        const labelMap: Record<string, string> = {};
-        const results: BlockNumbering[] = [];
-
-        summaries.forEach(summary => {
-            const blockRes: BlockNumbering = {
-                counts: { eq: [], fig: [], tbl: [], alg: [], sec: [], thm: [] }
-            };
-
-            for (const token of summary.tokens) {
-                if (token.kind === 'sec') {
-                    const numStr = this.advanceSection(counters, token.level);
-                    blockRes.counts.sec.push(numStr);
-                    if (token.label) { labelMap[token.label] = numStr; }
-                } else if (token.kind === 'eq') {
-                    counters.eq++;
-                    const numStr = token.tag ?? String(counters.eq);
-                    blockRes.counts.eq.push(numStr);
-                    if (token.label) { labelMap[token.label] = numStr; }
-                } else if (token.kind === 'float') {
-                    counters[token.floatKind]++;
-                    const numStr = String(counters[token.floatKind]);
-                    blockRes.counts[token.floatKind].push(numStr);
-                    if (token.label) { labelMap[token.label] = numStr; }
-                } else {
-                    dynamicCounters[token.envName] = (dynamicCounters[token.envName] ?? 0) + 1;
-                    const numStr = String(dynamicCounters[token.envName]);
-                    blockRes.counts.thm.push(numStr);
-                    if (token.label) { labelMap[token.label] = numStr; }
-                }
-            }
-
-            results.push(blockRes);
-        });
-
-        return { blockNumbering: results, labelMap };
-    }
-
-    private advanceSection(counters: CounterState, level: SectionLevel): string {
-        if (level === 'section') {
-            counters.sec++;
-            counters.subsec = 0;
-            counters.subsubsec = 0;
-        } else if (level === 'subsection') {
-            counters.subsec++;
-            counters.subsubsec = 0;
-        } else {
-            counters.subsubsec++;
-        }
-        return this.formatSec(counters);
-    }
-
-    private formatSec(counters: CounterState): string {
-        let s = `${counters.sec}`;
-        if (counters.subsec > 0) { s += `.${counters.subsec}`; }
-        if (counters.subsubsec > 0) { s += `.${counters.subsubsec}`; }
-        return s;
-    }
-
     private extractLabelNear(text: string, startIdx: number): string | undefined {
         const sub = text.substring(startIdx, startIdx + 200);
         return extractLatexLabelNames(sub)[0];
@@ -226,10 +253,4 @@ export class LatexCounterScanner {
         return { label, tag };
     }
 
-    private toFloatKind(type: string): FloatKind | undefined {
-        if (type === 'figure') { return 'fig'; }
-        if (type === 'table') { return 'tbl'; }
-        if (type === 'algorithm') { return 'alg'; }
-        return undefined;
-    }
 }

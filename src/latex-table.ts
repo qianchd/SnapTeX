@@ -325,6 +325,10 @@ function splitLatexLineBreaks(content: string): string[] {
     return splitLatexTopLevel(content, '\\\\').filter(line => line.length > 0);
 }
 
+export function renderLatexMakecellHtml(lines: readonly string[]): string {
+    return `<span class="latex-makecell">${lines.map(line => `<span class="latex-makecell-line">${line}</span>`).join('')}</span>`;
+}
+
 function renderTableInlineCommands(content: string, renderer: RenderContext): string {
     return replaceLatexCommandCalls(content, [
         {
@@ -333,8 +337,7 @@ function renderTableInlineCommands(content: string, renderer: RenderContext): st
             optionalArgs: 1,
             render: call => {
                 const lines = splitLatexLineBreaks(call.requiredArgs[0].content);
-                const lineHtml = lines.map(line => `<span class="latex-makecell-line">${renderLatexTableInlineContent(line, renderer)}</span>`).join('');
-                return renderer.protectHtml('makecell', `<span class="latex-makecell">${lineHtml}</span>`);
+                return renderer.protectHtml('makecell', renderLatexMakecellHtml(lines.map(line => renderLatexTableInlineContent(line, renderer))));
             }
         },
         {

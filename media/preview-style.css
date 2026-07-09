@@ -208,36 +208,34 @@ p:has(.no-indent-marker) {
 */
 
 /* 1. Invert Black Strokes (Lines, Arrows, Borders) */
-body.vscode-dark .tikz-container svg [stroke="#000"],
-body.vscode-dark .tikz-container svg [stroke="black"],
-body.vscode-dark .tikz-container svg [stroke="rgb(0,0,0)"],
-body.vscode-dark .tikz-container svg [stroke="rgb(0, 0, 0)"] {
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [stroke="#000"],
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [stroke="black"],
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [stroke="rgb(0,0,0)"],
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [stroke="rgb(0, 0, 0)"] {
     stroke: var(--vscode-editor-foreground) !important;
 }
 
 /* 2. Invert Black Fills (Text, Solid Shapes) */
 /* Note: Pattern fills use url(#id), so they won't match these selectors, which is good. */
-/* body.vscode-dark .tikz-container svg [fill="#000"],
-body.vscode-dark .tikz-container svg [fill="black"],
-body.vscode-dark .tikz-container svg [fill="rgb(0,0,0)"],
-body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [fill="#000"],
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [fill="black"],
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [fill="rgb(0,0,0)"],
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg [fill="rgb(0, 0, 0)"] {
     fill: var(--vscode-editor-foreground) !important;
-} */
+}
 
 /* 3. Ensure Text elements default to foreground if no fill is specified */
-/* body.vscode-dark .tikz-container svg text {
+body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg text {
     fill: var(--vscode-editor-foreground);
-} */
+}
 
 /* ==========================================================================
    Theorem Blocks (Theme-Adaptive Box)
    ========================================================================== */
 
 .latex-theorem {
-    /* [MAGIC] 混合 10% 的主题色与 90% 的透明度，生成极浅的背景 */
+    /* Keep theorem boxes readable across host themes without hard-coded colors. */
     background-color: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
-
-    /* 边框直接使用 100% 的主题色 */
     border-left: 4px solid color-mix(in srgb, var(--vscode-textLink-foreground) 40%, transparent);
 
     padding: 10px 15px;
@@ -247,9 +245,7 @@ body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
     page-break-inside: avoid;
 }
 
-/* Header Styling */
 .latex-theorem-header {
-    /* 标题颜色与边框保持一致 */
     color: var(--vscode-textLink-foreground);
 }
 
@@ -291,11 +287,28 @@ body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
     overflow-x: auto;
 }
 
+/* Verbatim/code blocks */
+.latex-verbatim {
+    display: block;
+    margin: 1em 0;
+    padding: 0.85em 1em;
+    border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.35));
+    border-radius: 6px;
+    background-color: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.10));
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.latex-verbatim code {
+    font-family: var(--vscode-editor-font-family, "Courier New", monospace);
+    font-size: 0.86em;
+}
+
 /* Algorithm Block Styles */
 .latex-algorithm {
     margin: 1.5em 0;
-    border-top: 2px solid black;
-    border-bottom: 2px solid black;
+    border-top: 2px solid var(--vscode-editor-foreground);
+    border-bottom: 2px solid var(--vscode-editor-foreground);
     padding: 10px;
 }
 
@@ -325,14 +338,6 @@ body.vscode-dark .tikz-container svg [fill="rgb(0, 0, 0)"] {
 .latex-algorithm .alg-item {
     margin-bottom: 3px;
     padding-left: 5px; /* Standard indentation/padding */
-}
-
-/* Items without markers (Input/Output/Require/Ensure) */
-/* These items should override the parent list's numbering */
-.latex-algorithm .alg-item.alg-item-no-marker {
-    list-style: none;
-    padding-left: 0; /* Align with the bullet/number position usually */
-    /* If you want them indented same as text, keep padding-left: 5px or remove this line */
 }
 
 .latex-figure { text-align: center; margin: 20px 0; }
@@ -524,7 +529,12 @@ ol ol { list-style-type: lower-alpha; }
 ol ol ol { list-style-type: lower-roman; }
 
 /* Fix alignment for custom label lists (\item[Label]) */
-ul li strong:first-child {
+.latex-list-custom-label {
+    list-style: none;
+}
+
+.latex-list-label {
+    font-weight: 600;
     margin-right: 0.5em;
 }
 

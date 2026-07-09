@@ -39,7 +39,7 @@ const CITATION_CMDS = [
 ];
 
 const SPLITTER_IGNORED_ENVS = [
-    'proof', 'itemize', 'enumerate'
+    'proof'
 ];
 
 const SPLITTER_MAJOR_ENVS = [

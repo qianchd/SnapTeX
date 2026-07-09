@@ -6,6 +6,7 @@ import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, T
 import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
 const previewBridge = getPreviewBridge();
+    const PREVIEW_LAYOUT_WIDTH_CHANGE_EPSILON_PX = 12;
     const PDF_RENDER_MARGIN_VH = 130;
     const PDF_RELEASE_MARGIN_VH = 380;
     window.pdfReqQueue = [];
@@ -432,6 +433,8 @@ const previewBridge = getPreviewBridge();
             this.isFirstLoad = true;
             this.lastScrollTime = 0;
             this.scrollCommandSeq = 0;
+            this.previewLayoutSyncSuppressedUntil = 0;
+            this.lastPreviewWidth = this.getPreviewWidth();
             this.virtualUpdateFrame = null;
             this.virtualCleanupTimer = null;
             this.config = {
@@ -481,9 +484,35 @@ const previewBridge = getPreviewBridge();
                 this.scheduleVirtualizedCleanup();
                 this.onScroll();
             });
-            window.addEventListener('resize', () => this.updateVirtualizedBlocks({ allowUnmount: true }));
+            window.addEventListener('resize', () => this.onPreviewResize());
+            if (typeof ResizeObserver !== 'undefined' && this.contentRoot) {
+                this.previewResizeObserver = new ResizeObserver(entries => {
+                    const width = entries[0]?.contentRect?.width;
+                    this.onPreviewResize(width);
+                });
+                this.previewResizeObserver.observe(this.contentRoot);
+            }
             document.addEventListener('dblclick', event => this.onDoubleClick(event));
             document.addEventListener('click', event => this.onInternalLinkClick(event));
+        }
+
+        getSyncSuppressionDuration() {
+            return Math.max(500, this.config.autoScrollDelay + 300);
+        }
+
+        getPreviewWidth() {
+            const rect = this.contentRoot?.getBoundingClientRect();
+            return rect && rect.width > 0 ? rect.width : window.innerWidth;
+        }
+
+        onPreviewResize(width = this.getPreviewWidth()) {
+            this.updateVirtualizedBlocks({ allowUnmount: true });
+            if (!Number.isFinite(width) || width <= 0 || Math.abs(width - this.lastPreviewWidth) < PREVIEW_LAYOUT_WIDTH_CHANGE_EPSILON_PX) {
+                return;
+            }
+            this.lastPreviewWidth = width;
+            this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
+            previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
         }
 
         lockScrolling(duration) {
@@ -525,6 +554,9 @@ const previewBridge = getPreviewBridge();
 
         handleUpdate(payload) {
             this.logPayloadStats(payload);
+            if (payload.resetPreviewState) {
+                this.resetPreviewRuntimeState();
+            }
             if (payload.numbering) {
                 this.currentNumbering = payload.numbering;
             }
@@ -556,6 +588,14 @@ const previewBridge = getPreviewBridge();
             if (!this.deferHeavyPreviewWork) {
                 this.scheduleHeavyPreviewWork();
             }
+        }
+
+        resetPreviewRuntimeState() {
+            this.pendingBlockHtmlRequests.clear();
+            this.virtualization.resetCaches();
+            this.isFirstLoad = true;
+            this.deferHeavyPreviewWork = false;
+            this.pendingScroll = null;
         }
 
         formatDebugMb(bytes) {
@@ -910,21 +950,20 @@ const previewBridge = getPreviewBridge();
 
         handleBlockHtml(message) {
             const pending = this.pendingBlockHtmlRequests.get(message.id);
-            if (pending) {
-                this.pendingBlockHtmlRequests.delete(message.id);
-            }
+            if (!pending) return;
+            this.pendingBlockHtmlRequests.delete(message.id);
             if (message.error || !message.html) {
-                const index = pending?.index ?? message.index;
+                const index = pending.index;
                 const shell = this.getShellByIndex(index);
                 if (shell) {
                     shell.removeAttribute('data-html-request-id');
                 }
-                pending?.callbacks?.forEach(callback => callback(null));
+                pending.callbacks.forEach(callback => callback(null));
                 return;
             }
 
-            const index = typeof message.index === 'number' ? message.index : pending?.index;
-            const hash = message.hash || pending?.hash || '';
+            const index = typeof message.index === 'number' ? message.index : pending.index;
+            const hash = message.hash || pending.hash || '';
             const htmlChars = message.html.length;
             this.debugStats.blockHtmlResponses += 1;
             this.debugStats.blockHtmlChars += htmlChars;
@@ -934,17 +973,17 @@ const previewBridge = getPreviewBridge();
                 shell.removeAttribute('data-html-request-id');
             }
             if (!shell) {
-                pending?.callbacks?.forEach(callback => callback(null));
+                pending.callbacks.forEach(callback => callback(null));
                 return;
             }
-            if (!pending?.forceMount && !this.virtualization.isShellInMountRange(shell)) return;
+            if (!pending.forceMount && !this.virtualization.isShellInMountRange(shell)) return;
 
             const block = this.virtualization.withViewportAnchorPreserved(() => this.virtualization.mountShell(
                 shell,
                 missingShell => this.requestVirtualBlockHtml(missingShell)
             ));
             if (block) { this.onVirtualBlockMounted(block); }
-            pending?.callbacks?.forEach(callback => callback(block || null));
+            pending.callbacks.forEach(callback => callback(block || null));
         }
 
         getPendingTikzContainers(root = document) {
@@ -1079,6 +1118,7 @@ const previewBridge = getPreviewBridge();
         onScroll() {
             if (this.state !== 'IDLE') return;
             const now = Date.now();
+            if (now < this.previewLayoutSyncSuppressedUntil) return;
             if (now - this.lastScrollTime < this.config.autoScrollDelay) return;
             this.lastScrollTime = now;
             const blocks = document.querySelectorAll('.latex-block, .latex-block-shell');
@@ -1131,11 +1171,14 @@ const previewBridge = getPreviewBridge();
                             }
                         }
                     }
+                    const sourceAnchor = event.target.closest('[data-sn-src-start]');
                     previewBridge.postMessage({
                         command: PreviewToHostCommand.RevealLine,
                         index: parseInt(index),
                         ratio,
                         anchors,
+                        sourceStart: sourceAnchor ? Number(sourceAnchor.getAttribute('data-sn-src-start')) : undefined,
+                        sourceEnd: sourceAnchor ? Number(sourceAnchor.getAttribute('data-sn-src-end')) : undefined,
                         viewRatio: event.clientY / window.innerHeight
                     });
                 }
@@ -1165,41 +1208,63 @@ const previewBridge = getPreviewBridge();
         }
 
         async executeScroll(data) {
-            const { index, ratio, anchor, auto, viewRatio = 0.5 } = data;
+            const { index, ratio, anchor, sourceStart, sourceEnd, auto, viewRatio = 0.5 } = data;
             const scrollSeq = ++this.scrollCommandSeq;
 
-            const mountResult = await this.ensureBlockMountedByIndex(index);
-            if (scrollSeq !== this.scrollCommandSeq) return;
-            const target = mountResult.target;
-            if (!auto || mountResult.mounted) {
-                await this.waitForLayout();
-                if (scrollSeq !== this.scrollCommandSeq) return;
-            }
-
-            if (target) {
-                const calcY = () => {
-                    if (!target.isConnected) return window.scrollY;
-                    const rect = target.getBoundingClientRect();
-                    const absoluteTop = rect.top + window.scrollY;
-                    let y = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
-                    if (anchor) {
-                        const textTop = this.findTextOffsetInBlock(target, anchor);
-                        if (textTop !== null) { y = textTop + window.scrollY - (window.innerHeight * viewRatio); }
-                    }
-                    return y;
-                };
-                const targetY = calcY();
+            const scrollToTarget = (target, useAnchor) => {
+                if (!target?.isConnected) return false;
+                const rect = target.getBoundingClientRect();
+                const absoluteTop = rect.top + window.scrollY;
+                let targetY = absoluteTop + (ratio || 0) * rect.height - (window.innerHeight * viewRatio);
+                const sourceTarget = this.findSourceAnchorInBlock(target, sourceStart, sourceEnd);
+                if (sourceTarget) {
+                    const sourceRect = sourceTarget.getBoundingClientRect();
+                    targetY = sourceRect.top + window.scrollY - (window.innerHeight * viewRatio);
+                }
+                if (!sourceTarget && useAnchor && anchor) {
+                    const textTop = this.findTextOffsetInBlock(target, anchor);
+                    if (textTop !== null) { targetY = textTop + window.scrollY - (window.innerHeight * viewRatio); }
+                }
                 const currentY = window.scrollY;
                 const autoSkipThreshold = 12;
-                if (Math.abs(currentY - targetY) < autoSkipThreshold && auto) { return; }
+                if (Math.abs(currentY - targetY) < autoSkipThreshold && auto) { return true; }
                 const lockTime = auto ? 600 : 1000;
                 this.lockScrolling(lockTime);
                 window.scrollTo({ top: targetY, behavior: 'auto' });
-                if (!auto) {
+                return true;
+            };
+
+            const target = this.getBlockByIndex(index);
+            if (target) {
+                await this.waitForLayout();
+                if (scrollSeq !== this.scrollCommandSeq) return;
+                if (scrollToTarget(target, true) && !auto) {
                     target.classList.add('jump-highlight');
                     setTimeout(() => target.classList.remove('jump-highlight'), 1000);
+                    const sourceTarget = this.findSourceAnchorInBlock(target, sourceStart, sourceEnd);
+                    if (sourceTarget) this.highlightElement(sourceTarget);
                     if (anchor) this.highlightTextInNode(target, anchor);
                 }
+                return;
+            }
+
+            const shell = this.getShellByIndex(index);
+            if (!shell) return;
+
+            scrollToTarget(shell, false);
+            const block = await this.ensureShellMounted(shell);
+            if (scrollSeq !== this.scrollCommandSeq) return;
+
+            const finalTarget = block || shell;
+            await this.waitForLayout();
+            if (scrollSeq !== this.scrollCommandSeq) return;
+
+            if (scrollToTarget(finalTarget, Boolean(block)) && !auto) {
+                finalTarget.classList.add('jump-highlight');
+                setTimeout(() => finalTarget.classList.remove('jump-highlight'), 1000);
+                const sourceTarget = block ? this.findSourceAnchorInBlock(block, sourceStart, sourceEnd) : null;
+                if (sourceTarget) this.highlightElement(sourceTarget);
+                if (block && anchor) this.highlightTextInNode(block, anchor);
             }
         }
 
@@ -1323,7 +1388,7 @@ const previewBridge = getPreviewBridge();
             this.insertElementsBefore(insertedShells, referenceNode);
 
             if (shift !== 0) {
-                this.virtualization.remapShellIndices(start + insertedShells.length, shift);
+                this.virtualization.remapShellIndicesFromDomPosition(start + insertedShells.length, shift);
             }
 
             this.forEachDirtyBlock(payload, (idx, html) => {
@@ -1485,6 +1550,21 @@ const previewBridge = getPreviewBridge();
                 }
             }, 2000);
             return true;
+        }
+
+        highlightElement(element) {
+            element.classList.add('highlight-word');
+            setTimeout(() => element.classList.remove('highlight-word'), 2000);
+        }
+
+        findSourceAnchorInBlock(rootElement, sourceStart, sourceEnd) {
+            if (typeof sourceStart !== 'number' || Number.isNaN(sourceStart)) return null;
+            const anchors = Array.from(rootElement.querySelectorAll('[data-sn-src-start]'));
+            return anchors.find(anchor => {
+                const start = Number(anchor.getAttribute('data-sn-src-start'));
+                const end = Number(anchor.getAttribute('data-sn-src-end'));
+                return start === sourceStart && (typeof sourceEnd !== 'number' || Number.isNaN(sourceEnd) || end === sourceEnd);
+            }) || null;
         }
 
         findTextOffsetInBlock(rootElement, text) {
