@@ -1,17 +1,20 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
+import type { BackendMode } from '../../../src/types';
 import {
-    chooseRootPath,
+    createProjectTree,
     fileInputPath,
     isProjectFile,
     isTexFile,
+    projectFolderPaths,
     projectFileFromFile,
     projectFileFromHandle,
-    projectTextPaths,
     readDirectoryHandle,
     type BrowserDirectoryHandle,
-    type BrowserFileHandle
+    type BrowserFileHandle,
+    type ProjectTreeNode
 } from '../../standalone/src/browser-project';
-import { normalizeBrowserPath, type BrowserProjectFile } from '../../standalone/src/browser-file-provider';
+import type { BrowserProjectFile } from '../../standalone/src/browser-file-provider';
+import { createStandaloneDemoProjectFiles } from '../../standalone/src/demo-project';
 
 const RESIZE_WIDTH_STEP_PX = 10;
 const RESIZE_FRAME_INTERVAL_MS = 30;
@@ -24,18 +27,72 @@ interface BrowserFilePickerWindow extends Window {
     showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>;
 }
 
-let currentProjectTextPaths: string[] = [];
 let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
 type WebTheme = 'light' | 'dark' | 'blue' | 'rose';
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
 type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
+type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
+type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput';
 
-interface ProjectTreeNode {
-    name: string;
-    path: string;
-    kind: 'file' | 'folder';
-    children: ProjectTreeNode[];
+const BOOLEAN_SETTING_CONTROLS: ReadonlyArray<[BooleanSettingControl, BooleanPreviewSetting]> = [
+    ['livePreviewToggle', 'livePreview'],
+    ['autoScrollToggle', 'autoScrollSync'],
+    ['virtualModeToggle', 'virtualMode'],
+    ['debugMemoryToggle', 'debugMemory']
+];
+
+const NUMBER_SETTING_CONTROLS: ReadonlyArray<[NumberSettingControl, NumberPreviewSetting, number]> = [
+    ['renderDelayInput', 'renderDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.renderDelayMs],
+    ['autoScrollDelayInput', 'autoScrollDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs]
+];
+
+function getElement<T extends HTMLElement>(id: string): T | null {
+    return document.getElementById(id) as T | null;
+}
+
+function requireElement<T extends HTMLElement>(id: string): T {
+    const element = getElement<T>(id);
+    if (!element) {
+        throw new Error(`Missing web control #${id}.`);
+    }
+    return element;
+}
+
+function readControls() {
+    return {
+        activePathLabel: requireElement('active-path-label'),
+        rootPathLabel: requireElement('root-path-label'),
+        status: requireElement('project-status'),
+        projectFiles: requireElement('project-files'),
+        projectDiagnostics: requireElement('project-diagnostics'),
+        toggleExplorerButton: requireElement('toggle-explorer-button'),
+        openFileButton: requireElement('open-file-button'),
+        openFolderButton: requireElement('open-folder-button'),
+        saveButton: requireElement('save-button'),
+        setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
+        settingsButton: requireElement('settings-button'),
+        settingsMenu: requireElement('settings-menu'),
+        showExplorerToggle: requireElement<HTMLInputElement>('show-explorer-toggle'),
+        showDiagnosticsToggle: requireElement<HTMLInputElement>('show-diagnostics-toggle'),
+        livePreviewToggle: requireElement<HTMLInputElement>('live-preview-toggle'),
+        autoScrollToggle: requireElement<HTMLInputElement>('auto-scroll-toggle'),
+        virtualModeToggle: requireElement<HTMLInputElement>('virtual-mode-toggle'),
+        debugMemoryToggle: requireElement<HTMLInputElement>('debug-memory-toggle'),
+        backendModeSelect: requireElement<HTMLSelectElement>('backend-mode-select'),
+        renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
+        autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
+        themeSelect: requireElement<HTMLSelectElement>('theme-select'),
+        openFileInput: requireElement<HTMLInputElement>('open-file-input'),
+        openFolderInput: requireElement<HTMLInputElement>('open-folder-input')
+    };
+}
+
+let controls: ReturnType<typeof readControls> | undefined;
+
+function getControls(): ReturnType<typeof readControls> {
+    controls ??= readControls();
+    return controls;
 }
 
 function enableSplitPaneResize(splitter: HTMLElement): void {
@@ -163,117 +220,53 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
 }
 
 function setStatus(message: string): void {
-    const status = document.getElementById('project-status');
-    if (status) {
-        status.textContent = message;
-    }
+    getControls().status.textContent = message;
 }
 
 function reportFailure(action: string, error: unknown): void {
     setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-function expandFoldersFromPaths(paths: readonly string[]): void {
-    for (const path of paths.map(normalizeBrowserPath)) {
-        const parts = path.split('/').filter(Boolean);
-        let currentPath = '';
-        for (let index = 0; index < parts.length - 1; index++) {
-            currentPath += `/${parts[index]}`;
-            expandedFolders.add(currentPath);
-        }
-    }
-}
-
 async function loadProject(host: StandaloneHost, files: readonly BrowserProjectFile[]): Promise<void> {
-    const rootPath = chooseRootPath(files);
+    const rootPath = await host.loadProjectFiles(files);
     if (!rootPath) {
         setStatus('No TeX file found.');
         return;
     }
 
-    await host.loadProject(files, rootPath);
-    currentProjectTextPaths = projectTextPaths(files);
     expandedFolders.clear();
-    expandFoldersFromPaths(currentProjectTextPaths);
+    projectFolderPaths(host.getProjectTextPaths()).forEach(path => expandedFolders.add(path));
     renderProjectState(host);
     setStatus(`Opened ${rootPath} (${files.length} files)`);
 }
 
 function renderProjectState(host: StandaloneHost): void {
     renderChromeState(host);
-    renderProjectFiles(host, currentProjectTextPaths);
+    renderProjectFiles(host);
     renderProjectDiagnostics(host);
 }
 
-function setText(id: string, text: string): void {
-    const element = document.getElementById(id);
-    if (element) {
-        element.textContent = text;
-        element.title = text;
-    }
-}
-
 function renderChromeState(host: StandaloneHost): void {
+    const controls = getControls();
     const activePath = host.getActivePath();
     const rootPath = host.getRootPath();
-    setText('active-path-label', `${activePath}${host.isDirty(activePath) ? ' *' : ''}`);
-    setText('root-path-label', `root: ${rootPath}`);
+    const activePathText = `${activePath}${host.isDirty(activePath) ? ' *' : ''}`;
+    controls.activePathLabel.textContent = activePathText;
+    controls.activePathLabel.title = activePathText;
+    controls.rootPathLabel.textContent = `root: ${rootPath}`;
+    controls.rootPathLabel.title = rootPath;
     syncSettingsControls(host);
 
-    const setRootButton = document.getElementById('set-root-button') as HTMLButtonElement | null;
-    if (setRootButton) {
-        const canSetRoot = isTexFile(activePath) && activePath !== rootPath;
-        setRootButton.disabled = !canSetRoot;
-        setRootButton.title = canSetRoot ? `Set ${activePath} as preview root` : 'Current TeX file is already the preview root';
-    }
+    const canSetRoot = isTexFile(activePath) && activePath !== rootPath;
+    controls.setRootButton.disabled = !canSetRoot;
+    controls.setRootButton.title = canSetRoot ? `Set ${activePath} as preview root` : 'Current TeX file is already the preview root';
 }
 
-function createProjectTree(paths: readonly string[]): ProjectTreeNode {
-    const root: ProjectTreeNode = { name: '', path: '/', kind: 'folder', children: [] };
-    const folderByPath = new Map<string, ProjectTreeNode>([['/', root]]);
-
-    for (const path of paths.map(normalizeBrowserPath)) {
-        const parts = path.split('/').filter(Boolean);
-        let parent = root;
-        let currentPath = '';
-        parts.forEach((part, index) => {
-            currentPath += `/${part}`;
-            const isFile = index === parts.length - 1;
-            if (isFile) {
-                parent.children.push({ name: part, path: currentPath, kind: 'file', children: [] });
-                return;
-            }
-
-            let folder = folderByPath.get(currentPath);
-            if (!folder) {
-                folder = { name: part, path: currentPath, kind: 'folder', children: [] };
-                folderByPath.set(currentPath, folder);
-                parent.children.push(folder);
-            }
-            parent = folder;
-        });
-    }
-
-    const sortTree = (node: ProjectTreeNode): void => {
-        node.children.sort((a, b) => {
-            if (a.kind !== b.kind) {
-                return a.kind === 'folder' ? -1 : 1;
-            }
-            return a.name.localeCompare(b.name);
-        });
-        node.children.forEach(sortTree);
-    };
-    sortTree(root);
-    return root;
-}
-
-function renderProjectFiles(host: StandaloneHost, paths: readonly string[]): void {
-    const fileList = document.getElementById('project-files');
-    if (!fileList) {
-        return;
-    }
-
-    fileList.replaceChildren(...createProjectTree(paths).children.flatMap(node => renderProjectTreeNode(host, node, 0)));
+function renderProjectFiles(host: StandaloneHost): void {
+    const rows = createProjectTree(host.getProjectTextPaths())
+        .children
+        .flatMap(node => renderProjectTreeNode(host, node, 0));
+    getControls().projectFiles.replaceChildren(...rows);
 }
 
 function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, depth: number): HTMLElement[] {
@@ -294,7 +287,7 @@ function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, dept
             } else {
                 expandedFolders.add(node.path);
             }
-            renderProjectFiles(host, currentProjectTextPaths);
+            renderProjectFiles(host);
         });
 
         const label = document.createElement('button');
@@ -318,7 +311,6 @@ function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, dept
     openButton.addEventListener('click', () => {
         host.openEditorFile(node.path)
             .then(() => {
-                renderProjectState(host);
                 setStatus(`Editing ${node.path}`);
             })
             .catch(error => reportFailure('Open file', error));
@@ -334,11 +326,7 @@ function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, dept
 }
 
 function renderProjectDiagnostics(host: StandaloneHost): void {
-    const panel = document.getElementById('project-diagnostics');
-    if (!panel) {
-        return;
-    }
-
+    const panel = getControls().projectDiagnostics;
     const diagnostics = host.getDiagnostics();
     if (diagnostics.length === 0) {
         panel.replaceChildren();
@@ -399,7 +387,6 @@ async function saveActiveFile(host: StandaloneHost): Promise<void> {
     if (!host.getSettings().livePreview) {
         await host.renderCurrentText();
     }
-    renderProjectState(host);
     if (result.wroteToSource) {
         setStatus(`Saved ${result.path}`);
         return;
@@ -423,34 +410,24 @@ function bindSaveShortcut(host: StandaloneHost): void {
 async function setActiveFileAsRoot(host: StandaloneHost): Promise<void> {
     const path = host.getActivePath();
     if (!isTexFile(path) || path === host.getRootPath()) {
-        renderProjectState(host);
         return;
     }
 
     await host.setPreviewRoot(path);
-    renderProjectState(host);
     setStatus(`Preview root ${path}`);
 }
 
 function setExplorerCollapsed(collapsed: boolean): void {
     explorerCollapsed = collapsed;
     document.body.dataset.explorerCollapsed = String(collapsed);
-    const button = document.getElementById('toggle-explorer-button');
-    if (button) {
-        button.setAttribute('aria-expanded', String(!collapsed));
-    }
-    const toggle = document.getElementById('show-explorer-toggle') as HTMLInputElement | null;
-    if (toggle) {
-        toggle.checked = !collapsed;
-    }
+    const controls = getControls();
+    controls.toggleExplorerButton.setAttribute('aria-expanded', String(!collapsed));
+    controls.showExplorerToggle.checked = !collapsed;
 }
 
 function setDiagnosticsVisible(visible: boolean): void {
     document.body.dataset.diagnosticsVisible = String(visible);
-    const toggle = document.getElementById('show-diagnostics-toggle') as HTMLInputElement | null;
-    if (toggle) {
-        toggle.checked = visible;
-    }
+    getControls().showDiagnosticsToggle.checked = visible;
 }
 
 function setInputValue(input: HTMLInputElement, value: number): void {
@@ -468,54 +445,26 @@ function readClampedNumber(input: HTMLInputElement, fallback: number): number {
 
 function setTheme(theme: WebTheme): void {
     document.body.dataset.theme = theme;
-    const select = document.getElementById('theme-select') as HTMLSelectElement | null;
-    if (select) {
-        select.value = theme;
-    }
+    getControls().themeSelect.value = theme;
 }
 
 function syncSettingsControls(host: StandaloneHost): void {
     const settings = host.getSettings();
-    const livePreviewToggle = document.getElementById('live-preview-toggle') as HTMLInputElement | null;
-    const autoScrollToggle = document.getElementById('auto-scroll-toggle') as HTMLInputElement | null;
-    const virtualModeToggle = document.getElementById('virtual-mode-toggle') as HTMLInputElement | null;
-    const debugMemoryToggle = document.getElementById('debug-memory-toggle') as HTMLInputElement | null;
-    const renderDelayInput = document.getElementById('render-delay-input') as HTMLInputElement | null;
-    const autoScrollDelayInput = document.getElementById('auto-scroll-delay-input') as HTMLInputElement | null;
-
-    if (livePreviewToggle) { livePreviewToggle.checked = settings.livePreview; }
-    if (autoScrollToggle) { autoScrollToggle.checked = settings.autoScrollSync; }
-    if (virtualModeToggle) { virtualModeToggle.checked = settings.virtualMode; }
-    if (debugMemoryToggle) { debugMemoryToggle.checked = settings.debugMemory; }
-    if (renderDelayInput) { setInputValue(renderDelayInput, settings.renderDelayMs); }
-    if (autoScrollDelayInput) { setInputValue(autoScrollDelayInput, settings.autoScrollDelayMs); }
+    const controls = getControls();
+    for (const [controlName, setting] of BOOLEAN_SETTING_CONTROLS) {
+        controls[controlName].checked = settings[setting];
+    }
+    controls.backendModeSelect.value = settings.backendMode;
+    for (const [controlName, setting] of NUMBER_SETTING_CONTROLS) {
+        setInputValue(controls[controlName], settings[setting]);
+    }
 }
 
 function bindProjectControls(host: StandaloneHost): void {
-    const toggleExplorerButton = document.getElementById('toggle-explorer-button');
-    const openFileButton = document.getElementById('open-file-button');
-    const openFolderButton = document.getElementById('open-folder-button');
-    const saveButton = document.getElementById('save-button');
-    const setRootButton = document.getElementById('set-root-button');
-    const settingsButton = document.getElementById('settings-button');
-    const settingsMenu = document.getElementById('settings-menu');
-    const showExplorerToggle = document.getElementById('show-explorer-toggle') as HTMLInputElement | null;
-    const showDiagnosticsToggle = document.getElementById('show-diagnostics-toggle') as HTMLInputElement | null;
-    const livePreviewToggle = document.getElementById('live-preview-toggle') as HTMLInputElement | null;
-    const autoScrollToggle = document.getElementById('auto-scroll-toggle') as HTMLInputElement | null;
-    const virtualModeToggle = document.getElementById('virtual-mode-toggle') as HTMLInputElement | null;
-    const debugMemoryToggle = document.getElementById('debug-memory-toggle') as HTMLInputElement | null;
-    const renderDelayInput = document.getElementById('render-delay-input') as HTMLInputElement | null;
-    const autoScrollDelayInput = document.getElementById('auto-scroll-delay-input') as HTMLInputElement | null;
-    const themeSelect = document.getElementById('theme-select') as HTMLSelectElement | null;
-    const openFileInput = document.getElementById('open-file-input') as HTMLInputElement | null;
-    const openFolderInput = document.getElementById('open-folder-input') as HTMLInputElement | null;
-    if (!toggleExplorerButton || !openFileButton || !openFolderButton || !saveButton || !setRootButton || !settingsButton || !settingsMenu || !showExplorerToggle || !showDiagnosticsToggle || !livePreviewToggle || !autoScrollToggle || !virtualModeToggle || !debugMemoryToggle || !renderDelayInput || !autoScrollDelayInput || !themeSelect || !openFileInput || !openFolderInput) {
-        throw new Error('Missing web project controls.');
-    }
+    const controls = getControls();
     const setSettingsOpen = (open: boolean): void => {
-        settingsButton.setAttribute('aria-expanded', String(open));
-        settingsMenu.hidden = !open;
+        controls.settingsButton.setAttribute('aria-expanded', String(open));
+        controls.settingsMenu.hidden = !open;
     };
     const bindToggleSetting = (input: HTMLInputElement, setting: BooleanPreviewSetting): void => {
         input.addEventListener('change', () => host.updateSettings({ [setting]: input.checked } as Partial<StandalonePreviewSettings>));
@@ -524,100 +473,79 @@ function bindProjectControls(host: StandaloneHost): void {
         input.addEventListener('change', () => host.updateSettings({ [setting]: readClampedNumber(input, fallback) } as Partial<StandalonePreviewSettings>));
     };
 
-    toggleExplorerButton.addEventListener('click', () => {
+    controls.toggleExplorerButton.addEventListener('click', () => {
         setExplorerCollapsed(!explorerCollapsed);
     });
-    openFileButton.addEventListener('click', () => {
-        openSingleFile(host, openFileInput).catch(error => reportFailure('Open', error));
+    controls.openFileButton.addEventListener('click', () => {
+        openSingleFile(host, controls.openFileInput).catch(error => reportFailure('Open', error));
     });
-    openFolderButton.addEventListener('click', () => {
-        openFolder(host, openFolderInput).catch(error => reportFailure('Open', error));
+    controls.openFolderButton.addEventListener('click', () => {
+        openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
     });
-    saveButton.addEventListener('click', () => {
+    controls.saveButton.addEventListener('click', () => {
         saveActiveFile(host).catch(error => reportFailure('Save', error));
     });
     bindSaveShortcut(host);
-    setRootButton.addEventListener('click', () => {
+    controls.setRootButton.addEventListener('click', () => {
         setActiveFileAsRoot(host).catch(error => reportFailure('Set root', error));
     });
-    settingsButton.addEventListener('click', () => {
-        setSettingsOpen(settingsButton.getAttribute('aria-expanded') !== 'true');
+    controls.settingsButton.addEventListener('click', () => {
+        setSettingsOpen(controls.settingsButton.getAttribute('aria-expanded') !== 'true');
     });
-    showExplorerToggle.addEventListener('change', () => {
-        setExplorerCollapsed(!showExplorerToggle.checked);
+    controls.showExplorerToggle.addEventListener('change', () => {
+        setExplorerCollapsed(!controls.showExplorerToggle.checked);
     });
-    showDiagnosticsToggle.addEventListener('change', () => {
-        setDiagnosticsVisible(showDiagnosticsToggle.checked);
+    controls.showDiagnosticsToggle.addEventListener('change', () => {
+        setDiagnosticsVisible(controls.showDiagnosticsToggle.checked);
     });
-    bindToggleSetting(livePreviewToggle, 'livePreview');
-    bindToggleSetting(autoScrollToggle, 'autoScrollSync');
-    bindToggleSetting(virtualModeToggle, 'virtualMode');
-    bindToggleSetting(debugMemoryToggle, 'debugMemory');
-    bindNumberSetting(renderDelayInput, 'renderDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.renderDelayMs);
-    bindNumberSetting(autoScrollDelayInput, 'autoScrollDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs);
-    themeSelect.addEventListener('change', () => {
-        setTheme(themeSelect.value as WebTheme);
+    for (const [controlName, setting] of BOOLEAN_SETTING_CONTROLS) {
+        bindToggleSetting(controls[controlName], setting);
+    }
+    controls.backendModeSelect.addEventListener('change', () => {
+        host.updateSettings({ backendMode: controls.backendModeSelect.value as BackendMode });
+    });
+    for (const [controlName, setting, fallback] of NUMBER_SETTING_CONTROLS) {
+        bindNumberSetting(controls[controlName], setting, fallback);
+    }
+    controls.themeSelect.addEventListener('change', () => {
+        setTheme(controls.themeSelect.value as WebTheme);
     });
     document.addEventListener('click', event => {
         const target = event.target as Node | null;
-        if (target && !settingsButton.contains(target) && !settingsMenu.contains(target)) {
+        if (target && !controls.settingsButton.contains(target) && !controls.settingsMenu.contains(target)) {
             setSettingsOpen(false);
         }
     });
 
-    openFileInput.addEventListener('change', () => {
-        const file = openFileInput.files?.[0];
+    controls.openFileInput.addEventListener('change', () => {
+        const file = controls.openFileInput.files?.[0];
         if (file) {
             loadProject(host, [projectFileFromFile(file, `/${file.name}`)])
                 .catch(error => reportFailure('Open', error));
         }
-        openFileInput.value = '';
+        controls.openFileInput.value = '';
     });
-    openFolderInput.addEventListener('change', () => {
-        const files = Array.from(openFolderInput.files ?? [])
+    controls.openFolderInput.addEventListener('change', () => {
+        const files = Array.from(controls.openFolderInput.files ?? [])
             .map(file => ({ file, path: fileInputPath(file) }))
             .filter(({ path }) => isProjectFile(path));
         loadProject(host, files.map(({ file, path }) => projectFileFromFile(file, path)))
             .catch(error => reportFailure('Open', error));
-        openFolderInput.value = '';
+        controls.openFolderInput.value = '';
     });
 
     syncSettingsControls(host);
 }
 
 const INITIAL_TEX = 'Loading the SnapTeX demo project...';
-const DEMO_PROJECT_FILES = [
-    { path: '/demo/main.tex', url: 'demo/main.tex', text: true },
-    { path: '/demo/sample.bib', url: 'demo/sample.bib', text: true },
-    { path: '/demo/sections/project-editing.tex', url: 'demo/sections/project-editing.tex', text: true },
-    { path: '/demo/frog.jpg', url: 'demo/frog.jpg' }
-] satisfies ReadonlyArray<{ path: string; url: string; text?: boolean }>;
-
-async function fetchText(url: string): Promise<string> {
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to load ${url}: ${response.status}`);
-    }
-    return response.text();
-}
-
-function demoProjectFile(file: typeof DEMO_PROJECT_FILES[number]): BrowserProjectFile {
-    return file.text
-        ? { path: file.path, readText: () => fetchText(file.url) }
-        : { path: file.path, resourceUrl: file.url };
-}
-
 async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     setStatus('Loading demo project...');
-    await loadProject(host, DEMO_PROJECT_FILES.map(demoProjectFile));
+    await loadProject(host, createStandaloneDemoProjectFiles());
 }
 
-const editorParent = document.getElementById('editor');
-if (!editorParent) {
-    throw new Error('Missing #editor container.');
-}
+const editorParent = requireElement('editor');
 
-const splitter = document.getElementById('splitter');
+const splitter = getElement('splitter');
 if (splitter) {
     enableSplitPaneResize(splitter);
 }

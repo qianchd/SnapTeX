@@ -38,7 +38,6 @@ function resolveRequestPath(root, url, indexPath = defaultIndexPath(root)) {
 
 export function createSnapTeXWebServer(options = {}) {
     const root = resolve(options.root ?? defaultRoot);
-    const port = Number(options.port ?? defaultPort);
     const indexPath = options.indexPath ?? defaultIndexPath(root);
     return createServer((request, response) => {
         const filePath = resolveRequestPath(root, request.url ?? '/', indexPath);
