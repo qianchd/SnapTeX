@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
 
 type WebServerModule = {
-    createSnapTeXWebServer(options: { root: string; port: number; indexPath?: string }): Server;
+    createSnapTeXWebServer(options: { root: string; indexPath?: string }): Server;
 };
 
 type StaticBuildModule = {
@@ -67,7 +67,7 @@ suite('Standalone web assets', () => {
         const buildModule = await import(pathToFileURL(resolve(root, 'apps/web/build-static.mjs')).href) as StaticBuildModule;
         const serverModule = await import(pathToFileURL(resolve(root, 'apps/web/server.mjs')).href) as WebServerModule;
         const build = buildModule.buildStaticWeb({ root, outDir });
-        const server = serverModule.createSnapTeXWebServer({ root: build.outDir, port: 0 });
+        const server = serverModule.createSnapTeXWebServer({ root: build.outDir });
         const baseUrl = await listen(server);
 
         try {
