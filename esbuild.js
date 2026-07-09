@@ -285,9 +285,9 @@ function extensionBuildOptions(problemMatcher) {
     };
 }
 
-function browserBuildOptions(entryPoint, outfile, globalName, problemMatcher) {
+function browserBuildOptions(entryPoint, outfile, globalName, problemMatcher, extraPlugins = []) {
     return {
-        ...baseBuildOptions("browser", outfile, [problemMatcher]),
+        ...baseBuildOptions("browser", outfile, [...extraPlugins, problemMatcher]),
         entryPoints: [entryPoint],
         format: "iife",
         globalName,
@@ -304,6 +304,10 @@ function buildOptions() {
         options.push(browserBuildOptions("src/webview/pdf.ts", "media/webview-pdf.js", "SnapTeXPdfRuntime", problemMatcher));
     }
     if (buildTarget === 'all' || buildTarget === 'web') {
+        if (buildTarget === 'web') {
+            options.push(browserBuildOptions("src/webview/main.ts", "media/webview-main.js", "SnapTeXWebview", problemMatcher, [createCopyAssetsPlugin()]));
+            options.push(browserBuildOptions("src/webview/pdf.ts", "media/webview-pdf.js", "SnapTeXPdfRuntime", problemMatcher));
+        }
         options.push(browserBuildOptions("apps/web/src/main.ts", "apps/web/dist/web-main.js", "SnapTeXStandaloneWeb", problemMatcher));
     }
     return options;
