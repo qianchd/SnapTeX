@@ -1207,6 +1207,10 @@ const previewBridge = getPreviewBridge();
         }
 
         saveScrollState() {
+            if (window.scrollY <= 1) {
+                return { scrollY: 0 };
+            }
+
             const blocks = document.querySelectorAll('.latex-block, .latex-block-shell');
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
@@ -1218,14 +1222,17 @@ const previewBridge = getPreviewBridge();
         }
 
         restoreScrollState(state) {
-            if (!state || !state.index) return;
-            const block = this.getBlockOrShellByIndex(state.index);
-            if (block) {
+            if (!state) return;
+            let targetY = typeof state.scrollY === 'number' ? state.scrollY : null;
+            if (targetY === null && state.index) {
+                const block = this.getBlockOrShellByIndex(state.index);
+                if (!block) return;
                 const newTop = block.getBoundingClientRect().top + window.scrollY;
-                let targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
-                this.lockScrolling(500);
-                window.scrollTo({ top: targetY, behavior: 'auto' });
+                targetY = state.ratio >= 0 ? newTop + (block.offsetHeight * state.ratio) : newTop;
             }
+            if (targetY === null || Math.abs(window.scrollY - targetY) < 1) return;
+            this.lockScrolling(500);
+            window.scrollTo({ top: targetY, behavior: 'auto' });
         }
 
         async executeScroll(data) {
