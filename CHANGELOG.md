@@ -2,6 +2,15 @@
 
 All notable changes to the "SnapTeX" extension will be documented in this file.
 
+## [0.7.1] - 2026-07-09
+- **Added**: Added the experimental `snaptex.backendMode` setting with an AST-assisted preview backend for testing structured splitting, rendering, dependencies, and source sync while keeping the legacy backend as the default.
+- **Added**: Added AST-aware rendering support for sections, math, citations, links, lists, floats, tables, algorithms, theorem/proof wrappers, TikZ, and source-sync anchors.
+- **Added**: Added `subfigure` rendering in both legacy and AST preview backends, including side-by-side layouts, subcaptions, subfigure numbering, and subfigure label references.
+- **Changed**: Improved the legacy rendering/runtime path for algorithms, nested lists, table notes, TikZ/PDF lazy blocks, preview layout changes, and bidirectional sync messages.
+- **Changed**: Improved AST and legacy preview behavior with source-hint based inline math sync, backend reset handling, and warm AST artifact generation for patched blocks.
+- **Changed**: Focused the automated test suite on behavior-level rendering, sync, web host, and AST/legacy integration coverage.
+- **Fixed**: Stabilized preview auto-scroll during patch updates that split or merge nearby blocks.
+
 ## [0.7.0] - 2026-07-07
 - **Changed**: Refactored the VS Code host under `apps/vscode` while preserving the existing VS Code preview workflow.
 - **Changed**: Reused the shared preview update pipeline in the VS Code extension.
