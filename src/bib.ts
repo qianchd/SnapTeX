@@ -248,11 +248,11 @@ export class BibTexParser {
         };
 
         if (authors.length > 2) {
-            return `${escapeHtml(getSurname(authors[0]))} <em>et al.</em>`;
+            return `${getSurname(authors[0])} et al.`;
         }
         if (authors.length === 2) {
-            return `${escapeHtml(getSurname(authors[0]))} &amp; ${escapeHtml(getSurname(authors[1]))}`;
+            return `${getSurname(authors[0])} & ${getSurname(authors[1])}`;
         }
-        return escapeHtml(getSurname(authors[0]));
+        return getSurname(authors[0]);
     }
 }

@@ -1,5 +1,7 @@
-import type { PreambleData, PreprocessRule, RenderContext } from './types';
-import { escapeScriptRawText, extractAndHideLabels } from './utils';
+import type { PreprocessRule, RenderContext } from './types';
+import { CITATION_COMMANDS } from './patterns';
+import { renderCitationTex } from './rule-helpers';
+import { escapeScriptRawText, extractAndHideLabels, replaceLatexCommandCalls, splitLatexCitationKeys } from './utils';
 import { optimizeTikzPreviewSource } from './tikz-preview-optimizer';
 
 function resolveDependencies(content: string, macroMap: Map<string, string>): string {
@@ -153,14 +155,29 @@ function filterTikzGlobalForPicture(globalPreamble: string, pictureSource: strin
 /**
  * Builds the inert TikZJax container shared by legacy and AST renderers.
  */
-export function renderTikzPictureHtml(options: string, content: string, metadata?: PreambleData): { html: string; hiddenHtml: string } {
+export function renderTikzPictureHtml(
+    options: string,
+    content: string,
+    renderer: Pick<RenderContext, 'metadata' | 'bibEntries' | 'resolveCitation'>
+): { html: string; hiddenHtml: string } {
     const { cleanContent, hiddenHtml } = extractAndHideLabels(content);
+    const resolvedContent = replaceLatexCommandCalls(cleanContent, {
+        name: CITATION_COMMANDS,
+        optionalArgs: 2,
+        requiredArgs: 1,
+        allowStar: true,
+        render: call => renderCitationTex(call.name, splitLatexCitationKeys(call.requiredArgs[0].content), {
+            pre: call.optionalArgs.length > 1 ? call.optionalArgs[0].content : undefined,
+            post: call.optionalArgs[call.optionalArgs.length - 1]?.content
+        }, renderer)
+    });
+    const metadata = renderer.metadata;
     const macroMap = metadata?.tikzMacroMap || new Map();
-    const neededMacros = resolveDependencies(`${options}\n${cleanContent}`, macroMap);
+    const neededMacros = resolveDependencies(`${options}\n${resolvedContent}`, macroMap);
     const optimized = optimizeTikzPreviewSource({
         globalPreamble: metadata?.tikzGlobal || "",
         options,
-        content: cleanContent,
+        content: resolvedContent,
         macroDefinitions: neededMacros
     });
     const opts = optimized.options ? `[${optimized.options}]` : '';
@@ -203,7 +220,7 @@ export function createTikzPictureRule(): PreprocessRule {
             const regex = /\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g;
 
             return text.replace(regex, (_match, options, content) => {
-                const rendered = renderTikzPictureHtml(options || '', content, renderer.metadata);
+                const rendered = renderTikzPictureHtml(options || '', content, renderer);
                 return renderer.protectHtml('tikz', rendered.html) + (rendered.hiddenHtml ? renderer.protectHtml('raw', rendered.hiddenHtml) : '');
             });
         }

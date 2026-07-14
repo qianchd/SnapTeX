@@ -6,7 +6,6 @@ import {
     toRoman,
     createHiddenLabelAnchor,
     escapeHtml,
-    escapeHtmlAttribute,
     extractAndHideLabels,
     formatEnumerateLabel,
     splitLatexCitationKeys,
@@ -26,7 +25,7 @@ import {
     R_THEBIBLIOGRAPHY,
     getTheoremDisplayName
 } from './patterns';
-import { createRefLink, createStyleHtmlProtector, renderBibliographyItemsHtml, renderExternalLinkHtml, renderInlineLatexHtml, renderMaketitleAuthorsHtml, renderMath, renderNumberedEquationHtml, renderReferenceLinksHtml } from './rule-helpers';
+import { createRefLink, createStyleHtmlProtector, renderBibliographyItemsHtml, renderCitationHtml, renderExternalLinkHtml, renderInlineLatexHtml, renderMaketitleAuthorsHtml, renderMath, renderNumberedEquationHtml, renderReferenceLinksHtml } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
 import { DEFAULT_AST_RENDER_RULES } from './ast/rules/defaults';
@@ -56,62 +55,6 @@ function replaceLatexLinkCommands(text: string, renderer: RenderContext): string
             }
         }
     ]);
-}
-
-interface CitationPart {
-    error: boolean;
-    key: string;
-    author: string;
-    year: string;
-}
-
-export function renderCitationHtml(
-    cmd: string,
-    keys: readonly string[],
-    options: { pre?: string; post?: string },
-    renderer: Pick<RenderContext, 'resolveCitation' | 'bibEntries'>
-): string {
-    const safePre = escapeHtml(options.pre ?? '');
-    const safePost = escapeHtml(options.post ?? '');
-    const parts: CitationPart[] = keys.map((key: string) => {
-        renderer.resolveCitation(key);
-        const entry = renderer.bibEntries.get(key);
-        if (!entry) { return { error: true, key, author: "unknown", year: "unknown" }; }
-        const author = BibTexParser.getShortAuthor(entry);
-        const year = escapeHtml(entry.fields.year || "unknown");
-        return { error: false, key, author, year };
-    });
-
-    const mkLink = (text: string, key: string) => {
-        const safeKey = escapeHtmlAttribute(key);
-        return `<a href="#ref-${safeKey}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${text}</a>`;
-    };
-    const renderYearText = (part: CitationPart, isLast: boolean) => {
-        if (part.error) { return `[${escapeHtml(part.key)}?]`; }
-        const suffix = isLast && safePost ? `, ${safePost}` : '';
-        return mkLink(`${part.year}${suffix}`, part.key);
-    };
-
-    if (cmd === 'citet') {
-        const formatted = parts.map((part, i) => {
-            const isLast = i === parts.length - 1;
-            if (part.error) { return renderYearText(part, isLast); }
-            return `${part.author} (${renderYearText(part, isLast)})`;
-        }).join(', ');
-        return safePre + formatted;
-    }
-
-    if (cmd === 'citeyear') {
-        return safePre + parts.map((part, i) => renderYearText(part, i === parts.length - 1)).join(', ');
-    }
-
-    let content = parts.map(part => {
-        if (part.error) { return `[${escapeHtml(part.key)}?]`; }
-        return mkLink(`${part.author}, ${part.year}`, part.key);
-    }).join('; ');
-    if (safePre) { content = safePre + content; }
-    if (safePost) { content = content + ', ' + safePost; }
-    return `(${content})`;
 }
 
 function replaceMathRefs(content: string, renderer: RenderContext): string {
@@ -458,7 +401,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 const keyArray = splitLatexCitationKeys(keys);
                 let pre = '';
                 let post = '';
-                if (opt2 !== undefined) { pre = opt1 ? opt1 + ' ' : ''; post = opt2; }
+                if (opt2 !== undefined) { pre = opt1 ?? ''; post = opt2; }
                 else if (opt1 !== undefined) { post = opt1; }
                 return renderer.protectHtml('cite', renderCitationHtml(cmd, keyArray, { pre, post }, renderer));
             });

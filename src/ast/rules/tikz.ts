@@ -34,7 +34,7 @@ export const AST_TIKZ_RULE: AstRenderRule = {
         const source = tikzSourceFromEnvironment(context.sourceSlice(input.node));
         const options = source?.options ?? argumentText(readNodeArgument(input.node, '[', 0));
         const content = source?.content ?? context.sourceContent(input.node.content);
-        const rendered = renderTikzPictureHtml(options, content, context.metadata);
+        const rendered = renderTikzPictureHtml(options, content, context);
         return {
             html: rendered.html + rendered.hiddenHtml
         };

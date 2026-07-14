@@ -1,4 +1,4 @@
-import { REGEX_STR } from '../../patterns';
+import { CITATION_COMMANDS, REGEX_STR } from '../../patterns';
 import { renderInlineLatexHtml, renderKatexHtml, renderReferenceLinksHtml } from '../../rule-helpers';
 import {
     createHiddenLabelAnchor,
@@ -22,7 +22,7 @@ import {
 } from '../visit-utils';
 
 export const AST_REF_MACROS = new Set(['ref', 'eqref']);
-export const AST_CITATION_MACROS = new Set(REGEX_STR.CITATION_CMDS.split('|'));
+export const AST_CITATION_MACROS = new Set<string>(CITATION_COMMANDS);
 export const AST_SECTION_MACROS = new Set(REGEX_STR.SECTION_LEVELS.split('|'));
 export const AST_TEXT_STYLE_CSS: Record<string, string> = {
     textbf: 'font-weight: 600',
@@ -67,6 +67,7 @@ export interface AstRenderContext {
     renderMath(tex: string, displayMode: boolean): string;
     renderLabel(label: string): string;
     renderRef(labels: readonly string[], type: 'ref' | 'eqref'): string;
+    resolveCitation(key: string): number;
     renderCitation(command: string, keys: readonly string[], options: { pre?: string; post?: string }): string;
     getCitedKeys(): readonly string[];
     renderImage(path: string, options?: string): string;
@@ -104,6 +105,7 @@ export function createDefaultAstRenderContext(overrides: AstRenderContextOverrid
         renderMath: (tex, displayMode) => renderKatexHtml(tex, displayMode, overrides.currentMacros ?? {}),
         renderLabel: createHiddenLabelAnchor,
         renderRef: (labels, type) => renderReferenceLinksHtml(labels, type),
+        resolveCitation: () => 1,
         renderCitation: (_command, keys) => `(${keys.map(key => escapeHtml(key)).join('; ')})`,
         getCitedKeys: () => [],
         renderImage: (path, options) => {

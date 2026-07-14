@@ -12,6 +12,104 @@ import {
 
 const BLOCK_LEVEL_HTML_PATTERN = /<(?:div|section|article|table|ul|ol|li|h[1-6]|p|blockquote|pre|canvas|script)\b|class="katex-display"/i;
 
+interface CitationPart {
+    key: string;
+    author?: string;
+    year?: string;
+    number: number;
+}
+
+interface CitationFormat {
+    text(value: string): string;
+    option(value: string): string;
+    author(value: string): string;
+    link(value: string, key: string): string;
+}
+
+function renderCitation(
+    command: string,
+    keys: readonly string[],
+    options: { pre?: string; post?: string },
+    renderer: Pick<RenderContext, 'resolveCitation' | 'bibEntries'>,
+    format: CitationFormat
+): string {
+    const pre = format.option(options.pre ?? '');
+    const post = format.option(options.post ?? '');
+    const prefix = pre ? `${pre} ` : '';
+    const parts: CitationPart[] = keys.map(key => {
+        const entry = renderer.bibEntries.get(key);
+        return {
+            key,
+            number: renderer.resolveCitation(key),
+            author: entry ? BibTexParser.getShortAuthor(entry) : undefined,
+            year: entry?.fields.year || undefined
+        };
+    });
+    const renderYear = (part: CitationPart, isLast: boolean) => {
+        if (!part.year) { return `[${format.text(part.key)}?]`; }
+        const suffix = isLast && post ? `, ${post}` : '';
+        return format.link(`${format.text(part.year)}${suffix}`, part.key);
+    };
+
+    if (command === 'citet') {
+        return prefix + parts.map((part, index) => part.author
+            ? `${format.author(part.author)} (${renderYear(part, index === parts.length - 1)})`
+            : renderYear(part, index === parts.length - 1)
+        ).join(', ');
+    }
+    if (command === 'citeyear') {
+        return prefix + parts.map((part, index) => renderYear(part, index === parts.length - 1)).join(', ');
+    }
+    if (command === 'citenum') {
+        const numbers = parts.map(part => format.link(String(part.number), part.key)).join(', ');
+        return `${prefix}${numbers}${post ? `, ${post}` : ''}`;
+    }
+
+    let content = parts.map(part => part.author && part.year
+        ? format.link(`${format.author(part.author)}, ${format.text(part.year)}`, part.key)
+        : `[${format.text(part.key)}?]`
+    ).join('; ');
+    if (prefix) { content = prefix + content; }
+    if (post) { content += `, ${post}`; }
+    return `(${content})`;
+}
+
+function renderHtmlAuthor(author: string): string {
+    return escapeHtml(author).replace(/\bet al\.$/, '<em>et al.</em>');
+}
+
+function escapeLatexText(text: string): string {
+    return text.replace(/([#$%&_{}])/g, '\\$1');
+}
+
+export function renderCitationHtml(
+    command: string,
+    keys: readonly string[],
+    options: { pre?: string; post?: string },
+    renderer: Pick<RenderContext, 'resolveCitation' | 'bibEntries'>
+): string {
+    return renderCitation(command, keys, options, renderer, {
+        text: escapeHtml,
+        option: escapeHtml,
+        author: renderHtmlAuthor,
+        link: (value, key) => `<a href="#ref-${escapeHtmlAttribute(key)}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${value}</a>`
+    });
+}
+
+export function renderCitationTex(
+    command: string,
+    keys: readonly string[],
+    options: { pre?: string; post?: string },
+    renderer: Pick<RenderContext, 'resolveCitation' | 'bibEntries'>
+): string {
+    return renderCitation(command, keys, options, renderer, {
+        text: escapeLatexText,
+        option: value => value,
+        author: value => escapeLatexText(value).replace(/\bet al\.$/, '\\emph{et al.}'),
+        link: value => value
+    });
+}
+
 export function hasBlockLevelHtml(html: string): boolean {
     return BLOCK_LEVEL_HTML_PATTERN.test(html);
 }

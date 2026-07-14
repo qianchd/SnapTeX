@@ -5,7 +5,8 @@ import { BlockNumberingCounts, BlockTextSnapshot, DependencyHelpers, DependencyS
 import { AST_SOURCE_HINT_KIND, type AstBlockArtifact } from './ast/block-metadata';
 import { renderLatexBlockWithAst } from './ast/renderer';
 import { createDefaultAstRenderContext } from './ast/rules';
-import { SNAP_TEX_RULES, postProcessHtml, renderCitationHtml } from './rules';
+import { SNAP_TEX_RULES, postProcessHtml } from './rules';
+import { renderCitationHtml } from './rule-helpers';
 import { LatexCounterScanner, type ScanResult } from './scanner';
 import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { extractLatexCitationKeys, extractLatexLabelNames, findNearestSyncAnchorLine, getBlockSpanText, lineAtOffset, normalizeUri, offsetAtLine, stableHash } from './utils';
@@ -191,10 +192,9 @@ export class SmartRenderer {
             currentMacros: this.currentMacros,
             metadata: this.documentView?.metadata,
             bibEntries: this.documentView ? this.documentView.bibEntries : new Map(),
-            renderCitation: (command, keys, options) => renderCitationHtml(command, keys, {
-                pre: options.pre ? `${options.pre} ` : undefined,
-                post: options.post
-            }, this.renderContext),
+            resolveCitation: key => this.resolveCitation(key),
+            getCitedKeys: () => this._citedKeys,
+            renderCitation: (command, keys, options) => renderCitationHtml(command, keys, options, this.renderContext),
             renderImage: path => renderIncludeGraphicsHtml(path)
         });
     }

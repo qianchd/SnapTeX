@@ -123,6 +123,28 @@ suite('PreviewUpdateService', () => {
         assert.match(html, /class="latex-bibliography-list"/);
     });
 
+    test('renders external bibliographies in both backend modes', async () => {
+        const bibUri = vscode.Uri.file('/project/refs.bib');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(bibUri), '@article{doe2024, author={Doe, Jane}, title={Example}, year={2024}}']
+        ]));
+        const source = [
+            '\\begin{document}',
+            'See \\citep{doe2024}.',
+            '\\bibliography{refs}',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(provider);
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.match(html, /class="latex-bibliography-list"/);
+            assert.doesNotMatch(html, /No citations found/);
+        }
+    });
+
     test('renders nested lists with display math through both preview modes', async () => {
         const source = [
             '\\begin{document}',
@@ -419,6 +441,44 @@ suite('PreviewUpdateService', () => {
         assert.match(html, /label = \{-80:\$\\htau_\{a\+2\}\$\}\] at \(F\) \{\};/);
         assert.match(html, /class="figure-caption"/);
         assert.doesNotMatch(html, /\[H\]/);
+    });
+
+    test('resolves citation commands inside TikZ in both backend modes', async () => {
+        const bibUri = vscode.Uri.file('/project/refs.bib');
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(bibUri), [
+                '@article{alpha, author={Alpha, Ada}, title={First}, year={2024}}',
+                '@article{beta, author={Beta, Bob}, title={Second}, year={2025}}'
+            ].join('\n')]
+        ]));
+        const source = [
+            '\\begin{document}',
+            'See \\cite{alpha}.',
+            '',
+            '\\begin{figure}',
+            '\\begin{tikzpicture}',
+            '\\node {\\cite{beta}};',
+            '\\node {\\citep{beta}};',
+            '\\node {\\citet{beta}};',
+            '\\node {\\citeyear{beta}};',
+            '\\node {[\\citenum{beta}]};',
+            '\\end{tikzpicture}',
+            '\\end{figure}',
+            '\\bibliography{refs}',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(provider);
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.match(html, /\\node \{\(Beta, 2025\)\};/);
+            assert.match(html, /\\node \{Beta \(2025\)\};/);
+            assert.match(html, /\\node \{2025\};/);
+            assert.match(html, /\\node \{\[2\]\};/);
+            assert.doesNotMatch(html, /\\cite/);
+        }
     });
 
     test('renders subfigures in both backend modes', async () => {

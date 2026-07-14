@@ -34,9 +34,9 @@ const SECTION_LEVELS = [
     'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'
 ] as const;
 
-const CITATION_CMDS = [
-    'cite', 'citep', 'citet', 'citeyear'
-];
+export const CITATION_COMMANDS = [
+    'cite', 'citep', 'citet', 'citeyear', 'citenum'
+] as const;
 
 const SPLITTER_IGNORED_ENVS = [
     'proof'
@@ -60,7 +60,7 @@ export const REGEX_STR = {
     FLOAT_ENVS: join(FLOAT_ENVS),
     THEOREM_ENVS: join(THEOREM_ENVS),
     SECTION_LEVELS: join(SECTION_LEVELS),
-    CITATION_CMDS: join(CITATION_CMDS),
+    CITATION_CMDS: join(CITATION_COMMANDS),
     SPLITTER_IGNORED: join(SPLITTER_IGNORED_ENVS),
     SPLITTER_MAJOR: join(SPLITTER_MAJOR_ENVS)
 };

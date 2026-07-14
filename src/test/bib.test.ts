@@ -35,7 +35,7 @@ suite('BibTexParser', () => {
 
         const entry = entries.get('accented');
         assert.ok(entry);
-        assert.equal(BibTexParser.getShortAuthor(entry), 'Muller <em>et al.</em>');
+        assert.equal(BibTexParser.getShortAuthor(entry), 'Muller et al.');
     });
 
     test('parses inline thebibliography bibitems', () => {
@@ -57,7 +57,7 @@ suite('BibTexParser', () => {
         assert.equal(entry.type, 'bibitem');
         assert.equal(entry.fields.year, '2027');
         assert.match(entry.fields.raw, /Journal of Preview Fixtures/);
-        assert.equal(BibTexParser.getShortAuthor(entry), 'Rivera &amp; Quinn');
+        assert.equal(BibTexParser.getShortAuthor(entry), 'Rivera & Quinn');
         assert.ok(!entries.has('hidden2025'));
 
         const protector = new ProtectionManager();
