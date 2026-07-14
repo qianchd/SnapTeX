@@ -140,6 +140,7 @@ suite('Standalone web assets', () => {
         assert.match(tikzJaxSource, /URL\.createObjectURL\(new Blob\(\[await u\.text\(\)\]/);
         assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:snaptexAssets\}\)/);
         assert.match(runTexSource, /snaptexAssetUrls&&snaptexAssetUrls\[A\]\|\|`\$\{zn\}\/\$\{A\}`/);
+        assert.match(runTexSource, /this\.values\[2\]=-n\*r\+g\*e,this\.values\[3\]=-B\*r\+s\*e/);
         assert.ok(runtimeAssets.includes('tex_files/tikzlibrarycalc.code.tex.gz'));
         assert.ok(runtimeAssets.includes('tex_files/pgflibraryarrows.meta.code.tex.gz'));
 

@@ -124,6 +124,11 @@ function createTikzJaxSourcePatches(runtimeAssetFiles) {
 function createRunTexSourcePatches() {
     return [
         {
+            label: "DVI rotation matrix",
+            original: "rotate(A){const t=A*Math.PI/180,e=Math.cos(t),r=Math.sin(t);return this.values[0]=this.values[0]*e+this.values[2]*r,this.values[1]=this.values[1]*e+this.values[3]*r,this.values[2]=-this.values[0]*r+this.values[2]*e,this.values[3]=-this.values[1]*r+this.values[3]*e,this}",
+            replacement: "rotate(A){const t=A*Math.PI/180,e=Math.cos(t),r=Math.sin(t),n=this.values[0],B=this.values[1],g=this.values[2],s=this.values[3];return this.values[0]=n*e+g*r,this.values[1]=B*e+s*r,this.values[2]=-n*r+g*e,this.values[3]=-B*r+s*e,this}"
+        },
+        {
             label: "run-tex asset fetch",
             original: "let Wn,Zn,zn;const Xn=async A=>{const t=await fetch(`${zn}/${A}`);",
             replacement: "let Wn,Zn,zn,snaptexAssetUrls=null;const Xn=async A=>{const t=await fetch(snaptexAssetUrls&&snaptexAssetUrls[A]||`${zn}/${A}`);"
