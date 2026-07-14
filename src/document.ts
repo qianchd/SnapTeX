@@ -220,12 +220,6 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         let normalizedText = textLines.join('\n');
         textLines.length = 0;
 
-        let contentStartLineOffset = 0;
-        const rawDocMatch = normalizedText.match(/\\begin\{document\}/i);
-        if (rawDocMatch && rawDocMatch.index !== undefined) {
-            contentStartLineOffset = lineAtOffset(normalizedText, rawDocMatch.index + rawDocMatch[0].length);
-        }
-
         const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors);
         normalizedText = "";
         options.trace?.('after metadata');
@@ -234,8 +228,10 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
         let bodyText = metaRes.cleanedText;
         const cleanDocMatch = metaRes.cleanedText.match(/\\begin\{document\}/i);
+        let contentStartLineOffset = 0;
         if (cleanDocMatch && cleanDocMatch.index !== undefined) {
             const startIndex = cleanDocMatch.index + cleanDocMatch[0].length;
+            contentStartLineOffset = lineAtOffset(metaRes.cleanedText, startIndex);
             const endIndex = metaRes.cleanedText.search(/\\end\{document\}/i);
             bodyText = metaRes.cleanedText.substring(startIndex, endIndex === -1 ? metaRes.cleanedText.length : endIndex);
         }
