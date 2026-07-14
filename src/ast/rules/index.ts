@@ -117,7 +117,7 @@ export function createDefaultAstRenderContext(overrides: AstRenderContextOverrid
     };
 }
 
-export function readAstCommandArguments(input: AstRenderInput): AstCommandArguments {
+export function readAstCommandArguments(input: AstRenderInput, requiredArgCount = 1): AstCommandArguments {
     const requiredArgs: string[] = [];
     const optionalArgs: string[] = [];
     if (!isMacroNode(input.node)) {
@@ -141,8 +141,8 @@ export function readAstCommandArguments(input: AstRenderInput): AstCommandArgume
     }
 
     let cursor = input.index + 1;
-    if (requiredArgs.length === 0) {
-        cursor = readDetachedArguments(input.siblings, cursor, optionalArgs, requiredArgs);
+    if (requiredArgs.length < requiredArgCount) {
+        cursor = readDetachedArguments(input.siblings, cursor, optionalArgs, requiredArgs, requiredArgCount);
     }
 
     return {
@@ -156,7 +156,8 @@ function readDetachedArguments(
     siblings: readonly SnaptexAstNode[],
     startIndex: number,
     optionalArgs: string[],
-    requiredArgs: string[]
+    requiredArgs: string[],
+    requiredArgCount: number
 ): number {
     let cursor = skipAstWhitespace(siblings, startIndex);
     while (true) {
@@ -168,10 +169,14 @@ function readDetachedArguments(
         cursor = skipAstWhitespace(siblings, optionalGroup.nextIndex);
     }
 
-    const requiredGroup = siblings[cursor];
-    if (isGroupNode(requiredGroup)) {
+    while (requiredArgs.length < requiredArgCount) {
+        const requiredGroup = siblings[cursor];
+        if (!isGroupNode(requiredGroup)) { break; }
         requiredArgs.push(astNodesToText(requiredGroup.content));
         cursor++;
+        if (requiredArgs.length < requiredArgCount) {
+            cursor = skipAstWhitespace(siblings, cursor);
+        }
     }
     return cursor;
 }

@@ -195,6 +195,25 @@ suite('PreviewUpdateService', () => {
         assert.match(html, /mathvariant="bold"|mord mathbf/);
     });
 
+    test('renders text macros in both backend modes', async () => {
+        const source = [
+            '\\newcommand{\\blue}[1]{{\\color{blue}#1}}',
+            '\\begin{document}',
+            'Plain \\blue{colored \\textbf{text}} end.',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.match(html, /color: blue/);
+            assert.match(html, /colored [\s\S]*<strong>text<\/strong>[\s\S]* end\./);
+            assert.doesNotMatch(html, /\\blue|\\color|\\textbf/);
+        }
+    });
+
     test('renders a representative document through legacy and AST splitter modes', async () => {
         const source = [
             '\\begin{document}',

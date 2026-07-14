@@ -1,8 +1,8 @@
 import { hasBlockLevelHtml } from '../../rule-helpers';
-import { escapeHtmlAttribute } from '../../utils';
+import { countLatexMacroArguments, escapeHtmlAttribute, expandLatexTextMacros } from '../../utils';
 import type { SnaptexAstNode } from '../types';
 import { argumentText, firstSignificantNode, isGroupNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
-import { AST_TEXT_STYLE_CSS, type AstRenderRule } from './index';
+import { AST_TEXT_STYLE_CSS, readAstCommandArguments, renderInlineLatexSource, type AstRenderRule } from './index';
 
 function wrapStyledHtml(html: string, style: string): string {
     const tag = hasBlockLevelHtml(html) || html.includes('\n\n') ? 'div' : 'span';
@@ -73,5 +73,32 @@ export const AST_TEXT_STYLE_RULE: AstRenderRule = {
         return style
             ? { html: content.length > 0 ? wrapStyledHtml(input.renderChildren(content), style) : '' }
             : undefined;
+    }
+};
+
+export const AST_USER_MACRO_RULE: AstRenderRule = {
+    name: 'ast-user-macro',
+    match: input => isMacroNode(input.node),
+    render: (input, context) => {
+        if (!isMacroNode(input.node)) { return undefined; }
+
+        const macros = context.metadata?.macros ?? {};
+        const name = `\\${input.node.content}`;
+        const definition = macros[name];
+        if (!definition) { return undefined; }
+        const argCount = countLatexMacroArguments(definition);
+        const args = argCount > 0
+            ? readAstCommandArguments(input, argCount)
+            : { requiredArgs: [], consumedNodes: 1 };
+        if (args.requiredArgs.length < argCount) { return undefined; }
+
+        const source = context.sourceSlice(input.node)
+            + input.siblings.slice(input.index + 1, input.index + args.consumedNodes)
+                .map(context.sourceSlice)
+                .join('');
+        return {
+            html: renderInlineLatexSource(expandLatexTextMacros(source, macros), context),
+            consumedNodes: args.consumedNodes
+        };
     }
 };

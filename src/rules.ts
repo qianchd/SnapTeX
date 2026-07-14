@@ -5,6 +5,7 @@ import {
 import {
     toRoman,
     createHiddenLabelAnchor,
+    expandLatexTextMacros,
     escapeHtml,
     extractAndHideLabels,
     formatEnumerateLabel,
@@ -376,6 +377,12 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 return processInline(content);
             });
         }
+    },
+
+    {
+        name: 'user_text_macros',
+        priority: 55,
+        apply: (text, renderer: RenderContext) => expandLatexTextMacros(text, renderer.metadata?.macros ?? {})
     },
 
     {

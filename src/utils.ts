@@ -283,6 +283,32 @@ export function resolveLatexTextTransforms(text: string): string {
     return text.replace(/\\(?:uppercase|MakeUppercase)\s*\{([^{}]*)\}/g, (_match, content: string) => content.toUpperCase());
 }
 
+export function countLatexMacroArguments(definition: string): number {
+    return Math.max(0, ...Array.from(definition.matchAll(/#([1-9])/g), match => Number(match[1])));
+}
+
+/** Expands simple user macros while leaving built-in LaTeX commands untouched. */
+export function expandLatexTextMacros(text: string, macros: Record<string, string>): string {
+    let expanded = text;
+    for (let pass = 0; pass < 8; pass++) {
+        const rules = Object.entries(macros)
+            .filter(([name]) => name.startsWith('\\') && expanded.includes(name))
+            .map(([name, definition]) => ({
+                name: name.slice(1),
+                requiredArgs: countLatexMacroArguments(definition),
+                render: (call: LatexCommandCall) => definition.replace(/#([1-9])/g, (_match, index: string) => {
+                    return call.requiredArgs[Number(index) - 1]?.content ?? '';
+                })
+            }));
+        if (rules.length === 0) { break; }
+
+        const next = replaceLatexCommandCalls(expanded, rules);
+        if (next === expanded) { break; }
+        expanded = next;
+    }
+    return expanded;
+}
+
 /**
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
