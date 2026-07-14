@@ -765,6 +765,27 @@ suite('PreviewUpdateService', () => {
         }
     });
 
+    test('ignores commented document markers when mapping source lines', async () => {
+        const source = [
+            '% \\begin{document}',
+            '% old draft content',
+            '\\title{Example}',
+            '\\begin{document}',
+            'First paragraph.',
+            '',
+            'Second paragraph.',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            await service.render(uri, source, { deferFullHtml: true, backendMode });
+
+            assert.equal(service.getPreviewSyncData(uri.toString(), 4)?.index, 0);
+            assert.equal(service.getPreviewSyncData(uri.toString(), 6)?.index, 1);
+        }
+    });
+
     test('maps block start, middle, and end ratios through both preview modes', async () => {
         const source = [
             '\\begin{document}',
