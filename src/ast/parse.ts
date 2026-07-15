@@ -1,5 +1,9 @@
 import type { AstParseError, AstParseResult, SnaptexAstRoot } from './types';
 
+type LatexParser = (text: string) => SnaptexAstRoot;
+
+let loadedParser: LatexParser | undefined;
+
 function parseErrorFromUnknown(error: unknown): AstParseError {
     if (error instanceof Error) {
         const line = typeof (error as Error & { line?: unknown }).line === 'number'
@@ -22,13 +26,21 @@ function parseErrorFromUnknown(error: unknown): AstParseError {
 export async function parseLatexToAst(text: string): Promise<AstParseResult> {
     try {
         const { parse } = await import('@unified-latex/unified-latex-util-parse');
-        return {
-            ast: parse(text) as SnaptexAstRoot,
-            errors: []
-        };
+        loadedParser = parse as LatexParser;
+        return parseLatexWithLoadedParser(text)!;
     } catch (error) {
         return {
             errors: [parseErrorFromUnknown(error)]
         };
+    }
+}
+
+/** Parses nested generated source after the lazily loaded AST parser is available. */
+export function parseLatexWithLoadedParser(text: string): AstParseResult | undefined {
+    if (!loadedParser) { return undefined; }
+    try {
+        return { ast: loadedParser(text), errors: [] };
+    } catch (error) {
+        return { errors: [parseErrorFromUnknown(error)] };
     }
 }

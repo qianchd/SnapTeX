@@ -6,6 +6,7 @@ import {
     escapeHtmlAttribute,
 } from '../../utils';
 import type { BibEntry, PreambleData } from '../../types';
+import { parseLatexWithLoadedParser } from '../parse';
 import type { SnaptexAstNode } from '../types';
 import {
     argumentText,
@@ -20,6 +21,8 @@ import {
     readOptionalMacroArgument,
     readRequiredMacroArgument
 } from '../visit-utils';
+
+const MAX_GENERATED_SOURCE_DEPTH = 8;
 
 export const AST_REF_MACROS = new Set(['ref', 'eqref']);
 export const AST_CITATION_MACROS = new Set<string>(CITATION_COMMANDS);
@@ -44,6 +47,7 @@ export interface AstRenderInput {
     siblings: readonly SnaptexAstNode[];
     index: number;
     renderChildren(nodes: readonly SnaptexAstNode[]): string;
+    renderSource(source: string): string;
 }
 
 export interface AstRenderResult {
@@ -77,6 +81,21 @@ interface AstRenderContextOverrides extends Partial<AstRenderContext> {
     sourceText?: string;
 }
 
+function sourceReaders(sourceText: string): Pick<AstRenderContext, 'sourceSlice' | 'sourceContent'> {
+    return {
+        sourceSlice: node => {
+            const position = getSourcePosition(node);
+            return position && sourceText
+                ? sourceText.slice(position.start.offset, position.end.offset)
+                : astNodesToText([node]);
+        },
+        sourceContent: nodes => {
+            const range = astNodesRange(nodes);
+            return range && sourceText ? sourceText.slice(range.start, range.end) : astNodesToText(nodes);
+        }
+    };
+}
+
 export interface AstCommandArguments {
     requiredArgs: string[];
     optionalArgs: string[];
@@ -85,23 +104,12 @@ export interface AstCommandArguments {
 
 export function createDefaultAstRenderContext(overrides: AstRenderContextOverrides = {}): AstRenderContext {
     const sourceText = overrides.sourceText ?? '';
-    const sourceSlice = (node: SnaptexAstNode) => {
-        const position = getSourcePosition(node);
-        return position && sourceText
-            ? sourceText.slice(position.start.offset, position.end.offset)
-            : astNodesToText([node]);
-    };
-    const sourceContent = (nodes: readonly SnaptexAstNode[]) => {
-        const range = astNodesRange(nodes);
-        return range && sourceText ? sourceText.slice(range.start, range.end) : astNodesToText(nodes);
-    };
 
     return {
         currentMacros: {},
         bibEntries: new Map(),
         escapeHtml,
-        sourceSlice,
-        sourceContent,
+        ...sourceReaders(sourceText),
         renderMath: (tex, displayMode) => renderKatexHtml(tex, displayMode, overrides.currentMacros ?? {}),
         renderLabel: createHiddenLabelAnchor,
         renderRef: (labels, type) => renderReferenceLinksHtml(labels, type),
@@ -197,6 +205,15 @@ export function renderAstNodesWithRules(
     rules: readonly AstRenderRule[],
     context: AstRenderContext = createDefaultAstRenderContext()
 ): string {
+    return renderAstNodes(nodes, rules, context, 0);
+}
+
+function renderAstNodes(
+    nodes: readonly SnaptexAstNode[],
+    rules: readonly AstRenderRule[],
+    context: AstRenderContext,
+    generatedSourceDepth: number
+): string {
     let html = '';
 
     for (let index = 0; index < nodes.length; index++) {
@@ -204,7 +221,10 @@ export function renderAstNodesWithRules(
             node: nodes[index],
             siblings: nodes,
             index,
-            renderChildren: childNodes => renderAstNodesWithRules(childNodes, rules, context)
+            renderChildren: childNodes => renderAstNodes(childNodes, rules, context, generatedSourceDepth),
+            renderSource: source => generatedSourceDepth < MAX_GENERATED_SOURCE_DEPTH
+                ? renderAstSource(source, rules, context, generatedSourceDepth + 1)
+                : renderInlineLatexSource(source, context)
         };
         const result = renderAstNodeWithRules(input, rules, context);
         html += result.html;
@@ -212,6 +232,21 @@ export function renderAstNodesWithRules(
     }
 
     return html;
+}
+
+function renderAstSource(
+    source: string,
+    rules: readonly AstRenderRule[],
+    context: AstRenderContext,
+    generatedSourceDepth: number
+): string {
+    const parsed = parseLatexWithLoadedParser(source);
+    if (!parsed?.ast || parsed.errors.length > 0) {
+        return renderInlineLatexSource(source, context);
+    }
+
+    const sourceContext = { ...context, ...sourceReaders(source) };
+    return renderAstNodes(parsed.ast.content, rules, sourceContext, generatedSourceDepth);
 }
 
 function renderAstNodeWithRules(

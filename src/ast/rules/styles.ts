@@ -96,8 +96,9 @@ export const AST_USER_MACRO_RULE: AstRenderRule = {
             + input.siblings.slice(input.index + 1, input.index + args.consumedNodes)
                 .map(context.sourceSlice)
                 .join('');
+        const expanded = expandLatexTextMacros(source, macros);
         return {
-            html: renderInlineLatexSource(expandLatexTextMacros(source, macros), context),
+            html: expanded === source ? renderInlineLatexSource(source, context) : input.renderSource(expanded),
             consumedNodes: args.consumedNodes
         };
     }

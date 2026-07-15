@@ -4,6 +4,8 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Fixed**: Routed expanded user-defined macros back through the shared AST rule registry, allowing custom preamble macros to wrap block-level preview structures without leaking raw LaTeX.
+
 ## [0.7.1] - 2026-07-09
 
 - **Added**: Added an experimental AST preview backend, including AST splitting, block artifacts, source hints, AST render rules, and backend switching through shared preview services.

@@ -209,8 +209,34 @@ suite('PreviewUpdateService', () => {
             const html = payload.htmls?.join('\n') ?? '';
 
             assert.match(html, /color: blue/);
-            assert.match(html, /colored [\s\S]*<strong>text<\/strong>[\s\S]* end\./);
+            assert.match(html, /colored [\s\S]*<(?:strong|span style="font-weight: 600")>text<\/(?:strong|span)>[\s\S]* end\./);
             assert.doesNotMatch(html, /\\blue|\\color|\\textbf/);
+        }
+    });
+
+    test('renders block content wrapped by user text macros in both backend modes', async () => {
+        const source = [
+            '\\newcommand{\\styledblock}[1]{{\\color{blue}#1}}',
+            '\\begin{document}',
+            '\\styledblock{',
+            '\\begin{table*}[t]',
+            '\\caption{Styled table}',
+            '\\begin{tabular}{cc}',
+            'A & B \\\\',
+            '\\end{tabular}',
+            '\\end{table*}',
+            '}',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.match(html, /class="latex-table"/);
+            assert.match(html, /color: blue/);
+            assert.doesNotMatch(html, /\\styledblock|\\begin\{table\*\}/);
         }
     });
 

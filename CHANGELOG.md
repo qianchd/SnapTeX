@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Fixed**: Let user-defined text macros wrap block structures such as tables, figures, lists, and theorem environments in the AST backend by routing expanded macro content through the shared AST rule pipeline.
 - **Fixed**: Kept source synchronization accurate when comments contain document markers such as `% \begin{document}`.
 - **Fixed**: Restored external bibliography rendering in the AST backend by carrying the document citation set into AST render contexts.
 - **Changed**: Unified citation resolution across HTML and TikZ rendering so `\cite`, `\citep`, `\citet`, `\citeyear`, and `\citenum` are converted before TikZJax compilation in both preview backends.
