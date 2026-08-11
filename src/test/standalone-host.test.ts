@@ -146,11 +146,16 @@ suite('StandaloneHost', () => {
         const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         const host = new StandaloneHost(editor as unknown as EditorView);
+        let persistedText = '';
 
         try {
             await host.loadProject([
                 { path: '/main.tex', readText: async () => '\\input{chapter}\r\n' },
-                { path: '/chapter.tex', readText: async () => 'Original\r\nchapter.' }
+                {
+                    path: '/chapter.tex',
+                    readText: async () => 'Original\r\nchapter.',
+                    writeText: text => { persistedText = text; }
+                }
             ], '/main.tex');
             assert.equal(host.isDirty('/main.tex'), false);
 
@@ -162,7 +167,9 @@ suite('StandaloneHost', () => {
             host.handleEditorUpdate();
             assert.equal(host.isDirty('/chapter.tex'), true);
 
-            await host.saveCurrentText();
+            const result = await host.saveCurrentText();
+            assert.equal(result.wroteToSource, true);
+            assert.equal(persistedText, 'Changed chapter.');
             assert.equal(host.isDirty('/chapter.tex'), false);
         } finally {
             restoreWindow();

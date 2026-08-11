@@ -426,7 +426,7 @@ export class StandaloneHost {
     }
 
     async renderCurrentText() {
-        if (!this.previewReady) {
+        if (!this.previewReady || this.projectPaths.length === 0) {
             return;
         }
 

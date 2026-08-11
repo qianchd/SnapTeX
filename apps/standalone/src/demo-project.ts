@@ -6,6 +6,11 @@ interface StandaloneDemoProjectAsset {
     text?: boolean;
 }
 
+export interface DemoTextStorage {
+    getItem(key: string): string | null;
+    setItem(key: string, value: string): void;
+}
+
 const STANDALONE_DEMO_PROJECT_ASSETS: readonly StandaloneDemoProjectAsset[] = [
     { path: '/demo/main.tex', url: 'demo/main.tex', text: true },
     { path: '/demo/sample.bib', url: 'demo/sample.bib', text: true },
@@ -21,8 +26,15 @@ async function fetchText(url: string): Promise<string> {
     return response.text();
 }
 
-export function createStandaloneDemoProjectFiles(readText: (url: string) => Promise<string> = fetchText): BrowserProjectFile[] {
+export function createStandaloneDemoProjectFiles(
+    readText: (url: string) => Promise<string> = fetchText,
+    storage?: DemoTextStorage
+): BrowserProjectFile[] {
     return STANDALONE_DEMO_PROJECT_ASSETS.map(file => file.text
-        ? { path: file.path, readText: () => readText(file.url) }
+        ? {
+            path: file.path,
+            readText: () => Promise.resolve(storage?.getItem(`snaptex${file.path}`) ?? readText(file.url)),
+            writeText: storage ? (text: string) => storage.setItem(`snaptex${file.path}`, text) : undefined
+        }
         : { path: file.path, resourceUrl: file.url });
 }

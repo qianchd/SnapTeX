@@ -3,6 +3,7 @@
 import * as assert from 'assert';
 import { chooseRootPath, createProjectTree, isProjectFile, projectFolderPaths } from '../../apps/standalone/src/browser-project';
 import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
+import { createStandaloneDemoProjectFiles } from '../../apps/standalone/src/demo-project';
 import { PreviewUpdateService } from '../preview-update-service';
 
 suite('BrowserFileProvider', () => {
@@ -46,5 +47,24 @@ suite('BrowserFileProvider', () => {
         const payload = await service.render(rootUri, await provider.read(rootUri), { deferFullHtml: false });
 
         assert.match(payload.htmls?.join('\n') ?? '', /Included paragraph/);
+    });
+
+    test('persists edited demo text in browser storage', async () => {
+        const values = new Map<string, string>();
+        const storage = {
+            getItem: (key: string) => values.get(key) ?? null,
+            setItem: (key: string, value: string) => values.set(key, value)
+        };
+        const fetchDemoText = async (url: string) => `Bundled ${url}`;
+        const mainFile = createStandaloneDemoProjectFiles(fetchDemoText, storage)
+            .find(file => file.path === '/demo/main.tex');
+        assert.ok(mainFile?.readText && mainFile.writeText);
+
+        assert.equal(await mainFile.readText(), 'Bundled demo/main.tex');
+        await mainFile.writeText('Edited demo');
+
+        const reopenedMainFile = createStandaloneDemoProjectFiles(fetchDemoText, storage)
+            .find(file => file.path === '/demo/main.tex');
+        assert.equal(await reopenedMainFile?.readText?.(), 'Edited demo');
     });
 });

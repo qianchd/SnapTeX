@@ -16,12 +16,15 @@
 </head>
 <body
     data-explorer-collapsed="true"
+    data-pane-layout="split"
+    data-project-open="false"
     data-tikz-jax-js-uri="/media/vendor/tikzjax/tikzjax.js"
     data-tikz-jax-css-uri="/media/vendor/tikzjax/fonts.css"
     data-pdf-js-uri="/media/vendor/pdfjs/pdf.mjs"
     data-pdf-worker-uri="/media/vendor/pdfjs/pdf.worker.mjs"
 >
     <main id="app-shell">
+        <div id="toolbar-hover-zone" aria-hidden="true"></div>
         <header id="web-toolbar" aria-label="Project controls">
             <div class="toolbar-group">
                 <a id="snaptex-brand" href="." aria-label="SnapTeX Web">
@@ -34,13 +37,13 @@
                 <button id="save-button" type="button">Save</button>
             </div>
             <div class="toolbar-group toolbar-paths" aria-live="polite">
-                <span id="active-path-label">/demo/main.tex</span>
-                <span id="root-path-label">root: /demo/main.tex</span>
+                <span id="active-path-label">No project open</span>
+                <span id="root-path-label">root: -</span>
             </div>
             <div class="toolbar-group toolbar-actions">
                 <button id="set-root-button" type="button">Set Root</button>
                 <button id="settings-button" type="button" aria-expanded="false" aria-controls="settings-menu">Settings</button>
-                <span id="project-status">Loading demo project...</span>
+                <span id="project-status">Ready</span>
             </div>
             <div id="settings-menu" hidden>
                 <div class="settings-section">
@@ -85,10 +88,25 @@
                 <div id="project-files" role="tree" aria-label="Project files"></div>
                 <div id="project-diagnostics" aria-live="polite"></div>
             </aside>
+            <section id="welcome-page" aria-labelledby="welcome-title">
+                <div class="welcome-content">
+                    <img src="/media/icon.png" alt="" aria-hidden="true">
+                    <p class="welcome-kicker">LaTeX editor and live preview</p>
+                    <h1 id="welcome-title">SnapTeX</h1>
+                    <p>Open a local project folder to start editing, or explore the bundled demo.</p>
+                    <p class="welcome-privacy">All processing stays on this device. SnapTeX does not upload your files or document data.</p>
+                    <div class="welcome-actions">
+                        <button id="welcome-open-folder-button" class="primary-action" type="button">Open Folder</button>
+                        <button id="welcome-open-demo-button" type="button">Open Demo</button>
+                    </div>
+                </div>
+            </section>
             <section id="editor-pane" aria-label="LaTeX editor">
                 <div id="editor"></div>
             </section>
-            <div id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor and preview panes"></div>
+            <div id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor and preview panes">
+                <button id="restore-pane-button" type="button" hidden></button>
+            </div>
             <section id="preview-pane" aria-label="SnapTeX preview">
                 <div id="content-root"></div>
             </section>

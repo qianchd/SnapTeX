@@ -12,9 +12,15 @@ export interface BrowserProjectFile {
     path: string;
     text?: string;
     readText?: () => Promise<string>;
+    writeText?: (text: string) => Promise<void> | void;
     blob?: Blob;
     resourceUrl?: string;
     handle?: BrowserWritableFileHandle;
+}
+
+interface BrowserFileEntry extends Omit<BrowserProjectFile, 'path'> {
+    mtime: number;
+    objectUrl?: string;
 }
 
 export function normalizeBrowserPath(path: string): string {
@@ -54,7 +60,7 @@ export class BrowserUri implements UriLike {
  * In-memory file provider shared by desktop browsers and future WebView hosts.
  */
 export class BrowserFileProvider implements IFileProvider<BrowserUri> {
-    private readonly files = new Map<string, { text?: string; readText?: () => Promise<string>; blob?: Blob; resourceUrl?: string; mtime: number; handle?: BrowserWritableFileHandle; objectUrl?: string }>();
+    private readonly files = new Map<string, BrowserFileEntry>();
     private version = 1;
 
     private clear() {
@@ -76,6 +82,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         this.files.set(normalizedPath, {
             text: file.text,
             readText: file.readText,
+            writeText: file.writeText,
             blob: file.blob,
             resourceUrl: file.resourceUrl,
             handle: file.handle ?? existing?.handle,
@@ -91,6 +98,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         }
         this.files.set(normalizedPath, {
             text,
+            writeText: existing?.writeText,
             handle: handle ?? existing?.handle,
             mtime: this.version++
         });
@@ -113,6 +121,10 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
     async write(uri: BrowserUri, text: string): Promise<boolean> {
         const file = this.files.get(uri.path);
         this.setFile(uri, text);
+        if (file?.writeText) {
+            await file.writeText(text);
+            return true;
+        }
         if (!file?.handle) {
             return false;
         }

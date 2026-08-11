@@ -69,7 +69,7 @@ function readControls() {
         toggleExplorerButton: requireElement('toggle-explorer-button'),
         openFileButton: requireElement('open-file-button'),
         openFolderButton: requireElement('open-folder-button'),
-        saveButton: requireElement('save-button'),
+        saveButton: requireElement<HTMLButtonElement>('save-button'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
         settingsButton: requireElement('settings-button'),
         settingsMenu: requireElement('settings-menu'),
@@ -83,6 +83,9 @@ function readControls() {
         renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
         autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),
+        welcomePage: requireElement('welcome-page'),
+        welcomeOpenFolderButton: requireElement('welcome-open-folder-button'),
+        welcomeOpenDemoButton: requireElement('welcome-open-demo-button'),
         openFileInput: requireElement<HTMLInputElement>('open-file-input'),
         openFolderInput: requireElement<HTMLInputElement>('open-folder-input')
     };
@@ -99,17 +102,23 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     const shell = document.getElementById('workspace');
     const editorPane = document.getElementById('editor-pane');
     const contentRoot = document.getElementById('content-root');
-    if (!shell || !editorPane) {
+    const restoreButton = getElement<HTMLButtonElement>('restore-pane-button');
+    if (!shell || !editorPane || !restoreButton) {
         return;
     }
 
+    type PaneLayout = 'split' | 'editor' | 'preview';
+    let paneLayout: PaneLayout = 'split';
+    let lastSplitEditorWidth: number | undefined;
     let dragState: {
         editorLeft: number;
         maxWidth: number;
         availableWidth: number;
+        rawEditorWidth: number;
         minEditorWidth: number;
         minPreviewWidth: number;
         splitterWidth: number;
+        collapseDistance: number;
         previewFontMin: number;
         previewFontMax: number;
         previewFontScale: number;
@@ -126,6 +135,19 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
 
     const clampedEditorWidth = (clientX: number, state: NonNullable<typeof dragState>): number =>
         Math.round(Math.min(state.maxWidth, Math.max(state.minEditorWidth, clientX - state.editorLeft)));
+
+    const setPaneLayout = (layout: PaneLayout): void => {
+        paneLayout = layout;
+        document.body.dataset.paneLayout = layout;
+        restoreButton.hidden = layout === 'split';
+        if (layout !== 'split') {
+            const showingEditor = layout === 'editor';
+            restoreButton.dataset.direction = showingEditor ? 'left' : 'right';
+            restoreButton.title = showingEditor ? 'Show preview panel' : 'Show editor panel';
+            restoreButton.setAttribute('aria-label', restoreButton.title);
+        }
+        window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    };
 
     const applyEditorWidth = (state: NonNullable<typeof dragState>, width: number): void => {
         if (width !== state.appliedWidth) {
@@ -145,6 +167,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             return;
         }
 
+        dragState.rawEditorWidth = clientX - dragState.editorLeft;
         dragState.nextWidth = clampedEditorWidth(clientX, dragState);
         if (dragState.animationFrame !== undefined) {
             return;
@@ -167,19 +190,25 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     };
 
     const startResize = (event: PointerEvent): void => {
+        if (paneLayout !== 'split' || event.target === restoreButton) {
+            return;
+        }
         const shellRect = shell.getBoundingClientRect();
         const editorRect = editorPane.getBoundingClientRect();
         const availableWidth = shellRect.right - editorRect.left;
         const minEditorWidth = cssNumber('--snaptex-web-min-editor-width');
         const minPreviewWidth = cssNumber('--snaptex-web-min-preview-width');
         const splitterWidth = cssNumber('--snaptex-web-splitter-width');
+        lastSplitEditorWidth = Math.round(editorRect.width);
         dragState = {
             editorLeft: editorRect.left,
             maxWidth: Math.max(minEditorWidth, availableWidth - minPreviewWidth - splitterWidth),
             availableWidth,
+            rawEditorWidth: editorRect.width,
             minEditorWidth,
             minPreviewWidth,
             splitterWidth,
+            collapseDistance: cssNumber('--snaptex-web-collapse-distance'),
             previewFontMin: cssNumber('--snaptex-preview-font-min'),
             previewFontMax: cssNumber('--snaptex-preview-font-max'),
             previewFontScale: cssNumber('--snaptex-preview-font-scale'),
@@ -197,9 +226,20 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     };
 
     const endResize = (event: PointerEvent): void => {
-        if (dragState?.animationFrame !== undefined) {
-            window.cancelAnimationFrame(dragState.animationFrame);
-            applyEditorWidth(dragState, dragState.nextWidth);
+        const state = dragState;
+        if (state?.animationFrame !== undefined) {
+            window.cancelAnimationFrame(state.animationFrame);
+        }
+        if (state) {
+            const rawPreviewWidth = state.availableWidth - state.rawEditorWidth - state.splitterWidth;
+            if (state.rawEditorWidth < state.collapseDistance) {
+                setPaneLayout('preview');
+            } else if (rawPreviewWidth < state.collapseDistance) {
+                setPaneLayout('editor');
+            } else {
+                applyEditorWidth(state, state.nextWidth);
+                lastSplitEditorWidth = state.nextWidth;
+            }
         }
         dragState = undefined;
         contentRoot?.style.removeProperty('--snaptex-web-resize-preview-font-size');
@@ -217,6 +257,13 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     });
     splitter.addEventListener('pointerup', endResize);
     splitter.addEventListener('pointercancel', endResize);
+    restoreButton.addEventListener('pointerdown', event => event.stopPropagation());
+    restoreButton.addEventListener('click', () => {
+        if (lastSplitEditorWidth !== undefined) {
+            shell.style.setProperty('--snaptex-web-editor-width', `${lastSplitEditorWidth}px`);
+        }
+        setPaneLayout('split');
+    });
 }
 
 function setStatus(message: string): void {
@@ -241,23 +288,27 @@ async function loadProject(host: StandaloneHost, files: readonly BrowserProjectF
 }
 
 function renderProjectState(host: StandaloneHost): void {
-    renderChromeState(host);
+    const projectOpen = host.getProjectTextPaths().length > 0;
+    document.body.dataset.projectOpen = String(projectOpen);
+    getControls().welcomePage.hidden = projectOpen;
+    renderChromeState(host, projectOpen);
     renderProjectFiles(host);
     renderProjectDiagnostics(host);
 }
 
-function renderChromeState(host: StandaloneHost): void {
+function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
     const controls = getControls();
     const activePath = host.getActivePath();
     const rootPath = host.getRootPath();
-    const activePathText = `${activePath}${host.isDirty(activePath) ? ' *' : ''}`;
+    const activePathText = projectOpen ? `${activePath}${host.isDirty(activePath) ? ' *' : ''}` : 'No project open';
     controls.activePathLabel.textContent = activePathText;
     controls.activePathLabel.title = activePathText;
-    controls.rootPathLabel.textContent = `root: ${rootPath}`;
-    controls.rootPathLabel.title = rootPath;
+    controls.rootPathLabel.textContent = projectOpen ? `root: ${rootPath}` : 'root: -';
+    controls.rootPathLabel.title = projectOpen ? rootPath : '';
+    controls.saveButton.disabled = !projectOpen;
     syncSettingsControls(host);
 
-    const canSetRoot = isTexFile(activePath) && activePath !== rootPath;
+    const canSetRoot = projectOpen && isTexFile(activePath) && activePath !== rootPath;
     controls.setRootButton.disabled = !canSetRoot;
     controls.setRootButton.title = canSetRoot ? `Set ${activePath} as preview root` : 'Current TeX file is already the preview root';
 }
@@ -482,6 +533,12 @@ function bindProjectControls(host: StandaloneHost): void {
     controls.openFolderButton.addEventListener('click', () => {
         openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
     });
+    controls.welcomeOpenFolderButton.addEventListener('click', () => {
+        openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
+    });
+    controls.welcomeOpenDemoButton.addEventListener('click', () => {
+        loadDefaultDemoProject(host).catch(error => reportFailure('Load demo', error));
+    });
     controls.saveButton.addEventListener('click', () => {
         saveActiveFile(host).catch(error => reportFailure('Save', error));
     });
@@ -537,10 +594,15 @@ function bindProjectControls(host: StandaloneHost): void {
     syncSettingsControls(host);
 }
 
-const INITIAL_TEX = 'Loading the SnapTeX demo project...';
 async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     setStatus('Loading demo project...');
-    await loadProject(host, createStandaloneDemoProjectFiles());
+    let storage: Storage | undefined;
+    try {
+        storage = window.localStorage;
+    } catch {
+        // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+    await loadProject(host, createStandaloneDemoProjectFiles(undefined, storage));
 }
 
 const editorParent = requireElement('editor');
@@ -557,9 +619,9 @@ setTheme('light');
 let host: StandaloneHost;
 host = createStandaloneSnapTeXApp({
     editorParent,
-    initialText: INITIAL_TEX,
+    initialText: '',
     settings: DEFAULT_STANDALONE_PREVIEW_SETTINGS,
     onStateChange: renderProjectState
 });
 bindProjectControls(host);
-void loadDefaultDemoProject(host).catch(error => reportFailure('Load demo', error));
+renderProjectState(host);
