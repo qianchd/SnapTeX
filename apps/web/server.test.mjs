@@ -111,9 +111,10 @@ test('protects remote projects with an independent web session', async () => {
 
     try {
         const anonymousPage = await fetch(`${baseUrl}/`, { redirect: 'manual' });
-        assert.equal(anonymousPage.status, 303);
-        assert.equal(anonymousPage.headers.get('location'), '/snaptex/web-auth/login?return_to=%2Fsnaptex%2F');
+        assert.equal(anonymousPage.status, 200);
+        assert.equal(await anonymousPage.text(), 'SnapTeX');
         assert.equal((await fetch(`${baseUrl}/api/projects`)).status, 401);
+        assert.equal((await fetch(`${baseUrl}/web-auth/login`)).headers.get('referrer-policy'), 'same-origin');
 
         const crossOriginLogin = await fetch(`${baseUrl}/web-auth/login`, {
             method: 'POST',

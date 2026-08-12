@@ -111,6 +111,7 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, '/media/icon-512.png');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
             assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
+            assert.match(serviceWorker, /mode === 'navigate'[\s\S]*fetch\(event\.request\)\.catch/);
             assert.doesNotMatch(serviceWorker, /\.nojekyll/);
             for (const source of [
                 /\.\/index\.html/, /\.\/media\/favicon\.ico/, /\.\/media\/icon-512\.png/,

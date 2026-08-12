@@ -17,7 +17,12 @@ import {
     type BrowserDirectoryHandle,
     type BrowserFileHandle
 } from './local-project';
-import { createRemoteProject, loadRemoteProject, RemoteProjectNotFoundError } from './remote-project';
+import {
+    createRemoteProject,
+    loadRemoteProject,
+    RemoteProjectAuthenticationError,
+    RemoteProjectNotFoundError
+} from './remote-project';
 
 const RESIZE_WIDTH_STEP_PX = 10;
 const RESIZE_FRAME_INTERVAL_MS = 30;
@@ -78,6 +83,7 @@ function readControls() {
         saveButton: requireElement<HTMLButtonElement>('save-button'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
         settingsButton: requireElement('settings-button'),
+        logoutButton: requireElement<HTMLButtonElement>('logout-button'),
         settingsMenu: requireElement('settings-menu'),
         showExplorerToggle: requireElement<HTMLInputElement>('show-explorer-toggle'),
         showDiagnosticsToggle: requireElement<HTMLInputElement>('show-diagnostics-toggle'),
@@ -442,7 +448,25 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
 
 let remoteProjectToCreate: string | undefined;
 
-function openRemoteProjectDialog(): void {
+function fetchWebSession(): Promise<Response> {
+    return fetch(new URL('web-auth/session', document.baseURI), { credentials: 'same-origin' });
+}
+
+function redirectToServerLogin(): void {
+    const loginUrl = new URL('web-auth/login', document.baseURI);
+    loginUrl.searchParams.set('return_to', `${window.location.pathname}${window.location.search}`);
+    window.location.assign(loginUrl);
+}
+
+async function openRemoteProjectDialog(): Promise<void> {
+    try {
+        if ((await fetchWebSession()).status === 401) {
+            redirectToServerLogin();
+            return;
+        }
+    } catch {
+        // Static deployments have no session endpoint.
+    }
     const controls = getControls();
     remoteProjectToCreate = undefined;
     controls.remoteProjectError.textContent = '';
@@ -465,6 +489,10 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
         await loadProject(host, project);
         controls.remoteProjectDialog.close();
     } catch (error) {
+        if (error instanceof RemoteProjectAuthenticationError) {
+            redirectToServerLogin();
+            return;
+        }
         if (error instanceof RemoteProjectNotFoundError) {
             remoteProjectToCreate = controls.remoteProjectName.value.trim();
             controls.remoteProjectError.textContent = 'Project does not exist. Create it?';
@@ -700,6 +728,39 @@ function bindProjectControls(host: StandaloneHost): void {
     syncSettingsControls(host);
 }
 
+async function bindLogoutControl(): Promise<void> {
+    const button = getControls().logoutButton;
+    try {
+        const response = await fetchWebSession();
+        if (!response.ok) {
+            return;
+        }
+        const session = await response.json() as { csrfToken?: unknown };
+        if (typeof session.csrfToken !== 'string' || !session.csrfToken) {
+            return;
+        }
+        const csrfToken = session.csrfToken;
+
+        button.hidden = false;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            const logout = await fetch(new URL('web-auth/logout', document.baseURI), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'X-CSRF-Token': csrfToken }
+            });
+            if (!logout.ok) {
+                button.disabled = false;
+                reportFailure('Log out', new Error(`Request failed: ${logout.status}`));
+                return;
+            }
+            window.location.reload();
+        });
+    } catch {
+        // Static deployments have no session endpoint.
+    }
+}
+
 async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     setStatus('Loading demo project...');
     let storage: Storage | undefined;
@@ -730,4 +791,5 @@ host = createStandaloneSnapTeXApp({
     onStateChange: renderProjectState
 });
 bindProjectControls(host);
+void bindLogoutControl();
 renderProjectState(host);

@@ -1,7 +1,12 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { createRemoteProject, loadRemoteProject, RemoteProjectNotFoundError } from '../../apps/web/src/remote-project';
+import {
+    createRemoteProject,
+    loadRemoteProject,
+    RemoteProjectAuthenticationError,
+    RemoteProjectNotFoundError
+} from '../../apps/web/src/remote-project';
 
 suite('RemoteProject', () => {
     test('loads, saves, and exposes resources through the project HTTP API', async () => {
@@ -88,5 +93,13 @@ suite('RemoteProject', () => {
         assert.equal(created, true);
         assert.equal(createRequests, 1);
         assert.equal(project.rootPath, '/main.tex');
+    });
+
+    test('reports authentication required for protected project requests', async () => {
+        const fetcher = async (): Promise<Response> => Response.json({ error: 'unauthorized' }, { status: 401 });
+        await assert.rejects(
+            () => loadRemoteProject('paper', 'https://example.test/api/projects/', fetcher),
+            RemoteProjectAuthenticationError
+        );
     });
 });

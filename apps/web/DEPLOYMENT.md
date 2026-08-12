@@ -1,6 +1,6 @@
 # SnapTeX Server deployment
 
-SnapTeX Server is an independent Node.js service. It owns its login, server-side browser sessions, CSRF validation, and project-file authorization. Nginx only terminates HTTPS and proxies `/snaptex/` to the loopback listener.
+SnapTeX Server is an independent Node.js service. The editor shell, local folders, and demo are public; remote projects require its login, server-side browser sessions, CSRF validation, and project-file authorization. Nginx only terminates HTTPS and proxies `/snaptex/` to the loopback listener.
 
 ## Requirements
 
@@ -66,7 +66,7 @@ Then validate and reload Nginx:
 nginx -t && systemctl reload nginx
 ```
 
-Open `https://snaptex.example.com/`. Anonymous page requests go to SnapTeX's own login page; API requests return `401`. The Node listener remains inaccessible from the public network.
+Open `https://snaptex.example.com/`. Anonymous users can use the welcome page, local folders, and demo without signing in. Choosing **Open Server** starts SnapTeX's login flow, and unauthenticated project API requests return `401`. The Node listener remains inaccessible from the public network.
 
 ## Operate and update
 

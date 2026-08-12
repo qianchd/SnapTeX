@@ -46,6 +46,7 @@ export function createWebSessionAuth(options) {
         if (!pathname.startsWith('/web-auth/')) return false;
         response.setHeader('Cache-Control', 'no-store');
         if (pathname === '/web-auth/login' && request.method === 'GET') {
+            response.setHeader('Referrer-Policy', 'same-origin');
             response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             response.end(loginPage(safeReturnTo(new URL(request.url, publicOrigin).searchParams.get('return_to'), publicPath)));
             return true;
@@ -129,19 +130,10 @@ export function createWebSessionAuth(options) {
         return true;
     }
 
-    function authorize(request, response, pathname) {
+    function authorize(request, response) {
         const session = findSession(request);
         if (!session) {
-            if (pathname.startsWith('/api/')) {
-                sendJson(response, 401, { error: 'unauthorized' });
-            } else {
-                const returnTo = `${publicPath}${pathname.replace(/^\/+/, '')}`;
-                response.writeHead(303, {
-                    Location: `${publicPath}web-auth/login?return_to=${encodeURIComponent(returnTo)}`,
-                    'Cache-Control': 'no-store'
-                });
-                response.end();
-            }
+            sendJson(response, 401, { error: 'unauthorized' });
             return false;
         }
         if (!SAFE_METHODS.has(request.method ?? 'GET') &&

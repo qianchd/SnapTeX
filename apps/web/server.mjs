@@ -335,7 +335,9 @@ export function createSnapTeXWebServer(options = {}) {
             sendJson(response, 200, { status: 'ok' });
             return;
         }
-        if (await auth.handle(request, response, pathname) || !auth.authorize(request, response, pathname)) return;
+        if (await auth.handle(request, response, pathname)) return;
+        const isProjectRequest = pathname === projectApiPrefix || pathname.startsWith(`${projectApiPrefix}/`);
+        if (isProjectRequest && !auth.authorize(request, response)) return;
         if (await handleProjectRequest(request, response, projectsRoot)) {
             return;
         }

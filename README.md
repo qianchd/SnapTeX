@@ -73,7 +73,7 @@ npm run web:install-server
 
 The installer runs `npm ci`, builds and tests the static Web app on the server, atomically installs the runtime, installs the repository's systemd unit template, and verifies the project API. Re-run the same command after replacing or updating the source tree. Open the served page and choose **Open Server**.
 
-`SNAPTEX_PROJECT_ROOT` is the only required setting. The API exposes supported project files inside that directory and permits saving existing text files. Keep the default loopback listener or place the service behind an authenticated HTTPS reverse proxy before making it public. See [the server deployment guide](apps/web/DEPLOYMENT.md) for configuration, logs, updates, and rollback details.
+`SNAPTEX_PROJECTS_ROOT` selects the directory exposed by the project API. The welcome page, local-folder editor, and demo remain public, while **Open Server** uses SnapTeX's built-in Web Session authentication. Keep the default loopback listener behind an HTTPS reverse proxy before making it public. See [the server deployment guide](apps/web/DEPLOYMENT.md) for configuration, logs, updates, and rollback details.
 
 ## Features
 

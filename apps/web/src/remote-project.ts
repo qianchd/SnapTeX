@@ -12,6 +12,19 @@ export class RemoteProjectNotFoundError extends Error {
     }
 }
 
+export class RemoteProjectAuthenticationError extends Error {
+    constructor() {
+        super('Sign in to access remote projects.');
+        this.name = 'RemoteProjectAuthenticationError';
+    }
+}
+
+function requestError(response: Response, method: string, url: string | URL): Error {
+    return response.status === 401
+        ? new RemoteProjectAuthenticationError()
+        : new Error(`${method} ${response.url || url} failed: ${response.status}`);
+}
+
 function remoteFileUrl(apiBaseUrl: string, path: string): string {
     const encodedPath = normalizeBrowserPath(path)
         .split('/')
@@ -24,7 +37,7 @@ function remoteFileUrl(apiBaseUrl: string, path: string): string {
 async function fetchOk(fetcher: typeof fetch, url: string, init?: RequestInit): Promise<Response> {
     const response = await fetcher(url, { credentials: 'same-origin', ...init });
     if (!response.ok) {
-        throw new Error(`${init?.method ?? 'GET'} ${url} failed: ${response.status}`);
+        throw requestError(response, init?.method ?? 'GET', url);
     }
     return response;
 }
@@ -39,7 +52,7 @@ function withCsrf(fetcher: typeof fetch, apiBaseUrl: string): typeof fetch {
         csrfToken ??= fetcher(new URL('../../web-auth/session', apiBaseUrl), { credentials: 'same-origin' })
             .then(async response => {
                 if (!response.ok) {
-                    throw new Error(`GET ${response.url || '/web-auth/session'} failed: ${response.status}`);
+                    throw requestError(response, 'GET', '/web-auth/session');
                 }
                 const value = await response.json() as { csrfToken?: unknown };
                 return typeof value.csrfToken === 'string' ? value.csrfToken : '';
@@ -122,7 +135,7 @@ export async function loadRemoteProject(projectName: string, apiBaseUrl: string,
         }
     }
     if (!response.ok) {
-        throw new Error(`GET ${response.url || new URL('manifest', baseUrl)} failed: ${response.status}`);
+        throw requestError(response, 'GET', new URL('manifest', baseUrl));
     }
     return createRemoteProjectModel(baseUrl, readManifest(await response.json()), fetcher);
 }
