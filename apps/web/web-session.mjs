@@ -8,6 +8,7 @@ const MAX_SESSIONS = 128;
 const MAX_LOGIN_BYTES = 16 * 1024;
 const MAX_FAILURES = 10;
 const MAX_FAILURE_SOURCES = 4096;
+const FAILURE_WINDOW_MS = 30 * 60_000;
 const LOCKOUT_MS = 30 * 24 * 60 * 60_000;
 
 /** Provides the shared browser-session HTTP contract for a standalone SnapTeX server. */
@@ -27,7 +28,12 @@ export function createWebSessionAuth(options) {
     if (!username || !password || !options.publicOrigin) {
         throw new Error('Web Session auth requires username, password, and publicOrigin.');
     }
-    const publicOrigin = new URL(options.publicOrigin).origin;
+    const publicUrl = new URL(options.publicOrigin);
+    if (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password ||
+        publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash) {
+        throw new Error('Web Session publicOrigin must be an HTTPS origin without a path.');
+    }
+    const publicOrigin = publicUrl.origin;
     const publicPath = normalizePublicPath(options.publicPath);
     const sessions = new Map();
     const loginFailures = new Map();
@@ -71,8 +77,7 @@ export function createWebSessionAuth(options) {
                 pruneLoginFailures(loginFailures, now);
                 const failedAttempts = (loginFailures.get(source)?.failedAttempts ?? 0) + 1;
                 const lockedUntil = failedAttempts >= MAX_FAILURES ? now + LOCKOUT_MS : 0;
-                loginFailures.delete(source);
-                loginFailures.set(source, { failedAttempts, lockedUntil, lastAttemptAt: now });
+                recordLoginFailure(loginFailures, source, { failedAttempts, lockedUntil, lastAttemptAt: now }, now);
                 if (lockedUntil) {
                     response.setHeader('Retry-After', String(LOCKOUT_MS / 1000));
                 }
@@ -183,11 +188,23 @@ function requestSource(request) {
 
 function pruneLoginFailures(failures, now) {
     for (const [source, failure] of failures) {
-        if (failure.lockedUntil <= now && failure.lastAttemptAt + LOCKOUT_MS <= now) {
+        if (failure.lockedUntil <= now && failure.lastAttemptAt + FAILURE_WINDOW_MS <= now) {
             failures.delete(source);
         }
     }
-    while (failures.size >= MAX_FAILURE_SOURCES) failures.delete(failures.keys().next().value);
+}
+
+function recordLoginFailure(failures, source, failure, now) {
+    if (!failures.has(source) && failures.size >= MAX_FAILURE_SOURCES) {
+        for (const [candidate, value] of failures) {
+            if (value.lockedUntil > now) continue;
+            failures.delete(candidate);
+            break;
+        }
+        if (failures.size >= MAX_FAILURE_SOURCES) return;
+    }
+    failures.delete(source);
+    failures.set(source, failure);
 }
 
 function safeReturnTo(value, fallback) {

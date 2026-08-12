@@ -61,7 +61,7 @@ nginx -t && systemctl reload nginx
 
 Open `https://snaptex.example.com/`. Anonymous users can use the welcome page, local folders, and demo without signing in. Choosing **Open Server** starts SnapTeX's login flow, and unauthenticated project API requests return `401`. The Node listener remains inaccessible from the public network.
 
-Login failures are tracked per source IP. Ten consecutive failures block that IP for 30 days without affecting other users. The bounded in-memory block list is cleared when the Node service restarts; use a host firewall or fail2ban as an additional layer if bans must survive service restarts.
+Login failures are tracked per source IP. Ten failures within 30 minutes block that IP for 30 days without affecting other users. The bounded in-memory block list is cleared when the Node service restarts; use a host firewall or fail2ban as an additional layer if bans must survive service restarts.
 
 ## Operate and update
 

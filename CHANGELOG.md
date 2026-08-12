@@ -8,8 +8,8 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Added**: Added shared text-file creation and deletion for writable local folders and remote Web projects, including `.tex`, `.bib`, `.md`, and other supported source files.
 - **Added**: Added persistent browser workspaces backed by IndexedDB, conflict-aware folder re-import, lazy resource reads, project ZIP export, and browser-backed demo editing.
 - **Added**: Secured self-hosted SnapTeX projects with independent server-side Web Sessions, same-origin login, CSRF validation, login lockout, hardened response headers, and a loopback-only deployment model.
-- **Security**: Made authentication mandatory whenever the remote project API is enabled, isolated deployment on `snaptex.example.com`, and replaced global login lockout with bounded per-IP failure tracking and a 30-day block after ten failures.
-- **Changed**: Reduced browser-workspace import memory by hashing files sequentially with SHA-256, preserved custom roots across re-imports, and prevented deletion of the currently open workspace.
+- **Security**: Made authentication mandatory whenever the remote project API is enabled, isolated deployment on `snaptex.example.com`, added bounded per-IP failure tracking with a 30-day block after ten failures within 30 minutes, and rejected unsafe static-file paths and methods.
+- **Changed**: Reduced browser-workspace memory with sequential SHA-256 hashing and disposable lazy resource blobs, preserved local edits with three-way re-import checks, retained custom roots, and enforced file/root invariants in IndexedDB.
 - **Changed**: Limited Web Session authentication to remote server projects so the welcome page, local-folder editing, and demo remain available without signing in.
 - **Changed**: Simplified public deployment to an ordinary HTTPS Nginx reverse proxy; SnapTeX no longer requires cross-service authentication or proxy-secret configuration.
 - **Fixed**: Made PWA page navigation network-first so self-hosted updates and on-demand server authentication are not masked by a cached application shell.

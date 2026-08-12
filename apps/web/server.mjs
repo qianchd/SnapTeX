@@ -44,8 +44,12 @@ function resolveRequestPath(root, url, indexPath = defaultIndexPath(root)) {
     try {
         const parsed = new URL(url, 'http://localhost');
         const pathname = parsed.pathname === '/' ? indexPath : parsed.pathname;
-        const filePath = resolve(root, decodeURIComponent(pathname).replace(/^\/+/, ''));
-        return filePath === root || filePath.startsWith(`${root}${sep}`) ? filePath : undefined;
+        const candidate = resolve(root, decodeURIComponent(pathname).replace(/^\/+/, ''));
+        if (!isWithin(root, candidate) || !existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) {
+            return undefined;
+        }
+        const filePath = realpathSync(candidate);
+        return isWithin(root, filePath) ? filePath : undefined;
     } catch {
         return undefined;
     }
@@ -320,11 +324,11 @@ async function handleProjectRequest(request, response, projectsRoot) {
 }
 
 export function createSnapTeXWebServer(options = {}) {
-    const root = resolve(options.root ?? defaultRoot);
+    const root = realpathSync(resolve(options.root ?? defaultRoot));
     const indexPath = options.indexPath ?? defaultIndexPath(root);
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
-    if (projectsRoot && !options.auth && options.allowInsecureRemoteProjects !== true) {
-        throw new Error('Remote projects require authentication or allowInsecureRemoteProjects for isolated tests.');
+    if (projectsRoot && !options.auth) {
+        throw new Error('Remote projects require authentication.');
     }
     const auth = createWebSessionAuth(options.auth);
     const server = createServer((request, response) => void (async () => {
@@ -344,8 +348,13 @@ export function createSnapTeXWebServer(options = {}) {
         if (await handleProjectRequest(request, response, projectsRoot)) {
             return;
         }
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+            response.writeHead(405, { Allow: 'GET, HEAD' });
+            response.end('Method not allowed');
+            return;
+        }
         const filePath = resolveRequestPath(root, request.url ?? '/', indexPath);
-        if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
+        if (!filePath || !statSync(filePath).isFile()) {
             response.writeHead(404);
             response.end('Not found');
             return;
@@ -355,7 +364,11 @@ export function createSnapTeXWebServer(options = {}) {
             'Content-Type': contentTypes.get(extname(filePath)) ?? 'application/octet-stream',
             'Cache-Control': 'no-store'
         });
-        createReadStream(filePath).pipe(response);
+        if (request.method === 'HEAD') {
+            response.end();
+        } else {
+            createReadStream(filePath).pipe(response);
+        }
     })().catch(error => {
         console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {
