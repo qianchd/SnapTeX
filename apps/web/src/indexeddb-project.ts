@@ -3,6 +3,7 @@ import {
     chooseRootPath,
     isProjectFile,
     isProjectTextFile,
+    isTexFile,
     normalizeBrowserPath,
     type BrowserProject,
     type BrowserProjectFile
@@ -19,8 +20,6 @@ interface StoredProjectRecord {
     rootPath: string;
     templateId?: string;
     activePath?: string;
-    createdAt: number;
-    updatedAt: number;
     lastOpenedAt: number;
 }
 
@@ -42,7 +41,6 @@ interface WorkspaceDatabase extends DBSchema {
     projects: {
         key: string;
         value: StoredProjectRecord;
-        indexes: { 'by-updated': number };
     };
     files: {
         key: string;
@@ -65,22 +63,6 @@ export interface BrowserWorkspaceSummary {
     name: string;
     rootPath: string;
     templateId?: string;
-    activePath?: string;
-    createdAt: number;
-    updatedAt: number;
-    lastOpenedAt: number;
-}
-
-export interface BrowserWorkspaceConflict {
-    path: string;
-    baseHash: string;
-    currentHash: string;
-    incomingHash: string;
-}
-
-export interface BrowserWorkspaceImportResult {
-    summary: BrowserWorkspaceSummary;
-    conflicts: readonly BrowserWorkspaceConflict[];
 }
 
 export interface BrowserWorkspaceTemplate {
@@ -108,8 +90,8 @@ async function contentHash(content: Blob): Promise<string> {
 }
 
 function projectSummary(record: StoredProjectRecord): BrowserWorkspaceSummary {
-    const { id, name, rootPath, templateId, activePath, createdAt, updatedAt, lastOpenedAt } = record;
-    return { id, name, rootPath, templateId, activePath, createdAt, updatedAt, lastOpenedAt };
+    const { id, name, rootPath, templateId } = record;
+    return { id, name, rootPath, templateId };
 }
 
 function commonImportRoot(paths: readonly string[]): string | undefined {
@@ -162,8 +144,7 @@ function rootPathFor(files: readonly { path: string }[]): string {
 async function touchProject(
     projects: { get(key: string): Promise<StoredProjectRecord | undefined>; put(value: StoredProjectRecord): Promise<string> },
     projectId: string,
-    activePath?: string,
-    changed = false
+    activePath?: string
 ): Promise<void> {
     const project = await projects.get(projectId);
     if (!project) {
@@ -173,8 +154,7 @@ async function touchProject(
     await projects.put({
         ...project,
         activePath: activePath ?? project.activePath,
-        lastOpenedAt: timestamp,
-        updatedAt: changed ? timestamp : project.updatedAt
+        lastOpenedAt: timestamp
     });
 }
 
@@ -226,7 +206,7 @@ function createProjectFile(
                 const transaction = db.transaction(['files', 'contents', 'projects'], 'readwrite');
                 transaction.objectStore('contents').put({ key: record.key, content });
                 transaction.objectStore('files').put({ ...record, currentHash });
-                await touchProject(transaction.objectStore('projects'), record.projectId, undefined, true);
+                await touchProject(transaction.objectStore('projects'), record.projectId);
                 await transaction.done;
                 record.currentHash = currentHash;
             }
@@ -240,8 +220,7 @@ export class BrowserWorkspaceStore {
     constructor(private readonly databaseName = DEFAULT_DATABASE_NAME) {
         this.database = idb.then(({ openDB }) => openDB<WorkspaceDatabase>(databaseName, DATABASE_VERSION, {
             upgrade(db) {
-                const projects = db.createObjectStore('projects', { keyPath: 'id' });
-                projects.createIndex('by-updated', 'updatedAt');
+                db.createObjectStore('projects', { keyPath: 'id' });
                 const files = db.createObjectStore('files', { keyPath: 'key' });
                 files.createIndex('by-project', 'projectId');
                 db.createObjectStore('contents', { keyPath: 'key' });
@@ -260,7 +239,7 @@ export class BrowserWorkspaceStore {
         return this.createWorkspace(name, normalizeImportFiles(files));
     }
 
-    async reimportFiles(id: string, files: readonly BrowserImportFile[], overwriteConflicts = false): Promise<BrowserWorkspaceImportResult> {
+    async reimportFiles(id: string, files: readonly BrowserImportFile[], overwriteConflicts = false): Promise<readonly string[]> {
         const normalizedFiles = normalizeImportFiles(files);
         if (normalizedFiles.length === 0) {
             throw new Error('The imported project contains no supported files.');
@@ -276,29 +255,19 @@ export class BrowserWorkspaceStore {
         const incomingByPath = new Map(incoming.map(record => [record.path, record]));
         const conflicts = incoming.flatMap(record => {
             const existing = oldByPath.get(record.path);
-            const localChange = existing && (existing.localOnly === true || existing.currentHash !== existing.baseHash);
-            return existing && localChange && existing.currentHash !== record.currentHash
-                ? [{
-                    path: record.path,
-                    baseHash: existing.baseHash,
-                    currentHash: existing.currentHash,
-                    incomingHash: record.currentHash
-                }]
-                : [];
+            if (!existing) {
+                return [];
+            }
+            const localChange = existing.localOnly === true || existing.currentHash !== existing.baseHash;
+            const sourceChange = existing.localOnly === true || record.currentHash !== existing.baseHash;
+            return localChange && sourceChange && existing.currentHash !== record.currentHash ? [record.path] : [];
         });
         conflicts.push(...oldFiles.flatMap(existing => {
             const localChange = existing.localOnly === true || existing.currentHash !== existing.baseHash;
-            return localChange && !incomingByPath.has(existing.path)
-                ? [{
-                path: existing.path,
-                baseHash: existing.baseHash,
-                currentHash: existing.currentHash,
-                incomingHash: ''
-                }]
-                : [];
+            return localChange && !incomingByPath.has(existing.path) ? [existing.path] : [];
         }));
         if (conflicts.length > 0 && !overwriteConflicts) {
-            return { summary: projectSummary(project), conflicts };
+            return conflicts;
         }
 
         const timestamp = now();
@@ -306,7 +275,6 @@ export class BrowserWorkspaceStore {
             ...project,
             rootPath: incomingByPath.has(project.rootPath) ? project.rootPath : rootPathFor(normalizedFiles),
             activePath: project.activePath && incomingByPath.has(project.activePath) ? project.activePath : undefined,
-            updatedAt: timestamp,
             lastOpenedAt: timestamp
         };
         const transaction = db.transaction(['projects', 'files', 'contents'], 'readwrite');
@@ -319,13 +287,18 @@ export class BrowserWorkspaceStore {
         }
         for (const record of incoming) {
             const existing = oldByPath.get(record.path);
+            const keepLocalChange = !overwriteConflicts && existing?.localOnly !== true &&
+                existing?.currentHash !== existing?.baseHash && record.currentHash === existing?.baseHash;
+            if (keepLocalChange) {
+                continue;
+            }
             transaction.objectStore('files').put(fileMetadata(record));
             if (!existing || existing.currentHash !== record.currentHash) {
                 transaction.objectStore('contents').put(record.content);
             }
         }
         await transaction.done;
-        return { summary: projectSummary(updatedProject), conflicts: [] };
+        return [];
     }
 
     async createFromTemplate(template: BrowserWorkspaceTemplate): Promise<BrowserWorkspaceSummary> {
@@ -385,11 +358,14 @@ export class BrowserWorkspaceStore {
         const db = await this.database;
         const project = await db.get('projects', id);
         if (!project) {
-            return;
+            throw new Error(`Browser project does not exist: ${id}`);
         }
-        project.rootPath = normalizeBrowserPath(rootPath);
-        project.updatedAt = now();
-        project.lastOpenedAt = project.updatedAt;
+        const normalizedPath = normalizeBrowserPath(rootPath);
+        if (!isTexFile(normalizedPath) || !await db.get('files', fileKey(id, normalizedPath))) {
+            throw new Error(`Browser project root does not exist: ${normalizedPath}`);
+        }
+        project.rootPath = normalizedPath;
+        project.lastOpenedAt = now();
         await db.put('projects', project);
     }
 
@@ -419,8 +395,6 @@ export class BrowserWorkspaceStore {
             name: name.trim() || 'Browser Project',
             rootPath,
             ...template,
-            createdAt: timestamp,
-            updatedAt: timestamp,
             lastOpenedAt: timestamp
         };
         const records = await createStoredRecords(projectId, files);
@@ -437,8 +411,14 @@ export class BrowserWorkspaceStore {
 
     private async createTextFile(projectId: string, path: string, text: string): Promise<BrowserProjectFile> {
         const normalizedPath = normalizeBrowserPath(path);
+        if (!isProjectTextFile(normalizedPath)) {
+            throw new Error('SnapTeX can only create supported text files.');
+        }
         const key = fileKey(projectId, normalizedPath);
         const db = await this.database;
+        if (!await db.get('projects', projectId)) {
+            throw new Error(`Browser project does not exist: ${projectId}`);
+        }
         if (await db.get('files', key)) {
             throw new Error(`Browser project file already exists: ${normalizedPath}`);
         }
@@ -455,20 +435,29 @@ export class BrowserWorkspaceStore {
         const transaction = db.transaction(['files', 'contents', 'projects'], 'readwrite');
         transaction.objectStore('files').put(record);
         transaction.objectStore('contents').put({ key, content });
-        await touchProject(transaction.objectStore('projects'), projectId, undefined, true);
+        await touchProject(transaction.objectStore('projects'), projectId);
         await transaction.done;
         return createProjectFile(db, record);
     }
 
     private async deleteFile(projectId: string, path: string): Promise<void> {
-        const key = fileKey(projectId, path);
+        const normalizedPath = normalizeBrowserPath(path);
+        const key = fileKey(projectId, normalizedPath);
         const db = await this.database;
+        const project = await db.get('projects', projectId);
+        if (!project) {
+            throw new Error(`Browser project does not exist: ${projectId}`);
+        }
+        if (project.rootPath === normalizedPath) {
+            throw new Error('The preview root cannot be deleted. Set another root first.');
+        }
+        if (!await db.get('files', key)) {
+            throw new Error(`Browser project file does not exist: ${normalizedPath}`);
+        }
         const transaction = db.transaction(['files', 'contents', 'projects'], 'readwrite');
         transaction.objectStore('files').delete(key);
         transaction.objectStore('contents').delete(key);
-        await touchProject(transaction.objectStore('projects'), projectId, undefined, true);
+        await touchProject(transaction.objectStore('projects'), projectId);
         await transaction.done;
     }
 }
-
-export { DEFAULT_DATABASE_NAME };

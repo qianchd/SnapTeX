@@ -104,6 +104,9 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         if (file?.resourceUrl) {
             return file.resourceUrl;
         }
+        if (file?.objectUrl) {
+            return file.objectUrl;
+        }
         if (!file) {
             return undefined;
         }
@@ -113,6 +116,9 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         }
         if (!file.objectUrl) {
             file.objectUrl = createObjectUrl(blob);
+            if (file.readBlob) {
+                file.blob = undefined;
+            }
         }
         return file.objectUrl;
     }

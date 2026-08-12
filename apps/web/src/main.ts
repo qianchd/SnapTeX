@@ -468,16 +468,16 @@ async function importBrowserFiles(host: StandaloneHost, files: BrowserImportFile
     if (reimportWorkspaceId) {
         const projectId = reimportWorkspaceId;
         reimportWorkspaceId = undefined;
-        const result = await browserWorkspaces.reimportFiles(projectId, files);
-        if (result.conflicts.length > 0) {
-            const paths = result.conflicts.map(conflict => conflict.path).join(', ');
+        const conflicts = await browserWorkspaces.reimportFiles(projectId, files);
+        if (conflicts.length > 0) {
+            const paths = conflicts.join(', ');
             if (!window.confirm(`These files changed both locally and in the imported folder: ${paths}\n\nOverwrite the local edits with the imported files?`)) {
                 setStatus('Re-import stopped: local changes were kept.');
                 return;
             }
             await browserWorkspaces.reimportFiles(projectId, files, true);
         }
-        await loadProject(host, await browserWorkspaces.open(result.summary.id));
+        await loadProject(host, await browserWorkspaces.open(projectId));
         return;
     }
     const summary = await browserWorkspaces.importFiles(name, files);

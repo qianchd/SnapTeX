@@ -128,7 +128,7 @@ suite('BrowserFileProvider', () => {
         assert.deepEqual(removed, ['sections/notes.md']);
     });
 
-    test('shares concurrent lazy resource reads', async () => {
+    test('shares concurrent lazy resource reads and reuses their object URL', async () => {
         const provider = new BrowserFileProvider();
         let reads = 0;
         let urls = 0;
@@ -145,7 +145,9 @@ suite('BrowserFileProvider', () => {
             provider.getResourceUrl(uri, () => `blob:${++urls}`),
             provider.getResourceUrl(uri, () => `blob:${++urls}`)
         ]);
+        const reused = await provider.getResourceUrl(uri, () => `blob:${++urls}`);
         assert.deepEqual(result, ['blob:1', 'blob:1']);
+        assert.equal(reused, 'blob:1');
         assert.equal(reads, 1);
         assert.equal(urls, 1);
     });
@@ -214,18 +216,28 @@ suite('BrowserFileProvider', () => {
                 assert.ok(main);
                 await main.writeText?.('Local');
                 await opened.setRootPath?.('/alt.tex');
+                await assert.rejects(() => opened.setRootPath?.('/missing.tex') ?? Promise.resolve(), /does not exist/);
+                await assert.rejects(() => opened.operations?.deleteFile('/alt.tex') ?? Promise.resolve(), /preview root/);
+                await assert.rejects(() => opened.operations?.createTextFile('/image.png', '') ?? Promise.resolve(), /text files/);
+
+                const unchangedSource = await store.reimportFiles(project.id, [
+                    { path: '/main.tex', file: new Blob(['Base']) },
+                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                ]);
+                assert.equal(unchangedSource.length, 0);
+                assert.equal(await (await store.open(project.id)).files.find(file => file.path === '/main.tex')?.readText?.(), 'Local');
 
                 const conflict = await store.reimportFiles(project.id, [
                     { path: '/main.tex', file: new Blob(['Remote']) },
                     { path: '/alt.tex', file: new Blob(['Alternative']) }
                 ]);
-                assert.equal(conflict.conflicts.length, 1);
+                assert.equal(conflict.length, 1);
 
                 const merged = await store.reimportFiles(project.id, [
                     { path: '/main.tex', file: new Blob(['Local']) },
                     { path: '/alt.tex', file: new Blob(['Alternative']) }
                 ]);
-                assert.equal(merged.conflicts.length, 0);
+                assert.equal(merged.length, 0);
                 const reopened = await store.open(project.id);
                 assert.equal(reopened.rootPath, '/alt.tex');
                 assert.equal(await reopened.files.find(file => file.path === '/main.tex')?.readText?.(), 'Local');
@@ -235,7 +247,7 @@ suite('BrowserFileProvider', () => {
                     { path: '/main.tex', file: new Blob(['Local']) },
                     { path: '/alt.tex', file: new Blob(['Alternative']) }
                 ]);
-                assert.deepEqual(missingLocalFile.conflicts.map(conflict => conflict.path), ['/notes.tex']);
+                assert.deepEqual(missingLocalFile, ['/notes.tex']);
             } finally {
                 await store.deleteDatabase();
             }
