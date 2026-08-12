@@ -323,6 +323,9 @@ export function createSnapTeXWebServer(options = {}) {
     const root = resolve(options.root ?? defaultRoot);
     const indexPath = options.indexPath ?? defaultIndexPath(root);
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
+    if (projectsRoot && !options.auth && options.allowInsecureRemoteProjects !== true) {
+        throw new Error('Remote projects require authentication or allowInsecureRemoteProjects for isolated tests.');
+    }
     const auth = createWebSessionAuth(options.auth);
     const server = createServer((request, response) => void (async () => {
         response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -374,14 +377,14 @@ if (isDirectRun) {
     const publicOrigin = process.env.SNAPTEX_PUBLIC_ORIGIN;
     const username = process.env.SNAPTEX_AUTH_USERNAME;
     const password = process.env.SNAPTEX_AUTH_PASSWORD;
-    if (process.env.NODE_ENV === 'production' && !['127.0.0.1', '::1', 'localhost'].includes(defaultHost)) {
-        throw new Error('Production SnapTeX Server must listen on a loopback host behind an HTTPS reverse proxy.');
+    if (projectsRoot && !['127.0.0.1', '::1', 'localhost'].includes(defaultHost)) {
+        throw new Error('SnapTeX remote projects must listen on a loopback host behind an HTTPS reverse proxy.');
     }
-    if (projectsRoot && process.env.NODE_ENV === 'production' && publicOrigin && new URL(publicOrigin).protocol !== 'https:') {
-        throw new Error('Production SNAPTeX_PUBLIC_ORIGIN must use HTTPS.');
+    if (projectsRoot && publicOrigin && new URL(publicOrigin).protocol !== 'https:') {
+        throw new Error('SNAPTeX_PUBLIC_ORIGIN must use HTTPS when remote projects are enabled.');
     }
-    if (projectsRoot && process.env.NODE_ENV === 'production' && (!username || !password || password.length < 16 || !publicOrigin)) {
-        throw new Error('Production remote projects require SNAPTeX_AUTH_USERNAME, SNAPTeX_AUTH_PASSWORD (16+ characters), and SNAPTeX_PUBLIC_ORIGIN.');
+    if (projectsRoot && (!username || !password || password.length < 16 || !publicOrigin)) {
+        throw new Error('Remote projects require SNAPTeX_AUTH_USERNAME, SNAPTeX_AUTH_PASSWORD (16+ characters), and SNAPTeX_PUBLIC_ORIGIN.');
     }
     const auth = username && password && publicOrigin ? {
         username,

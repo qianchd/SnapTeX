@@ -18,7 +18,15 @@ test('serves a writable project through the remote project API', async () => {
     await writeFile(join(projectRoot, 'figure.png'), 'image');
     await writeFile(join(projectRoot, 'build.aux'), 'ignored');
 
-    const server = createSnapTeXWebServer({ root: staticRoot, projectsRoot });
+    assert.throws(
+        () => createSnapTeXWebServer({ root: staticRoot, projectsRoot }),
+        /authentication or allowInsecureRemoteProjects/
+    );
+    const server = createSnapTeXWebServer({
+        root: staticRoot,
+        projectsRoot,
+        allowInsecureRemoteProjects: true
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     assert.ok(address && typeof address === 'object');
@@ -98,11 +106,11 @@ test('protects remote projects with an independent web session', async () => {
     await writeFile(join(projectRoot, 'main.tex'), 'Original');
     await writeFile(join(projectRoot, '.private', 'hidden.tex'), 'Secret');
     await writeFile(join(projectRoot, 'active.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
-    const publicOrigin = 'https://tex.example.test';
+    const publicOrigin = 'https://snaptex.example.com';
     const server = createSnapTeXWebServer({
         root: staticRoot,
         projectsRoot,
-        auth: { username: 'owner', password: 'a-secure-test-password', publicOrigin, publicPath: '/snaptex/' }
+        auth: { username: 'owner', password: 'a-secure-test-password', publicOrigin, publicPath: '/' }
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -128,11 +136,11 @@ test('protects remote projects with an independent web session', async () => {
         const login = await fetch(`${baseUrl}/web-auth/login`, {
             method: 'POST',
             headers: { Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ username: 'owner', password: 'a-secure-test-password', return_to: '/snaptex/../admin' }),
+            body: new URLSearchParams({ username: 'owner', password: 'a-secure-test-password', return_to: '//evil.example' }),
             redirect: 'manual'
         });
         assert.equal(login.status, 303);
-        assert.equal(login.headers.get('location'), '/snaptex/');
+        assert.equal(login.headers.get('location'), '/');
         const setCookie = login.headers.get('set-cookie') ?? '';
         assert.match(setCookie, /__Host-snaptex-session=/);
         assert.match(setCookie, /HttpOnly/);
@@ -194,17 +202,46 @@ test('protects remote projects with an independent web session', async () => {
         assert.equal(logout.status, 204);
         assert.equal((await fetch(`${baseUrl}/web-auth/session`, { headers: { cookie } })).status, 401);
 
+        const blockedAddress = '203.0.113.10';
         let failure;
         for (let attempt = 0; attempt < 10; attempt += 1) {
             failure = await fetch(`${baseUrl}/web-auth/login`, {
                 method: 'POST',
-                headers: { Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
+                headers: {
+                    Origin: publicOrigin,
+                    'X-Real-IP': blockedAddress,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
                 body: new URLSearchParams({ username: 'owner', password: 'wrong-password' }),
                 redirect: 'manual'
             });
         }
         assert.equal(failure.status, 429);
-        assert.equal(failure.headers.get('retry-after'), '1800');
+        assert.equal(failure.headers.get('retry-after'), String(30 * 24 * 60 * 60));
+
+        const blockedLogin = await fetch(`${baseUrl}/web-auth/login`, {
+            method: 'POST',
+            headers: {
+                Origin: publicOrigin,
+                'X-Real-IP': blockedAddress,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({ username: 'owner', password: 'a-secure-test-password' }),
+            redirect: 'manual'
+        });
+        assert.equal(blockedLogin.status, 429);
+
+        const independentLogin = await fetch(`${baseUrl}/web-auth/login`, {
+            method: 'POST',
+            headers: {
+                Origin: publicOrigin,
+                'X-Real-IP': '203.0.113.11',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({ username: 'owner', password: 'a-secure-test-password' }),
+            redirect: 'manual'
+        });
+        assert.equal(independentLogin.status, 303);
     } finally {
         await new Promise(resolve => server.close(resolve));
         await rm(tempRoot, { recursive: true, force: true });

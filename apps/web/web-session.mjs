@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 
 const COOKIE_NAME = '__Host-snaptex-session';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -6,7 +7,8 @@ const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const MAX_SESSIONS = 128;
 const MAX_LOGIN_BYTES = 16 * 1024;
 const MAX_FAILURES = 10;
-const LOCKOUT_MS = 30 * 60_000;
+const MAX_FAILURE_SOURCES = 4096;
+const LOCKOUT_MS = 30 * 24 * 60 * 60_000;
 
 /** Provides the shared browser-session HTTP contract for a standalone SnapTeX server. */
 export function createWebSessionAuth(options) {
@@ -28,8 +30,7 @@ export function createWebSessionAuth(options) {
     const publicOrigin = new URL(options.publicOrigin).origin;
     const publicPath = normalizePublicPath(options.publicPath);
     const sessions = new Map();
-    let failedAttempts = 0;
-    let lockedUntil = 0;
+    const loginFailures = new Map();
 
     function findSession(request) {
         const id = readCookie(request.headers.cookie, COOKIE_NAME);
@@ -56,8 +57,10 @@ export function createWebSessionAuth(options) {
             const form = new URLSearchParams(await readBody(request, MAX_LOGIN_BYTES));
             const returnTo = safeReturnTo(form.get('return_to'), publicPath);
             const now = Date.now();
-            if (lockedUntil > now) {
-                response.setHeader('Retry-After', String(Math.ceil((lockedUntil - now) / 1000)));
+            const source = requestSource(request);
+            const failure = loginFailures.get(source);
+            if (failure?.lockedUntil > now) {
+                response.setHeader('Retry-After', String(Math.ceil((failure.lockedUntil - now) / 1000)));
                 response.writeHead(429);
                 response.end('Login is temporarily locked after repeated failures.');
                 return true;
@@ -65,17 +68,19 @@ export function createWebSessionAuth(options) {
             const usernameMatches = constantTimeEqual(form.get('username') ?? '', username);
             const passwordMatches = constantTimeEqual(form.get('password') ?? '', password);
             if (!usernameMatches || !passwordMatches) {
-                failedAttempts += 1;
-                if (failedAttempts >= MAX_FAILURES) {
-                    lockedUntil = now + LOCKOUT_MS;
+                pruneLoginFailures(loginFailures, now);
+                const failedAttempts = (loginFailures.get(source)?.failedAttempts ?? 0) + 1;
+                const lockedUntil = failedAttempts >= MAX_FAILURES ? now + LOCKOUT_MS : 0;
+                loginFailures.delete(source);
+                loginFailures.set(source, { failedAttempts, lockedUntil, lastAttemptAt: now });
+                if (lockedUntil) {
                     response.setHeader('Retry-After', String(LOCKOUT_MS / 1000));
                 }
                 response.writeHead(failedAttempts >= MAX_FAILURES ? 429 : 401, { 'Content-Type': 'text/html; charset=utf-8' });
                 response.end(loginPage(returnTo, 'Invalid username or password.'));
                 return true;
             }
-            failedAttempts = 0;
-            lockedUntil = 0;
+            loginFailures.delete(source);
             pruneSessions(sessions);
             while (sessions.size >= MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
             const id = randomBytes(32).toString('base64url');
@@ -147,16 +152,42 @@ export function createWebSessionAuth(options) {
         return true;
     }
 
-    return { handle, authorize, clear: () => sessions.clear() };
+    return {
+        handle,
+        authorize,
+        clear: () => {
+            sessions.clear();
+            loginFailures.clear();
+        }
+    };
 }
 
 function normalizePublicPath(value = '/') {
     const path = `/${value}`.replace(/\/{2,}/g, '/');
     const normalized = path.endsWith('/') ? path : `${path}/`;
-    if (!/^\/[A-Za-z0-9._~/-]*\/$/.test(normalized) || normalized.includes('/../') || normalized.includes('/./')) {
+    if (normalized !== '/' && (!/^\/[A-Za-z0-9._~/-]*\/$/.test(normalized) || normalized.includes('/../') || normalized.includes('/./'))) {
         throw new Error('publicPath must be an absolute URL path.');
     }
     return normalized;
+}
+
+function requestSource(request) {
+    const socketAddress = String(request.socket?.remoteAddress ?? 'unknown').replace(/^::ffff:/, '');
+    const forwardedAddress = request.headers['x-real-ip'];
+    if ((socketAddress === '127.0.0.1' || socketAddress === '::1') &&
+        typeof forwardedAddress === 'string' && isIP(forwardedAddress.trim())) {
+        return forwardedAddress.trim();
+    }
+    return socketAddress;
+}
+
+function pruneLoginFailures(failures, now) {
+    for (const [source, failure] of failures) {
+        if (failure.lockedUntil <= now && failure.lastAttemptAt + LOCKOUT_MS <= now) {
+            failures.delete(source);
+        }
+    }
+    while (failures.size >= MAX_FAILURE_SOURCES) failures.delete(failures.keys().next().value);
 }
 
 function safeReturnTo(value, fallback) {
