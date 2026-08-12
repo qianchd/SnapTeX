@@ -1,4 +1,5 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
+import { createProjectZip } from '../../standalone/src/project-archive';
 import type { BackendMode } from '../../../src/types';
 import {
     createProjectTree,
@@ -8,12 +9,11 @@ import {
     type BrowserProject,
     type ProjectTreeNode
 } from '../../standalone/src/browser-project';
-import { createDemoProjectFiles } from './demo-project';
+import { DEMO_PROJECT_TEMPLATE, loadDemoTemplate } from './demo-project';
+import { BrowserWorkspaceStore, type BrowserImportFile } from './indexeddb-project';
 import {
     createDirectoryProject,
     fileInputPath,
-    projectFileFromFile,
-    projectFileFromHandle,
     type BrowserDirectoryHandle,
     type BrowserFileHandle
 } from './local-project';
@@ -37,6 +37,9 @@ interface BrowserFilePickerWindow extends Window {
 
 let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
+const browserWorkspaces = new BrowserWorkspaceStore();
+let startupRestoreActive = true;
+let activeBrowserWorkspaceId: string | undefined;
 type WebTheme = 'light' | 'dark' | 'blue' | 'rose';
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
 type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
@@ -70,16 +73,18 @@ function requireElement<T extends HTMLElement>(id: string): T {
 function readControls() {
     return {
         activePathLabel: requireElement('active-path-label'),
-        rootPathLabel: requireElement('root-path-label'),
         status: requireElement('project-status'),
         projectFiles: requireElement('project-files'),
         projectDiagnostics: requireElement('project-diagnostics'),
         toggleExplorerButton: requireElement('toggle-explorer-button'),
         openFileButton: requireElement('open-file-button'),
         openFolderButton: requireElement('open-folder-button'),
+        importFolderButton: requireElement('import-folder-button'),
+        openWorkspaceButton: requireElement('open-workspace-button'),
         openRemoteButton: requireElement('open-remote-button'),
         newFileButton: requireElement<HTMLButtonElement>('new-file-button'),
         deleteFileButton: requireElement<HTMLButtonElement>('delete-file-button'),
+        exportButton: requireElement<HTMLButtonElement>('export-button'),
         saveButton: requireElement<HTMLButtonElement>('save-button'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
         settingsButton: requireElement('settings-button'),
@@ -97,7 +102,9 @@ function readControls() {
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),
         welcomePage: requireElement('welcome-page'),
         welcomeOpenFolderButton: requireElement('welcome-open-folder-button'),
+        welcomeImportFolderButton: requireElement('welcome-import-folder-button'),
         welcomeOpenDemoButton: requireElement('welcome-open-demo-button'),
+        welcomeOpenWorkspaceButton: requireElement('welcome-open-workspace-button'),
         welcomeOpenRemoteButton: requireElement('welcome-open-remote-button'),
         remoteProjectDialog: requireElement<HTMLDialogElement>('remote-project-dialog'),
         remoteProjectForm: requireElement<HTMLFormElement>('remote-project-form'),
@@ -111,7 +118,10 @@ function readControls() {
         newFileCancelButton: requireElement<HTMLButtonElement>('new-file-cancel-button'),
         newFileError: requireElement('new-file-error'),
         openFileInput: requireElement<HTMLInputElement>('open-file-input'),
-        openFolderInput: requireElement<HTMLInputElement>('open-folder-input')
+        openFolderInput: requireElement<HTMLInputElement>('open-folder-input'),
+        workspaceDialog: requireElement<HTMLDialogElement>('workspace-dialog'),
+        workspaceList: requireElement('workspace-list'),
+        workspaceCancelButton: requireElement<HTMLButtonElement>('workspace-cancel-button')
     };
 }
 
@@ -298,8 +308,15 @@ function reportFailure(action: string, error: unknown): void {
     setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-async function loadProject(host: StandaloneHost, project: BrowserProject): Promise<void> {
+async function loadProject(host: StandaloneHost, project: BrowserProject, automatic = false): Promise<void> {
+    if (automatic && !startupRestoreActive) {
+        return;
+    }
+    if (!automatic) {
+        startupRestoreActive = false;
+    }
     const rootPath = await host.loadProject(project);
+    activeBrowserWorkspaceId = project.id;
 
     expandedFolders.clear();
     projectFolderPaths(host.getProjectTextPaths()).forEach(path => expandedFolders.add(path));
@@ -323,9 +340,8 @@ function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
     const activePathText = projectOpen ? `${activePath}${host.isDirty(activePath) ? ' *' : ''}` : 'No project open';
     controls.activePathLabel.textContent = activePathText;
     controls.activePathLabel.title = activePathText;
-    controls.rootPathLabel.textContent = projectOpen ? `root: ${rootPath}` : 'root: -';
-    controls.rootPathLabel.title = projectOpen ? rootPath : '';
     controls.saveButton.disabled = !projectOpen;
+    controls.exportButton.disabled = !projectOpen;
     controls.newFileButton.disabled = !projectOpen || !host.canModifyProject();
     controls.deleteFileButton.disabled = !projectOpen || !host.canModifyProject() || activePath === rootPath;
     syncSettingsControls(host);
@@ -416,6 +432,7 @@ function renderProjectDiagnostics(host: StandaloneHost): void {
 }
 
 async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Promise<void> {
+    reimportWorkspaceId = undefined;
     const pickerWindow = window as BrowserFilePickerWindow;
     if (pickerWindow.showOpenFilePicker) {
         const [handle] = await pickerWindow.showOpenFilePicker({
@@ -426,7 +443,7 @@ async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Pr
             }]
         });
         if (handle) {
-            await loadProject(host, { files: [await projectFileFromHandle(handle, `/${handle.name}`)] });
+            await importBrowserFiles(host, [{ path: `/${handle.name}`, file: await handle.getFile() }], handle.name);
         }
         return;
     }
@@ -435,6 +452,7 @@ async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Pr
 }
 
 async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promise<void> {
+    reimportWorkspaceId = undefined;
     const pickerWindow = window as BrowserFilePickerWindow;
     if (pickerWindow.showDirectoryPicker) {
         const directory = await pickerWindow.showDirectoryPicker();
@@ -446,7 +464,28 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
     input.click();
 }
 
+async function importBrowserFiles(host: StandaloneHost, files: BrowserImportFile[], name: string): Promise<void> {
+    if (reimportWorkspaceId) {
+        const projectId = reimportWorkspaceId;
+        reimportWorkspaceId = undefined;
+        const result = await browserWorkspaces.reimportFiles(projectId, files);
+        if (result.conflicts.length > 0) {
+            const paths = result.conflicts.map(conflict => conflict.path).join(', ');
+            if (!window.confirm(`These files changed both locally and in the imported folder: ${paths}\n\nOverwrite the local edits with the imported files?`)) {
+                setStatus('Re-import stopped: local changes were kept.');
+                return;
+            }
+            await browserWorkspaces.reimportFiles(projectId, files, true);
+        }
+        await loadProject(host, await browserWorkspaces.open(result.summary.id));
+        return;
+    }
+    const summary = await browserWorkspaces.importFiles(name, files);
+    await loadProject(host, await browserWorkspaces.open(summary.id));
+}
+
 let remoteProjectToCreate: string | undefined;
+let reimportWorkspaceId: string | undefined;
 
 function fetchWebSession(): Promise<Response> {
     return fetch(new URL('web-auth/session', document.baseURI), { credentials: 'same-origin' });
@@ -546,6 +585,84 @@ function downloadText(path: string, text: string): void {
     URL.revokeObjectURL(url);
 }
 
+async function exportProject(host: StandaloneHost): Promise<void> {
+    const snapshot = await host.createProjectSnapshot();
+    const blob = await createProjectZip(snapshot);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${snapshot.name.replace(/[^A-Za-z0-9._-]+/g, '-') || 'snaptex-project'}.zip`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus(`Exported ${snapshot.files.length} files`);
+}
+
+function browserImportName(files: readonly File[], fallback: string): string {
+    const relativePath = files[0] && (files[0] as File & { webkitRelativePath?: string }).webkitRelativePath;
+    return relativePath?.split('/')[0] || fallback;
+}
+
+async function openBrowserWorkspaceDialog(host: StandaloneHost): Promise<void> {
+    const controls = getControls();
+    const summaries = await browserWorkspaces.list();
+    if (summaries.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'workspace-list-empty';
+        empty.textContent = 'No browser workspaces yet.';
+        controls.workspaceList.replaceChildren(empty);
+    } else {
+        controls.workspaceList.replaceChildren(...summaries.map(summary => {
+            const row = document.createElement('div');
+            row.className = 'workspace-list-row';
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'workspace-list-item';
+            button.textContent = summary.name;
+            button.title = summary.rootPath;
+            button.addEventListener('click', () => {
+                void browserWorkspaces.open(summary.id)
+                    .then(project => loadProject(host, project))
+                    .then(() => controls.workspaceDialog.close())
+                    .catch(error => reportFailure('Open workspace', error));
+            });
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'workspace-delete-button';
+            deleteButton.textContent = 'Delete';
+            deleteButton.disabled = summary.id === activeBrowserWorkspaceId;
+            if (deleteButton.disabled) {
+                deleteButton.title = 'Open another project before deleting this workspace.';
+            }
+            deleteButton.addEventListener('click', () => {
+                if (!window.confirm(`Delete browser workspace "${summary.name}"?`)) {
+                    return;
+                }
+                void browserWorkspaces.delete(summary.id)
+                    .then(() => row.remove())
+                    .catch(error => reportFailure('Delete workspace', error));
+            });
+            const reimportButton = document.createElement('button');
+            reimportButton.type = 'button';
+            reimportButton.className = 'workspace-reimport-button';
+            reimportButton.textContent = 'Re-import';
+            reimportButton.addEventListener('click', () => {
+                reimportWorkspaceId = summary.id;
+                controls.workspaceDialog.close();
+                controls.openFolderInput.click();
+            });
+            row.append(button, reimportButton, deleteButton);
+            return row;
+        }));
+    }
+    controls.workspaceDialog.showModal();
+}
+
+function openImportFolder(input: HTMLInputElement): void {
+    startupRestoreActive = false;
+    reimportWorkspaceId = undefined;
+    input.click();
+}
+
 async function saveActiveFile(host: StandaloneHost): Promise<void> {
     const result = await host.saveCurrentText();
     if (!host.getSettings().livePreview) {
@@ -626,6 +743,9 @@ function syncSettingsControls(host: StandaloneHost): void {
 
 function bindProjectControls(host: StandaloneHost): void {
     const controls = getControls();
+    const supportsLocalFolderAccess = typeof (window as BrowserFilePickerWindow).showDirectoryPicker === 'function';
+    controls.openFolderButton.hidden = !supportsLocalFolderAccess;
+    controls.welcomeOpenFolderButton.hidden = !supportsLocalFolderAccess;
     const setSettingsOpen = (open: boolean): void => {
         controls.settingsButton.setAttribute('aria-expanded', String(open));
         controls.settingsMenu.hidden = !open;
@@ -641,19 +761,39 @@ function bindProjectControls(host: StandaloneHost): void {
         setExplorerCollapsed(!explorerCollapsed);
     });
     controls.openFileButton.addEventListener('click', () => {
+        startupRestoreActive = false;
         openSingleFile(host, controls.openFileInput).catch(error => reportFailure('Open', error));
     });
     controls.openFolderButton.addEventListener('click', () => {
+        startupRestoreActive = false;
         openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
     });
-    controls.openRemoteButton.addEventListener('click', openRemoteProjectDialog);
+    controls.importFolderButton.addEventListener('click', () => openImportFolder(controls.openFolderInput));
+    controls.openWorkspaceButton.addEventListener('click', () => {
+        startupRestoreActive = false;
+        openBrowserWorkspaceDialog(host).catch(error => reportFailure('Open workspace', error));
+    });
+    controls.openRemoteButton.addEventListener('click', () => {
+        startupRestoreActive = false;
+        void openRemoteProjectDialog();
+    });
     controls.welcomeOpenFolderButton.addEventListener('click', () => {
+        startupRestoreActive = false;
         openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
     });
+    controls.welcomeImportFolderButton.addEventListener('click', () => openImportFolder(controls.openFolderInput));
     controls.welcomeOpenDemoButton.addEventListener('click', () => {
+        startupRestoreActive = false;
         loadDefaultDemoProject(host).catch(error => reportFailure('Load demo', error));
     });
-    controls.welcomeOpenRemoteButton.addEventListener('click', openRemoteProjectDialog);
+    controls.welcomeOpenWorkspaceButton.addEventListener('click', () => {
+        startupRestoreActive = false;
+        openBrowserWorkspaceDialog(host).catch(error => reportFailure('Open workspace', error));
+    });
+    controls.welcomeOpenRemoteButton.addEventListener('click', () => {
+        startupRestoreActive = false;
+        void openRemoteProjectDialog();
+    });
     controls.remoteProjectForm.addEventListener('submit', event => {
         event.preventDefault();
         void connectRemoteProject(host);
@@ -670,11 +810,15 @@ function bindProjectControls(host: StandaloneHost): void {
         void createTextFile(host);
     });
     controls.newFileCancelButton.addEventListener('click', () => controls.newFileDialog.close());
+    controls.workspaceCancelButton.addEventListener('click', () => controls.workspaceDialog.close());
     controls.deleteFileButton.addEventListener('click', () => {
         deleteActiveFile(host).catch(error => reportFailure('Delete', error));
     });
     controls.saveButton.addEventListener('click', () => {
         saveActiveFile(host).catch(error => reportFailure('Save', error));
+    });
+    controls.exportButton.addEventListener('click', () => {
+        exportProject(host).catch(error => reportFailure('Export', error));
     });
     bindSaveShortcut(host);
     controls.setRootButton.addEventListener('click', () => {
@@ -711,7 +855,7 @@ function bindProjectControls(host: StandaloneHost): void {
     controls.openFileInput.addEventListener('change', () => {
         const file = controls.openFileInput.files?.[0];
         if (file) {
-            loadProject(host, { files: [projectFileFromFile(file, `/${file.name}`)] })
+            importBrowserFiles(host, [{ path: `/${file.name}`, file }], file.name)
                 .catch(error => reportFailure('Open', error));
         }
         controls.openFileInput.value = '';
@@ -720,8 +864,12 @@ function bindProjectControls(host: StandaloneHost): void {
         const files = Array.from(controls.openFolderInput.files ?? [])
             .map(file => ({ file, path: fileInputPath(file) }))
             .filter(({ path }) => isProjectFile(path));
-        loadProject(host, { files: files.map(({ file, path }) => projectFileFromFile(file, path)) })
-            .catch(error => reportFailure('Open', error));
+        if (files.length > 0) {
+            importBrowserFiles(host, files, browserImportName(files.map(file => file.file), 'Imported Project'))
+                .catch(error => reportFailure('Import', error));
+        } else {
+            reimportWorkspaceId = undefined;
+        }
         controls.openFolderInput.value = '';
     });
 
@@ -763,13 +911,21 @@ async function bindLogoutControl(): Promise<void> {
 
 async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     setStatus('Loading demo project...');
-    let storage: Storage | undefined;
-    try {
-        storage = window.localStorage;
-    } catch {
-        // Storage can be unavailable in privacy-restricted browser contexts.
+    const existing = (await browserWorkspaces.list()).find(project => project.templateId === DEMO_PROJECT_TEMPLATE.id);
+    if (existing) {
+        await loadProject(host, await browserWorkspaces.open(existing.id));
+        return;
     }
-    await loadProject(host, { files: createDemoProjectFiles(undefined, storage) });
+    const summary = await browserWorkspaces.createFromTemplate(await loadDemoTemplate());
+    await loadProject(host, await browserWorkspaces.open(summary.id));
+}
+
+async function restoreLastBrowserWorkspace(host: StandaloneHost): Promise<void> {
+    const [summary] = await browserWorkspaces.list();
+    if (summary) {
+        await loadProject(host, await browserWorkspaces.open(summary.id), true);
+    }
+    startupRestoreActive = false;
 }
 
 const editorParent = requireElement('editor');
@@ -792,4 +948,6 @@ host = createStandaloneSnapTeXApp({
 });
 bindProjectControls(host);
 void bindLogoutControl();
+window.addEventListener('pagehide', () => { void host.flushProjectWrites(); });
 renderProjectState(host);
+void restoreLastBrowserWorkspace(host).catch(() => undefined);

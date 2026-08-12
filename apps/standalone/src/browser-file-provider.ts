@@ -1,10 +1,11 @@
 import type { IFileProvider } from '../../../src/file-provider';
 import type { UriLike } from '../../../src/types';
-import { normalizeBrowserPath, type BrowserProjectFile } from './browser-project';
+import { isProjectTextFile, normalizeBrowserPath, type BrowserProjectFile, type BrowserProjectSnapshotFile } from './browser-project';
 
 interface BrowserFileEntry extends Omit<BrowserProjectFile, 'path'> {
     mtime: number;
     objectUrl?: string;
+    blobPromise?: Promise<Blob | undefined>;
 }
 
 function parentDir(path: string): string {
@@ -53,6 +54,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             readText: file.readText,
             writeText: file.writeText,
             blob: file.blob,
+            readBlob: file.readBlob,
             resourceUrl: file.resourceUrl,
             mtime: this.version++
         });
@@ -89,24 +91,82 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             this.revokeObjectUrl(existing.objectUrl);
         }
         this.files.set(normalizedPath, {
+            ...existing,
             text,
             writeText: existing?.writeText,
+            objectUrl: undefined,
             mtime: this.version++
         });
     }
 
-    getResourceUrl(uri: BrowserUri, createObjectUrl: (blob: Blob) => string = blob => URL.createObjectURL(blob)): string | undefined {
+    async getResourceUrl(uri: BrowserUri, createObjectUrl: (blob: Blob) => string = blob => URL.createObjectURL(blob)): Promise<string | undefined> {
         const file = this.files.get(uri.path);
         if (file?.resourceUrl) {
             return file.resourceUrl;
         }
-        if (!file?.blob) {
+        if (!file) {
+            return undefined;
+        }
+        const blob = await this.loadBlob(file);
+        if (!blob) {
             return undefined;
         }
         if (!file.objectUrl) {
-            file.objectUrl = createObjectUrl(file.blob);
+            file.objectUrl = createObjectUrl(blob);
         }
         return file.objectUrl;
+    }
+
+    async readBlob(uri: BrowserUri): Promise<Blob> {
+        const file = this.files.get(uri.path);
+        if (!file) {
+            throw new Error(`Missing browser file: ${uri.path}`);
+        }
+        const blob = await this.loadBlob(file);
+        if (blob) {
+            return blob;
+        }
+        throw new Error(`Missing browser resource: ${uri.path}`);
+    }
+
+    private loadBlob(file: BrowserFileEntry): Promise<Blob | undefined> {
+        if (file.blob) {
+            return Promise.resolve(file.blob);
+        }
+        file.blobPromise ??= (file.readBlob
+            ? file.readBlob()
+            : file.resourceUrl
+                ? fetch(file.resourceUrl).then(async response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to read browser resource.');
+                    }
+                    return response.blob();
+                })
+                : Promise.resolve(undefined))
+            .then(blob => {
+                file.blob = blob;
+                return blob;
+            })
+            .finally(() => {
+                file.blobPromise = undefined;
+            });
+        return file.blobPromise;
+    }
+
+    async snapshot(): Promise<BrowserProjectSnapshotFile[]> {
+        const files: BrowserProjectSnapshotFile[] = [];
+        for (const path of this.getPaths()) {
+            const uri = new BrowserUri(path);
+            const file = this.files.get(path);
+            if (!file) {
+                continue;
+            }
+            const content = isProjectTextFile(path)
+                ? new Blob([await this.read(uri)], { type: 'text/plain;charset=utf-8' })
+                : await this.readBlob(uri);
+            files.push({ path, content });
+        }
+        return files;
     }
 
     async write(uri: BrowserUri, text: string): Promise<boolean> {

@@ -247,6 +247,47 @@ body[data-explorer-collapsed="true"] {
     justify-content: flex-end;
 }
 
+.toolbar-menu {
+    position: relative;
+}
+
+.toolbar-menu summary {
+    list-style: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--snaptex-button-fg);
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.toolbar-menu summary::-webkit-details-marker {
+    display: none;
+}
+
+.toolbar-menu[open] summary,
+.toolbar-menu summary:hover {
+    background: var(--snaptex-hover-bg);
+}
+
+.toolbar-menu-content {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 2;
+    display: grid;
+    min-width: 142px;
+    padding: 4px;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 5px;
+    background: var(--snaptex-panel-bg);
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+}
+
+.toolbar-menu-content button {
+    text-align: left;
+    white-space: nowrap;
+}
+
 .toolbar-paths {
     color: var(--snaptex-muted);
 }
@@ -278,8 +319,7 @@ body[data-explorer-collapsed="true"] {
 }
 
 #project-status,
-#active-path-label,
-#root-path-label {
+#active-path-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -289,11 +329,6 @@ body[data-explorer-collapsed="true"] {
 #active-path-label {
     color: var(--snaptex-editor-fg);
     font-weight: 600;
-}
-
-#root-path-label {
-    padding-left: 8px;
-    border-left: 1px solid var(--snaptex-border);
 }
 
 #project-status {
@@ -396,6 +431,65 @@ body[data-explorer-collapsed="true"] {
     border-color: var(--snaptex-active-fg);
     background: var(--snaptex-active-fg);
     color: white;
+}
+
+.workspace-list {
+    display: grid;
+    gap: 6px;
+    max-height: min(46vh, 360px);
+    overflow: auto;
+}
+
+.workspace-list-item {
+    flex: 1 1 auto;
+    overflow: hidden;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-editor-bg);
+    color: var(--snaptex-editor-fg);
+    cursor: pointer;
+    font: inherit;
+    padding: 9px 10px;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workspace-list-row {
+    display: flex;
+    gap: 6px;
+}
+
+.workspace-delete-button,
+.workspace-reimport-button {
+    flex: 0 0 auto;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-panel-bg);
+    color: var(--snaptex-button-fg);
+    cursor: pointer;
+    font: inherit;
+    padding: 0 9px;
+}
+
+.workspace-delete-button:hover,
+.workspace-reimport-button:hover {
+    background: var(--snaptex-hover-bg);
+}
+
+.workspace-delete-button:hover {
+    background: var(--snaptex-warning-bg);
+    color: var(--snaptex-warning-fg);
+}
+
+.workspace-list-item:hover {
+    border-color: var(--snaptex-active-fg);
+    background: var(--snaptex-hover-bg);
+}
+
+.workspace-list-empty {
+    margin: 0;
+    color: var(--snaptex-muted);
 }
 
 #settings-menu label {
@@ -543,6 +637,23 @@ body[data-explorer-collapsed="true"] #explorer-panel {
     font-weight: 700;
     letter-spacing: 0;
     text-transform: uppercase;
+}
+
+.panel-title button {
+    margin-left: auto;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-panel-bg);
+    color: var(--snaptex-button-fg);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    padding: 3px 6px;
+    text-transform: none;
+}
+
+.panel-title button:hover {
+    background: var(--snaptex-hover-bg);
 }
 
 #editor-pane {

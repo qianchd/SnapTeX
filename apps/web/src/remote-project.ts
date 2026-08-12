@@ -91,7 +91,7 @@ function readManifest(value: unknown): RemoteProjectManifest {
     return { rootPath: normalizedRoot, files: normalizedFiles };
 }
 
-function createRemoteProjectModel(baseUrl: string, manifest: RemoteProjectManifest, fetcher: typeof fetch): BrowserProject {
+function createRemoteProjectModel(projectName: string, baseUrl: string, manifest: RemoteProjectManifest, fetcher: typeof fetch): BrowserProject {
     const createFile = (path: string): BrowserProjectFile => {
         const url = remoteFileUrl(baseUrl, path);
         return isProjectTextFile(path)
@@ -107,6 +107,7 @@ function createRemoteProjectModel(baseUrl: string, manifest: RemoteProjectManife
             : { path, resourceUrl: url };
     };
     return {
+        name: projectName,
         rootPath: manifest.rootPath,
         files: manifest.files.map(createFile),
         operations: {
@@ -137,12 +138,12 @@ export async function loadRemoteProject(projectName: string, apiBaseUrl: string,
     if (!response.ok) {
         throw requestError(response, 'GET', new URL('manifest', baseUrl));
     }
-    return createRemoteProjectModel(baseUrl, readManifest(await response.json()), fetcher);
+    return createRemoteProjectModel(projectName, baseUrl, readManifest(await response.json()), fetcher);
 }
 
 export async function createRemoteProject(projectName: string, apiBaseUrl: string, fetcher: typeof fetch = fetch): Promise<BrowserProject> {
     fetcher = withCsrf(fetcher, apiBaseUrl);
     const baseUrl = projectUrl(apiBaseUrl, projectName);
     const response = await fetchOk(fetcher, baseUrl, { method: 'POST' });
-    return createRemoteProjectModel(baseUrl, readManifest(await response.json()), fetcher);
+    return createRemoteProjectModel(projectName, baseUrl, readManifest(await response.json()), fetcher);
 }

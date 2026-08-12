@@ -3,11 +3,46 @@
 import * as assert from 'assert';
 import { chooseRootPath, createProjectTree, isProjectFile, isProjectTextFile, projectFolderPaths } from '../../apps/standalone/src/browser-project';
 import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
-import { createDemoProjectFiles } from '../../apps/web/src/demo-project';
+import { BrowserWorkspaceStore } from '../../apps/web/src/indexeddb-project';
+import { createProjectZip } from '../../apps/standalone/src/project-archive';
 import { createDirectoryProject, type BrowserDirectoryHandle, type BrowserFileHandle } from '../../apps/web/src/local-project';
 import { PreviewUpdateService } from '../preview-update-service';
 
 suite('BrowserFileProvider', () => {
+    async function withFakeIndexedDb<T>(callback: () => Promise<T>): Promise<T> {
+        const fake = await import('fake-indexeddb');
+        const names = [
+            'indexedDB',
+            'IDBCursor',
+            'IDBCursorWithValue',
+            'IDBDatabase',
+            'IDBFactory',
+            'IDBIndex',
+            'IDBKeyRange',
+            'IDBObjectStore',
+            'IDBOpenDBRequest',
+            'IDBRequest',
+            'IDBTransaction',
+            'IDBVersionChangeEvent'
+        ] as const;
+        const globalValues = globalThis as unknown as Record<string, unknown>;
+        const previous = new Map(names.map(name => [name, globalValues[name]]));
+        for (const name of names) {
+            globalValues[name] = fake[name];
+        }
+        try {
+            return await callback();
+        } finally {
+            for (const name of names) {
+                if (previous.get(name) === undefined) {
+                    delete globalValues[name];
+                } else {
+                    globalValues[name] = previous.get(name);
+                }
+            }
+        }
+    }
+
     test('selects browser project roots and text files with shared project helpers', () => {
         const files = [
             { path: '/project/sections/intro.tex', text: 'Intro' },
@@ -51,25 +86,6 @@ suite('BrowserFileProvider', () => {
         assert.match(payload.htmls?.join('\n') ?? '', /Included paragraph/);
     });
 
-    test('persists edited demo text in browser storage', async () => {
-        const values = new Map<string, string>();
-        const storage = {
-            getItem: (key: string) => values.get(key) ?? null,
-            setItem: (key: string, value: string) => values.set(key, value)
-        };
-        const fetchDemoText = async (url: string) => `Bundled ${url}`;
-        const mainFile = createDemoProjectFiles(fetchDemoText, storage)
-            .find(file => file.path === '/demo/main.tex');
-        assert.ok(mainFile?.readText && mainFile.writeText);
-
-        assert.equal(await mainFile.readText(), 'Bundled demo/main.tex');
-        await mainFile.writeText('Edited demo');
-
-        const reopenedMainFile = createDemoProjectFiles(fetchDemoText, storage)
-            .find(file => file.path === '/demo/main.tex');
-        assert.equal(await reopenedMainFile?.readText?.(), 'Edited demo');
-    });
-
     test('creates and deletes files through a writable browser directory', async () => {
         const written = new Map<string, string>();
         const removed: string[] = [];
@@ -110,5 +126,133 @@ suite('BrowserFileProvider', () => {
         assert.equal(created.path, '/sections/notes.md');
         assert.equal(written.get('notes.md'), 'Draft');
         assert.deepEqual(removed, ['sections/notes.md']);
+    });
+
+    test('shares concurrent lazy resource reads', async () => {
+        const provider = new BrowserFileProvider();
+        let reads = 0;
+        let urls = 0;
+        provider.setProjectFiles([{
+            path: '/figure.png',
+            readBlob: async () => {
+                reads++;
+                await new Promise(resolve => setTimeout(resolve, 5));
+                return new Blob(['image']);
+            }
+        }]);
+        const uri = new BrowserUri('/figure.png');
+        const result = await Promise.all([
+            provider.getResourceUrl(uri, () => `blob:${++urls}`),
+            provider.getResourceUrl(uri, () => `blob:${++urls}`)
+        ]);
+        assert.deepEqual(result, ['blob:1', 'blob:1']);
+        assert.equal(reads, 1);
+        assert.equal(urls, 1);
+    });
+
+    test('keeps same-named browser projects independent and restores edited text', async () => {
+        await withFakeIndexedDb(async () => {
+            const databaseName = `snaptex-test-${Date.now()}-${Math.random()}`;
+            const firstStore = new BrowserWorkspaceStore(databaseName);
+            try {
+            const first = await firstStore.importFiles('paper', [
+                { path: '/paper/main.tex', file: new Blob(['First']) },
+                { path: '/paper/figure.png', file: new Blob(['image']) }
+            ]);
+            const second = await firstStore.importFiles('paper', [
+                { path: '/paper/main.tex', file: new Blob(['Second']) }
+            ]);
+            assert.notEqual(first.id, second.id);
+
+            const firstProject = await firstStore.open(first.id);
+            const firstMain = firstProject.files.find(file => file.path === '/main.tex');
+            assert.ok(firstMain?.readText && firstMain.writeText);
+            assert.equal(await firstMain.readText(), 'First');
+            await firstMain.writeText('Edited first');
+            const reopenedFirst = await firstStore.open(first.id);
+            assert.equal(await reopenedFirst.files.find(file => file.path === '/main.tex')?.readText?.(), 'Edited first');
+
+            const secondProject = await firstStore.open(second.id);
+            assert.equal(await secondProject.files[0].readText?.(), 'Second');
+
+            const resource = firstProject.files.find(file => file.path === '/figure.png');
+            assert.ok(resource?.readBlob);
+            assert.equal(resource?.blob, undefined);
+            assert.equal(await (await resource.readBlob()).text(), 'image');
+            } finally {
+                await firstStore.deleteDatabase();
+            }
+        });
+    });
+
+    test('imports a single file without stripping its filename', async () => {
+        await withFakeIndexedDb(async () => {
+            const databaseName = `snaptex-test-${Date.now()}-${Math.random()}`;
+            const store = new BrowserWorkspaceStore(databaseName);
+            try {
+                const project = await store.importFiles('single', [
+                    { path: '/main.tex', file: new Blob(['Single file']) }
+                ]);
+                assert.equal((await store.open(project.id)).rootPath, '/main.tex');
+            } finally {
+                await store.deleteDatabase();
+            }
+        });
+    });
+
+    test('preserves project state while detecting conflicting re-imports', async () => {
+        await withFakeIndexedDb(async () => {
+            const databaseName = `snaptex-test-${Date.now()}-${Math.random()}`;
+            const store = new BrowserWorkspaceStore(databaseName);
+            try {
+                const project = await store.importFiles('paper', [
+                    { path: '/main.tex', file: new Blob(['Base']) },
+                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                ]);
+                const opened = await store.open(project.id);
+                const main = opened.files.find(file => file.path === '/main.tex');
+                assert.ok(main);
+                await main.writeText?.('Local');
+                await opened.setRootPath?.('/alt.tex');
+
+                const conflict = await store.reimportFiles(project.id, [
+                    { path: '/main.tex', file: new Blob(['Remote']) },
+                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                ]);
+                assert.equal(conflict.conflicts.length, 1);
+
+                const merged = await store.reimportFiles(project.id, [
+                    { path: '/main.tex', file: new Blob(['Local']) },
+                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                ]);
+                assert.equal(merged.conflicts.length, 0);
+                const reopened = await store.open(project.id);
+                assert.equal(reopened.rootPath, '/alt.tex');
+                assert.equal(await reopened.files.find(file => file.path === '/main.tex')?.readText?.(), 'Local');
+
+                await opened.operations?.createTextFile('/notes.tex', 'New local file');
+                const missingLocalFile = await store.reimportFiles(project.id, [
+                    { path: '/main.tex', file: new Blob(['Local']) },
+                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                ]);
+                assert.deepEqual(missingLocalFile.conflicts.map(conflict => conflict.path), ['/notes.tex']);
+            } finally {
+                await store.deleteDatabase();
+            }
+        });
+    });
+
+    test('exports text and binary project files as a ZIP snapshot', async () => {
+        const blob = await createProjectZip({
+            name: 'sample',
+            files: [
+                { path: '/main.tex', content: new Blob(['Document']) },
+                { path: '/figure.png', content: new Blob(['image']) }
+            ]
+        });
+        const { default: Zip } = await import('jszip');
+        const zip = await Zip.loadAsync(await blob.arrayBuffer());
+        assert.equal(await zip.file('main.tex')?.async('text'), 'Document');
+        assert.equal(await zip.file('figure.png')?.async('text'), 'image');
     });
 });

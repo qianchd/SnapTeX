@@ -4,7 +4,7 @@ import { Decoration, type DecorationSet, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
-import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject } from './browser-project';
+import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import type { BackendMode } from '../../../src/types';
 import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
@@ -92,6 +92,12 @@ export class StandaloneHost {
     private readonly dirtyPaths = new Set<string>();
     private readonly diagnostics = new Set<string>();
     private projectOperations: BrowserProject['operations'];
+    private setProjectActivePath: BrowserProject['setActivePath'];
+    private setProjectRootPath: BrowserProject['setRootPath'];
+    private projectName = 'SnapTeX Project';
+    private projectAutosave = false;
+    private autosaveTimer: number | undefined;
+    private autosaveQueue: Promise<void> = Promise.resolve();
     private labels: string[] = [];
     private previewReady = false;
     private programmaticEditorText: string | undefined;
@@ -120,18 +126,27 @@ export class StandaloneHost {
     }
 
     async loadProject(project: BrowserProject): Promise<string> {
+        await this.flushProjectWrites();
         const rootPath = project.rootPath ?? chooseRootPath(project.files);
         if (!rootPath) {
             throw new Error('No TeX root file found.');
         }
         this.fileProvider.setProjectFiles(project.files);
         this.projectOperations = project.operations;
+        this.projectAutosave = project.autosave === true;
+        this.setProjectActivePath = project.setActivePath;
+        this.setProjectRootPath = project.setRootPath;
+        this.projectName = project.name ?? rootPath;
         this.labels = [];
         this.savedTexts.clear();
         this.dirtyPaths.clear();
         this.rootUri = new BrowserUri(rootPath);
-        this.activeUri = this.rootUri;
+        const activePath = project.activePath && this.fileProvider.has(project.activePath)
+            ? project.activePath
+            : rootPath;
+        this.activeUri = new BrowserUri(activePath);
         const text = await this.fileProvider.read(this.activeUri);
+        await this.setProjectActivePath?.(this.activeUri.path);
         this.markSaved(this.activeUri.path, text);
         this.replaceEditorText(text);
         this.updateService.resetState();
@@ -141,9 +156,11 @@ export class StandaloneHost {
     }
 
     async openEditorFile(path: string) {
+        await this.flushProjectWrites();
         this.persistActiveEditorText();
         this.activeUri = new BrowserUri(path);
         const text = await this.fileProvider.read(this.activeUri);
+        await this.setProjectActivePath?.(this.activeUri.path);
         if (!this.savedTexts.has(this.activeUri.path)) {
             this.markSaved(this.activeUri.path, text);
         }
@@ -153,8 +170,10 @@ export class StandaloneHost {
     }
 
     async setPreviewRoot(path: string) {
+        await this.flushProjectWrites();
         this.persistActiveEditorText();
         this.rootUri = new BrowserUri(path);
+        await this.setProjectRootPath?.(this.rootUri.path);
         this.updateService.resetState();
         this.notifyStateChanged();
         await this.renderCurrentText();
@@ -275,6 +294,42 @@ export class StandaloneHost {
         this.updateDirtyState(this.activeUri.path, text);
     }
 
+    private async writeCurrentText(): Promise<StandaloneSaveResult> {
+        const text = this.editorView.state.doc.toString();
+        const path = this.activeUri.path;
+        const wroteToSource = await this.fileProvider.write(this.activeUri, text);
+        this.markSaved(path, text);
+        return { path, text, wroteToSource };
+    }
+
+    private scheduleAutosave(): void {
+        if (!this.projectAutosave) {
+            return;
+        }
+        this.clearAutosaveTimer();
+        this.autosaveTimer = window.setTimeout(() => {
+            this.autosaveTimer = undefined;
+            void this.queueAutosave().catch(error => this.addDiagnostic(`Autosave failed: ${error instanceof Error ? error.message : String(error)}`));
+        }, 300);
+    }
+
+    private queueAutosave(): Promise<void> {
+        const write = this.autosaveQueue.then(async () => {
+            if (this.projectAutosave && !this.fileProvider.isEmpty()) {
+                await this.writeCurrentText();
+            }
+        });
+        this.autosaveQueue = write.catch(() => undefined);
+        return write;
+    }
+
+    private clearAutosaveTimer(): void {
+        if (this.autosaveTimer !== undefined) {
+            window.clearTimeout(this.autosaveTimer);
+            this.autosaveTimer = undefined;
+        }
+    }
+
     private markSaved(path: string, text: string) {
         this.savedTexts.set(path, normalizeEditorText(text));
         this.updateDirtyState(path, text);
@@ -299,13 +354,23 @@ export class StandaloneHost {
     }
 
     async saveCurrentText(): Promise<StandaloneSaveResult> {
-        const text = this.editorView.state.doc.toString();
-        const wroteToSource = await this.fileProvider.write(this.activeUri, text);
-        this.markSaved(this.activeUri.path, text);
+        this.clearAutosaveTimer();
+        await this.autosaveQueue;
+        return this.writeCurrentText();
+    }
+
+    async flushProjectWrites(): Promise<void> {
+        this.clearAutosaveTimer();
+        if (this.projectAutosave) {
+            await this.queueAutosave();
+        }
+    }
+
+    async createProjectSnapshot(): Promise<BrowserProjectSnapshot> {
+        await this.flushProjectWrites();
         return {
-            path: this.activeUri.path,
-            text,
-            wroteToSource
+            name: this.projectName,
+            files: await this.fileProvider.snapshot()
         };
     }
 
@@ -437,6 +502,7 @@ export class StandaloneHost {
         }
         this.programmaticEditorText = undefined;
         this.persistActiveEditorText();
+        this.scheduleAutosave();
         if (this.settings.livePreview) {
             this.scheduleRender();
         }
@@ -453,7 +519,7 @@ export class StandaloneHost {
                 await this.handleBlockHtmlRequest(message.id, message.index, message.hash);
                 break;
             case PreviewToHostCommand.RequestPdf:
-                this.handlePdfRequest(message.id, message.path);
+                await this.handlePdfRequest(message.id, message.path);
                 break;
             case PreviewToHostCommand.RevealLine:
                 void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio, message.sourceStart, message.sourceEnd);
@@ -492,12 +558,12 @@ export class StandaloneHost {
             id,
             index,
             hash: rendered?.hash ?? hash,
-            html: rendered?.html === undefined ? undefined : this.fixHtmlPaths(rendered.html),
+            html: rendered?.html === undefined ? undefined : await this.fixHtmlPaths(rendered.html),
             error: rendered?.html ? undefined : 'Block HTML is unavailable.'
         });
     }
 
-    private handlePdfRequest(id: string, path: string) {
+    private async handlePdfRequest(id: string, path: string) {
         const pathText = decodeHtmlAttribute(path);
         if (!pathText.toLowerCase().endsWith('.pdf')) {
             this.postToPreview({ command: HostToPreviewCommand.PdfUri, id, error: 'Invalid PDF path' });
@@ -505,7 +571,7 @@ export class StandaloneHost {
         }
 
         const uri = this.resolveProjectResourceUri(pathText);
-        const url = this.fileProvider.getResourceUrl(uri);
+        const url = await this.fileProvider.getResourceUrl(uri);
         if (!url) {
             this.addDiagnostic(`Missing PDF: ${pathText}`);
         }
@@ -514,15 +580,18 @@ export class StandaloneHost {
             : { command: HostToPreviewCommand.PdfUri, id, path: pathText, error: 'PDF not found' });
     }
 
-    private fixHtmlPaths(html: string): string {
-        return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (_match, attr, relPath) => {
-            const path = decodeHtmlAttribute(relPath);
-            const url = this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(path));
+    private async fixHtmlPaths(html: string): Promise<string> {
+        const matches = [...html.matchAll(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g)];
+        const replacements = await Promise.all(matches.map(async match => {
+            const path = decodeHtmlAttribute(match[2]);
+            const url = await this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(path));
             if (!url) {
-                this.addDiagnostic(`${attr === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
+                this.addDiagnostic(`${match[1] === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
             }
-            return url ? `${attr}="${escapeHtmlAttribute(url)}"` : `${attr}=""`;
-        });
+            return url ? `${match[1]}="${escapeHtmlAttribute(url)}"` : `${match[1]}=""`;
+        }));
+        let replacementIndex = 0;
+        return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, () => replacements[replacementIndex++]);
     }
 
     private resolveProjectResourceUri(relativePath: string): BrowserUri {

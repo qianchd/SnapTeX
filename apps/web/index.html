@@ -33,19 +33,30 @@
                     <span>SnapTeX</span>
                 </a>
                 <button id="toggle-explorer-button" type="button" aria-expanded="false" aria-controls="explorer-panel">Explorer</button>
-                <button id="open-file-button" type="button">Open TeX</button>
-                <button id="open-folder-button" type="button">Open Folder</button>
-                <button id="open-remote-button" type="button">Open Server</button>
-                <button id="new-file-button" type="button">New File</button>
-                <button id="delete-file-button" type="button">Delete</button>
-                <button id="save-button" type="button">Save</button>
+                <details class="toolbar-menu">
+                    <summary>Open</summary>
+                    <div class="toolbar-menu-content">
+                        <button id="open-file-button" type="button">Import File</button>
+                        <button id="open-folder-button" type="button">Open Folder</button>
+                        <button id="import-folder-button" type="button">Import Folder</button>
+                        <button id="open-workspace-button" type="button">Workspaces</button>
+                        <button id="open-remote-button" type="button">Server</button>
+                    </div>
+                </details>
+                <details class="toolbar-menu">
+                    <summary>File</summary>
+                    <div class="toolbar-menu-content">
+                        <button id="new-file-button" type="button">New File</button>
+                        <button id="delete-file-button" type="button">Delete</button>
+                        <button id="save-button" type="button">Save</button>
+                        <button id="export-button" type="button">Export ZIP</button>
+                    </div>
+                </details>
             </div>
             <div class="toolbar-group toolbar-paths" aria-live="polite">
                 <span id="active-path-label">No project open</span>
-                <span id="root-path-label">root: -</span>
             </div>
             <div class="toolbar-group toolbar-actions">
-                <button id="set-root-button" type="button">Set Root</button>
                 <button id="settings-button" type="button" aria-expanded="false" aria-controls="settings-menu">Settings</button>
                 <button id="logout-button" type="button" hidden>Log out</button>
                 <span id="project-status">Ready</span>
@@ -89,7 +100,10 @@
         </header>
         <div id="workspace">
             <aside id="explorer-panel" aria-label="Project explorer">
-                <div class="panel-title">Explorer</div>
+                <div class="panel-title">
+                    <span>Explorer</span>
+                    <button id="set-root-button" type="button" title="Use current TeX file as preview root">Set Root</button>
+                </div>
                 <div id="project-files" role="tree" aria-label="Project files"></div>
                 <div id="project-diagnostics" aria-live="polite"></div>
             </aside>
@@ -102,7 +116,9 @@
                     <p class="welcome-privacy">All processing stays on this device. SnapTeX does not upload your files or document data.</p>
                     <div class="welcome-actions">
                         <button id="welcome-open-folder-button" class="primary-action" type="button">Open Folder</button>
+                        <button id="welcome-import-folder-button" type="button">Import Folder</button>
                         <button id="welcome-open-demo-button" type="button">Open Demo</button>
+                        <button id="welcome-open-workspace-button" type="button">Workspaces</button>
                         <button id="welcome-open-remote-button" type="button">Open Server</button>
                     </div>
                 </div>
@@ -119,6 +135,16 @@
         </div>
         <input id="open-file-input" type="file" accept=".tex" hidden>
         <input id="open-folder-input" type="file" webkitdirectory multiple hidden>
+        <dialog id="workspace-dialog" class="project-dialog">
+            <form method="dialog" class="project-dialog-form">
+                <h2>Browser Workspaces</h2>
+                <p>Imported projects and the demo are saved locally in this browser.</p>
+                <div id="workspace-list" class="workspace-list"></div>
+                <div class="dialog-actions">
+                    <button id="workspace-cancel-button" type="submit">Close</button>
+                </div>
+            </form>
+        </dialog>
         <dialog id="remote-project-dialog" class="project-dialog">
             <form id="remote-project-form" class="project-dialog-form">
                 <h2>Open Server Project</h2>

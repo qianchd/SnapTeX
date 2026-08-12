@@ -27,12 +27,6 @@ function writableText(handle: BrowserFileHandle): (text: string) => Promise<void
     };
 }
 
-export function projectFileFromFile(file: File, path: string): BrowserProjectFile {
-    return isProjectTextFile(path)
-        ? { path, readText: () => file.text() }
-        : { path, blob: file };
-}
-
 export async function projectFileFromHandle(handle: BrowserFileHandle, path: string): Promise<BrowserProjectFile> {
     if (isProjectTextFile(path)) {
         return {
@@ -41,7 +35,7 @@ export async function projectFileFromHandle(handle: BrowserFileHandle, path: str
             writeText: writableText(handle)
         };
     }
-    return projectFileFromFile(await handle.getFile(), path);
+    return { path, readBlob: async () => handle.getFile() };
 }
 
 export function fileInputPath(file: File): string {
@@ -76,6 +70,7 @@ async function projectFileParent(directory: BrowserDirectoryHandle, path: string
 /** Opens a writable browser directory as a shared SnapTeX project. */
 export async function createDirectoryProject(directory: BrowserDirectoryHandle): Promise<BrowserProject> {
     return {
+        name: directory.name,
         files: await readDirectoryHandle(directory),
         operations: {
             createTextFile: async (path, text) => {

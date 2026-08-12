@@ -7,6 +7,7 @@ export interface BrowserProjectFile {
     readText?: () => Promise<string>;
     writeText?: (text: string) => Promise<void> | void;
     blob?: Blob;
+    readBlob?: () => Promise<Blob>;
     resourceUrl?: string;
 }
 
@@ -108,8 +109,24 @@ export interface BrowserProjectOperations {
     deleteFile(path: string): Promise<void>;
 }
 
+export interface BrowserProjectSnapshotFile {
+    path: string;
+    content: Blob;
+}
+
+export interface BrowserProjectSnapshot {
+    name: string;
+    files: readonly BrowserProjectSnapshotFile[];
+}
+
 export interface BrowserProject {
+    id?: string;
+    name?: string;
+    autosave?: boolean;
     files: readonly BrowserProjectFile[];
     rootPath?: string;
+    activePath?: string;
+    setActivePath?: (path: string) => Promise<void>;
+    setRootPath?: (path: string) => Promise<void>;
     operations?: BrowserProjectOperations;
 }

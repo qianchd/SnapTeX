@@ -9,7 +9,7 @@ export interface PreviewRenderOptions {
     backendMode?: BackendMode;
     resetPreviewState?: boolean;
     trace?: (label: string) => void;
-    transformHtml?: (html: string) => string;
+    transformHtml?: (html: string) => string | Promise<string>;
 }
 
 /**
@@ -104,7 +104,7 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
         }
 
         this.releaseParseText(parseResult);
-        this.transformPayloadHtml(payload, options.transformHtml);
+        await this.transformPayloadHtml(payload, options.transformHtml);
         if (options.transformHtml) {
             options.trace?.('after transformHtml');
         }
@@ -132,16 +132,16 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
         parseResult.astBlockArtifacts = [];
     }
 
-    private transformPayloadHtml(payload: RenderPayload, transformHtml: ((html: string) => string) | undefined) {
+    private async transformPayloadHtml(payload: RenderPayload, transformHtml: ((html: string) => string | Promise<string>) | undefined) {
         if (!transformHtml) { return; }
         if (payload.dirtyBlocks) {
             for (const [index, html] of Object.entries(payload.dirtyBlocks)) {
-                payload.dirtyBlocks[Number(index)] = transformHtml(html);
+                payload.dirtyBlocks[Number(index)] = await transformHtml(html);
             }
         }
         if (payload.htmls) {
             for (let index = 0; index < payload.htmls.length; index++) {
-                payload.htmls[index] = transformHtml(payload.htmls[index]);
+                payload.htmls[index] = await transformHtml(payload.htmls[index]);
             }
         }
     }
