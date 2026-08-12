@@ -1,40 +1,54 @@
-import type { BrowserProjectFile, BrowserWritableFileHandle } from '../../standalone/src/browser-file-provider';
-import { isProjectFile, isProjectTextFile } from '../../standalone/src/browser-project';
+import { isProjectFile, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectFile } from '../../standalone/src/browser-project';
 
-export interface BrowserFileHandle extends BrowserWritableFileHandle {
+export interface BrowserFileHandle {
     kind: 'file';
     name: string;
     getFile(): Promise<File>;
+    createWritable(): Promise<{
+        write(data: string): Promise<void> | void;
+        close(): Promise<void> | void;
+    }>;
 }
 
 export interface BrowserDirectoryHandle {
     kind: 'directory';
     name: string;
     values(): AsyncIterable<BrowserFileHandle | BrowserDirectoryHandle>;
+    getFileHandle(name: string, options?: { create?: boolean }): Promise<BrowserFileHandle>;
+    getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<BrowserDirectoryHandle>;
+    removeEntry(name: string): Promise<void>;
 }
 
-export function projectFileFromFile(file: File, path: string, handle?: BrowserFileHandle): BrowserProjectFile {
+function writableText(handle: BrowserFileHandle): (text: string) => Promise<void> {
+    return async text => {
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+    };
+}
+
+export function projectFileFromFile(file: File, path: string): BrowserProjectFile {
     return isProjectTextFile(path)
-        ? { path, readText: () => file.text(), handle }
-        : { path, blob: file, handle };
+        ? { path, readText: () => file.text() }
+        : { path, blob: file };
 }
 
 export async function projectFileFromHandle(handle: BrowserFileHandle, path: string): Promise<BrowserProjectFile> {
     if (isProjectTextFile(path)) {
         return {
             path,
-            handle,
-            readText: async () => (await handle.getFile()).text()
+            readText: async () => (await handle.getFile()).text(),
+            writeText: writableText(handle)
         };
     }
-    return projectFileFromFile(await handle.getFile(), path, handle);
+    return projectFileFromFile(await handle.getFile(), path);
 }
 
 export function fileInputPath(file: File): string {
     return `/${(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name}`;
 }
 
-export async function readDirectoryHandle(directory: BrowserDirectoryHandle, prefix = ''): Promise<BrowserProjectFile[]> {
+async function readDirectoryHandle(directory: BrowserDirectoryHandle, prefix = ''): Promise<BrowserProjectFile[]> {
     const files: BrowserProjectFile[] = [];
     for await (const entry of directory.values()) {
         const path = `${prefix}/${entry.name}`;
@@ -45,4 +59,35 @@ export async function readDirectoryHandle(directory: BrowserDirectoryHandle, pre
         }
     }
     return files;
+}
+
+async function projectFileParent(directory: BrowserDirectoryHandle, path: string, create = false): Promise<[BrowserDirectoryHandle, string]> {
+    const parts = normalizeBrowserPath(path).split('/').filter(Boolean);
+    const name = parts.pop();
+    if (!name) {
+        throw new Error('File path is empty.');
+    }
+    for (const part of parts) {
+        directory = await directory.getDirectoryHandle(part, { create });
+    }
+    return [directory, name];
+}
+
+/** Opens a writable browser directory as a shared SnapTeX project. */
+export async function createDirectoryProject(directory: BrowserDirectoryHandle): Promise<BrowserProject> {
+    return {
+        files: await readDirectoryHandle(directory),
+        operations: {
+            createTextFile: async (path, text) => {
+                const [parent, name] = await projectFileParent(directory, path, true);
+                const handle = await parent.getFileHandle(name, { create: true });
+                await writableText(handle)(text);
+                return projectFileFromHandle(handle, normalizeBrowserPath(path));
+            },
+            deleteFile: async path => {
+                const [parent, name] = await projectFileParent(directory, path);
+                await parent.removeEntry(name);
+            }
+        }
+    };
 }

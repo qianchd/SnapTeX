@@ -1,0 +1,23 @@
+[Unit]
+Description=SnapTeX Web remote project server
+After=network.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+Group=@RUN_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+EnvironmentFile=@ENV_FILE@
+ExecStart="@NODE_BIN@" "@INSTALL_DIR@/apps/web/server.mjs" "@INSTALL_DIR@/dist-web"
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=@PROJECTS_ROOT@
+
+[Install]
+WantedBy=multi-user.target

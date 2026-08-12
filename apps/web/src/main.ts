@@ -1,24 +1,23 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
 import type { BackendMode } from '../../../src/types';
 import {
-    chooseRootPath,
     createProjectTree,
     isProjectFile,
     isTexFile,
     projectFolderPaths,
+    type BrowserProject,
     type ProjectTreeNode
 } from '../../standalone/src/browser-project';
-import type { BrowserProjectFile } from '../../standalone/src/browser-file-provider';
 import { createDemoProjectFiles } from './demo-project';
 import {
+    createDirectoryProject,
     fileInputPath,
     projectFileFromFile,
     projectFileFromHandle,
-    readDirectoryHandle,
     type BrowserDirectoryHandle,
     type BrowserFileHandle
 } from './local-project';
-import { loadRemoteProject } from './remote-project';
+import { createRemoteProject, loadRemoteProject, RemoteProjectNotFoundError } from './remote-project';
 
 const RESIZE_WIDTH_STEP_PX = 10;
 const RESIZE_FRAME_INTERVAL_MS = 30;
@@ -74,6 +73,8 @@ function readControls() {
         openFileButton: requireElement('open-file-button'),
         openFolderButton: requireElement('open-folder-button'),
         openRemoteButton: requireElement('open-remote-button'),
+        newFileButton: requireElement<HTMLButtonElement>('new-file-button'),
+        deleteFileButton: requireElement<HTMLButtonElement>('delete-file-button'),
         saveButton: requireElement<HTMLButtonElement>('save-button'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
         settingsButton: requireElement('settings-button'),
@@ -94,10 +95,15 @@ function readControls() {
         welcomeOpenRemoteButton: requireElement('welcome-open-remote-button'),
         remoteProjectDialog: requireElement<HTMLDialogElement>('remote-project-dialog'),
         remoteProjectForm: requireElement<HTMLFormElement>('remote-project-form'),
-        remoteProjectUrl: requireElement<HTMLInputElement>('remote-project-url'),
+        remoteProjectName: requireElement<HTMLInputElement>('remote-project-name'),
         remoteProjectCancelButton: requireElement<HTMLButtonElement>('remote-project-cancel-button'),
         remoteProjectConnectButton: requireElement<HTMLButtonElement>('remote-project-connect-button'),
         remoteProjectError: requireElement('remote-project-error'),
+        newFileDialog: requireElement<HTMLDialogElement>('new-file-dialog'),
+        newFileForm: requireElement<HTMLFormElement>('new-file-form'),
+        newFilePath: requireElement<HTMLInputElement>('new-file-path'),
+        newFileCancelButton: requireElement<HTMLButtonElement>('new-file-cancel-button'),
+        newFileError: requireElement('new-file-error'),
         openFileInput: requireElement<HTMLInputElement>('open-file-input'),
         openFolderInput: requireElement<HTMLInputElement>('open-folder-input')
     };
@@ -286,18 +292,13 @@ function reportFailure(action: string, error: unknown): void {
     setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-async function loadProject(host: StandaloneHost, files: readonly BrowserProjectFile[], requestedRoot?: string): Promise<void> {
-    const rootPath = requestedRoot ?? chooseRootPath(files);
-    if (!rootPath) {
-        setStatus('No TeX file found.');
-        return;
-    }
-    await host.loadProject(files, rootPath);
+async function loadProject(host: StandaloneHost, project: BrowserProject): Promise<void> {
+    const rootPath = await host.loadProject(project);
 
     expandedFolders.clear();
     projectFolderPaths(host.getProjectTextPaths()).forEach(path => expandedFolders.add(path));
     renderProjectState(host);
-    setStatus(`Opened ${rootPath} (${files.length} files)`);
+    setStatus(`Opened ${rootPath} (${project.files.length} files)`);
 }
 
 function renderProjectState(host: StandaloneHost): void {
@@ -319,6 +320,8 @@ function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
     controls.rootPathLabel.textContent = projectOpen ? `root: ${rootPath}` : 'root: -';
     controls.rootPathLabel.title = projectOpen ? rootPath : '';
     controls.saveButton.disabled = !projectOpen;
+    controls.newFileButton.disabled = !projectOpen || !host.canModifyProject();
+    controls.deleteFileButton.disabled = !projectOpen || !host.canModifyProject() || activePath === rootPath;
     syncSettingsControls(host);
 
     const canSetRoot = projectOpen && isTexFile(activePath) && activePath !== rootPath;
@@ -417,7 +420,7 @@ async function openSingleFile(host: StandaloneHost, input: HTMLInputElement): Pr
             }]
         });
         if (handle) {
-            await loadProject(host, [await projectFileFromHandle(handle, `/${handle.name}`)]);
+            await loadProject(host, { files: [await projectFileFromHandle(handle, `/${handle.name}`)] });
         }
         return;
     }
@@ -429,19 +432,23 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
     const pickerWindow = window as BrowserFilePickerWindow;
     if (pickerWindow.showDirectoryPicker) {
         const directory = await pickerWindow.showDirectoryPicker();
-        await loadProject(host, await readDirectoryHandle(directory));
+        const project = await createDirectoryProject(directory);
+        await loadProject(host, project);
         return;
     }
 
     input.click();
 }
 
+let remoteProjectToCreate: string | undefined;
+
 function openRemoteProjectDialog(): void {
     const controls = getControls();
+    remoteProjectToCreate = undefined;
     controls.remoteProjectError.textContent = '';
-    controls.remoteProjectUrl.value ||= new URL('api/project/', window.location.href).toString();
+    controls.remoteProjectConnectButton.textContent = 'Connect';
     controls.remoteProjectDialog.showModal();
-    controls.remoteProjectUrl.select();
+    controls.remoteProjectName.select();
 }
 
 async function connectRemoteProject(host: StandaloneHost): Promise<void> {
@@ -450,17 +457,55 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
     controls.remoteProjectError.textContent = '';
     setStatus('Connecting to project server...');
     try {
-        const apiUrl = new URL(controls.remoteProjectUrl.value.trim(), window.location.href).toString();
-        const project = await loadRemoteProject(apiUrl);
-        await loadProject(host, project.files, project.rootPath);
+        const projectName = controls.remoteProjectName.value.trim();
+        const apiUrl = new URL('/api/projects/', window.location.href).toString();
+        const project = remoteProjectToCreate === projectName
+            ? await createRemoteProject(projectName, apiUrl)
+            : await loadRemoteProject(projectName, apiUrl);
+        await loadProject(host, project);
         controls.remoteProjectDialog.close();
     } catch (error) {
+        if (error instanceof RemoteProjectNotFoundError) {
+            remoteProjectToCreate = controls.remoteProjectName.value.trim();
+            controls.remoteProjectError.textContent = 'Project does not exist. Create it?';
+            controls.remoteProjectConnectButton.textContent = 'Create project';
+            setStatus('Project does not exist.');
+            return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         controls.remoteProjectError.textContent = message;
         setStatus(`Connect failed: ${message}`);
     } finally {
         controls.remoteProjectConnectButton.disabled = false;
     }
+}
+
+function openNewFileDialog(): void {
+    const controls = getControls();
+    controls.newFileError.textContent = '';
+    controls.newFilePath.value = '';
+    controls.newFileDialog.showModal();
+    controls.newFilePath.focus();
+}
+
+async function createTextFile(host: StandaloneHost): Promise<void> {
+    const controls = getControls();
+    try {
+        await host.createTextFile(controls.newFilePath.value.trim());
+        controls.newFileDialog.close();
+        setStatus(`Created ${host.getActivePath()}`);
+    } catch (error) {
+        controls.newFileError.textContent = error instanceof Error ? error.message : String(error);
+    }
+}
+
+async function deleteActiveFile(host: StandaloneHost): Promise<void> {
+    const path = host.getActivePath();
+    if (!window.confirm(`Delete ${path}?`)) {
+        return;
+    }
+    await host.deleteTextFile(path);
+    setStatus(`Deleted ${path}`);
 }
 
 function downloadText(path: string, text: string): void {
@@ -585,7 +630,21 @@ function bindProjectControls(host: StandaloneHost): void {
         event.preventDefault();
         void connectRemoteProject(host);
     });
+    controls.remoteProjectName.addEventListener('input', () => {
+        remoteProjectToCreate = undefined;
+        controls.remoteProjectError.textContent = '';
+        controls.remoteProjectConnectButton.textContent = 'Connect';
+    });
     controls.remoteProjectCancelButton.addEventListener('click', () => controls.remoteProjectDialog.close());
+    controls.newFileButton.addEventListener('click', openNewFileDialog);
+    controls.newFileForm.addEventListener('submit', event => {
+        event.preventDefault();
+        void createTextFile(host);
+    });
+    controls.newFileCancelButton.addEventListener('click', () => controls.newFileDialog.close());
+    controls.deleteFileButton.addEventListener('click', () => {
+        deleteActiveFile(host).catch(error => reportFailure('Delete', error));
+    });
     controls.saveButton.addEventListener('click', () => {
         saveActiveFile(host).catch(error => reportFailure('Save', error));
     });
@@ -624,7 +683,7 @@ function bindProjectControls(host: StandaloneHost): void {
     controls.openFileInput.addEventListener('change', () => {
         const file = controls.openFileInput.files?.[0];
         if (file) {
-            loadProject(host, [projectFileFromFile(file, `/${file.name}`)])
+            loadProject(host, { files: [projectFileFromFile(file, `/${file.name}`)] })
                 .catch(error => reportFailure('Open', error));
         }
         controls.openFileInput.value = '';
@@ -633,7 +692,7 @@ function bindProjectControls(host: StandaloneHost): void {
         const files = Array.from(controls.openFolderInput.files ?? [])
             .map(file => ({ file, path: fileInputPath(file) }))
             .filter(({ path }) => isProjectFile(path));
-        loadProject(host, files.map(({ file, path }) => projectFileFromFile(file, path)))
+        loadProject(host, { files: files.map(({ file, path }) => projectFileFromFile(file, path)) })
             .catch(error => reportFailure('Open', error));
         controls.openFolderInput.value = '';
     });
@@ -649,7 +708,7 @@ async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     } catch {
         // Storage can be unavailable in privacy-restricted browser contexts.
     }
-    await loadProject(host, createDemoProjectFiles(undefined, storage));
+    await loadProject(host, { files: createDemoProjectFiles(undefined, storage) });
 }
 
 const editorParent = requireElement('editor');

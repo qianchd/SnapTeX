@@ -7,6 +7,7 @@ media/webview-main.js
 media/webview-pdf.js
 media/webview-*.js.map
 apps/web/*.log
+apps/web/server.env
 .vscode-test/
 *.vsix
 src/localtestTeX

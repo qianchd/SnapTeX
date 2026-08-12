@@ -319,7 +319,7 @@ body[data-explorer-collapsed="true"] {
     display: none;
 }
 
-#remote-project-dialog {
+.project-dialog {
     width: min(460px, calc(100vw - 32px));
     box-sizing: border-box;
     border: 1px solid var(--snaptex-border);
@@ -330,36 +330,37 @@ body[data-explorer-collapsed="true"] {
     padding: 0;
 }
 
-#remote-project-dialog::backdrop {
+.project-dialog::backdrop {
     background: rgba(15, 23, 42, 0.42);
 }
 
-#remote-project-form {
+.project-dialog-form {
     display: grid;
     gap: 12px;
     padding: 20px;
 }
 
-#remote-project-form h2,
-#remote-project-form p {
+.project-dialog-form h2,
+.project-dialog-form p {
     margin: 0;
 }
 
-#remote-project-form h2 {
+.project-dialog-form h2 {
     font-size: 18px;
 }
 
-#remote-project-form > p {
+.project-dialog-form > p {
     color: var(--snaptex-muted);
     line-height: 1.45;
 }
 
-#remote-project-form label {
+.project-dialog-form label {
     font-size: 13px;
     font-weight: 600;
 }
 
-#remote-project-url {
+#remote-project-name,
+#new-file-path {
     box-sizing: border-box;
     width: 100%;
     border: 1px solid var(--snaptex-border);
@@ -370,7 +371,8 @@ body[data-explorer-collapsed="true"] {
     padding: 8px 9px;
 }
 
-#remote-project-error:not(:empty) {
+#remote-project-error:not(:empty),
+#new-file-error:not(:empty) {
     color: var(--snaptex-warning-fg);
 }
 

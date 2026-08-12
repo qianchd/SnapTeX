@@ -1,41 +1,10 @@
 import type { IFileProvider } from '../../../src/file-provider';
 import type { UriLike } from '../../../src/types';
-
-export interface BrowserWritableFileHandle {
-    createWritable(): Promise<{
-        write(data: string): Promise<void> | void;
-        close(): Promise<void> | void;
-    }>;
-}
-
-export interface BrowserProjectFile {
-    path: string;
-    text?: string;
-    readText?: () => Promise<string>;
-    writeText?: (text: string) => Promise<void> | void;
-    blob?: Blob;
-    resourceUrl?: string;
-    handle?: BrowserWritableFileHandle;
-}
+import { normalizeBrowserPath, type BrowserProjectFile } from './browser-project';
 
 interface BrowserFileEntry extends Omit<BrowserProjectFile, 'path'> {
     mtime: number;
     objectUrl?: string;
-}
-
-export function normalizeBrowserPath(path: string): string {
-    const parts: string[] = [];
-    for (const part of path.replace(/\\/g, '/').split('/')) {
-        if (!part || part === '.') {
-            continue;
-        }
-        if (part === '..') {
-            parts.pop();
-        } else {
-            parts.push(part);
-        }
-    }
-    return `/${parts.join('/')}`;
 }
 
 function parentDir(path: string): string {
@@ -85,21 +54,43 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             writeText: file.writeText,
             blob: file.blob,
             resourceUrl: file.resourceUrl,
-            handle: file.handle ?? existing?.handle,
             mtime: this.version++
         });
     }
 
-    setFile(uri: BrowserUri, text: string, handle?: BrowserWritableFileHandle) {
+    deleteProjectFile(path: string) {
+        const normalizedPath = normalizeBrowserPath(path);
+        const existing = this.files.get(normalizedPath);
+        if (existing?.objectUrl) {
+            this.revokeObjectUrl(existing.objectUrl);
+        }
+        this.files.delete(normalizedPath);
+    }
+
+    getPaths(): string[] {
+        return [...this.files.keys()].sort((a, b) => a.localeCompare(b));
+    }
+
+    has(path: string): boolean {
+        return this.files.has(normalizeBrowserPath(path));
+    }
+
+    isEmpty(): boolean {
+        return this.files.size === 0;
+    }
+
+    setFile(uri: BrowserUri, text: string) {
         const normalizedPath = uri.path;
         const existing = this.files.get(normalizedPath);
+        if (existing?.text === text) {
+            return;
+        }
         if (existing?.objectUrl) {
             this.revokeObjectUrl(existing.objectUrl);
         }
         this.files.set(normalizedPath, {
             text,
             writeText: existing?.writeText,
-            handle: handle ?? existing?.handle,
             mtime: this.version++
         });
     }
@@ -125,14 +116,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             await file.writeText(text);
             return true;
         }
-        if (!file?.handle) {
-            return false;
-        }
-
-        const writable = await file.handle.createWritable();
-        await writable.write(text);
-        await writable.close();
-        return true;
+        return false;
     }
 
     async read(uri: BrowserUri): Promise<string> {

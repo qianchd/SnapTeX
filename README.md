@@ -62,14 +62,18 @@ Grab it from the Visual Studio Code Marketplace by searching for **SnapTeX** o
 
 ### Self-hosted Web projects
 
-The same Web client can edit a server-side project through SnapTeX's optional project API:
+Copy or clone the complete SnapTeX source tree onto the server, then create its local deployment configuration:
 
 ```bash
-npm run web:build-static
-SNAPTEX_PROJECT_ROOT=/absolute/path/to/project HOST=localhost PORT=3000 node apps/web/server.mjs dist-web
+cd /path/to/SnapTeX
+cp apps/web/server.env.example apps/web/server.env
+nano apps/web/server.env
+npm run web:install-server
 ```
 
-Open the served page and choose **Open Server**. The server only exposes supported TeX project files inside `SNAPTEX_PROJECT_ROOT`; place it behind an authenticated reverse proxy before making it public.
+The installer runs `npm ci`, builds and tests the static Web app on the server, atomically installs the runtime, installs the repository's systemd unit template, and verifies the project API. Re-run the same command after replacing or updating the source tree. Open the served page and choose **Open Server**.
+
+`SNAPTEX_PROJECT_ROOT` is the only required setting. The API exposes supported project files inside that directory and permits saving existing text files. Keep the default loopback listener or place the service behind an authenticated HTTPS reverse proxy before making it public. See [the server deployment guide](apps/web/DEPLOYMENT.md) for configuration, logs, updates, and rollback details.
 
 ## Features
 

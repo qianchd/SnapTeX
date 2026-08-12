@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,9 +8,10 @@ const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const defaultRoot = resolve(process.argv[2] ?? join(repoRoot, 'dist-web'));
 const defaultPort = Number(process.env.PORT || 3000);
 const defaultHost = process.env.HOST || '127.0.0.1';
-const projectFilePattern = /\.(?:tex|bib|sty|cls|bst|txt|pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
-const projectTextFilePattern = /\.(?:tex|bib|sty|cls|bst|txt)$/i;
-const projectApiPrefix = '/api/project';
+const projectFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt|pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
+const projectTextFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
+const projectApiPrefix = '/api/projects';
+const projectNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const maxWriteBytes = 10 * 1024 * 1024;
 
 const contentTypes = new Map([
@@ -19,11 +20,14 @@ const contentTypes = new Map([
     ['.ico', 'image/x-icon'],
     ['.js', 'text/javascript; charset=utf-8'],
     ['.json', 'application/json; charset=utf-8'],
+    ['.bmp', 'image/bmp'],
+    ['.gif', 'image/gif'],
     ['.jpg', 'image/jpeg'],
     ['.jpeg', 'image/jpeg'],
     ['.pdf', 'application/pdf'],
     ['.png', 'image/png'],
     ['.svg', 'image/svg+xml'],
+    ['.webp', 'image/webp'],
     ['.webmanifest', 'application/manifest+json; charset=utf-8'],
     ['.mjs', 'text/javascript; charset=utf-8'],
     ['.wasm', 'application/wasm'],
@@ -72,17 +76,52 @@ function chooseProjectRootPath(files) {
         ?? texFiles[0];
 }
 
-function resolveProjectFile(root, pathname) {
+function resolveProjectFile(root, pathname, requireExisting = true) {
     try {
         const relativePath = decodeURIComponent(pathname).replace(/^\/+/, '');
         const candidate = resolve(root, relativePath);
-        if (!isWithin(root, candidate) || !projectFilePattern.test(candidate) || !existsSync(candidate)) {
+        if (!relativePath || !isWithin(root, candidate) || !projectFilePattern.test(candidate)) {
+            return undefined;
+        }
+        if (!existsSync(candidate)) {
+            return requireExisting ? undefined : candidate;
+        }
+        if (lstatSync(candidate).isSymbolicLink()) {
             return undefined;
         }
         const realPath = realpathSync(candidate);
         return isWithin(root, realPath) && lstatSync(realPath).isFile() ? realPath : undefined;
     } catch {
         return undefined;
+    }
+}
+
+function isProjectName(name) {
+    return projectNamePattern.test(name) && name !== '.' && name !== '..';
+}
+
+function resolveProjectDirectory(projectsRoot, name) {
+    if (!isProjectName(name)) {
+        return undefined;
+    }
+    const candidate = resolve(projectsRoot, name);
+    if (!isWithin(projectsRoot, candidate) || !existsSync(candidate)) {
+        return undefined;
+    }
+    const realPath = realpathSync(candidate);
+    return isWithin(projectsRoot, realPath) && lstatSync(realPath).isDirectory() ? realPath : undefined;
+}
+
+async function ensureProjectParent(projectRoot, filePath) {
+    const relativePath = relative(projectRoot, filePath);
+    let directory = projectRoot;
+    for (const part of relativePath.split(sep).slice(0, -1)) {
+        directory = join(directory, part);
+        if (!existsSync(directory)) {
+            await mkdir(directory);
+        } else if (lstatSync(directory).isSymbolicLink() || !lstatSync(directory).isDirectory()) {
+            throw new Error('Project file parent is not a directory.');
+        }
     }
 }
 
@@ -107,18 +146,75 @@ async function readTextBody(request) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
-async function handleProjectRequest(request, response, projectRoot) {
+async function handleProjectRequest(request, response, projectsRoot) {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
     if (pathname !== projectApiPrefix && !pathname.startsWith(`${projectApiPrefix}/`)) {
         return false;
     }
-    if (!projectRoot) {
+    if (!projectsRoot) {
         response.writeHead(404);
         response.end('Remote project API is disabled.');
         return true;
     }
 
-    if (pathname === `${projectApiPrefix}/manifest` && request.method === 'GET') {
+    if (pathname === projectApiPrefix) {
+        if (request.method === 'GET') {
+            sendJson(response, 200, { status: 'ok' });
+        } else {
+            response.writeHead(405, { Allow: 'GET' });
+            response.end('Method not allowed');
+        }
+        return true;
+    }
+
+    const remainder = pathname.slice(projectApiPrefix.length + 1);
+    const slashIndex = remainder.indexOf('/');
+    const encodedName = slashIndex < 0 ? remainder : remainder.slice(0, slashIndex);
+    const route = slashIndex < 0 ? '' : remainder.slice(slashIndex + 1);
+    let projectName;
+    try {
+        projectName = decodeURIComponent(encodedName);
+    } catch {
+        projectName = '';
+    }
+    if (!isProjectName(projectName)) {
+        response.writeHead(404);
+        response.end('Not found');
+        return true;
+    }
+
+    let projectRoot = resolveProjectDirectory(projectsRoot, projectName);
+    if (!projectRoot && route === '' && request.method === 'POST') {
+        const projectPath = resolve(projectsRoot, projectName);
+        try {
+            await mkdir(projectPath);
+        } catch (error) {
+            if (error?.code === 'EEXIST') {
+                sendJson(response, 409, { error: 'Project already exists.' });
+                return true;
+            }
+            throw error;
+        }
+        await writeFile(join(projectPath, 'main.tex'), [
+            '\\documentclass{article}',
+            '\\begin{document}',
+            '',
+            '\\end{document}',
+            ''
+        ].join('\n'), 'utf8');
+        sendJson(response, 201, { rootPath: '/main.tex', files: ['/main.tex'] });
+        return true;
+    }
+    if (!projectRoot) {
+        sendJson(response, 404, { code: 'PROJECT_NOT_FOUND', error: 'Project does not exist.' });
+        return true;
+    }
+    if (route === '' && request.method === 'POST') {
+        sendJson(response, 409, { error: 'Project already exists.' });
+        return true;
+    }
+
+    if (route === 'manifest' && request.method === 'GET') {
         const files = listProjectFiles(projectRoot);
         const rootPath = chooseProjectRootPath(files);
         if (!rootPath) {
@@ -129,10 +225,36 @@ async function handleProjectRequest(request, response, projectRoot) {
         return true;
     }
 
-    const filePrefix = `${projectApiPrefix}/files/`;
-    const filePath = pathname.startsWith(filePrefix)
-        ? resolveProjectFile(projectRoot, pathname.slice(filePrefix.length))
+    const filePrefix = 'files/';
+    const encodedFilePath = route.startsWith(filePrefix) ? route.slice(filePrefix.length) : '';
+    const filePath = encodedFilePath ? resolveProjectFile(projectRoot, encodedFilePath) : undefined;
+    const newFilePath = !filePath && request.method === 'POST'
+        ? resolveProjectFile(projectRoot, encodedFilePath, false)
         : undefined;
+    if (newFilePath && !projectTextFilePattern.test(newFilePath)) {
+        response.writeHead(415);
+        response.end('Only supported text files can be created.');
+        return true;
+    }
+    if (newFilePath) {
+        await ensureProjectParent(projectRoot, newFilePath);
+        try {
+            await writeFile(newFilePath, await readTextBody(request), { encoding: 'utf8', flag: 'wx' });
+        } catch (error) {
+            if (error?.code === 'EEXIST') {
+                sendJson(response, 409, { error: 'File already exists.' });
+                return true;
+            }
+            throw error;
+        }
+        response.writeHead(201);
+        response.end();
+        return true;
+    }
+    if (filePath && request.method === 'POST') {
+        sendJson(response, 409, { error: 'File already exists.' });
+        return true;
+    }
     if (!filePath) {
         response.writeHead(404);
         response.end('Not found');
@@ -152,8 +274,28 @@ async function handleProjectRequest(request, response, projectRoot) {
         response.end();
         return true;
     }
+    if (request.method === 'DELETE' && projectTextFilePattern.test(filePath)) {
+        const relativeFilePath = `/${relative(projectRoot, filePath).split(sep).join('/')}`;
+        if (/\.tex$/i.test(relativeFilePath)) {
+            const remainingTexFiles = listProjectFiles(projectRoot)
+                .filter(path => path !== relativeFilePath && /\.tex$/i.test(path));
+            if (remainingTexFiles.length === 0) {
+                sendJson(response, 409, { error: 'The project must keep at least one TeX root file.' });
+                return true;
+            }
+        }
+        if (!existsSync(filePath)) {
+            response.writeHead(404);
+            response.end('Not found');
+            return true;
+        }
+        await unlink(filePath);
+        response.writeHead(204);
+        response.end();
+        return true;
+    }
 
-    response.writeHead(405, { Allow: projectTextFilePattern.test(filePath) ? 'GET, PUT' : 'GET' });
+    response.writeHead(405, { Allow: projectTextFilePattern.test(filePath) ? 'GET, PUT, DELETE' : 'GET' });
     response.end('Method not allowed');
     return true;
 }
@@ -161,9 +303,9 @@ async function handleProjectRequest(request, response, projectRoot) {
 export function createSnapTeXWebServer(options = {}) {
     const root = resolve(options.root ?? defaultRoot);
     const indexPath = options.indexPath ?? defaultIndexPath(root);
-    const projectRoot = options.projectRoot ? realpathSync(resolve(options.projectRoot)) : undefined;
+    const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
     return createServer((request, response) => void (async () => {
-        if (await handleProjectRequest(request, response, projectRoot)) {
+        if (await handleProjectRequest(request, response, projectsRoot)) {
             return;
         }
         const filePath = resolveRequestPath(root, request.url ?? '/', indexPath);
@@ -190,12 +332,12 @@ export function createSnapTeXWebServer(options = {}) {
 const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isDirectRun) {
-    const projectRoot = process.env.SNAPTEX_PROJECT_ROOT;
-    const server = createSnapTeXWebServer({ projectRoot });
+    const projectsRoot = process.env.SNAPTEX_PROJECTS_ROOT;
+    const server = createSnapTeXWebServer({ projectsRoot });
     server.listen(defaultPort, defaultHost, () => {
         console.log(`[SnapTeX Web] http://${defaultHost}:${defaultPort}/`);
-        if (projectRoot) {
-            console.log(`[SnapTeX Web] Project API: ${resolve(projectRoot)}`);
+        if (projectsRoot) {
+            console.log(`[SnapTeX Web] Projects API: ${resolve(projectsRoot)}`);
         }
     });
 }

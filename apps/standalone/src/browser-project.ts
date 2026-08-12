@@ -1,7 +1,29 @@
-import { normalizeBrowserPath, type BrowserProjectFile } from './browser-file-provider';
-
-const PROJECT_TEXT_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|txt)$/i;
+const PROJECT_TEXT_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
 const PROJECT_RESOURCE_FILE_PATTERN = /\.(?:pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
+
+export interface BrowserProjectFile {
+    path: string;
+    text?: string;
+    readText?: () => Promise<string>;
+    writeText?: (text: string) => Promise<void> | void;
+    blob?: Blob;
+    resourceUrl?: string;
+}
+
+export function normalizeBrowserPath(path: string): string {
+    const parts: string[] = [];
+    for (const part of path.replace(/\\/g, '/').split('/')) {
+        if (!part || part === '.') {
+            continue;
+        }
+        if (part === '..') {
+            parts.pop();
+        } else {
+            parts.push(part);
+        }
+    }
+    return `/${parts.join('/')}`;
+}
 
 export interface ProjectTreeNode {
     name: string;
@@ -79,4 +101,15 @@ export function createProjectTree(paths: readonly string[]): ProjectTreeNode {
     };
     sortTree(root);
     return root;
+}
+
+export interface BrowserProjectOperations {
+    createTextFile(path: string, text: string): Promise<BrowserProjectFile>;
+    deleteFile(path: string): Promise<void>;
+}
+
+export interface BrowserProject {
+    files: readonly BrowserProjectFile[];
+    rootPath?: string;
+    operations?: BrowserProjectOperations;
 }

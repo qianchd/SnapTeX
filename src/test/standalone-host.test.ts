@@ -3,7 +3,6 @@
 import * as assert from 'assert';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
-import type { BrowserWritableFileHandle } from '../../apps/standalone/src/browser-file-provider';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage } from '../preview-messages';
 
 function normalizeEditorText(text: string): string {
@@ -55,17 +54,6 @@ class TestEditorView {
     }
 }
 
-function createWritableHandle(writeText: (text: string) => void): BrowserWritableFileHandle {
-    return {
-        async createWritable() {
-            return {
-                write: writeText,
-                close() {}
-            };
-        }
-    };
-}
-
 const flushAsync = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function installWindow(messages: HostToPreviewMessage[]) {
@@ -92,6 +80,41 @@ async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMes
 }
 
 suite('StandaloneHost', () => {
+    test('creates and deletes project text files through injected project operations', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const created: string[] = [];
+        const deleted: string[] = [];
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject({ files: [
+                { path: '/main.tex', text: '\\begin{document}Root\\end{document}' }
+            ], rootPath: '/main.tex', operations: {
+                createTextFile: async path => {
+                    created.push(path);
+                    return { path, text: '' };
+                },
+                deleteFile: async path => { deleted.push(path); }
+            }});
+
+            await host.createTextFile('/sections/notes.md');
+            assert.deepEqual(created, ['/sections/notes.md']);
+            assert.equal(host.getActivePath(), '/sections/notes.md');
+            assert.ok(host.getProjectTextPaths().includes('/sections/notes.md'));
+
+            await host.deleteTextFile('/sections/notes.md');
+            assert.deepEqual(deleted, ['/sections/notes.md']);
+            assert.equal(host.getActivePath(), '/main.tex');
+            assert.ok(!host.getProjectTextPaths().includes('/sections/notes.md'));
+            await assert.rejects(() => host.deleteTextFile('/main.tex'), /preview root/i);
+            await assert.rejects(() => host.createTextFile('/figure.png'), /text file/i);
+        } finally {
+            restoreWindow();
+        }
+    });
+
     test('switches active files while rendering from the project root', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];
@@ -100,7 +123,7 @@ suite('StandaloneHost', () => {
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
-            const rootPath = await host.loadProjectFiles([
+            await host.loadProject({ files: [
                 {
                     path: '/main.tex',
                     text: [
@@ -109,15 +132,15 @@ suite('StandaloneHost', () => {
                         '\\input{chapter}',
                         '\\end{document}'
                     ].join('\n'),
-                    handle: createWritableHandle(text => written.set('/main.tex', text))
+                    writeText: text => { written.set('/main.tex', text); }
                 },
                 {
                     path: '/chapter.tex',
                     text: 'Original included paragraph.',
-                    handle: createWritableHandle(text => written.set('/chapter.tex', text))
+                    writeText: text => { written.set('/chapter.tex', text); }
                 }
-            ]);
-            assert.equal(rootPath, '/main.tex');
+            ]});
+            assert.equal(host.getRootPath(), '/main.tex');
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
@@ -149,14 +172,14 @@ suite('StandaloneHost', () => {
         let persistedText = '';
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 { path: '/main.tex', readText: async () => '\\input{chapter}\r\n' },
                 {
                     path: '/chapter.tex',
                     readText: async () => 'Original\r\nchapter.',
                     writeText: text => { persistedText = text; }
                 }
-            ], '/main.tex');
+            ], rootPath: '/main.tex' });
             assert.equal(host.isDirty('/main.tex'), false);
 
             await host.openEditorFile('/chapter.tex');
@@ -186,7 +209,7 @@ suite('StandaloneHost', () => {
         });
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/main.tex',
                     text: [
@@ -208,7 +231,7 @@ suite('StandaloneHost', () => {
                         '\\end{document}'
                     ].join('\n')
                 }
-            ], '/main.tex');
+            ], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
@@ -239,7 +262,7 @@ suite('StandaloneHost', () => {
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/old/main.tex',
                     text: [
@@ -252,7 +275,7 @@ suite('StandaloneHost', () => {
                     path: '/old/chapter.tex',
                     text: 'Old included paragraph.'
                 }
-            ], '/old/main.tex');
+            ], rootPath: '/old/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/old/chapter.tex');
@@ -261,7 +284,7 @@ suite('StandaloneHost', () => {
             host.handleEditorUpdate();
             assert.equal(host.isDirty('/old/chapter.tex'), true);
 
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/new/main.tex',
                     text: [
@@ -270,7 +293,7 @@ suite('StandaloneHost', () => {
                         '\\end{document}'
                     ].join('\n')
                 }
-            ], '/new/main.tex');
+            ], rootPath: '/new/main.tex' });
 
             assert.equal(host.getRootPath(), '/new/main.tex');
             assert.equal(host.getActivePath(), '/new/main.tex');
@@ -289,7 +312,7 @@ suite('StandaloneHost', () => {
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/main.tex',
                     text: [
@@ -303,7 +326,7 @@ suite('StandaloneHost', () => {
                         '\\end{document}'
                     ].join('\n')
                 }
-            ], '/main.tex');
+            ], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.renderCurrentText();
@@ -328,7 +351,7 @@ suite('StandaloneHost', () => {
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/main.tex',
                     text: [
@@ -346,7 +369,7 @@ suite('StandaloneHost', () => {
                         'Included second paragraph with \\textbf{sync anchor}.'
                     ].join('\n')
                 }
-            ], '/main.tex');
+            ], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
@@ -384,14 +407,14 @@ suite('StandaloneHost', () => {
         });
 
         try {
-            await host.loadProject([{
+            await host.loadProject({ files: [{
                 path: '/main.tex',
                 text: [
                     '\\begin{document}',
                     'Root paragraph.',
                     '\\end{document}'
                 ].join('\n')
-            }], '/main.tex');
+            }], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             const config = messages.find(message => message.command === HostToPreviewCommand.Config);
@@ -429,14 +452,14 @@ suite('StandaloneHost', () => {
         });
 
         try {
-            await host.loadProject([{
+            await host.loadProject({ files: [{
                 path: '/main.tex',
                 text: [
                     '\\begin{document}',
                     'Root paragraph.',
                     '\\end{document}'
                 ].join('\n')
-            }], '/main.tex');
+            }], rootPath: '/main.tex' });
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await flushAsync();
             const updateCount = messages.filter(message => message.command === HostToPreviewCommand.Update).length;
@@ -472,7 +495,7 @@ suite('StandaloneHost', () => {
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/main.tex',
                     text: [
@@ -490,7 +513,7 @@ suite('StandaloneHost', () => {
                         'Included second paragraph with \\textbf{sync anchor}.'
                     ].join('\n')
                 }
-            ], '/main.tex');
+            ], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
@@ -520,7 +543,7 @@ suite('StandaloneHost', () => {
         ].join('\n');
 
         try {
-            await host.loadProject([
+            await host.loadProject({ files: [
                 {
                     path: '/main.tex',
                     text: [
@@ -534,7 +557,7 @@ suite('StandaloneHost', () => {
                     path: '/chapter.tex',
                     text: chapterText
                 }
-            ], '/main.tex');
+            ], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');

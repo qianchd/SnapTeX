@@ -2,9 +2,9 @@ import { basicSetup, EditorView } from 'codemirror';
 import { EditorState, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
-import { BrowserFileProvider, BrowserUri, normalizeBrowserPath, type BrowserProjectFile } from './browser-file-provider';
+import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
-import { chooseRootPath, isProjectTextFile } from './browser-project';
+import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import type { BackendMode } from '../../../src/types';
 import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
@@ -91,7 +91,7 @@ export class StandaloneHost {
     private readonly savedTexts = new Map<string, string>();
     private readonly dirtyPaths = new Set<string>();
     private readonly diagnostics = new Set<string>();
-    private projectPaths: string[] = [];
+    private projectOperations: BrowserProject['operations'];
     private labels: string[] = [];
     private previewReady = false;
     private programmaticEditorText: string | undefined;
@@ -119,9 +119,13 @@ export class StandaloneHost {
         queued.forEach(message => void this.handlePreviewMessage(message));
     }
 
-    async loadProject(files: readonly BrowserProjectFile[], rootPath: string) {
-        this.fileProvider.setProjectFiles(files);
-        this.projectPaths = files.map(file => normalizeBrowserPath(file.path)).sort((a, b) => a.localeCompare(b));
+    async loadProject(project: BrowserProject): Promise<string> {
+        const rootPath = project.rootPath ?? chooseRootPath(project.files);
+        if (!rootPath) {
+            throw new Error('No TeX root file found.');
+        }
+        this.fileProvider.setProjectFiles(project.files);
+        this.projectOperations = project.operations;
         this.labels = [];
         this.savedTexts.clear();
         this.dirtyPaths.clear();
@@ -133,14 +137,6 @@ export class StandaloneHost {
         this.updateService.resetState();
         this.notifyStateChanged();
         await this.renderCurrentText();
-    }
-
-    async loadProjectFiles(files: readonly BrowserProjectFile[]): Promise<string | undefined> {
-        const rootPath = chooseRootPath(files);
-        if (!rootPath) {
-            return undefined;
-        }
-        await this.loadProject(files, rootPath);
         return rootPath;
     }
 
@@ -181,7 +177,53 @@ export class StandaloneHost {
     }
 
     getProjectTextPaths(): readonly string[] {
-        return this.projectPaths.filter(isProjectTextFile);
+        return this.fileProvider.getPaths().filter(isProjectTextFile);
+    }
+
+    canModifyProject(): boolean {
+        return this.projectOperations !== undefined;
+    }
+
+    async createTextFile(path: string): Promise<void> {
+        const normalizedPath = normalizeBrowserPath(path);
+        if (!this.projectOperations) {
+            throw new Error('This project does not support creating files.');
+        }
+        if (!isProjectTextFile(normalizedPath)) {
+            throw new Error('SnapTeX can only create supported text files.');
+        }
+        if (this.fileProvider.has(normalizedPath)) {
+            throw new Error(`File already exists: ${normalizedPath}`);
+        }
+
+        const file = await this.projectOperations.createTextFile(normalizedPath, '');
+        this.fileProvider.setProjectFile({ ...file, path: normalizedPath });
+        await this.openEditorFile(normalizedPath);
+    }
+
+    async deleteTextFile(path: string): Promise<void> {
+        const normalizedPath = normalizeBrowserPath(path);
+        if (!this.projectOperations) {
+            throw new Error('This project does not support deleting files.');
+        }
+        if (!isProjectTextFile(normalizedPath) || !this.fileProvider.has(normalizedPath)) {
+            throw new Error(`Project text file does not exist: ${normalizedPath}`);
+        }
+        if (normalizedPath === this.rootUri.path) {
+            throw new Error('The preview root cannot be deleted. Set another root first.');
+        }
+
+        await this.projectOperations.deleteFile(normalizedPath);
+        this.fileProvider.deleteProjectFile(normalizedPath);
+        this.savedTexts.delete(normalizedPath);
+        this.dirtyPaths.delete(normalizedPath);
+        this.updateService.resetState();
+        if (this.activeUri.path === normalizedPath) {
+            this.activeUri = this.rootUri;
+            this.replaceEditorText(await this.fileProvider.read(this.rootUri));
+        }
+        this.notifyStateChanged();
+        await this.renderCurrentText();
     }
 
     getSettings(): StandalonePreviewSettings {
@@ -210,7 +252,7 @@ export class StandaloneHost {
         return {
             labels: this.labels,
             citationKeys: this.updateService.getBibliographyKeys(),
-            projectPaths: this.projectPaths,
+            projectPaths: this.fileProvider.getPaths(),
             macros: this.updateService.getMacroNames()
         };
     }
@@ -426,7 +468,7 @@ export class StandaloneHost {
     }
 
     async renderCurrentText() {
-        if (!this.previewReady || this.projectPaths.length === 0) {
+        if (!this.previewReady || this.fileProvider.isEmpty()) {
             return;
         }
 

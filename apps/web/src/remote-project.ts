@@ -1,14 +1,15 @@
-import { normalizeBrowserPath, type BrowserProjectFile } from '../../standalone/src/browser-file-provider';
-import { isProjectFile, isProjectTextFile, isTexFile } from '../../standalone/src/browser-project';
+import { isProjectFile, isProjectTextFile, isTexFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectFile } from '../../standalone/src/browser-project';
 
 interface RemoteProjectManifest {
     rootPath: string;
     files: string[];
 }
 
-export interface RemoteProject {
-    rootPath: string;
-    files: BrowserProjectFile[];
+export class RemoteProjectNotFoundError extends Error {
+    constructor(projectName: string) {
+        super(`Project does not exist: ${projectName}`);
+        this.name = 'RemoteProjectNotFoundError';
+    }
 }
 
 function remoteFileUrl(apiBaseUrl: string, path: string): string {
@@ -28,6 +29,14 @@ async function fetchOk(fetcher: typeof fetch, url: string, init?: RequestInit): 
     return response;
 }
 
+function projectUrl(apiBaseUrl: string, projectName: string): string {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(projectName) || projectName === '.' || projectName === '..') {
+        throw new Error('Project name may only contain letters, numbers, dots, underscores, and hyphens.');
+    }
+    const baseUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl : `${apiBaseUrl}/`;
+    return new URL(`${encodeURIComponent(projectName)}/`, baseUrl).toString();
+}
+
 function readManifest(value: unknown): RemoteProjectManifest {
     if (!value || typeof value !== 'object') {
         throw new Error('Remote project manifest must be an object.');
@@ -45,25 +54,56 @@ function readManifest(value: unknown): RemoteProjectManifest {
     return { rootPath: normalizedRoot, files: normalizedFiles };
 }
 
-/** Maps the optional SnapTeX HTTP project API onto the shared browser project model. */
-export async function loadRemoteProject(apiBaseUrl: string, fetcher: typeof fetch = fetch): Promise<RemoteProject> {
-    const baseUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl : `${apiBaseUrl}/`;
-    const manifest = readManifest(await (await fetchOk(fetcher, new URL('manifest', baseUrl).toString())).json());
+function createRemoteProjectModel(baseUrl: string, manifest: RemoteProjectManifest, fetcher: typeof fetch): BrowserProject {
+    const createFile = (path: string): BrowserProjectFile => {
+        const url = remoteFileUrl(baseUrl, path);
+        return isProjectTextFile(path)
+            ? {
+                path,
+                readText: async () => (await fetchOk(fetcher, url)).text(),
+                writeText: async text => { await fetchOk(fetcher, url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                    body: text
+                }); }
+            }
+            : { path, resourceUrl: url };
+    };
     return {
         rootPath: manifest.rootPath,
-        files: manifest.files.map(path => {
-            const url = remoteFileUrl(baseUrl, path);
-            return isProjectTextFile(path)
-                ? {
-                    path,
-                    readText: async () => (await fetchOk(fetcher, url)).text(),
-                    writeText: async text => { await fetchOk(fetcher, url, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-                        body: text
-                    }); }
-                }
-                : { path, resourceUrl: url };
-        })
+        files: manifest.files.map(createFile),
+        operations: {
+            createTextFile: async (path, text) => {
+                await fetchOk(fetcher, remoteFileUrl(baseUrl, path), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                    body: text
+                });
+                return createFile(path);
+            },
+            deleteFile: async path => { await fetchOk(fetcher, remoteFileUrl(baseUrl, path), { method: 'DELETE' }); }
+        }
     };
+}
+
+/** Maps a named project from the optional SnapTeX HTTP API onto the shared browser project model. */
+export async function loadRemoteProject(projectName: string, apiBaseUrl: string, fetcher: typeof fetch = fetch): Promise<BrowserProject> {
+    const baseUrl = projectUrl(apiBaseUrl, projectName);
+    const response = await fetcher(new URL('manifest', baseUrl));
+    if (response.status === 404) {
+        const body = await response.json().catch(() => undefined) as { code?: string } | undefined;
+        if (body?.code === 'PROJECT_NOT_FOUND') {
+            throw new RemoteProjectNotFoundError(projectName);
+        }
+    }
+    if (!response.ok) {
+        throw new Error(`GET ${response.url || new URL('manifest', baseUrl)} failed: ${response.status}`);
+    }
+    return createRemoteProjectModel(baseUrl, readManifest(await response.json()), fetcher);
+}
+
+export async function createRemoteProject(projectName: string, apiBaseUrl: string, fetcher: typeof fetch = fetch): Promise<BrowserProject> {
+    const baseUrl = projectUrl(apiBaseUrl, projectName);
+    const response = await fetchOk(fetcher, baseUrl, { method: 'POST' });
+    return createRemoteProjectModel(baseUrl, readManifest(await response.json()), fetcher);
 }

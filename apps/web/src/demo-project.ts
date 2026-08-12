@@ -1,4 +1,4 @@
-import type { BrowserProjectFile } from '../../standalone/src/browser-file-provider';
+import type { BrowserProjectFile } from '../../standalone/src/browser-project';
 
 interface DemoProjectAsset {
     path: string;

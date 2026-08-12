@@ -35,6 +35,8 @@
                 <button id="open-file-button" type="button">Open TeX</button>
                 <button id="open-folder-button" type="button">Open Folder</button>
                 <button id="open-remote-button" type="button">Open Server</button>
+                <button id="new-file-button" type="button">New File</button>
+                <button id="delete-file-button" type="button">Delete</button>
                 <button id="save-button" type="button">Save</button>
             </div>
             <div class="toolbar-group toolbar-paths" aria-live="polite">
@@ -115,16 +117,29 @@
         </div>
         <input id="open-file-input" type="file" accept=".tex" hidden>
         <input id="open-folder-input" type="file" webkitdirectory multiple hidden>
-        <dialog id="remote-project-dialog">
-            <form id="remote-project-form">
+        <dialog id="remote-project-dialog" class="project-dialog">
+            <form id="remote-project-form" class="project-dialog-form">
                 <h2>Open Server Project</h2>
-                <p>Connect to a SnapTeX project API. Files remain on the configured server.</p>
-                <label for="remote-project-url">Project API URL</label>
-                <input id="remote-project-url" name="url" type="url" required spellcheck="false" autocomplete="url">
+                <p>Connect to a remote project. Files remain on the configured server.</p>
+                <label for="remote-project-name">Project name</label>
+                <input id="remote-project-name" name="name" type="text" required spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._-]*">
                 <p id="remote-project-error" role="alert"></p>
                 <div class="dialog-actions">
                     <button id="remote-project-cancel-button" type="button">Cancel</button>
                     <button id="remote-project-connect-button" class="primary-action" type="submit">Connect</button>
+                </div>
+            </form>
+        </dialog>
+        <dialog id="new-file-dialog" class="project-dialog">
+            <form id="new-file-form" class="project-dialog-form">
+                <h2>New Text File</h2>
+                <p>Create a TeX, bibliography, Markdown, or other supported text file in the current project.</p>
+                <label for="new-file-path">Project path</label>
+                <input id="new-file-path" name="path" type="text" required spellcheck="false" autocomplete="off" placeholder="sections/introduction.tex">
+                <p id="new-file-error" role="alert"></p>
+                <div class="dialog-actions">
+                    <button id="new-file-cancel-button" type="button">Cancel</button>
+                    <button class="primary-action" type="submit">Create</button>
                 </div>
             </form>
         </dialog>
