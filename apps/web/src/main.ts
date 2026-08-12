@@ -458,7 +458,7 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
     setStatus('Connecting to project server...');
     try {
         const projectName = controls.remoteProjectName.value.trim();
-        const apiUrl = new URL('/api/projects/', window.location.href).toString();
+        const apiUrl = new URL('api/projects/', document.baseURI).toString();
         const project = remoteProjectToCreate === projectName
             ? await createRemoteProject(projectName, apiUrl)
             : await loadRemoteProject(projectName, apiUrl);

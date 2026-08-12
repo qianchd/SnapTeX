@@ -22,11 +22,35 @@ function remoteFileUrl(apiBaseUrl: string, path: string): string {
 }
 
 async function fetchOk(fetcher: typeof fetch, url: string, init?: RequestInit): Promise<Response> {
-    const response = await fetcher(url, init);
+    const response = await fetcher(url, { credentials: 'same-origin', ...init });
     if (!response.ok) {
         throw new Error(`${init?.method ?? 'GET'} ${url} failed: ${response.status}`);
     }
     return response;
+}
+
+function withCsrf(fetcher: typeof fetch, apiBaseUrl: string): typeof fetch {
+    let csrfToken: Promise<string> | undefined;
+    return async (input, init) => {
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+            return fetcher(input, { credentials: 'same-origin', ...init });
+        }
+        csrfToken ??= fetcher(new URL('../../web-auth/session', apiBaseUrl), { credentials: 'same-origin' })
+            .then(async response => {
+                if (!response.ok) {
+                    throw new Error(`GET ${response.url || '/web-auth/session'} failed: ${response.status}`);
+                }
+                const value = await response.json() as { csrfToken?: unknown };
+                return typeof value.csrfToken === 'string' ? value.csrfToken : '';
+            });
+        const token = await csrfToken;
+        const headers = new Headers(init?.headers);
+        if (token) {
+            headers.set('X-CSRF-Token', token);
+        }
+        return fetcher(input, { ...init, credentials: 'same-origin', headers });
+    };
 }
 
 function projectUrl(apiBaseUrl: string, projectName: string): string {
@@ -88,6 +112,7 @@ function createRemoteProjectModel(baseUrl: string, manifest: RemoteProjectManife
 
 /** Maps a named project from the optional SnapTeX HTTP API onto the shared browser project model. */
 export async function loadRemoteProject(projectName: string, apiBaseUrl: string, fetcher: typeof fetch = fetch): Promise<BrowserProject> {
+    fetcher = withCsrf(fetcher, apiBaseUrl);
     const baseUrl = projectUrl(apiBaseUrl, projectName);
     const response = await fetcher(new URL('manifest', baseUrl));
     if (response.status === 404) {
@@ -103,6 +128,7 @@ export async function loadRemoteProject(projectName: string, apiBaseUrl: string,
 }
 
 export async function createRemoteProject(projectName: string, apiBaseUrl: string, fetcher: typeof fetch = fetch): Promise<BrowserProject> {
+    fetcher = withCsrf(fetcher, apiBaseUrl);
     const baseUrl = projectUrl(apiBaseUrl, projectName);
     const response = await fetchOk(fetcher, baseUrl, { method: 'POST' });
     return createRemoteProjectModel(baseUrl, readManifest(await response.json()), fetcher);

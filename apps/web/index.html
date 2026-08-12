@@ -9,6 +9,7 @@
     <link rel="apple-touch-icon" sizes="192x192" href="/media/icon-192.png">
     <link rel="manifest" href="/apps/web/manifest.webmanifest">
     <meta name="theme-color" content="#2563eb">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
     <link rel="stylesheet" href="/media/vendor/katex/katex.min.css">
     <link rel="stylesheet" href="/media/preview-style.css">
     <link rel="stylesheet" href="/apps/web/web.css">
@@ -144,18 +145,7 @@
             </form>
         </dialog>
     </main>
-    <script>
-        window.snaptexPreviewMessageQueue = [];
-        window.snaptexPreviewBridge = {
-            postMessage(message) {
-                if (window.snaptexStandaloneHost) {
-                    window.snaptexStandaloneHost.handlePreviewMessage(message);
-                } else {
-                    window.snaptexPreviewMessageQueue.push(message);
-                }
-            }
-        };
-    </script>
+    <script src="/apps/web/preview-bridge.js"></script>
     <script src="/media/webview-main.js"></script>
     <script src="/media/webview-pdf.js"></script>
     <script src="/apps/web/dist/web-main.js"></script>

@@ -4,6 +4,8 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: Added an independently deployable SnapTeX Server security boundary with opaque browser sessions, CSRF protection, project-path confinement, and hardened systemd defaults.
+- **Changed**: Kept the browser-session HTTP contract aligned with gpt-web-connecter while leaving both applications independently deployed and removing cross-service Nginx coupling.
 - **Fixed**: Routed expanded user-defined macros back through the shared AST rule registry, allowing custom preamble macros to wrap block-level preview structures without leaking raw LaTeX.
 
 ## [0.7.1] - 2026-07-09

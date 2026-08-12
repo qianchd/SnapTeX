@@ -6,6 +6,8 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 - **Added**: Added an optional self-hosted Web project API with named projects, project creation, lazy remote file loading, in-place text saves, resource URLs, and repository-managed one-command server installation.
 - **Added**: Added shared text-file creation and deletion for writable local folders and remote Web projects, including `.tex`, `.bib`, `.md`, and other supported source files.
+- **Added**: Secured self-hosted SnapTeX projects with independent server-side Web Sessions, same-origin login, CSRF validation, login lockout, hardened response headers, and a loopback-only deployment model.
+- **Changed**: Simplified public deployment to an ordinary HTTPS Nginx reverse proxy; SnapTeX no longer requires cross-service authentication or proxy-secret configuration.
 - **Added**: Added a local-first web welcome screen, persistent demo editing, a larger auto-hidden toolbar trigger, and collapsible editor/preview panes.
 - **Fixed**: Let user-defined text macros wrap block structures such as tables, figures, lists, and theorem environments in the AST backend by routing expanded macro content through the shared AST rule pipeline.
 - **Fixed**: Kept source synchronization accurate when comments contain document markers such as `% \begin{document}`.

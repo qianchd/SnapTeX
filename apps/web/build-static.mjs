@@ -18,6 +18,8 @@ const staticFiles = [
     ['media/webview-main.js', 'media/webview-main.js'],
     ['media/webview-pdf.js', 'media/webview-pdf.js'],
     ['apps/web/web.css', 'web.css'],
+    ['apps/web/preview-bridge.js', 'preview-bridge.js'],
+    ['apps/web/register-service-worker.js', 'register-service-worker.js'],
     ['apps/web/dist/web-main.js', 'web-main.js']
 ];
 
@@ -38,19 +40,9 @@ function makeStaticIndex(source) {
         .replace(/\b(href|src|data-[\w-]+)="\/media\//g, '$1="media/')
         .replace('href="/apps/web/manifest.webmanifest"', 'href="manifest.webmanifest"')
         .replaceAll('href="/apps/web/web.css"', 'href="web.css"')
+        .replaceAll('src="/apps/web/preview-bridge.js"', 'src="preview-bridge.js"')
         .replaceAll('src="/apps/web/dist/web-main.js"', 'src="web-main.js"')
-        .replace('</body>', [
-            '    <script>',
-            "        if ('serviceWorker' in navigator) {",
-            "            window.addEventListener('load', () => {",
-            "                navigator.serviceWorker.register('service-worker.js').catch(error => {",
-            "                    console.warn('[SnapTeX] PWA service worker registration failed.', error);",
-            '                });',
-            '            });',
-            '        }',
-            '    </script>',
-            '</body>'
-        ].join('\n'));
+        .replace('</body>', '    <script src="register-service-worker.js"></script>\n</body>');
 }
 
 function listFiles(dir, root = dir) {
@@ -80,7 +72,8 @@ function serviceWorkerSource(cacheName, assets) {
         '});',
         '',
         "self.addEventListener('fetch', event => {",
-        "    if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) {",
+        '    const url = new URL(event.request.url);',
+        "    if (event.request.method !== 'GET' || url.origin !== self.location.origin || /\\/(?:api|web-auth)\\//.test(url.pathname)) {",
         '        return;',
         '    }',
         '',

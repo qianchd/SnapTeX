@@ -1,8 +1,10 @@
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createWebSessionAuth } from './web-session.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const defaultRoot = resolve(process.argv[2] ?? join(repoRoot, 'dist-web'));
@@ -53,6 +55,10 @@ function isWithin(root, path) {
     return path === root || path.startsWith(`${root}${sep}`);
 }
 
+function hasDeniedPathSegment(pathname) {
+    return pathname.split(/[\\/]+/).some(part => !part || part === '.' || part === '..' || part === 'node_modules' || part.startsWith('.'));
+}
+
 function listProjectFiles(root, directory = root) {
     const files = [];
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -80,7 +86,7 @@ function resolveProjectFile(root, pathname, requireExisting = true) {
     try {
         const relativePath = decodeURIComponent(pathname).replace(/^\/+/, '');
         const candidate = resolve(root, relativePath);
-        if (!relativePath || !isWithin(root, candidate) || !projectFilePattern.test(candidate)) {
+        if (!relativePath || hasDeniedPathSegment(relativePath) || !isWithin(root, candidate) || !projectFilePattern.test(candidate)) {
             return undefined;
         }
         if (!existsSync(candidate)) {
@@ -105,7 +111,7 @@ function resolveProjectDirectory(projectsRoot, name) {
         return undefined;
     }
     const candidate = resolve(projectsRoot, name);
-    if (!isWithin(projectsRoot, candidate) || !existsSync(candidate)) {
+    if (!isWithin(projectsRoot, candidate) || !existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) {
         return undefined;
     }
     const realPath = realpathSync(candidate);
@@ -122,6 +128,16 @@ async function ensureProjectParent(projectRoot, filePath) {
         } else if (lstatSync(directory).isSymbolicLink() || !lstatSync(directory).isDirectory()) {
             throw new Error('Project file parent is not a directory.');
         }
+    }
+}
+
+async function replaceTextFile(filePath, text) {
+    const temporaryPath = join(dirname(filePath), `.snaptex-${randomBytes(12).toString('hex')}.tmp`);
+    try {
+        await writeFile(temporaryPath, text, { encoding: 'utf8', flag: 'wx' });
+        await rename(temporaryPath, filePath);
+    } finally {
+        await unlink(temporaryPath).catch(() => undefined);
     }
 }
 
@@ -261,6 +277,9 @@ async function handleProjectRequest(request, response, projectsRoot) {
         return true;
     }
     if (request.method === 'GET') {
+        if (extname(filePath).toLowerCase() === '.svg') {
+            response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+        }
         response.writeHead(200, {
             'Content-Type': contentTypes.get(extname(filePath)) ?? 'application/octet-stream',
             'Cache-Control': 'no-store'
@@ -269,7 +288,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
         return true;
     }
     if (request.method === 'PUT' && projectTextFilePattern.test(filePath)) {
-        await writeFile(filePath, await readTextBody(request), 'utf8');
+        await replaceTextFile(filePath, await readTextBody(request));
         response.writeHead(204);
         response.end();
         return true;
@@ -304,7 +323,19 @@ export function createSnapTeXWebServer(options = {}) {
     const root = resolve(options.root ?? defaultRoot);
     const indexPath = options.indexPath ?? defaultIndexPath(root);
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
-    return createServer((request, response) => void (async () => {
+    const auth = createWebSessionAuth(options.auth);
+    const server = createServer((request, response) => void (async () => {
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        response.setHeader('Referrer-Policy', 'no-referrer');
+        response.setHeader('X-Frame-Options', 'DENY');
+        response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+        response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+        if (pathname === '/healthz') {
+            sendJson(response, 200, { status: 'ok' });
+            return;
+        }
+        if (await auth.handle(request, response, pathname) || !auth.authorize(request, response, pathname)) return;
         if (await handleProjectRequest(request, response, projectsRoot)) {
             return;
         }
@@ -321,19 +352,42 @@ export function createSnapTeXWebServer(options = {}) {
         });
         createReadStream(filePath).pipe(response);
     })().catch(error => {
+        console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {
-            sendJson(response, error.message === 'Request body is too large.' ? 413 : 500, { error: error.message });
+            sendJson(response, error.message === 'Request body is too large.' ? 413 : 500, {
+                error: error.message === 'Request body is too large.' ? error.message : 'Internal server error.'
+            });
         } else {
             response.destroy(error);
         }
     }));
+    server.on('close', auth.clear);
+    return server;
 }
 
 const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isDirectRun) {
     const projectsRoot = process.env.SNAPTEX_PROJECTS_ROOT;
-    const server = createSnapTeXWebServer({ projectsRoot });
+    const publicOrigin = process.env.SNAPTEX_PUBLIC_ORIGIN;
+    const username = process.env.SNAPTEX_AUTH_USERNAME;
+    const password = process.env.SNAPTEX_AUTH_PASSWORD;
+    if (process.env.NODE_ENV === 'production' && !['127.0.0.1', '::1', 'localhost'].includes(defaultHost)) {
+        throw new Error('Production SnapTeX Server must listen on a loopback host behind an HTTPS reverse proxy.');
+    }
+    if (projectsRoot && process.env.NODE_ENV === 'production' && publicOrigin && new URL(publicOrigin).protocol !== 'https:') {
+        throw new Error('Production SNAPTeX_PUBLIC_ORIGIN must use HTTPS.');
+    }
+    if (projectsRoot && process.env.NODE_ENV === 'production' && (!username || !password || password.length < 16 || !publicOrigin)) {
+        throw new Error('Production remote projects require SNAPTeX_AUTH_USERNAME, SNAPTeX_AUTH_PASSWORD (16+ characters), and SNAPTeX_PUBLIC_ORIGIN.');
+    }
+    const auth = username && password && publicOrigin ? {
+        username,
+        password,
+        publicOrigin,
+        publicPath: process.env.SNAPTEX_PUBLIC_PATH
+    } : undefined;
+    const server = createSnapTeXWebServer({ projectsRoot, auth });
     server.listen(defaultPort, defaultHost, () => {
         console.log(`[SnapTeX Web] http://${defaultHost}:${defaultPort}/`);
         if (projectsRoot) {

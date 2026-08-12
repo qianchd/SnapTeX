@@ -11,6 +11,9 @@ suite('RemoteProject', () => {
             const url = String(input);
             const method = init?.method ?? 'GET';
             requests.push({ url, method, body: typeof init?.body === 'string' ? init.body : undefined });
+            if (url.endsWith('/web-auth/session')) {
+                return Response.json({ csrfToken: 'test-csrf-token' });
+            }
             if (url.endsWith('/manifest')) {
                 return Response.json({
                     rootPath: '/project/main.tex',
@@ -49,6 +52,7 @@ suite('RemoteProject', () => {
         assert.equal(mainText, 'Updated document.');
         assert.equal(imageFile?.resourceUrl, 'https://example.test/api/projects/paper-one/files/project/figure.png');
         assert.ok(requests.some(request => request.method === 'PUT' && request.body === 'Updated document.'));
+        assert.ok(requests.some(request => request.url === 'https://example.test/web-auth/session'));
 
         const created = await project.operations?.createTextFile('/notes.md', 'Draft');
         assert.equal(created?.path, '/notes.md');
@@ -61,6 +65,9 @@ suite('RemoteProject', () => {
         let created = false;
         let createRequests = 0;
         const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            if (String(input).endsWith('/web-auth/session')) {
+                return Response.json({ csrfToken: 'test-csrf-token' });
+            }
             const method = init?.method ?? 'GET';
             if (method === 'POST') {
                 created = true;

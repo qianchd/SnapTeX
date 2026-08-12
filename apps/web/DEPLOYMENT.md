@@ -1,15 +1,15 @@
-# SnapTeX Web server deployment
+# SnapTeX Server deployment
 
-The Web server is deployed from a complete SnapTeX source tree. Building locally and copying `dist-web` is not required.
+SnapTeX Server is an independent Node.js service. It owns its login, server-side browser sessions, CSRF validation, and project-file authorization. Nginx only terminates HTTPS and proxies `/snaptex/` to the loopback listener.
 
 ## Requirements
 
 - Linux with Node.js 22 or later, npm, bash, curl, and systemd.
-- A copied or cloned SnapTeX source tree. Prefer `git clone`/`git pull` or a source archive; do not recursively copy local `node_modules`, `.vscode-test`, build output, or VSIX files.
-- A projects directory whose direct child directories are LaTeX projects.
-- `sudo` access when installing outside the current account or registering the system service.
+- A complete SnapTeX source tree and a projects directory whose direct children are LaTeX projects.
+- The `acl` package (`setfacl`) and permission to create a system service account.
+- An HTTPS Nginx virtual host for public access.
 
-## Configure and install
+## Install
 
 From the server-side source root:
 
@@ -17,35 +17,56 @@ From the server-side source root:
 cp apps/web/server.env.example apps/web/server.env
 ```
 
-Edit `apps/web/server.env`. Quote values that contain spaces:
+Edit the private configuration:
 
 ```dotenv
 SNAPTEX_PROJECTS_ROOT=/srv/snaptex/projects
 SNAPTEX_INSTALL_DIR=/opt/snaptex-web
 SNAPTEX_SERVICE_NAME=snaptex-web
-SNAPTEX_RUN_USER=user
+SNAPTEX_RUN_USER=snaptex
 HOST=localhost
 PORT=3000
+SNAPTEX_AUTH_USERNAME=snaptex-admin
+SNAPTEX_AUTH_PASSWORD=<a long random password>
+SNAPTEX_PUBLIC_ORIGIN=https://snaptex.example.com
+SNAPTEX_PUBLIC_PATH=/snaptex/
 ```
 
-Systemd deployment and projects paths must not contain whitespace. With the example above, entering `demo` in **Open Server** opens `/srv/snaptex/projects/demo`; if it does not exist, SnapTeX offers to create it with a minimal `main.tex`.
+`SNAPTEX_PUBLIC_ORIGIN` is the external HTTPS origin without a path. `SNAPTEX_PUBLIC_PATH` is the path exposed by Nginx. If `SNAPTEX_RUN_USER` does not exist, the installer creates it as a non-login system account. It grants that account traversal on parent directories and inherited read/write ACLs only on `SNAPTEX_PROJECTS_ROOT`; ownership and existing ACL entries are preserved.
 
-`SNAPTEX_RUN_USER` defaults to the account running the installer. Then run:
+Run the installer:
 
 ```bash
 npm run web:install-server
 ```
 
-The command performs the complete deployment:
+It installs exact dependencies, builds and tests the Web app, installs the runtime, writes a root-readable environment file and hardened systemd unit, restarts the loopback service, and rolls back the runtime if `/healthz` does not become ready. It does not edit Nginx or depend on another service.
 
-1. Installs exact dependencies with `npm ci`.
-2. Builds `dist-web` and runs the server API test.
-3. Installs only `dist-web` and `apps/web/server.mjs` into `SNAPTEX_INSTALL_DIR`.
-4. Generates the systemd environment and unit from the repository template.
-5. Enables and restarts the service.
-6. Checks `/api/projects` and restores the previous runtime if startup fails.
+## Nginx
 
-The source directory remains the deployment input. The installed runtime and project collection are separate and can be replaced or backed up independently.
+Add the locations from `apps/web/deploy/nginx-location.conf` to the existing HTTPS `server` block, or use the equivalent minimal configuration:
+
+```nginx
+location = /snaptex {
+    return 308 /snaptex/;
+}
+
+location ^~ /snaptex/ {
+    proxy_pass http://localhost:3000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Then validate and reload Nginx:
+
+```bash
+nginx -t && systemctl reload nginx
+```
+
+Open `https://snaptex.example.com/`. Anonymous page requests go to SnapTeX's own login page; API requests return `401`. The Node listener remains inaccessible from the public network.
 
 ## Operate and update
 
@@ -54,18 +75,6 @@ systemctl status snaptex-web.service
 journalctl -u snaptex-web.service -f
 ```
 
-To update, replace the source tree or run `git pull`, preserve `apps/web/server.env`, and run the same command again:
+After updating the source tree, preserve `apps/web/server.env` and run `npm run web:install-server` again. The previous runtime remains at `<SNAPTEX_INSTALL_DIR>.previous`; the installer never replaces or deletes the projects directory.
 
-```bash
-npm run web:install-server
-```
-
-The previous runtime remains at `<SNAPTEX_INSTALL_DIR>.previous` after a successful update. The installer never copies, deletes, or replaces `SNAPTEX_PROJECTS_ROOT`; project creation and text-file edits happen only through the running project API.
-
-The default service listens only on `127.0.0.1`. Use an SSH tunnel for private access:
-
-```bash
-ssh -N -L 3001:localhost:3000 server
-```
-
-Then open `http://127.0.0.1:5190/`. Public deployments should use an authenticated HTTPS reverse proxy rather than exposing the Node.js listener directly.
+The browser-session routes are `/web-auth/login`, `/web-auth/session`, `/web-auth/logout`, and `/web-auth/check`. They intentionally use the same HTTP contract as gpt-web-connecter while remaining a separate implementation and deployment. A future joint server can mount the SnapTeX handler behind one shared authentication implementation without introducing service-to-service authentication today.
