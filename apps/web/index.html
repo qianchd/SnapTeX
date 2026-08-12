@@ -34,6 +34,7 @@
                 <button id="toggle-explorer-button" type="button" aria-expanded="false" aria-controls="explorer-panel">Explorer</button>
                 <button id="open-file-button" type="button">Open TeX</button>
                 <button id="open-folder-button" type="button">Open Folder</button>
+                <button id="open-remote-button" type="button">Open Server</button>
                 <button id="save-button" type="button">Save</button>
             </div>
             <div class="toolbar-group toolbar-paths" aria-live="polite">
@@ -98,6 +99,7 @@
                     <div class="welcome-actions">
                         <button id="welcome-open-folder-button" class="primary-action" type="button">Open Folder</button>
                         <button id="welcome-open-demo-button" type="button">Open Demo</button>
+                        <button id="welcome-open-remote-button" type="button">Open Server</button>
                     </div>
                 </div>
             </section>
@@ -113,6 +115,19 @@
         </div>
         <input id="open-file-input" type="file" accept=".tex" hidden>
         <input id="open-folder-input" type="file" webkitdirectory multiple hidden>
+        <dialog id="remote-project-dialog">
+            <form id="remote-project-form">
+                <h2>Open Server Project</h2>
+                <p>Connect to a SnapTeX project API. Files remain on the configured server.</p>
+                <label for="remote-project-url">Project API URL</label>
+                <input id="remote-project-url" name="url" type="url" required spellcheck="false" autocomplete="url">
+                <p id="remote-project-error" role="alert"></p>
+                <div class="dialog-actions">
+                    <button id="remote-project-cancel-button" type="button">Cancel</button>
+                    <button id="remote-project-connect-button" class="primary-action" type="submit">Connect</button>
+                </div>
+            </form>
+        </dialog>
     </main>
     <script>
         window.snaptexPreviewMessageQueue = [];

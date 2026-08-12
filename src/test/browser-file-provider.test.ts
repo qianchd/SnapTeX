@@ -3,7 +3,7 @@
 import * as assert from 'assert';
 import { chooseRootPath, createProjectTree, isProjectFile, projectFolderPaths } from '../../apps/standalone/src/browser-project';
 import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
-import { createStandaloneDemoProjectFiles } from '../../apps/standalone/src/demo-project';
+import { createDemoProjectFiles } from '../../apps/web/src/demo-project';
 import { PreviewUpdateService } from '../preview-update-service';
 
 suite('BrowserFileProvider', () => {
@@ -56,14 +56,14 @@ suite('BrowserFileProvider', () => {
             setItem: (key: string, value: string) => values.set(key, value)
         };
         const fetchDemoText = async (url: string) => `Bundled ${url}`;
-        const mainFile = createStandaloneDemoProjectFiles(fetchDemoText, storage)
+        const mainFile = createDemoProjectFiles(fetchDemoText, storage)
             .find(file => file.path === '/demo/main.tex');
         assert.ok(mainFile?.readText && mainFile.writeText);
 
         assert.equal(await mainFile.readText(), 'Bundled demo/main.tex');
         await mainFile.writeText('Edited demo');
 
-        const reopenedMainFile = createStandaloneDemoProjectFiles(fetchDemoText, storage)
+        const reopenedMainFile = createDemoProjectFiles(fetchDemoText, storage)
             .find(file => file.path === '/demo/main.tex');
         assert.equal(await reopenedMainFile?.readText?.(), 'Edited demo');
     });

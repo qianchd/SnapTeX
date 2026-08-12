@@ -1,6 +1,6 @@
-import type { BrowserProjectFile } from './browser-file-provider';
+import type { BrowserProjectFile } from '../../standalone/src/browser-file-provider';
 
-interface StandaloneDemoProjectAsset {
+interface DemoProjectAsset {
     path: string;
     url: string;
     text?: boolean;
@@ -11,7 +11,7 @@ export interface DemoTextStorage {
     setItem(key: string, value: string): void;
 }
 
-const STANDALONE_DEMO_PROJECT_ASSETS: readonly StandaloneDemoProjectAsset[] = [
+const DEMO_PROJECT_ASSETS: readonly DemoProjectAsset[] = [
     { path: '/demo/main.tex', url: 'demo/main.tex', text: true },
     { path: '/demo/sample.bib', url: 'demo/sample.bib', text: true },
     { path: '/demo/sections/project-editing.tex', url: 'demo/sections/project-editing.tex', text: true },
@@ -26,11 +26,11 @@ async function fetchText(url: string): Promise<string> {
     return response.text();
 }
 
-export function createStandaloneDemoProjectFiles(
+export function createDemoProjectFiles(
     readText: (url: string) => Promise<string> = fetchText,
     storage?: DemoTextStorage
 ): BrowserProjectFile[] {
-    return STANDALONE_DEMO_PROJECT_ASSETS.map(file => file.text
+    return DEMO_PROJECT_ASSETS.map(file => file.text
         ? {
             path: file.path,
             readText: () => Promise.resolve(storage?.getItem(`snaptex${file.path}`) ?? readText(file.url)),

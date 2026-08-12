@@ -319,6 +319,83 @@ body[data-explorer-collapsed="true"] {
     display: none;
 }
 
+#remote-project-dialog {
+    width: min(460px, calc(100vw - 32px));
+    box-sizing: border-box;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 6px;
+    background: var(--snaptex-panel-bg);
+    color: var(--snaptex-ui-fg);
+    box-shadow: 0 20px 52px rgba(15, 23, 42, 0.28);
+    padding: 0;
+}
+
+#remote-project-dialog::backdrop {
+    background: rgba(15, 23, 42, 0.42);
+}
+
+#remote-project-form {
+    display: grid;
+    gap: 12px;
+    padding: 20px;
+}
+
+#remote-project-form h2,
+#remote-project-form p {
+    margin: 0;
+}
+
+#remote-project-form h2 {
+    font-size: 18px;
+}
+
+#remote-project-form > p {
+    color: var(--snaptex-muted);
+    line-height: 1.45;
+}
+
+#remote-project-form label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+#remote-project-url {
+    box-sizing: border-box;
+    width: 100%;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-editor-bg);
+    color: var(--snaptex-editor-fg);
+    font: inherit;
+    padding: 8px 9px;
+}
+
+#remote-project-error:not(:empty) {
+    color: var(--snaptex-warning-fg);
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.dialog-actions button {
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-panel-bg);
+    color: var(--snaptex-button-fg);
+    cursor: pointer;
+    font: inherit;
+    padding: 6px 12px;
+}
+
+.dialog-actions .primary-action {
+    border-color: var(--snaptex-active-fg);
+    background: var(--snaptex-active-fg);
+    color: white;
+}
+
 #settings-menu label {
     display: flex;
     align-items: center;

@@ -155,11 +155,12 @@
     "package": "npm run check-types && npm run lint && node esbuild.js --production --target=vscode",
     "compile-tests": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint && npm run web:test-server",
     "check-types": "tsc --noEmit",
     "lint": "eslint src apps/vscode/src apps/standalone/src apps/web/src",
     "web:build": "node esbuild.js --target=web",
     "web:build-static": "npm run web:build && node apps/web/build-static.mjs",
+    "web:test-server": "node --test apps/web/server.test.mjs",
     "web:serve": "npm run web:build-static && node apps/web/server.mjs dist-web",
     "web:serve-source": "npm run web:build && node apps/web/server.mjs .",
     "test": "vscode-test"

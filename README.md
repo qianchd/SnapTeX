@@ -60,6 +60,17 @@ Grab it from the Visual Studio Code Marketplace by searching for **SnapTeX** o
 * **Virtual Mode:** `snaptex.virtualMode` is enabled by default. It keeps long previews responsive by mounting only viewport-near blocks while preserving scrollbar length with measured shell heights.
 * **Lazy Heavy Resources:** PDF canvases and TikZ output are created only when their blocks are mounted near the viewport and can be released when far offscreen.
 
+### Self-hosted Web projects
+
+The same Web client can edit a server-side project through SnapTeX's optional project API:
+
+```bash
+npm run web:build-static
+SNAPTEX_PROJECT_ROOT=/absolute/path/to/project HOST=localhost PORT=3000 node apps/web/server.mjs dist-web
+```
+
+Open the served page and choose **Open Server**. The server only exposes supported TeX project files inside `SNAPTEX_PROJECT_ROOT`; place it behind an authenticated reverse proxy before making it public.
+
 ## Features
 
 * **Instant Math Rendering**: Real-time rendering of inline math `$ ... $` and complex display math environments (e.g., `equation`, `align`, `gather`) using KaTeX.
