@@ -1,35 +1,79 @@
-# Getting Started
+# Your First Preview
 
-SnapTeX requires no TeX distribution for its preview. Choose either the VS Code extension or the Web app.
+This walkthrough starts with a small project and ends with a working source/preview navigation loop.
 
-## VS Code
+## 1. Create a root document
 
-1. Install **SnapTeX** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex).
-2. Open a `.tex` file.
-3. Press `Ctrl+K V` on Windows/Linux or `Cmd+K V` on macOS.
-4. Edit the source and watch the preview update.
+Use a file such as `main.tex`:
 
-Use `Ctrl+Alt+M` (`Cmd+Alt+M` on macOS) to move the preview to the editor cursor. Double-click preview content to jump back to the source.
+```latex
+\documentclass{article}
+\usepackage{amsmath}
 
-## Web app
+\title{A SnapTeX Preview}
+\author{Example Author}
 
-1. Open [SnapTeX Web](https://qianchd.github.io/SnapTeX/).
-2. Choose **Open Folder** for direct folder access in a Chromium-based browser, or **Import Folder** to create a persistent browser workspace.
-3. Select the root `.tex` file in Explorer and choose **Set Root** when needed.
-4. Press `Ctrl+S` to save the active file.
+\begin{document}
+\maketitle
 
-The public Web app is a static PWA. It can work offline after the application assets have been cached, and document rendering remains local to the browser.
+\section{Introduction}
+The preview updates while you write. Inline math such as $p > n$ is rendered by KaTeX.
 
-## Try the demo
+\begin{equation}\label{eq:demo}
+  y = X\beta + \varepsilon.
+\end{equation}
 
-Choose **Open Demo** on the welcome page. The demo is copied into browser storage, so editing and `Ctrl+S` behave like a normal browser workspace. Export the project as ZIP if you want to keep a portable copy.
+Equation~\ref{eq:demo} is linked to its preview anchor.
+\end{document}
+```
 
-## Expected first load
+The root document owns the preamble and resolves included files, bibliography databases, images, and PDFs. Even when you are editing an included file, keep the preview rooted at `main.tex`.
 
-The initial render builds document metadata, block spans, numbering, references, and preview shells. TikZ and PDF runtimes load only when their blocks are requested. Later edits normally use local patches rather than replacing the complete preview.
+## 2. Open it in VS Code
+
+1. Open `main.tex` in the editor.
+2. Press `Ctrl+K V` on Windows/Linux or `Cmd+K V` on macOS.
+3. Wait for the first structural preview to appear.
+4. Place the editor cursor in the introduction and press `Ctrl+Alt+M` (`Cmd+Alt+M` on macOS).
+5. Double-click a sentence in the preview to return to its source.
+
+By default, live preview and automatic scroll synchronization are enabled. Save behavior, delays, virtualization, and backend selection are available under VS Code Settings by searching for **SnapTeX**.
+
+## 3. Open it in the Web app
+
+From the welcome page, choose one of these actions:
+
+- **Open Folder** to work directly with a browser-granted local directory;
+- **Import Folder** to copy a project into persistent browser storage;
+- **Open Demo** to create a reusable demo workspace.
+
+Select `main.tex` in Explorer. If another `.tex` file is currently the root, use **Set Root**. Press `Ctrl+S` or `Cmd+S` to save the active file through the current workspace backend.
+
+Use `Ctrl+Alt+M` to reveal the editor cursor in the preview. Double-click preview content for the reverse direction.
+
+## 4. Understand the first load
+
+The initial render extracts metadata and supported macros, resolves included source, creates block/source mappings, scans numbering and references, and builds lightweight preview shells. In virtual mode, HTML and heavy resources are requested only near the viewport.
+
+TikZ and PDF support may therefore activate later than ordinary text and math. Subsequent edits normally update only changed or dependency-dirty blocks.
+
+## 5. Check saving
+
+Saving depends on the project type:
+
+| Project type | What save does |
+| --- | --- |
+| VS Code workspace | Uses VS Code's normal file save |
+| Web direct folder | Writes through the granted file handle |
+| Web imported workspace or demo | Persists the current text to IndexedDB |
+| Remote server project | Sends an authenticated write to the project API |
+
+The Web app marks modified files until the current backend confirms a save. Use **Export ZIP** for a portable snapshot of a browser workspace.
 
 ## Next steps
 
-- Configure the [VS Code extension](./vscode.md).
-- Learn how [Web projects and storage](./web.md) differ by browser.
-- Review [rendering support](../features/rendering.md).
+- [VS Code Extension](./vscode.md)
+- [Web App](./web.md)
+- [Projects and Files](./projects.md)
+- [Sync and Navigation](../features/sync.md)
+- [Troubleshooting](./troubleshooting.md)

@@ -2,6 +2,17 @@
 
 SnapTeX Web uses CodeMirror for editing and the shared SnapTeX preview runtime for rendering. The editor, preview, project explorer, settings, and split-pane layout all run in the browser.
 
+## Welcome page choices
+
+| Action | Result | Save destination |
+| --- | --- | --- |
+| **Open Folder** | Uses a browser-granted directory handle | Selected local files |
+| **Import Folder** | Copies supported files into a browser workspace | IndexedDB |
+| **Open Demo** | Creates/reopens the bundled example workspace | IndexedDB |
+| **Open Server** | Opens a named project in a server-enabled deployment | Authenticated remote project API |
+
+The static public edition keeps the **Open Server** entry as deployment guidance but does not call a missing project API.
+
 ## Open Folder
 
 In browsers that implement the File System Access API, **Open Folder** keeps handles to the selected local directory. Saving writes the changed text back to the selected files after the browser grants permission.
@@ -26,6 +37,8 @@ Browser storage can still be cleared by the user, private-browsing policy, or st
 
 The bundled demo is imported into the same browser workspace store. It is not a writable server directory and does not require a login.
 
+Changes are saved to the demo's IndexedDB workspace, so `Ctrl+S` does not download a file. Use **Export ZIP** when you want a portable copy.
+
 ## Static and server editions
 
 The same UI supports two build modes:
@@ -38,3 +51,5 @@ The server process corrects the deployment marker in served HTML from its actual
 ## Offline behavior
 
 The static build installs a service worker that caches application assets. Open the app online once and allow the first load to finish before relying on offline use. Local and imported projects remain browser-managed data and are not uploaded by the static edition.
+
+Remote server projects require a network connection to their server even when the application shell is cached.

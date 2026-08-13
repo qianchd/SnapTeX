@@ -20,9 +20,16 @@
     letter-spacing: 0;
 }
 
+.VPDoc .content,
+.VPDoc .content-container,
+.vp-doc {
+    min-width: 0;
+}
+
 .vp-doc table {
-    display: table;
-    width: 100%;
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
 }
 
 .vp-doc th {

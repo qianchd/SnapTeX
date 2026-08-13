@@ -1,34 +1,58 @@
 # Sync and Navigation
 
-SnapTeX keeps source and preview navigation separate from rendering. Both the legacy and AST backends produce the same block/source map consumed by the host and preview runtime.
+SnapTeX can move from source to preview, from preview to source, or keep the panes aligned automatically. These controls are available in both the legacy and AST backends.
 
-## Editor to preview
+## Source to preview
 
-Forward sync uses the active source line, character position, nearby text anchors, and source ranges to choose a preview block. If virtual mode has released that block, the webview mounts it first and then reveals the target.
+Place the editor cursor at the content you want to reveal, then use:
 
-The reveal keeps the editor cursor's approximate vertical position in the preview. This avoids always placing a synchronized target at the top edge.
+| Host | Action |
+| --- | --- |
+| VS Code | `Ctrl+Alt+M` on Windows/Linux or `Cmd+Alt+M` on macOS |
+| Web | `Ctrl+Alt+M` (`Cmd+Alt+M` where supported) |
 
-## Preview to editor
+SnapTeX reveals the corresponding preview block and tries to preserve the cursor's vertical position in the viewport instead of always placing it at the top.
 
-Double-clicking preview content sends:
+This explicit command is useful after:
 
-- the block index and local click ratio;
-- nearby visible words;
-- AST source ranges when the AST backend produced hints;
-- the clicked viewport ratio.
+- searching or jumping a long distance in the editor;
+- moving to a block that virtual mode has not mounted;
+- disabling automatic sync;
+- opening an included source file while the preview remains rooted at `main.tex`.
 
-The host chooses the nearest matching source range and reveals it at the corresponding vertical ratio. A short highlight animation marks the resolved source.
+## Preview to source
 
-## Automatic scrolling
+Double-click visible preview content. SnapTeX reveals the closest matching source range and briefly highlights it.
 
-Automatic sync observes scroll and cursor changes in both panes. Directional suppression locks prevent a movement initiated by one pane from being echoed back as a new movement from the other pane.
+Click text, math, a table cell, or another visible element rather than the blank margin. When the same words appear several times in a long block, the click position and nearby source anchors help select the closest occurrence.
 
-Layout changes, split-pane resizing, and preview patches temporarily suppress synchronization. This matters because virtual block mounting and changing block heights can otherwise turn one user scroll into a feedback loop.
+## Automatic sync
 
-## Virtual mode
+Automatic source/preview synchronization is enabled by default.
 
-Virtualization does not remove navigation metadata. Every block retains a lightweight shell with its source line, hash, and estimated height. Reference jumps, tooltips, and explicit sync requests can mount an offscreen block on demand.
+- In VS Code, use `Ctrl+Alt+A` (`Cmd+Alt+A` on macOS) to toggle it.
+- In the Web app, use **Settings > Auto scroll sync**.
 
-## AST enhancement
+Scroll or move the caret normally. SnapTeX suppresses the reverse event while one pane is applying a synchronized movement, so the panes do not repeatedly pull each other back.
 
-The AST backend stores compact source hints rather than retaining complete AST trees for every block. Those hints add source spans for inline math and other structured nodes, improving fine-grained sync without reparsing during each navigation request.
+During split-pane resizing or a preview layout update, synchronization pauses briefly. This prevents changing block heights from being mistaken for a user scroll.
+
+## References and tooltips
+
+Click a rendered `\ref`, `\eqref`, or supported citation link to reveal its preview target. Hovering a reference opens contextual content that includes the target block and neighboring blocks when available.
+
+Virtual mode retains anchors even when target HTML is unmounted. The requested block is mounted before the jump or tooltip is shown.
+
+## AST precision
+
+When `ast(experimental)` is selected, stored source hints can narrow inline math and other structured nodes. Navigation consumes those hints; it does not reparse a block every time you synchronize.
+
+The ordinary block/source map still exists, so the same commands and webview message protocol work in either backend.
+
+## When sync looks wrong
+
+1. Confirm that the preview is rooted at the correct document.
+2. Use the explicit source-to-preview shortcut after a large jump.
+3. Reopen or fully reload the preview after switching backends.
+4. Double-click visible content instead of an empty area.
+5. See [Troubleshooting](../guide/troubleshooting.md#sync-jumps-to-the-wrong-place) for reporting details.

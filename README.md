@@ -83,7 +83,8 @@ The maintained guides cover:
 - [Static Web and PWA deployment](https://qianchd.github.io/SnapTeX/docs/deployment/static-web)
 - [SnapTeX Server installation](https://qianchd.github.io/SnapTeX/docs/deployment/server)
 - [Security model](https://qianchd.github.io/SnapTeX/docs/deployment/security)
-- [Rules registry](https://qianchd.github.io/SnapTeX/docs/extending/rules)
+- [Developer extension guide](https://qianchd.github.io/SnapTeX/docs/extending/)
+- [Rendering rule API](https://qianchd.github.io/SnapTeX/docs/extending/rule-api)
 - [Architecture and rendering pipeline](https://qianchd.github.io/SnapTeX/docs/development/architecture)
 
 ## Core Dependencies

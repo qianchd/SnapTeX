@@ -27,7 +27,7 @@ The Web settings menu exposes the host-independent subset:
 - render and sync delays;
 - light, dark, blue, and rose themes.
 
-Web settings apply to the current application session. Project contents are stored by the selected project backend, independently of display settings.
+Web settings apply to the running application. Project contents are stored by the selected project backend, independently of display settings.
 
 ## Backend mode
 

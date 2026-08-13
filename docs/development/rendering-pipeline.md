@@ -27,7 +27,9 @@ Unchanged block text is not duplicated into long-lived renderer snapshots. Hashe
 
 ## Rendering rules
 
-Legacy preprocessing rules run in ascending priority, protecting generated HTML before Markdown-it. AST render rules can consume structured nodes first in AST mode. Unclaimed content still passes through the established rendering helpers, preserving behavior shared with the legacy backend.
+Legacy preprocessing rules run in ascending priority, protecting generated HTML before Markdown-it. In AST mode, the AST walker tests `astRenderRules` in array order and gives the first rule returning a result ownership of the current node. Unclaimed AST nodes use the AST fallback renderer; built-in AST rules reuse shared math, citation, table, TikZ, and inline helpers where the output contract is common.
+
+The selected backend runs one rendering-rule array. A source-level extension targets `renderRules` or `astRenderRules`; it is not automatically passed through both.
 
 ## Full versus patch update
 

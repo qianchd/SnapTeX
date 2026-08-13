@@ -29,7 +29,7 @@ Dynamic source updates regenerate artifacts for affected blocks. Navigation read
 
 AST rules match node structure rather than competing regular-expression priority alone. They improve nested command arguments, headings with math, list ownership, captions at arbitrary child positions, and inline source spans.
 
-Legacy render helpers remain the fallback for content not claimed by an AST rule. This is deliberate reuse of stable behavior, not a fallback to a separate backend pipeline.
+Content not claimed by an AST rule uses the AST fallback renderer for comments, whitespace, paragraphs, ordinary text, unsupported macros, and child arrays. Built-in AST rules deliberately reuse host-neutral helpers such as KaTeX, citations, tables, and TikZ preparation where those services are shared; the block is not rerun through the legacy `renderRules` pipeline.
 
 ## Scanner status
 
