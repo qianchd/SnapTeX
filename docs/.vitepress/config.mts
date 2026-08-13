@@ -58,6 +58,7 @@ export default defineConfig({
                 text: 'Extend SnapTeX',
                 items: [
                     { text: 'Rules Registry', link: '/extending/rules' },
+                    { text: 'Rule API Reference', link: '/extending/rule-api' },
                     { text: 'Metadata and Dependencies', link: '/extending/metadata' }
                 ]
             },
