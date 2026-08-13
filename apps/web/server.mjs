@@ -346,6 +346,8 @@ export function createSnapTeXWebServer(options = {}) {
         response.setHeader('X-Content-Type-Options', 'nosniff');
         response.setHeader('Referrer-Policy', 'no-referrer');
         response.setHeader('X-Frame-Options', 'DENY');
+        response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
         response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
         response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
         const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
