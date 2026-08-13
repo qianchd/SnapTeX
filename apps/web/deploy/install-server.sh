@@ -43,7 +43,7 @@ if [[ ! "$SNAPTEX_PUBLIC_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
     echo "SNAPTEX_PUBLIC_ORIGIN must be an HTTPS origin without a path." >&2
     exit 1
 fi
-if [[ ! "$SNAPTEX_PUBLIC_PATH" =~ ^/[A-Za-z0-9._~/-]*/$ ]] || [[ "$SNAPTEX_PUBLIC_PATH" == "//" ]]; then
+if [[ "$SNAPTEX_PUBLIC_PATH" != "/" && ! "$SNAPTEX_PUBLIC_PATH" =~ ^/[A-Za-z0-9._~/-]+/$ ]]; then
     echo "SNAPTEX_PUBLIC_PATH must be an absolute URL path ending in /." >&2
     exit 1
 fi
