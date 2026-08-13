@@ -1,4 +1,4 @@
-import type { BrowserWorkspaceTemplate } from './indexeddb-project';
+import type { BrowserImportFile } from './indexeddb-project';
 
 const DEMO_ASSETS = [
     { path: '/main.tex', url: 'demo/main.tex' },
@@ -15,15 +15,9 @@ async function fetchAsset(asset: typeof DEMO_ASSETS[number]): Promise<{ path: st
     return { path: asset.path, file: await response.blob() };
 }
 
-export const DEMO_PROJECT_TEMPLATE: BrowserWorkspaceTemplate = {
-    id: 'snaptex-demo',
-    name: 'SnapTeX Demo',
-    files: []
-};
+export const DEMO_PROJECT_ID = 'snaptex-demo';
+export const DEMO_PROJECT_NAME = 'SnapTeX Demo';
 
-export async function loadDemoTemplate(): Promise<BrowserWorkspaceTemplate> {
-    return {
-        ...DEMO_PROJECT_TEMPLATE,
-        files: await Promise.all(DEMO_ASSETS.map(fetchAsset))
-    };
+export function loadDemoFiles(): Promise<BrowserImportFile[]> {
+    return Promise.all(DEMO_ASSETS.map(fetchAsset));
 }

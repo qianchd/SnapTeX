@@ -209,7 +209,8 @@ suite('BrowserFileProvider', () => {
             try {
                 const project = await store.importFiles('paper', [
                     { path: '/main.tex', file: new Blob(['Base']) },
-                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                    { path: '/alt.tex', file: new Blob(['Alternative']) },
+                    { path: '/figure.png', file: new Blob(['Old image']) }
                 ]);
                 const opened = await store.open(project.id);
                 const main = opened.files.find(file => file.path === '/main.tex');
@@ -222,20 +223,24 @@ suite('BrowserFileProvider', () => {
 
                 const unchangedSource = await store.reimportFiles(project.id, [
                     { path: '/main.tex', file: new Blob(['Base']) },
-                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                    { path: '/alt.tex', file: new Blob(['Alternative']) },
+                    { path: '/figure.png', file: new Blob(['New image']) }
                 ]);
                 assert.equal(unchangedSource.length, 0);
                 assert.equal(await (await store.open(project.id)).files.find(file => file.path === '/main.tex')?.readText?.(), 'Local');
+                assert.equal(await (await (await store.open(project.id)).files.find(file => file.path === '/figure.png')?.readBlob?.())?.text(), 'New image');
 
                 const conflict = await store.reimportFiles(project.id, [
                     { path: '/main.tex', file: new Blob(['Remote']) },
-                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                    { path: '/alt.tex', file: new Blob(['Alternative']) },
+                    { path: '/figure.png', file: new Blob(['New image']) }
                 ]);
                 assert.equal(conflict.length, 1);
 
                 const merged = await store.reimportFiles(project.id, [
                     { path: '/main.tex', file: new Blob(['Local']) },
-                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                    { path: '/alt.tex', file: new Blob(['Alternative']) },
+                    { path: '/figure.png', file: new Blob(['New image']) }
                 ]);
                 assert.equal(merged.length, 0);
                 const reopened = await store.open(project.id);
@@ -245,7 +250,8 @@ suite('BrowserFileProvider', () => {
                 await opened.operations?.createTextFile('/notes.tex', 'New local file');
                 const missingLocalFile = await store.reimportFiles(project.id, [
                     { path: '/main.tex', file: new Blob(['Local']) },
-                    { path: '/alt.tex', file: new Blob(['Alternative']) }
+                    { path: '/alt.tex', file: new Blob(['Alternative']) },
+                    { path: '/figure.png', file: new Blob(['New image']) }
                 ]);
                 assert.deepEqual(missingLocalFile, ['/notes.tex']);
             } finally {

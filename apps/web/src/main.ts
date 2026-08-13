@@ -9,7 +9,7 @@ import {
     type BrowserProject,
     type ProjectTreeNode
 } from '../../standalone/src/browser-project';
-import { DEMO_PROJECT_TEMPLATE, loadDemoTemplate } from './demo-project';
+import { DEMO_PROJECT_ID, DEMO_PROJECT_NAME, loadDemoFiles } from './demo-project';
 import { BrowserWorkspaceStore, type BrowserImportFile } from './indexeddb-project';
 import {
     createDirectoryProject,
@@ -575,25 +575,19 @@ async function deleteActiveFile(host: StandaloneHost): Promise<void> {
     setStatus(`Deleted ${path}`);
 }
 
-function downloadText(path: string, text: string): void {
-    const blob = new Blob([text], { type: 'text/x-tex;charset=utf-8' });
+function downloadBlob(blob: Blob, name: string): void {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = path.split('/').pop() || 'main.tex';
+    link.download = name;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url));
 }
 
 async function exportProject(host: StandaloneHost): Promise<void> {
     const snapshot = await host.createProjectSnapshot();
     const blob = await createProjectZip(snapshot);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${snapshot.name.replace(/[^A-Za-z0-9._-]+/g, '-') || 'snaptex-project'}.zip`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${snapshot.name.replace(/[^A-Za-z0-9._-]+/g, '-') || 'snaptex-project'}.zip`);
     setStatus(`Exported ${snapshot.files.length} files`);
 }
 
@@ -673,7 +667,7 @@ async function saveActiveFile(host: StandaloneHost): Promise<void> {
         return;
     }
 
-    downloadText(result.path, result.text);
+    downloadBlob(new Blob([result.text], { type: 'text/x-tex;charset=utf-8' }), result.path.split('/').pop() || 'main.tex');
     setStatus(`Downloaded ${result.path}`);
 }
 
@@ -911,12 +905,12 @@ async function bindLogoutControl(): Promise<void> {
 
 async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     setStatus('Loading demo project...');
-    const existing = (await browserWorkspaces.list()).find(project => project.templateId === DEMO_PROJECT_TEMPLATE.id);
+    const existing = (await browserWorkspaces.list()).find(project => project.templateId === DEMO_PROJECT_ID);
     if (existing) {
         await loadProject(host, await browserWorkspaces.open(existing.id));
         return;
     }
-    const summary = await browserWorkspaces.createFromTemplate(await loadDemoTemplate());
+    const summary = await browserWorkspaces.importFiles(DEMO_PROJECT_NAME, await loadDemoFiles(), DEMO_PROJECT_ID);
     await loadProject(host, await browserWorkspaces.open(summary.id));
 }
 

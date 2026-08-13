@@ -65,12 +65,6 @@ export interface BrowserWorkspaceSummary {
     templateId?: string;
 }
 
-export interface BrowserWorkspaceTemplate {
-    id: string;
-    name: string;
-    files: readonly BrowserImportFile[];
-}
-
 function createProjectId(): string {
     return globalThis.crypto?.randomUUID?.()
         ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -170,7 +164,7 @@ async function createStoredRecords(projectId: string, files: readonly BrowserImp
     const records: StoredFileDraft[] = [];
     for (const file of files) {
         const key = fileKey(projectId, file.path);
-        const hash = await contentHash(file.file);
+        const hash = isProjectTextFile(file.path) ? await contentHash(file.file) : '';
         records.push({
             key,
             projectId,
@@ -235,8 +229,8 @@ export class BrowserWorkspaceStore {
             .map(projectSummary);
     }
 
-    async importFiles(name: string, files: readonly BrowserImportFile[]): Promise<BrowserWorkspaceSummary> {
-        return this.createWorkspace(name, normalizeImportFiles(files));
+    async importFiles(name: string, files: readonly BrowserImportFile[], templateId?: string): Promise<BrowserWorkspaceSummary> {
+        return this.createWorkspace(name, normalizeImportFiles(files), templateId);
     }
 
     async reimportFiles(id: string, files: readonly BrowserImportFile[], overwriteConflicts = false): Promise<readonly string[]> {
@@ -293,19 +287,12 @@ export class BrowserWorkspaceStore {
                 continue;
             }
             transaction.objectStore('files').put(fileMetadata(record));
-            if (!existing || existing.currentHash !== record.currentHash) {
+            if (!isProjectTextFile(record.path) || !existing || existing.currentHash !== record.currentHash) {
                 transaction.objectStore('contents').put(record.content);
             }
         }
         await transaction.done;
         return [];
-    }
-
-    async createFromTemplate(template: BrowserWorkspaceTemplate): Promise<BrowserWorkspaceSummary> {
-        const project = await this.createWorkspace(template.name, normalizeImportFiles(template.files), {
-            templateId: template.id
-        });
-        return project;
     }
 
     async open(id: string): Promise<BrowserProject> {
@@ -382,7 +369,7 @@ export class BrowserWorkspaceStore {
     private async createWorkspace(
         name: string,
         files: readonly BrowserImportFile[],
-        template: Pick<StoredProjectRecord, 'templateId'> = {}
+        templateId?: string
     ): Promise<BrowserWorkspaceSummary> {
         if (files.length === 0) {
             throw new Error('The imported project contains no supported files.');
@@ -394,7 +381,7 @@ export class BrowserWorkspaceStore {
             id: projectId,
             name: name.trim() || 'Browser Project',
             rootPath,
-            ...template,
+            templateId,
             lastOpenedAt: timestamp
         };
         const records = await createStoredRecords(projectId, files);
