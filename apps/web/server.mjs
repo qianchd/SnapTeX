@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { createWebSessionAuth } from './web-session.mjs';
 
@@ -71,7 +72,8 @@ function isWithin(root, path) {
 }
 
 function hasDeniedPathSegment(pathname) {
-    return pathname.split(/[\\/]+/).some(part => !part || part === '.' || part === '..' || part === 'node_modules' || part.startsWith('.'));
+    return pathname.split(/[\\/]+/).some(part => !part || part === '.' || part === '..' ||
+        part === 'node_modules' || part.startsWith('.') || /[\u0000-\u001f\u007f]/.test(part));
 }
 
 function listProjectFiles(root, directory = root) {
@@ -162,6 +164,22 @@ function sendJson(response, status, value) {
         'Cache-Control': 'no-store'
     });
     response.end(JSON.stringify(value));
+}
+
+async function sendFile(response, filePath, headOnly = false) {
+    const extension = extname(filePath).toLowerCase();
+    if (extension === '.svg') {
+        response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    }
+    response.writeHead(200, {
+        'Content-Type': contentTypes.get(extension) ?? 'application/octet-stream',
+        'Cache-Control': 'no-store'
+    });
+    if (headOnly) {
+        response.end();
+        return;
+    }
+    await pipeline(createReadStream(filePath), response);
 }
 
 async function readTextBody(request) {
@@ -292,14 +310,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
         return true;
     }
     if (request.method === 'GET') {
-        if (extname(filePath).toLowerCase() === '.svg') {
-            response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
-        }
-        response.writeHead(200, {
-            'Content-Type': contentTypes.get(extname(filePath)) ?? 'application/octet-stream',
-            'Cache-Control': 'no-store'
-        });
-        createReadStream(filePath).pipe(response);
+        await sendFile(response, filePath);
         return true;
     }
     if (request.method === 'PUT' && projectTextFilePattern.test(filePath)) {
@@ -341,6 +352,9 @@ export function createSnapTeXWebServer(options = {}) {
     if (projectsRoot && !options.auth) {
         throw new Error('Remote projects require authentication.');
     }
+    if (projectsRoot && (isWithin(root, projectsRoot) || isWithin(projectsRoot, root))) {
+        throw new Error('Static assets and remote projects require separate directories.');
+    }
     const auth = createWebSessionAuth(options.auth);
     const server = createServer((request, response) => void (async () => {
         response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -381,15 +395,7 @@ export function createSnapTeXWebServer(options = {}) {
             return;
         }
 
-        response.writeHead(200, {
-            'Content-Type': contentTypes.get(extname(filePath)) ?? 'application/octet-stream',
-            'Cache-Control': 'no-store'
-        });
-        if (request.method === 'HEAD') {
-            response.end();
-        } else {
-            createReadStream(filePath).pipe(response);
-        }
+        await sendFile(response, filePath, request.method === 'HEAD');
     })().catch(error => {
         console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {
@@ -400,6 +406,9 @@ export function createSnapTeXWebServer(options = {}) {
             response.destroy(error);
         }
     }));
+    server.requestTimeout = 30_000;
+    server.headersTimeout = 15_000;
+    server.maxHeadersCount = 100;
     server.on('close', auth.clear);
     return server;
 }
@@ -414,10 +423,7 @@ if (isDirectRun) {
     if (projectsRoot && !['127.0.0.1', '::1', 'localhost'].includes(defaultHost)) {
         throw new Error('SnapTeX remote projects must listen on a loopback host behind an HTTPS reverse proxy.');
     }
-    if (projectsRoot && publicOrigin && new URL(publicOrigin).protocol !== 'https:') {
-        throw new Error('SNAPTeX_PUBLIC_ORIGIN must use HTTPS when remote projects are enabled.');
-    }
-    if (projectsRoot && (!username || !password || password.length < 16 || !publicOrigin)) {
+    if (projectsRoot && (!username || !password || !publicOrigin)) {
         throw new Error('Remote projects require SNAPTeX_AUTH_USERNAME, SNAPTeX_AUTH_PASSWORD (16+ characters), and SNAPTeX_PUBLIC_ORIGIN.');
     }
     const auth = username && password && publicOrigin ? {

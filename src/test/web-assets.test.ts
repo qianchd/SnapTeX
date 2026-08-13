@@ -6,6 +6,7 @@ import type { Server } from 'http';
 import { basename, join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
+import { runInNewContext } from 'vm';
 
 type WebServerModule = {
     createSnapTeXWebServer(options: { root: string; indexPath?: string }): Server;
@@ -112,7 +113,7 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, '/media/icon-192.png');
             await fetchBytes(baseUrl, '/media/icon-512.png');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
-            assert.match(serviceWorker, /CACHE_NAME = "snaptex-web-/);
+            assert.match(serviceWorker, /CACHE_PREFIX = `snaptex-web:\$\{self\.registration\.scope\}:/);
             assert.match(serviceWorker, /mode === 'navigate'[\s\S]*fetch\(event\.request\)\.catch/);
             assert.doesNotMatch(serviceWorker, /\.nojekyll/);
             for (const source of [
@@ -121,6 +122,44 @@ suite('Standalone web assets', () => {
             ]) {
                 assert.match(serviceWorker, source);
             }
+            type ServiceWorkerTestEvent = {
+                request?: { method: string; mode: string; url: string };
+                respondWith?(response: Promise<unknown>): void;
+                waitUntil?(work: Promise<unknown>): void;
+            };
+            const handlers = new Map<string, (event: ServiceWorkerTestEvent) => void>();
+            const deletedCaches: string[] = [];
+            runInNewContext(serviceWorker, {
+                URL,
+                fetch: () => Promise.reject(new Error('Unexpected network request.')),
+                caches: {
+                    delete: async (name: string) => { deletedCaches.push(name); return true; },
+                    keys: async () => [
+                        'snaptex-web:https://snaptex.test/app/:old',
+                        'snaptex-web:https://snaptex.test/other/:current',
+                        'unrelated-app-cache'
+                    ],
+                    open: async () => ({ match: async () => 'cached-response' })
+                },
+                self: {
+                    addEventListener: (name: string, handler: (event: ServiceWorkerTestEvent) => void) => handlers.set(name, handler),
+                    clients: { claim: async () => undefined },
+                    location: { origin: 'https://snaptex.test' },
+                    registration: { scope: 'https://snaptex.test/app/' },
+                    skipWaiting: async () => undefined
+                }
+            });
+            let activation = Promise.resolve<unknown>(undefined);
+            handlers.get('activate')?.({ waitUntil: work => { activation = work; } });
+            await activation;
+            assert.deepEqual(deletedCaches, ['snaptex-web:https://snaptex.test/app/:old']);
+
+            let cachedResponse: Promise<unknown> | undefined;
+            handlers.get('fetch')?.({
+                request: { method: 'GET', mode: 'same-origin', url: 'https://snaptex.test/web-main.js' },
+                respondWith: response => { cachedResponse = response; }
+            });
+            assert.equal(await cachedResponse, 'cached-response');
             await fetchText(baseUrl, tikzJaxUri);
             await fetchText(baseUrl, tikzCssUri);
             await fetchText(baseUrl, `${tikzBaseUri}/run-tex.js`);

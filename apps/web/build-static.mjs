@@ -59,9 +59,10 @@ function listFiles(dir, root = dir) {
     return entries.sort();
 }
 
-function serviceWorkerSource(cacheName, assets) {
+function serviceWorkerSource(cacheVersion, assets) {
     return [
-        `const CACHE_NAME = ${JSON.stringify(cacheName)};`,
+        "const CACHE_PREFIX = `snaptex-web:${self.registration.scope}:`;",
+        `const CACHE_NAME = CACHE_PREFIX + ${JSON.stringify(cacheVersion)};`,
         `const ASSETS = ${JSON.stringify(['./', ...assets.map(asset => `./${asset}`)], null, 4)};`,
         '',
         "self.addEventListener('install', event => {",
@@ -69,7 +70,7 @@ function serviceWorkerSource(cacheName, assets) {
         '});',
         '',
         "self.addEventListener('activate', event => {",
-        '    event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))).then(() => self.clients.claim()));',
+        '    event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map(key => caches.delete(key)))).then(() => self.clients.claim()));',
         '});',
         '',
         "self.addEventListener('fetch', event => {",
@@ -79,25 +80,23 @@ function serviceWorkerSource(cacheName, assets) {
         '    }',
         '',
         "    if (event.request.mode === 'navigate') {",
-        "        event.respondWith(fetch(event.request).catch(() => caches.match('./') || caches.match('./index.html')));",
+        "        event.respondWith(fetch(event.request).catch(() => caches.open(CACHE_NAME).then(cache => cache.match('./').then(cached => cached || cache.match('./index.html')))));",
         '        return;',
         '    }',
         '',
-        '    event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).catch(error => {',
-        '        throw error;',
-        '    })));',
+        '    event.respondWith(caches.open(CACHE_NAME).then(cache => cache.match(event.request)).then(cached => cached || fetch(event.request)));',
         '});',
         ''
     ].join('\n');
 }
 
-function cacheNameFor(outDir, assets) {
+function cacheVersionFor(outDir, assets) {
     const hash = createHash('sha256');
     for (const asset of assets) {
         hash.update(asset);
         hash.update(readFileSync(join(outDir, asset)));
     }
-    return `snaptex-web-${hash.digest('hex').slice(0, 12)}`;
+    return hash.digest('hex').slice(0, 12);
 }
 
 export function buildStaticWeb(options = {}) {
@@ -118,7 +117,7 @@ export function buildStaticWeb(options = {}) {
     writeFileSync(join(outDir, 'manifest.webmanifest'), readFileSync(join(root, 'apps/web/manifest.webmanifest'), 'utf8').replaceAll('"/media/', '"media/'));
     writeFileSync(join(outDir, '.nojekyll'), '');
     const assets = listFiles(outDir).filter(asset => asset !== 'service-worker.js' && !asset.startsWith('.'));
-    writeFileSync(join(outDir, 'service-worker.js'), serviceWorkerSource(cacheNameFor(outDir, assets), assets));
+    writeFileSync(join(outDir, 'service-worker.js'), serviceWorkerSource(cacheVersionFor(outDir, assets), assets));
     return { outDir, assets };
 }
 

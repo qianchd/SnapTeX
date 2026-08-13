@@ -36,6 +36,33 @@ test('serves a writable project through the remote project API', async () => {
             publicOrigin: `${publicOrigin}/nested`
         }
     }), /HTTPS origin without a path/);
+    assert.throws(() => createSnapTeXWebServer({
+        root: projectsRoot,
+        projectsRoot,
+        auth: {
+            username: 'test-user',
+            password: 'a-secure-test-password',
+            publicOrigin
+        }
+    }), /separate directories/);
+    assert.throws(() => createSnapTeXWebServer({
+        root: staticRoot,
+        projectsRoot,
+        auth: {
+            username: 'invalid\nuser',
+            password: 'a-secure-test-password',
+            publicOrigin
+        }
+    }), /username/);
+    assert.throws(() => createSnapTeXWebServer({
+        root: staticRoot,
+        projectsRoot,
+        auth: {
+            username: 'test-user',
+            password: 'too-short',
+            publicOrigin
+        }
+    }), /16 characters/);
     const server = createSnapTeXWebServer({
         root: staticRoot,
         projectsRoot,
@@ -46,6 +73,9 @@ test('serves a writable project through the remote project API', async () => {
             publicPath: '/'
         }
     });
+    assert.equal(server.requestTimeout, 30_000);
+    assert.equal(server.headersTimeout, 15_000);
+    assert.equal(server.maxHeadersCount, 100);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     assert.ok(address && typeof address === 'object');
@@ -110,6 +140,9 @@ test('serves a writable project through the remote project API', async () => {
 
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/build.aux`)).status, 404);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/%2e%2e%2Foutside.tex`)).status, 404);
+        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/line%0Abreak.tex`, {
+            method: 'POST', body: 'x'
+        })).status, 404);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/image.png`, { method: 'POST', body: 'x' })).status, 415);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'POST', body: 'x' })).status, 409);
 
@@ -320,6 +353,7 @@ test('limits the source development server to public web assets', async () => {
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
         assert.equal((await fetch(`${baseUrl}/`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/web-auth/session`)).status, 404);
         assert.equal((await fetch(`${baseUrl}/package.json`)).status, 404);
         assert.equal((await fetch(`${baseUrl}/apps/web/server.env`)).status, 404);
         assert.equal((await fetch(`${baseUrl}/media/%2e%2e%2fapps/web/server.env`)).status, 404);

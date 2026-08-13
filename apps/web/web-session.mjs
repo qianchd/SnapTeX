@@ -15,11 +15,7 @@ const LOCKOUT_MS = 30 * 24 * 60 * 60_000;
 export function createWebSessionAuth(options) {
     if (!options) {
         return {
-            handle: (_request, response, pathname) => {
-                if (pathname !== '/web-auth/session') return false;
-                sendJson(response, 200, { authenticated: true, csrfToken: '' });
-                return true;
-            },
+            handle: () => false,
             authorize: () => true,
             clear: () => undefined
         };
@@ -27,6 +23,12 @@ export function createWebSessionAuth(options) {
     const { username, password } = options;
     if (!username || !password || !options.publicOrigin) {
         throw new Error('Web Session auth requires username, password, and publicOrigin.');
+    }
+    if (/[\u0000-\u001f\u007f]/.test(username)) {
+        throw new Error('Web Session username cannot contain control characters.');
+    }
+    if (password.length < 16) {
+        throw new Error('Web Session password must contain at least 16 characters.');
     }
     const publicUrl = new URL(options.publicOrigin);
     if (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password ||
@@ -201,7 +203,7 @@ function recordLoginFailure(failures, source, failure, now) {
             failures.delete(candidate);
             break;
         }
-        if (failures.size >= MAX_FAILURE_SOURCES) return;
+        if (failures.size >= MAX_FAILURE_SOURCES) failures.delete(failures.keys().next().value);
     }
     failures.delete(source);
     failures.set(source, failure);
