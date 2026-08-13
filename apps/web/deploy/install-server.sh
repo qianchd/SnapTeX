@@ -14,10 +14,8 @@ if ! chmod 600 "$config_file"; then
     echo "Cannot restrict $config_file to its owner." >&2
     exit 1
 fi
-set -a
 # shellcheck source=/dev/null
 source "$config_file"
-set +a
 
 : "${SNAPTEX_PROJECTS_ROOT:?Set SNAPTEX_PROJECTS_ROOT in $config_file}"
 : "${SNAPTEX_AUTH_USERNAME:?Set SNAPTEX_AUTH_USERNAME in $config_file}"
@@ -112,9 +110,12 @@ run_root find "$SNAPTEX_PROJECTS_ROOT" -type d -exec setfacl -m "d:u:$SNAPTEX_RU
 
 echo "[SnapTeX] Installing dependencies and building the Web app..."
 cd "$repo_root"
-npm ci
-npm run web:build-static
-npm run web:test-server
+(
+    unset SNAPTEX_AUTH_USERNAME SNAPTEX_AUTH_PASSWORD
+    npm ci
+    npm run web:build-static
+    npm run web:test-server
+)
 
 node_bin="$(command -v node)"
 run_group="$(id -gn "$SNAPTEX_RUN_USER")"
