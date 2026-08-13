@@ -194,7 +194,7 @@ Both examples above promise plain argument text and therefore escape it. Decide 
 | Already parsed AST children | `input.renderChildren(...)` |
 | Generated LaTeX source in AST mode | `input.renderSource(...)` |
 
-Do not add a more powerful renderer unless the command actually promises nested syntax. The [Rule API Reference](./rule-api.md#renderinlinelatexhtmltext-rendermathhtml) explains every argument of `renderInlineLatexHtml`, including where its callback parameter comes from.
+Do not add a more powerful renderer unless the command actually promises nested syntax. The [`renderInlineLatexHtml` reference](./api/rendering/render-inline-latex-html) explains every argument, including where its callback parameter comes from.
 
 ## Legacy ordering
 

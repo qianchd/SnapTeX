@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vitepress';
+import { withMermaid } from 'vitepress-plugin-mermaid';
 
 const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 const docsBase = process.env.SNAPTEX_DOCS_BASE ?? '/docs/';
@@ -49,6 +50,116 @@ const deploymentSidebar = [
     }
 ];
 
+const apiReferenceItems = [
+    { text: 'API Overview', link: '/extending/rule-api' },
+    { text: 'Call Relationships', link: '/extending/api/call-relationships' },
+    {
+        text: 'Contracts',
+        collapsed: true,
+        items: [
+            { text: 'Registry', link: '/extending/api/contracts/registry' },
+            { text: 'Legacy Rules', link: '/extending/api/contracts/legacy-rules' },
+            { text: 'AST Rules', link: '/extending/api/contracts/ast-rules' },
+            { text: 'Metadata and Dependencies', link: '/extending/api/contracts/metadata-dependencies' },
+            { text: 'Splitter', link: '/extending/api/contracts/splitter' }
+        ]
+    },
+    {
+        text: 'Registry Functions',
+        collapsed: true,
+        items: [
+            { text: 'defineRuleRegistry', link: '/extending/api/registry/define-rule-registry' },
+            { text: 'defineAstRenderRule', link: '/extending/api/registry/define-ast-render-rule' },
+            { text: 'defineBlockDependencyRule', link: '/extending/api/registry/define-block-dependency-rule' }
+        ]
+    },
+    {
+        text: 'Legacy Context',
+        collapsed: true,
+        items: [
+            { text: 'PreprocessRule.apply', link: '/extending/api/legacy/apply' },
+            { text: 'protectHtml', link: '/extending/api/legacy/protect-html' },
+            { text: 'renderInline', link: '/extending/api/legacy/render-inline' },
+            { text: 'resolveCitation', link: '/extending/api/legacy/resolve-citation' },
+            { text: 'getCitedKeys', link: '/extending/api/legacy/get-cited-keys' }
+        ]
+    },
+    {
+        text: 'Source Readers',
+        collapsed: true,
+        items: [
+            { text: 'replaceLatexCommandCalls', link: '/extending/api/source/replace-latex-command-calls' },
+            { text: 'readLatexGroup', link: '/extending/api/source/read-latex-group' },
+            { text: 'readLatexCommandAt', link: '/extending/api/source/read-latex-command-at' },
+            { text: 'skipLatexWhitespace', link: '/extending/api/source/skip-latex-whitespace' },
+            { text: 'stripLatexComments', link: '/extending/api/source/strip-latex-comments' }
+        ]
+    },
+    {
+        text: 'Rendering Functions',
+        collapsed: true,
+        items: [
+            { text: 'escapeHtml', link: '/extending/api/rendering/escape-html' },
+            { text: 'renderMath', link: '/extending/api/rendering/render-math' },
+            { text: 'renderInlineLatexHtml', link: '/extending/api/rendering/render-inline-latex-html' }
+        ]
+    },
+    {
+        text: 'AST Functions',
+        collapsed: true,
+        items: [
+            { text: 'AstRenderRule.match', link: '/extending/api/ast/match' },
+            { text: 'AstRenderRule.render', link: '/extending/api/ast/render' },
+            { text: 'readAstCommandArguments', link: '/extending/api/ast/read-ast-command-arguments' },
+            { text: 'isMacroNode', link: '/extending/api/ast/is-macro-node' },
+            { text: 'isEnvironmentNode', link: '/extending/api/ast/is-environment-node' },
+            { text: 'environmentName', link: '/extending/api/ast/environment-name' },
+            { text: 'readRequiredMacroArgument', link: '/extending/api/ast/read-required-macro-argument' },
+            { text: 'readOptionalMacroArgument', link: '/extending/api/ast/read-optional-macro-argument' },
+            { text: 'argumentText', link: '/extending/api/ast/argument-text' },
+            { text: 'renderChildren', link: '/extending/api/ast/render-children' },
+            { text: 'renderSource', link: '/extending/api/ast/render-source' },
+            { text: 'context.escapeHtml', link: '/extending/api/ast/context-escape-html' },
+            { text: 'context.sourceSlice', link: '/extending/api/ast/context-source-slice' },
+            { text: 'context.sourceContent', link: '/extending/api/ast/context-source-content' },
+            { text: 'context.renderMath', link: '/extending/api/ast/context-render-math' },
+            { text: 'context.renderLabel', link: '/extending/api/ast/context-render-label' },
+            { text: 'context.renderRef', link: '/extending/api/ast/context-render-ref' },
+            { text: 'context.resolveCitation', link: '/extending/api/ast/context-resolve-citation' },
+            { text: 'context.renderCitation', link: '/extending/api/ast/context-render-citation' },
+            { text: 'context.getCitedKeys', link: '/extending/api/ast/context-get-cited-keys' },
+            { text: 'context.renderImage', link: '/extending/api/ast/context-render-image' }
+        ]
+    },
+    {
+        text: 'Metadata and Dependencies',
+        collapsed: true,
+        items: [
+            { text: 'MetadataExtractor.extract', link: '/extending/api/metadata/extract' },
+            { text: 'readMetadataCommand', link: '/extending/api/metadata/read-metadata-command' },
+            { text: 'collect', link: '/extending/api/dependencies/collect' },
+            { text: 'deps.metadata', link: '/extending/api/dependencies/metadata' },
+            { text: 'deps.citedKeys', link: '/extending/api/dependencies/cited-keys' }
+        ]
+    },
+    {
+        text: 'Testing API',
+        collapsed: true,
+        items: [
+            { text: 'PreviewUpdateService', link: '/extending/api/testing/preview-update-service' },
+            { text: 'render', link: '/extending/api/testing/render' },
+            { text: 'renderBlockByIndex', link: '/extending/api/testing/render-block-by-index' },
+            { text: 'resetState', link: '/extending/api/testing/reset-state' },
+            { text: 'getDiagnostics', link: '/extending/api/testing/get-diagnostics' },
+            { text: 'getPreviewSyncData', link: '/extending/api/testing/get-preview-sync-data' },
+            { text: 'getSourceSyncData', link: '/extending/api/testing/get-source-sync-data' },
+            { text: 'isKnownFile', link: '/extending/api/testing/is-known-file' },
+            { text: 'getBibliographyKeys', link: '/extending/api/testing/get-bibliography-keys' },
+            { text: 'getMacroNames', link: '/extending/api/testing/get-macro-names' }
+        ]
+    }
+];
+
 const developerSidebar = [
     {
         text: 'Developer Guide',
@@ -64,9 +175,13 @@ const developerSidebar = [
         items: [
             { text: 'Extension Model', link: '/extending/' },
             { text: 'Rendering Rules Tutorial', link: '/extending/rules' },
-            { text: 'Rule API Reference', link: '/extending/rule-api' },
             { text: 'Metadata and Dependencies', link: '/extending/metadata' }
         ]
+    },
+    {
+        text: 'API Reference',
+        collapsed: true,
+        items: apiReferenceItems
     },
     {
         text: 'Internals',
@@ -80,10 +195,14 @@ const developerSidebar = [
     }
 ];
 
-export default defineConfig({
+export default withMermaid(defineConfig({
     title: 'SnapTeX Documentation',
     description: 'Guides and reference for the SnapTeX LaTeX previewer, Web app, and server.',
     base: docsBase,
+    mermaid: {
+        securityLevel: 'strict',
+        startOnLoad: false
+    },
     cleanUrls: true,
     lastUpdated: true,
     head: [
@@ -122,4 +241,4 @@ export default defineConfig({
             copyright: `SnapTeX ${version} · GPL-3.0-or-later`
         }
     }
-});
+}));
