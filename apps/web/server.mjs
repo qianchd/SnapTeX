@@ -9,7 +9,7 @@ import { createWebSessionAuth } from './web-session.mjs';
 const repoRoot = realpathSync(resolve(fileURLToPath(new URL('../..', import.meta.url))));
 const defaultRoot = resolve(process.argv[2] ?? join(repoRoot, 'dist-web'));
 const defaultPort = Number(process.env.PORT || 3000);
-const defaultHost = process.env.HOST || '127.0.0.1';
+const defaultHost = process.env.HOST || 'localhost';
 const projectFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt|pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
 const projectTextFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
 const projectApiPrefix = '/api/projects';
