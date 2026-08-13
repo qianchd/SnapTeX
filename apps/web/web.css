@@ -389,6 +389,24 @@ body[data-explorer-collapsed="true"] {
     line-height: 1.45;
 }
 
+.remote-project-server-controls {
+    display: grid;
+    gap: 12px;
+}
+
+.remote-project-server-controls > p,
+.remote-project-static-notice {
+    margin: 0;
+    color: var(--snaptex-muted);
+    line-height: 1.45;
+}
+
+body[data-deployment-mode="static"] .remote-project-server-controls,
+body[data-deployment-mode="static"] #remote-project-connect-button,
+body[data-deployment-mode="server"] .remote-project-static-notice {
+    display: none;
+}
+
 .project-dialog-form label {
     font-size: 13px;
     font-weight: 600;

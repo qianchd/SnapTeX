@@ -2,6 +2,8 @@
 
 SnapTeX Server is an independent Node.js service. The editor shell, local folders, and demo are public; remote projects require its login, server-side browser sessions, CSRF validation, and project-file authorization. Nginx only terminates HTTPS and proxies `snaptex.example.com` to the loopback listener.
 
+The public GitHub Pages build uses the static deployment mode and never calls the remote-project API. This installer selects the server deployment mode, which enables **Open Server** and the authenticated session flow in the generated frontend.
+
 ## Requirements
 
 - Linux with Node.js 22 or later, npm, bash, curl, systemd, Nginx, and Certbot.

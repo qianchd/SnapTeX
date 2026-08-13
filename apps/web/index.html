@@ -16,6 +16,7 @@
     <title>SnapTeX Web Preview</title>
 </head>
 <body
+    data-deployment-mode="static"
     data-explorer-collapsed="true"
     data-pane-layout="split"
     data-project-open="false"
@@ -148,12 +149,18 @@
         <dialog id="remote-project-dialog" class="project-dialog">
             <form id="remote-project-form" class="project-dialog-form">
                 <h2>Open Server Project</h2>
-                <p>Connect to a remote project. Files remain on the configured server.</p>
-                <label for="remote-project-name">Project name</label>
-                <input id="remote-project-name" name="name" type="text" required spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._-]*">
-                <p id="remote-project-error" role="alert"></p>
+                <div class="remote-project-server-controls">
+                    <p>Connect to a remote project. Files remain on the configured server.</p>
+                    <label for="remote-project-name">Project name</label>
+                    <input id="remote-project-name" name="name" type="text" required spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._-]*">
+                    <p id="remote-project-error" role="alert"></p>
+                </div>
+                <p class="remote-project-static-notice">
+                    Remote projects are unavailable in this static edition. SnapTeX Server adds authenticated access to projects stored on your own server.
+                    <a href="https://github.com/qianchd/SnapTeX#web-deployment-modes" target="_blank" rel="noopener noreferrer">Read the server deployment guide.</a>
+                </p>
                 <div class="dialog-actions">
-                    <button id="remote-project-cancel-button" type="button">Cancel</button>
+                    <button id="remote-project-cancel-button" type="button">Close</button>
                     <button id="remote-project-connect-button" class="primary-action" type="submit">Connect</button>
                 </div>
             </form>

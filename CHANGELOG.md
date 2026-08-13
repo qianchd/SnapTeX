@@ -11,6 +11,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Security**: Made authentication mandatory whenever the remote project API is enabled, isolated deployment on `snaptex.example.com`, added bounded per-IP failure tracking with a 30-day block after ten failures within 30 minutes, and rejected unsafe static-file paths and methods.
 - **Changed**: Reduced browser-workspace memory with sequential SHA-256 hashing and disposable lazy resource blobs, preserved local edits with three-way re-import checks, retained custom roots, and enforced file/root invariants in IndexedDB.
 - **Changed**: Limited Web Session authentication to remote server projects so the welcome page, local-folder editing, and demo remain available without signing in.
+- **Changed**: Added explicit static and server Web deployment modes; GitHub Pages now shows server deployment guidance without probing unavailable session or project APIs, while the server installer enables authenticated remote projects.
 - **Changed**: Simplified public deployment to an ordinary HTTPS Nginx reverse proxy; SnapTeX no longer requires cross-service authentication or proxy-secret configuration.
 - **Fixed**: Made PWA page navigation network-first so self-hosted updates and on-demand server authentication are not masked by a cached application shell.
 - **Added**: Added a local-first web welcome screen, persistent demo editing, a larger auto-hidden toolbar trigger, and collapsible editor/preview panes.

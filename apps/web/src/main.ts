@@ -491,6 +491,10 @@ function fetchWebSession(): Promise<Response> {
     return fetch(new URL('web-auth/session', document.baseURI), { credentials: 'same-origin' });
 }
 
+function supportsRemoteProjects(): boolean {
+    return document.body.dataset.deploymentMode === 'server';
+}
+
 function redirectToServerLogin(): void {
     const loginUrl = new URL('web-auth/login', document.baseURI);
     loginUrl.searchParams.set('return_to', `${window.location.pathname}${window.location.search}`);
@@ -498,15 +502,19 @@ function redirectToServerLogin(): void {
 }
 
 async function openRemoteProjectDialog(): Promise<void> {
+    const controls = getControls();
+    if (!supportsRemoteProjects()) {
+        controls.remoteProjectDialog.showModal();
+        return;
+    }
     try {
         if ((await fetchWebSession()).status === 401) {
             redirectToServerLogin();
             return;
         }
     } catch {
-        // Static deployments have no session endpoint.
+        // Let the project request surface server connectivity errors.
     }
-    const controls = getControls();
     remoteProjectToCreate = undefined;
     controls.remoteProjectError.textContent = '';
     controls.remoteProjectConnectButton.textContent = 'Connect';
@@ -515,6 +523,9 @@ async function openRemoteProjectDialog(): Promise<void> {
 }
 
 async function connectRemoteProject(host: StandaloneHost): Promise<void> {
+    if (!supportsRemoteProjects()) {
+        return;
+    }
     const controls = getControls();
     controls.remoteProjectConnectButton.disabled = true;
     controls.remoteProjectError.textContent = '';
@@ -941,7 +952,9 @@ host = createStandaloneSnapTeXApp({
     onStateChange: renderProjectState
 });
 bindProjectControls(host);
-void bindLogoutControl();
+if (supportsRemoteProjects()) {
+    void bindLogoutControl();
+}
 window.addEventListener('pagehide', () => { void host.flushProjectWrites(); });
 renderProjectState(host);
 void restoreLastBrowserWorkspace(host).catch(() => undefined);

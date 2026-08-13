@@ -113,7 +113,7 @@ cd "$repo_root"
 (
     unset SNAPTEX_AUTH_USERNAME SNAPTEX_AUTH_PASSWORD
     npm ci
-    npm run web:build-static
+    npm run web:build-server
     npm run web:test-server
 )
 

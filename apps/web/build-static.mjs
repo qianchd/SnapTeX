@@ -35,8 +35,9 @@ function copyPath(source, destination) {
     }
 }
 
-function makeStaticIndex(source) {
+function makeStaticIndex(source, deploymentMode) {
     return source
+        .replace('data-deployment-mode="static"', `data-deployment-mode="${deploymentMode}"`)
         .replace(/\b(href|src|data-[\w-]+)="\/media\//g, '$1="media/')
         .replace('href="/apps/web/manifest.webmanifest"', 'href="manifest.webmanifest"')
         .replaceAll('href="/apps/web/web.css"', 'href="web.css"')
@@ -102,6 +103,10 @@ function cacheNameFor(outDir, assets) {
 export function buildStaticWeb(options = {}) {
     const root = resolve(options.root ?? rootDir);
     const outDir = resolve(options.outDir ?? defaultOutDir);
+    const deploymentMode = options.deploymentMode ?? 'static';
+    if (deploymentMode !== 'static' && deploymentMode !== 'server') {
+        throw new Error(`Unsupported Web deployment mode: ${deploymentMode}`);
+    }
     rmSync(outDir, { recursive: true, force: true });
     mkdirSync(outDir, { recursive: true });
 
@@ -109,7 +114,7 @@ export function buildStaticWeb(options = {}) {
         copyPath(join(root, source), join(outDir, destination));
     }
 
-    writeFileSync(join(outDir, 'index.html'), makeStaticIndex(readFileSync(join(root, 'apps/web/index.html'), 'utf8')));
+    writeFileSync(join(outDir, 'index.html'), makeStaticIndex(readFileSync(join(root, 'apps/web/index.html'), 'utf8'), deploymentMode));
     writeFileSync(join(outDir, 'manifest.webmanifest'), readFileSync(join(root, 'apps/web/manifest.webmanifest'), 'utf8').replaceAll('"/media/', '"media/'));
     writeFileSync(join(outDir, '.nojekyll'), '');
     const assets = listFiles(outDir).filter(asset => asset !== 'service-worker.js' && !asset.startsWith('.'));
@@ -118,6 +123,7 @@ export function buildStaticWeb(options = {}) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-    const { outDir } = buildStaticWeb({ outDir: process.env.SNAPTEX_WEB_OUT_DIR });
-    console.log(`[SnapTeX Web] Static PWA written to ${outDir}`);
+    const deploymentMode = process.argv.includes('--server') ? 'server' : 'static';
+    const { outDir } = buildStaticWeb({ outDir: process.env.SNAPTEX_WEB_OUT_DIR, deploymentMode });
+    console.log(`[SnapTeX Web] ${deploymentMode} PWA written to ${outDir}`);
 }

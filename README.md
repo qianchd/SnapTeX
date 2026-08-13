@@ -1,6 +1,6 @@
 # SnapTeX: High-Performance LaTeX Live Previewer
 
-> **New:** SnapTeX now has a pure static web version: **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)**. Try the editor and live preview directly from GitHub Pages, with no VS Code extension install required.
+> **New:** SnapTeX now has a pure static web version: **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)**. Try the editor and live preview directly from GitHub Pages, with no VS Code extension install required. This public edition works with local folders and browser workspaces; remote server projects require a self-hosted SnapTeX Server.
 
 <div align="center">
 <picture>
@@ -60,9 +60,14 @@ Grab it from the Visual Studio Code Marketplace by searching for **SnapTeX** o
 * **Virtual Mode:** `snaptex.virtualMode` is enabled by default. It keeps long previews responsive by mounting only viewport-near blocks while preserving scrollbar length with measured shell heights.
 * **Lazy Heavy Resources:** PDF canvases and TikZ output are created only when their blocks are mounted near the viewport and can be released when far offscreen.
 
-### Self-hosted Web projects
+### Web deployment modes
 
-Copy or clone the complete SnapTeX source tree onto the server, then create its local deployment configuration:
+SnapTeX Web has two explicit deployment modes:
+
+* **Static Web** is the default produced by `npm run web:build-static` and used by GitHub Pages. It supports local folders, imported browser workspaces, the demo, offline PWA use, and project export. **Open Server** displays deployment guidance without making unavailable API requests.
+* **SnapTeX Server** serves the same editor with authenticated remote-project storage. It is built by the installer with `npm run web:build-server`; remote project files stay under the configured server directory.
+
+To install the server edition, copy or clone the complete source tree onto the server, then create its private deployment configuration:
 
 ```bash
 cd /path/to/SnapTeX
@@ -71,7 +76,7 @@ nano apps/web/server.env
 npm run web:install-server
 ```
 
-The installer runs `npm ci`, builds and tests the static Web app on the server, atomically installs the runtime, installs the repository's systemd unit template, and verifies the project API. Re-run the same command after replacing or updating the source tree. Open the served page and choose **Open Server**.
+The installer runs `npm ci`, builds the server-enabled Web app, runs its server tests, atomically installs the runtime and systemd unit, and verifies the project API. Re-run the same command after replacing or updating the source tree. Open the served page and choose **Open Server**.
 
 `SNAPTEX_PROJECTS_ROOT` selects the directory exposed by the project API. The welcome page, local-folder editor, and demo remain public, while **Open Server** uses SnapTeX's built-in Web Session authentication. Keep the default loopback listener behind an HTTPS reverse proxy before making it public. See [the server deployment guide](apps/web/DEPLOYMENT.md) for configuration, logs, updates, and rollback details.
 

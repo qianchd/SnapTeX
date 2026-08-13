@@ -12,7 +12,7 @@ type WebServerModule = {
 };
 
 type StaticBuildModule = {
-    buildStaticWeb(options: { root: string; outDir: string }): { outDir: string; assets: string[] };
+    buildStaticWeb(options: { root: string; outDir: string; deploymentMode?: 'static' | 'server' }): { outDir: string; assets: string[] };
 };
 
 async function listen(server: Server): Promise<string> {
@@ -62,6 +62,7 @@ suite('Standalone web assets', () => {
         this.timeout(10000);
         const root = repoRoot();
         const outDir = mkdtempSync(join(tmpdir(), 'snaptex-web-'));
+        const serverOutDir = mkdtempSync(join(tmpdir(), 'snaptex-server-web-'));
         const outsideAsset = resolve(outDir, '..', `${basename(outDir)}-outside.txt`);
         writeFileSync(outsideAsset, 'outside');
         const buildModule = await import(pathToFileURL(resolve(root, 'apps/web/build-static.mjs')).href) as StaticBuildModule;
@@ -75,6 +76,7 @@ suite('Standalone web assets', () => {
             const tikzJaxUri = readDataAttribute(indexHtml, 'tikz-jax-js-uri');
             const tikzCssUri = readDataAttribute(indexHtml, 'tikz-jax-css-uri');
             const tikzBaseUri = tikzJaxUri.replace(/\/tikzjax\.js$/, '');
+            assert.equal(readDataAttribute(indexHtml, 'deployment-mode'), 'static');
 
             for (const asset of [
                 'index.html', 'manifest.webmanifest',
@@ -125,9 +127,12 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, `${tikzBaseUri}/tex.wasm.gz`);
             await fetchBytes(baseUrl, `${tikzBaseUri}/core.dump.gz`);
             await fetchBytes(baseUrl, `${tikzBaseUri}/tex_files/tikzlibrarycalc.code.tex.gz`);
+            buildModule.buildStaticWeb({ root, outDir: serverOutDir, deploymentMode: 'server' });
+            assert.equal(readDataAttribute(readFileSync(join(serverOutDir, 'index.html'), 'utf8'), 'deployment-mode'), 'server');
         } finally {
             await closeServer(server);
             rmSync(outDir, { recursive: true, force: true });
+            rmSync(serverOutDir, { recursive: true, force: true });
             rmSync(outsideAsset, { force: true });
         }
     });
