@@ -69,6 +69,7 @@ test('serves a writable project through the remote project API', async () => {
         };
 
         assert.equal((await authenticatedFetch(`${baseUrl}/index.html`, { method: 'POST' })).status, 405);
+        assert.equal((await fetch(`${baseUrl}/healthz`, { method: 'POST' })).status, 405);
         assert.equal((await authenticatedFetch(`${baseUrl}/linked/secret.txt`)).status, 404);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects`)).status, 200);
         const manifest = await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json();
@@ -306,5 +307,21 @@ test('protects remote projects with an independent web session', async () => {
     } finally {
         await new Promise(resolve => server.close(resolve));
         await rm(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('limits the source development server to public web assets', async () => {
+    const server = createSnapTeXWebServer({ root: process.cwd() });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+        assert.equal((await fetch(`${baseUrl}/`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/package.json`)).status, 404);
+        assert.equal((await fetch(`${baseUrl}/apps/web/server.env`)).status, 404);
+        assert.equal((await fetch(`${baseUrl}/media/%2e%2e%2fapps/web/server.env`)).status, 404);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
     }
 });

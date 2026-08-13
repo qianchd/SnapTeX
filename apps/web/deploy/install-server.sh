@@ -10,7 +10,10 @@ if [[ ! -f "$config_file" ]]; then
     echo "Copy apps/web/server.env.example to apps/web/server.env and configure it first." >&2
     exit 1
 fi
-
+if ! chmod 600 "$config_file"; then
+    echo "Cannot restrict $config_file to its owner." >&2
+    exit 1
+fi
 set -a
 # shellcheck source=/dev/null
 source "$config_file"

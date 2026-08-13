@@ -197,5 +197,9 @@
     "katex": "^0.16.27",
     "markdown-it": "^14.1.0",
     "pdfjs-dist": "^5.4.449"
+  },
+  "overrides": {
+    "diff": "8.0.3",
+    "serialize-javascript": "7.0.7"
   }
 }

@@ -6,7 +6,7 @@ import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWebSessionAuth } from './web-session.mjs';
 
-const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const repoRoot = realpathSync(resolve(fileURLToPath(new URL('../..', import.meta.url))));
 const defaultRoot = resolve(process.argv[2] ?? join(repoRoot, 'dist-web'));
 const defaultPort = Number(process.env.PORT || 3000);
 const defaultHost = process.env.HOST || '127.0.0.1';
@@ -15,6 +15,12 @@ const projectTextFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
 const projectApiPrefix = '/api/projects';
 const projectNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const maxWriteBytes = 10 * 1024 * 1024;
+const sourceWebFiles = new Set([
+    '/apps/web/index.html',
+    '/apps/web/manifest.webmanifest',
+    '/apps/web/preview-bridge.js',
+    '/apps/web/web.css'
+]);
 
 const contentTypes = new Map([
     ['.css', 'text/css; charset=utf-8'],
@@ -44,7 +50,12 @@ function resolveRequestPath(root, url, indexPath = defaultIndexPath(root)) {
     try {
         const parsed = new URL(url, 'http://localhost');
         const pathname = parsed.pathname === '/' ? indexPath : parsed.pathname;
-        const candidate = resolve(root, decodeURIComponent(pathname).replace(/^\/+/, ''));
+        const relativePath = decodeURIComponent(pathname).replace(/^\/+/, '');
+        const publicPath = `/${relativePath.replace(/\\/g, '/')}`;
+        if (root === repoRoot && (hasDeniedPathSegment(relativePath) ||
+            (!sourceWebFiles.has(publicPath) && !publicPath.startsWith('/apps/web/dist/') &&
+                !publicPath.startsWith('/media/') && !publicPath.startsWith('/demo/')))) return undefined;
+        const candidate = resolve(root, relativePath);
         if (!isWithin(root, candidate) || !existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) {
             return undefined;
         }
@@ -339,7 +350,15 @@ export function createSnapTeXWebServer(options = {}) {
         response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
         const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
         if (pathname === '/healthz') {
-            sendJson(response, 200, { status: 'ok' });
+            if (request.method === 'GET') {
+                sendJson(response, 200, { status: 'ok' });
+            } else if (request.method === 'HEAD') {
+                response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+                response.end();
+            } else {
+                response.writeHead(405, { Allow: 'GET, HEAD' });
+                response.end('Method not allowed');
+            }
             return;
         }
         if (await auth.handle(request, response, pathname)) return;
