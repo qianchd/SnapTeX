@@ -39,7 +39,7 @@ During split-pane resizing or a preview layout update, synchronization pauses br
 
 ## References and tooltips
 
-Click a rendered `\ref`, `\eqref`, or supported citation link to reveal its preview target. Hovering a reference opens contextual content that includes the target block and neighboring blocks when available.
+Hover over a rendered `\ref`, `\eqref`, or supported citation link to preview its target in a tooltip. The tooltip includes the target block and neighboring blocks when available. Click the link to jump directly to the target in the preview.
 
 Virtual mode retains anchors even when target HTML is unmounted. The requested block is mounted before the jump or tooltip is shown.
 
