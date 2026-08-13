@@ -16,6 +16,24 @@
     height: 28px;
 }
 
+.VPNavBarMenuLink.active {
+    box-shadow: inset 0 -2px var(--vp-c-brand-1);
+    font-weight: 700;
+}
+
+.VPSidebarItem.is-active > .item {
+    margin: 1px -8px;
+    padding: 0 8px;
+    width: calc(100% + 16px);
+    border-radius: 5px;
+    background: var(--vp-c-brand-soft);
+}
+
+.VPSidebarItem.is-active > .item > .link > .text {
+    color: var(--vp-c-brand-1);
+    font-weight: 700;
+}
+
 .vp-doc h1 {
     letter-spacing: 0;
 }

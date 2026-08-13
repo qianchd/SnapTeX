@@ -94,10 +94,9 @@ export default defineConfig({
         logo: '/icon.png',
         siteTitle: 'SnapTeX Docs',
         nav: [
-            { text: 'User Guide', link: '/guide/' },
-            { text: 'Self-hosting', link: '/deployment/overview' },
-            { text: 'Developer Guide', link: '/development/' },
-            { text: 'Rule API', link: '/extending/rule-api' },
+            { text: 'User Guide', link: '/guide/', activeMatch: '^/(guide|features|reference)/' },
+            { text: 'Self-hosting', link: '/deployment/overview', activeMatch: '^/deployment/' },
+            { text: 'Developer Guide', link: '/development/', activeMatch: '^/(development|extending)/' },
             { text: `v${version}`, link: 'https://github.com/qianchd/SnapTeX/releases' },
             { text: 'Open Web App', link: 'https://qianchd.github.io/SnapTeX/' }
         ],
