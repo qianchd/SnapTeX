@@ -12,9 +12,11 @@ test('serves a writable project through the remote project API', async () => {
     const projectsRoot = join(tempRoot, 'projects');
     const projectRoot = join(projectsRoot, 'paper-one');
     await mkdir(join(projectRoot, 'sections'), { recursive: true });
-    await mkdir(staticRoot);
+    await mkdir(join(staticRoot, 'docs', 'guide'), { recursive: true });
     await mkdir(outsideRoot);
     await writeFile(join(staticRoot, 'index.html'), '<body data-deployment-mode="static">SnapTeX</body>');
+    await writeFile(join(staticRoot, 'docs', 'index.html'), 'Documentation');
+    await writeFile(join(staticRoot, 'docs', 'guide', 'start.html'), 'Getting started');
     await writeFile(join(outsideRoot, 'secret.txt'), 'Secret');
     await symlink(outsideRoot, join(staticRoot, 'linked'), 'junction');
     await writeFile(join(projectRoot, 'main.tex'), 'Original');
@@ -83,6 +85,8 @@ test('serves a writable project through the remote project API', async () => {
 
     try {
         assert.match(await (await fetch(`${baseUrl}/`)).text(), /data-deployment-mode="server"/);
+        assert.equal(await (await fetch(`${baseUrl}/docs/`)).text(), 'Documentation');
+        assert.equal(await (await fetch(`${baseUrl}/docs/guide/start`)).text(), 'Getting started');
         const login = await fetch(`${baseUrl}/web-auth/login`, {
             method: 'POST',
             headers: { Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },

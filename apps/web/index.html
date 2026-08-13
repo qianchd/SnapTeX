@@ -38,7 +38,7 @@
                     <summary>Open</summary>
                     <div class="toolbar-menu-content">
                         <button id="open-file-button" type="button">Import File</button>
-                        <button id="open-folder-button" type="button">Open Folder</button>
+                        <button id="open-folder-button" type="button" hidden>Open Folder</button>
                         <button id="import-folder-button" type="button">Import Folder</button>
                         <button id="open-workspace-button" type="button">Workspaces</button>
                         <button id="open-remote-button" type="button">Server</button>
@@ -58,6 +58,7 @@
                 <span id="active-path-label">No project open</span>
             </div>
             <div class="toolbar-group toolbar-actions">
+                <a class="toolbar-link" href="https://qianchd.github.io/SnapTeX/docs/" target="_blank" rel="noopener noreferrer">Docs</a>
                 <details class="toolbar-menu">
                     <summary>Settings</summary>
                     <div id="settings-menu" class="toolbar-menu-content">
@@ -118,7 +119,7 @@
                     <p>Open a local project folder to start editing, or explore the bundled demo.</p>
                     <p class="welcome-privacy">All processing stays on this device. SnapTeX does not upload your files or document data.</p>
                     <div class="welcome-actions">
-                        <button id="welcome-open-folder-button" class="primary-action" type="button">Open Folder</button>
+                        <button id="welcome-open-folder-button" class="primary-action" type="button" hidden>Open Folder</button>
                         <button id="welcome-import-folder-button" type="button">Import Folder</button>
                         <button id="welcome-open-demo-button" type="button">Open Demo</button>
                         <button id="welcome-open-workspace-button" type="button">Workspaces</button>
@@ -159,7 +160,7 @@
                 </div>
                 <p class="remote-project-static-notice">
                     Remote projects are unavailable in this static edition. SnapTeX Server adds authenticated access to projects stored on your own server.
-                    <a href="https://github.com/qianchd/SnapTeX#web-deployment-modes" target="_blank" rel="noopener noreferrer">Read the server deployment guide.</a>
+                    <a href="https://qianchd.github.io/SnapTeX/docs/deployment/server" target="_blank" rel="noopener noreferrer">Read the server deployment guide.</a>
                 </p>
                 <div class="dialog-actions">
                     <button id="remote-project-cancel-button" type="button">Close</button>

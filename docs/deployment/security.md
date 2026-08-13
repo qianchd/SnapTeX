@@ -1,0 +1,43 @@
+# Security Model
+
+## Trust boundary
+
+Use a dedicated origin such as `https://snaptex.example.com`. Browser storage, cookies, service workers, and JavaScript authority are isolated by origin, not URL path. Hosting unrelated applications under the same origin makes every same-origin application part of the same trust boundary.
+
+## Authentication and sessions
+
+Remote projects use the built-in Web Session flow:
+
+- credentials are read from the private server environment;
+- successful login creates an `HttpOnly`, `Secure`, `SameSite=Strict` host cookie;
+- sessions are server-side and bounded;
+- state-changing requests require a matching origin and CSRF token;
+- the welcome page and local-only features do not require login.
+
+Failed logins are tracked by source IP. Ten failures within 30 minutes block that IP for 30 days. The bounded in-memory block list resets with the Node service; use firewall or fail2ban controls when persistent bans are required.
+
+## File authorization
+
+The project API:
+
+- accepts only a constrained project-name format;
+- resolves and revalidates real paths beneath `SNAPTEX_PROJECTS_ROOT`;
+- rejects symbolic links and hidden path segments;
+- limits readable project extensions;
+- allows writes only to supported text formats;
+- limits request body size;
+- uses temporary files and atomic rename for replacement writes.
+
+## Process isolation
+
+The installer runs SnapTeX as a dedicated non-root account. Its systemd unit removes capabilities, restricts device and kernel access, mounts the installed runtime read-only, and grants write access only to the configured project root.
+
+## HTTP defenses
+
+The Node service sends a restrictive Content Security Policy, frame denial, no-sniff, no-referrer, same-origin opener/resource policies, and a limited Permissions Policy. Active SVG project resources receive an additional sandbox policy.
+
+Nginx should expose only the loopback service over HTTPS. Do not bind the Node listener directly to a public network interface.
+
+## Secrets
+
+Keep `apps/web/server.env` out of Git. The installer writes a root-readable environment file outside the runtime. Never place real origins, usernames, passwords, tokens, or private project paths in repository documentation or examples.

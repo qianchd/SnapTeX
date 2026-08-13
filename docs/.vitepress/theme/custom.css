@@ -1,0 +1,61 @@
+:root {
+    --vp-c-brand-1: #0f766e;
+    --vp-c-brand-2: #0d9488;
+    --vp-c-brand-3: #14b8a6;
+    --vp-c-brand-soft: rgba(13, 148, 136, 0.14);
+    --vp-c-tip-1: #0f766e;
+    --vp-c-tip-2: #0d9488;
+    --vp-c-tip-3: #14b8a6;
+    --vp-c-tip-soft: rgba(13, 148, 136, 0.12);
+    --vp-custom-block-tip-border: #14b8a6;
+    --vp-custom-block-warning-border: #f59e0b;
+}
+
+.VPNavBarTitle .logo {
+    width: 28px;
+    height: 28px;
+}
+
+.vp-doc h1 {
+    letter-spacing: 0;
+}
+
+.vp-doc table {
+    display: table;
+    width: 100%;
+}
+
+.vp-doc th {
+    text-align: left;
+}
+
+.doc-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 22px 0 30px;
+}
+
+.doc-actions a {
+    border: 1px solid var(--vp-c-brand-1);
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: var(--vp-c-brand-1);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.doc-actions a:first-child {
+    background: var(--vp-c-brand-1);
+    color: white;
+}
+
+.doc-actions a:hover {
+    border-color: var(--vp-c-brand-2);
+    background: var(--vp-c-brand-soft);
+}
+
+.doc-actions a:first-child:hover {
+    background: var(--vp-c-brand-2);
+    color: white;
+}

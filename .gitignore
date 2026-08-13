@@ -1,6 +1,8 @@
 out
 dist
 dist-web
+docs/.vitepress/cache
+docs/.vitepress/dist
 node_modules
 media/vendor/
 media/webview-main.js

@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Replaced the internal notes under `docs/` with a searchable VitePress documentation site covering user workflows, rendering, deployment, security, extension APIs, architecture, performance, and testing.
 - **Added**: Added an optional self-hosted Web project API with named projects, project creation, lazy remote file loading, in-place text saves, resource URLs, and repository-managed one-command server installation.
 - **Added**: Added shared text-file creation and deletion for writable local folders and remote Web projects, including `.tex`, `.bib`, `.md`, and other supported source files.
 - **Added**: Added persistent browser workspaces backed by IndexedDB, conflict-aware folder re-import, lazy resource reads, project ZIP export, and browser-backed demo editing.

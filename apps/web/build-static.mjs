@@ -124,5 +124,8 @@ export function buildStaticWeb(options = {}) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
     const deploymentMode = process.argv.includes('--server') ? 'server' : 'static';
     const { outDir } = buildStaticWeb({ outDir: process.env.SNAPTEX_WEB_OUT_DIR, deploymentMode });
+    if (deploymentMode === 'static') {
+        copyPath(join(rootDir, 'docs/.vitepress/dist'), join(outDir, 'docs'));
+    }
     console.log(`[SnapTeX Web] ${deploymentMode} PWA written to ${outDir}`);
 }

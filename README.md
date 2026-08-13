@@ -1,21 +1,14 @@
-# SnapTeX: High-Performance LaTeX Live Previewer
+# SnapTeX
 
-> **New:** SnapTeX now has a pure static web version: **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)**. Try the editor and live preview directly from GitHub Pages, with no VS Code extension install required. This public edition works with local folders and browser workspaces; remote server projects require a self-hosted SnapTeX Server.
+Fast, local-first LaTeX editing and structural preview for VS Code and the browser.
 
-<div align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="media/icon.png">
-  <img src="media/icon.png" alt="SnapTeX Logo" width="150">
-</picture>
-</div>
+**[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)** · **[Read the documentation](https://qianchd.github.io/SnapTeX/docs/)** · **[Install the VS Code extension](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex)**
 
-**SnapTeX** is a lightweight, ultra-fast LaTeX previewer for Visual Studio Code. Unlike traditional previewers, it does not require a full TeX distribution (like TeXLive or MiKTeX) to function.
+<p align="center">
+  <img src="media/icon.png" alt="SnapTeX logo" width="150">
+</p>
 
-It combines a custom high‑speed regex parser with **Markdown-It** and **KaTeX** to deliver near‑instant structural and mathematical previews. The result is a lightweight engine featuring a text‑block splitter, diff checker, and fully local rendering.
-
-SnapTeX also runs in the browser via [vscode.dev](https://www.vscode.dev) or GitHub codespace, so you can use it from any device with an internet connection, making this ideal for tablets and other machines that don’t have a native VS Code install. Note that the SnapTeX preview itself is rendered entirely locally in the page, but you’ll need the ability to open the VS Code web site/Github codespace.
-
-It is a demo based on the early conceptual proof, [mume.parser](https://github.com/qianchd/mume.parser) for [MPE](https://github.com/shd101wyy/vscode-markdown-preview-enhanced).
+SnapTeX renders prose, math, references, citations, figures, PDFs, tables, algorithms, theorem-like environments, and TikZ without requiring a local TeX distribution. It is designed for responsive writing and navigation; use a full TeX toolchain for final pagination and publication output.
 
 ## Demo
 
@@ -23,117 +16,82 @@ It is a demo based on the early conceptual proof, [mume.parser](https://github.c
   <img src="media/demo/001.openPreview.gif" alt="Open a SnapTeX preview from a LaTeX document">
 </p>
 
-| Bi-directional sync | Auto scroll sync |
+| Bidirectional sync | Automatic scroll sync |
 | --- | --- |
-| <img src="media/demo/002.BiSync.gif" alt="Jump between LaTeX source and SnapTeX preview"> | <img src="media/demo/003.BiAutoScroll.gif" alt="Keep the LaTeX editor and SnapTeX preview scrolling together"> |
+| <img src="media/demo/002.BiSync.gif" alt="Jump between LaTeX source and preview"> | <img src="media/demo/003.BiAutoScroll.gif" alt="Keep source and preview scrolling together"> |
 
-| References, figures, tables, algorithms, and tooltips | Fast local updates |
+| Rich structural preview | Fast local updates |
 | --- | --- |
-| <img src="media/demo/004.EqFigTableAlgoRefTooltips.gif" alt="Preview equations, figures, tables, algorithms, references, and tooltips"> | <img src="media/demo/005.FastLocalRendering.gif" alt="Fast local rendering updates in SnapTeX"> |
+| <img src="media/demo/004.EqFigTableAlgoRefTooltips.gif" alt="Preview equations, figures, tables, algorithms, references, and tooltips"> | <img src="media/demo/005.FastLocalRendering.gif" alt="Fast local rendering updates"> |
 
----
+## Choose a Host
 
-## What's New in 0.6.0
+| Host | Best for | Storage |
+| --- | --- | --- |
+| VS Code extension | Native local editing and workspace integration | Local VS Code workspace |
+| Static Web/PWA | Browser editing, offline use, and portable workspaces | Local folder handles or IndexedDB |
+| SnapTeX Server | Named projects stored on infrastructure you control | Authenticated server project directory |
 
-* **Default virtual mode for long documents**: SnapTeX now keeps lightweight block shells in the webview and mounts real block DOM only near the viewport, greatly reducing DOM, PDF, image, and TikZ memory pressure.
-* **On-demand block HTML loading**: Large previews can send block metadata first and request HTML only when a block needs to render.
-* **Smoother synchronization**: Editor-to-preview sync, preview-to-editor sync, reference jumps, and hover tooltips now work through virtualized blocks.
-* **Faster, sturdier TikZ previews**: TikZJax is lazy-loaded, worker resources are bootstrapped safely inside VS Code webviews, unused libraries are pruned per picture, stale SVGs remain visible while rerendering, and compile failures are surfaced cleanly.
-* **Better PDF handling**: PDF figures use webview-safe URI loading, viewport-near rendering, a blob module worker, and far-offscreen canvas release.
-* **Stronger rendering safety and maintainability**: Generated HTML is protected explicitly, user-controlled HTML is escaped more consistently, and the renderer/webview code is split into clearer modules with broader tests.
+The public Web app performs document processing locally and does not upload local-folder or browser-workspace contents. Remote projects are available only in a separately deployed server edition.
 
-## **SnapTeX Preview Quick Start Guide**
+## Quick Start
 
-### Installation
+### VS Code
 
-Grab it from the Visual Studio Code Marketplace by searching for **SnapTeX** or visiting the [extension page](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex).
+1. Install **SnapTeX** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex).
+2. Open the root `.tex` file.
+3. Press `Ctrl+K V` (`Cmd+K V` on macOS).
 
-### **How to Open the Preview**
+Use `Ctrl+Alt+M` (`Cmd+Alt+M`) to reveal the editor cursor in the preview. Double-click preview content to return to its source.
 
-* **Via Command Palette:** Open your `*.tex` file, press `Ctrl+Shift+p`, search for **"SnapTeX Preview: Start"**, and press `Enter`.
-* **Via Shortcut:** Simply press the keyboard shortcut `Ctrl+k v` to launch the preview immediately.
+### Web
 
-### **Performance & Rendering**
+Open [SnapTeX Web](https://qianchd.github.io/SnapTeX/) and choose **Open Folder**, **Import Folder**, or **Open Demo**. Imported projects and the demo persist in browser storage and can be exported as ZIP.
 
-* **Initial Load:** The first time you open the preview, it may take several seconds to complete the full rendering.
-* **Real-Time Updates:** Once initialized, updates are processed locally, providing **instant, real-time rendering** as you type.
-* **Virtual Mode:** `snaptex.virtualMode` is enabled by default. It keeps long previews responsive by mounting only viewport-near blocks while preserving scrollbar length with measured shell heights.
-* **Lazy Heavy Resources:** PDF canvases and TikZ output are created only when their blocks are mounted near the viewport and can be released when far offscreen.
+## Highlights
 
-### Web deployment modes
+- KaTeX math, PDF.js figures, and bundled TikZJax rendering.
+- Block hashes, incremental patches, and dependency-aware refreshes.
+- Default virtual mode for lower DOM and heavy-resource memory use on long documents.
+- Bidirectional navigation, automatic scroll sync, references, and contextual tooltips.
+- External BibTeX and inline `thebibliography` previews.
+- Structured metadata for titles, authors, affiliations, email addresses, abstracts, and keywords.
+- Shared rendering core across VS Code, standalone Web, PWA, and server hosts.
+- Extensible render, metadata, dependency, AST, and splitter rules assembled in [`src/rules.ts`](src/rules.ts).
 
-SnapTeX Web has two explicit deployment modes:
+See [Rendering Support](https://qianchd.github.io/SnapTeX/docs/features/rendering) for details and intentional compatibility boundaries.
 
-* **Static Web** is the default produced by `npm run web:build-static` and used by GitHub Pages. It supports local folders, imported browser workspaces, the demo, offline PWA use, and project export. **Open Server** displays deployment guidance without making unavailable API requests.
-* **SnapTeX Server** serves the same editor with authenticated remote-project storage. It is built by the installer with `npm run web:build-server`; remote project files stay under the configured server directory.
-
-To install the server edition, copy or clone the complete source tree onto the server, then create its private deployment configuration:
+## Development
 
 ```bash
-cd /path/to/SnapTeX
-cp apps/web/server.env.example apps/web/server.env
-nano apps/web/server.env
-npm run web:install-server
+npm ci
+npm run compile
+npm test
 ```
 
-The installer runs `npm ci`, builds the server-enabled Web app, runs its server tests, atomically installs the runtime and systemd unit, and verifies the project API. Re-run the same command after replacing or updating the source tree. Open the served page and choose **Open Server**.
+Web and documentation commands:
 
-`SNAPTEX_PROJECTS_ROOT` selects the directory exposed by the project API. The welcome page, local-folder editor, and demo remain public, while **Open Server** uses SnapTeX's built-in Web Session authentication. Keep the default loopback listener behind an HTTPS reverse proxy before making it public. See [the server deployment guide](apps/web/DEPLOYMENT.md) for configuration, logs, updates, and rollback details.
+```bash
+npm run web:serve          # static Web app + docs
+npm run docs:dev           # documentation development server
+npm run web:build-server   # server-enabled Web assets
+```
 
-## Features
+The maintained guides cover:
 
-* **Instant Math Rendering**: Real-time rendering of inline math `$ ... $` and complex display math environments (e.g., `equation`, `align`, `gather`) using KaTeX.
-* **Intelligent Math Protection**: Uses a proprietary protection layer to ensure LaTeX math syntax is not corrupted by the Markdown parser.
-* **Structural Previews**: Renders hierarchical headers (`\section` to `\subsubsection`), abstracts, and keywords with academic styling.
-* **Low-Memory Long Document Preview**: Uses block hashes, shell virtualization, on-demand HTML, and viewport-near resource mounting to keep large documents usable.
+- [Web projects and browser storage](https://qianchd.github.io/SnapTeX/docs/guide/web)
+- [Static Web and PWA deployment](https://qianchd.github.io/SnapTeX/docs/deployment/static-web)
+- [SnapTeX Server installation](https://qianchd.github.io/SnapTeX/docs/deployment/server)
+- [Security model](https://qianchd.github.io/SnapTeX/docs/deployment/security)
+- [Rules registry](https://qianchd.github.io/SnapTeX/docs/extending/rules)
+- [Architecture and rendering pipeline](https://qianchd.github.io/SnapTeX/docs/development/architecture)
 
-* **Smart Bi-Directional Sync**:
-    * **Forward Sync**: Jump from the editor cursor to the exact location in the preview with `ctrl+alt+n`.
-    * **Reverse Sync**: Double-click any element in the preview to jump to the corresponding line in the LaTeX source.
-    * **Virtualized References and Tooltips**: Reference jumps and hover tooltips mount offscreen target blocks on demand, including nearby context blocks.
+## Core Dependencies
 
-* **Auto Scrolling**:
-    * `snaptex.autoScrollSync`: Enable cursor and scroll synchronization between editor and preview.
-    * `snaptex.autoScrollDelay`: Debounce/Throttle delay (in ms) for scroll synchronization events.
+- [Markdown-it](https://github.com/markdown-it/markdown-it) for prose rendering.
+- [KaTeX](https://katex.org/) for math.
+- [PDF.js](https://mozilla.github.io/pdf.js/) for PDF figures.
+- [TikZJax](https://github.com/kisonecat/tikzjax) and the [Glenn Rice fork](https://github.com/drgrice1/tikzjax) for TikZ.
+- [unified-latex](https://github.com/siefkenj/unified-latex) for the experimental AST backend.
 
-* **Macro Support**: Real-time expansion of `\newcommand`, `\def` and `\DeclareMathOperator` definitions.
-
-* **Advanced Environments Support (Basic demo works)**:
-    * **Algorithms**: Renders pseudocode with keyword bolding (If, For, Return) and preserved indentation.
-    * **Tables**: Converts standard `tabular` and common `tabularx` environments into clean HTML tables with support for internal math rendering.
-    * **Figures**: Resolves local image paths and renders PDF/image figures through webview-safe resource URIs.
-    * **TikZ**: Supported by TikZJax with lazy runtime loading, per-picture library pruning, and smoother rerendering after edits.
-
-* **Label Reference**: Supports equation/section/figure/table/algorithm/theorem... labeling and cross-reference commands `ref,label,eqref`.
-
-* **Citations**: Support dynamic BibTeX bibliography rendering, with a simple style and rendering rule for snap preview.
-
-* **User-defined Rules**: under dev.
-
-## Requirements
-
-SnapTeX is designed to be "zero-config." It works out of the box with no external dependencies.
-
-* Simply open a `.tex` file and run the preview command.
-* For math rendering, it uses an internal bundled version of KaTeX.
-
-## Known Issues and update plan
-
-* Planned: broaden package support by adopting techniques similar to those used for TikzJax, enabling more familiar LaTeX packages in the preview.
-
-## Dependence
-
-* MarkdownIt: made parser simple
-* KaTeX: for rendering math
-* Pdfjs: for import pdf-type figures.
-* Tikzjax: [Jim Fowler's original](https://github.com/kisonecat/tikzjax); [Glenn Rice's fork](https://github.com/drgrice1/tikzjax);
-
-## For Developers and AI-assistants
-
-* If you plan to add new features or rendering rules, please try your best to add them in the [@rules.ts](src/rules.ts) file. SnapTeX defines sufficient APIs for the extension possibilities.
-
-* We plan to support user-defined rules in the future version.
-
----
-
-**Enjoy writing LaTeX with SnapTeX!**
+SnapTeX is licensed under [GPL-3.0-or-later](LICENSE).

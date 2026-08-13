@@ -56,10 +56,16 @@ function resolveRequestPath(root, url, indexPath = defaultIndexPath(root)) {
         if (root === repoRoot && (hasDeniedPathSegment(relativePath) ||
             (!sourceWebFiles.has(publicPath) && !publicPath.startsWith('/apps/web/dist/') &&
                 !publicPath.startsWith('/media/') && !publicPath.startsWith('/demo/')))) return undefined;
-        const candidate = resolve(root, relativePath);
-        if (!isWithin(root, candidate) || !existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) {
+        let candidate = resolve(root, relativePath);
+        if (!isWithin(root, candidate)) {
             return undefined;
         }
+        if (existsSync(candidate) && !lstatSync(candidate).isSymbolicLink() && statSync(candidate).isDirectory()) {
+            candidate = join(candidate, 'index.html');
+        } else if (!existsSync(candidate) && !extname(candidate)) {
+            candidate += '.html';
+        }
+        if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) { return undefined; }
         const filePath = realpathSync(candidate);
         return isWithin(root, filePath) ? filePath : undefined;
     } catch {

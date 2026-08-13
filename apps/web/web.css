@@ -248,6 +248,18 @@ body[data-explorer-collapsed="true"] {
     justify-content: flex-end;
 }
 
+.toolbar-link {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--snaptex-button-fg);
+    padding: 4px 8px;
+    text-decoration: none;
+}
+
+.toolbar-link:hover {
+    background: var(--snaptex-menu-hover-bg);
+}
+
 .toolbar-menu {
     position: relative;
 }
