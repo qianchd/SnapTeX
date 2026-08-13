@@ -87,9 +87,7 @@ function readControls() {
         exportButton: requireElement<HTMLButtonElement>('export-button'),
         saveButton: requireElement<HTMLButtonElement>('save-button'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
-        settingsButton: requireElement('settings-button'),
         logoutButton: requireElement<HTMLButtonElement>('logout-button'),
-        settingsMenu: requireElement('settings-menu'),
         showExplorerToggle: requireElement<HTMLInputElement>('show-explorer-toggle'),
         showDiagnosticsToggle: requireElement<HTMLInputElement>('show-diagnostics-toggle'),
         livePreviewToggle: requireElement<HTMLInputElement>('live-preview-toggle'),
@@ -751,9 +749,13 @@ function bindProjectControls(host: StandaloneHost): void {
     const supportsLocalFolderAccess = typeof (window as BrowserFilePickerWindow).showDirectoryPicker === 'function';
     controls.openFolderButton.hidden = !supportsLocalFolderAccess;
     controls.welcomeOpenFolderButton.hidden = !supportsLocalFolderAccess;
-    const setSettingsOpen = (open: boolean): void => {
-        controls.settingsButton.setAttribute('aria-expanded', String(open));
-        controls.settingsMenu.hidden = !open;
+    const toolbarMenus = Array.from(document.querySelectorAll<HTMLDetailsElement>('.toolbar-menu'));
+    const closeToolbarMenus = (except?: HTMLDetailsElement): void => {
+        for (const menu of toolbarMenus) {
+            if (menu !== except) {
+                menu.open = false;
+            }
+        }
     };
     const bindToggleSetting = (input: HTMLInputElement, setting: BooleanPreviewSetting): void => {
         input.addEventListener('change', () => host.updateSettings({ [setting]: input.checked } as Partial<StandalonePreviewSettings>));
@@ -829,9 +831,6 @@ function bindProjectControls(host: StandaloneHost): void {
     controls.setRootButton.addEventListener('click', () => {
         setActiveFileAsRoot(host).catch(error => reportFailure('Set root', error));
     });
-    controls.settingsButton.addEventListener('click', () => {
-        setSettingsOpen(controls.settingsButton.getAttribute('aria-expanded') !== 'true');
-    });
     controls.showExplorerToggle.addEventListener('change', () => {
         setExplorerCollapsed(!controls.showExplorerToggle.checked);
     });
@@ -850,10 +849,18 @@ function bindProjectControls(host: StandaloneHost): void {
     controls.themeSelect.addEventListener('change', () => {
         setTheme(controls.themeSelect.value as WebTheme);
     });
+    for (const menu of toolbarMenus) {
+        menu.addEventListener('toggle', () => {
+            if (menu.open) {
+                closeToolbarMenus(menu);
+            }
+        });
+        menu.addEventListener('mouseleave', () => { menu.open = false; });
+    }
     document.addEventListener('click', event => {
         const target = event.target as Node | null;
-        if (target && !controls.settingsButton.contains(target) && !controls.settingsMenu.contains(target)) {
-            setSettingsOpen(false);
+        if (target && !toolbarMenus.some(menu => menu.contains(target))) {
+            closeToolbarMenus();
         }
     });
 

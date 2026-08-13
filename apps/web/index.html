@@ -58,45 +58,47 @@
                 <span id="active-path-label">No project open</span>
             </div>
             <div class="toolbar-group toolbar-actions">
-                <button id="settings-button" type="button" aria-expanded="false" aria-controls="settings-menu">Settings</button>
+                <details class="toolbar-menu">
+                    <summary>Settings</summary>
+                    <div id="settings-menu" class="toolbar-menu-content">
+                        <div class="settings-section">
+                            <label><input id="show-explorer-toggle" type="checkbox"> Explorer</label>
+                            <label><input id="show-diagnostics-toggle" type="checkbox" checked> Diagnostics</label>
+                        </div>
+                        <div class="settings-section">
+                            <label><input id="live-preview-toggle" type="checkbox" checked> Live preview</label>
+                            <label><input id="auto-scroll-toggle" type="checkbox" checked> Auto scroll sync</label>
+                            <label><input id="virtual-mode-toggle" type="checkbox" checked> Virtual mode</label>
+                            <label><input id="debug-memory-toggle" type="checkbox"> Debug memory</label>
+                        </div>
+                        <label class="setting-row">
+                            <span>Backend</span>
+                            <select id="backend-mode-select">
+                                <option value="legacy">Legacy</option>
+                                <option value="ast(experimental)">AST experimental</option>
+                            </select>
+                        </label>
+                        <label class="setting-row">
+                            <span>Render delay</span>
+                            <input id="render-delay-input" type="number" min="0" max="2000" step="25" value="150">
+                        </label>
+                        <label class="setting-row">
+                            <span>Scroll delay</span>
+                            <input id="auto-scroll-delay-input" type="number" min="0" max="2000" step="25" value="100">
+                        </label>
+                        <label class="setting-row">
+                            <span>Theme</span>
+                            <select id="theme-select">
+                                <option value="light">Light</option>
+                                <option value="dark">Dark</option>
+                                <option value="blue">Blue</option>
+                                <option value="rose">Rose</option>
+                            </select>
+                        </label>
+                    </div>
+                </details>
                 <button id="logout-button" type="button" hidden>Log out</button>
                 <span id="project-status">Ready</span>
-            </div>
-            <div id="settings-menu" hidden>
-                <div class="settings-section">
-                    <label><input id="show-explorer-toggle" type="checkbox"> Explorer</label>
-                    <label><input id="show-diagnostics-toggle" type="checkbox" checked> Diagnostics</label>
-                </div>
-                <div class="settings-section">
-                    <label><input id="live-preview-toggle" type="checkbox" checked> Live preview</label>
-                    <label><input id="auto-scroll-toggle" type="checkbox" checked> Auto scroll sync</label>
-                    <label><input id="virtual-mode-toggle" type="checkbox" checked> Virtual mode</label>
-                    <label><input id="debug-memory-toggle" type="checkbox"> Debug memory</label>
-                </div>
-                <label class="setting-row">
-                    <span>Backend</span>
-                    <select id="backend-mode-select">
-                        <option value="legacy">Legacy</option>
-                        <option value="ast(experimental)">AST experimental</option>
-                    </select>
-                </label>
-                <label class="setting-row">
-                    <span>Render delay</span>
-                    <input id="render-delay-input" type="number" min="0" max="2000" step="25" value="150">
-                </label>
-                <label class="setting-row">
-                    <span>Scroll delay</span>
-                    <input id="auto-scroll-delay-input" type="number" min="0" max="2000" step="25" value="100">
-                </label>
-                <label class="setting-row">
-                    <span>Theme</span>
-                    <select id="theme-select">
-                        <option value="light">Light</option>
-                        <option value="dark">Dark</option>
-                        <option value="blue">Blue</option>
-                        <option value="rose">Rose</option>
-                    </select>
-                </label>
             </div>
         </header>
         <div id="workspace">

@@ -30,6 +30,7 @@ body {
     --snaptex-editor-active-line-bg: #fafafa;
     --snaptex-button-fg: #1f2937;
     --snaptex-hover-bg: #e5e7eb;
+    --snaptex-menu-hover-bg: rgba(100, 116, 139, 0.12);
     --snaptex-active-bg: #dbeafe;
     --snaptex-active-fg: #1d4ed8;
     --snaptex-warning-bg: #fff7ed;
@@ -266,12 +267,12 @@ body[data-explorer-collapsed="true"] {
 
 .toolbar-menu[open] summary,
 .toolbar-menu summary:hover {
-    background: var(--snaptex-hover-bg);
+    background: var(--snaptex-menu-hover-bg);
 }
 
 .toolbar-menu-content {
     position: absolute;
-    top: calc(100% + 4px);
+    top: 100%;
     left: 0;
     z-index: 2;
     display: grid;
@@ -292,8 +293,7 @@ body[data-explorer-collapsed="true"] {
     color: var(--snaptex-muted);
 }
 
-#web-toolbar button,
-#settings-menu button {
+#web-toolbar button {
     border: 1px solid transparent;
     border-radius: 4px;
     background: transparent;
@@ -304,7 +304,10 @@ body[data-explorer-collapsed="true"] {
 }
 
 #web-toolbar button:hover,
-#web-toolbar button[aria-expanded="true"],
+#web-toolbar button[aria-expanded="true"] {
+    background: var(--snaptex-menu-hover-bg);
+}
+
 #settings-menu label:hover {
     background: var(--snaptex-hover-bg);
 }
@@ -337,21 +340,10 @@ body[data-explorer-collapsed="true"] {
 }
 
 #settings-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 10px;
-    display: grid;
     gap: 4px;
     min-width: 190px;
-    padding: 6px;
-    border: 1px solid var(--snaptex-border);
-    border-radius: 6px;
-    background: var(--snaptex-panel-bg);
-    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
-}
-
-#settings-menu[hidden] {
-    display: none;
+    right: 0;
+    left: auto;
 }
 
 .project-dialog {

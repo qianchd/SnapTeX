@@ -14,7 +14,7 @@ test('serves a writable project through the remote project API', async () => {
     await mkdir(join(projectRoot, 'sections'), { recursive: true });
     await mkdir(staticRoot);
     await mkdir(outsideRoot);
-    await writeFile(join(staticRoot, 'index.html'), 'SnapTeX');
+    await writeFile(join(staticRoot, 'index.html'), '<body data-deployment-mode="static">SnapTeX</body>');
     await writeFile(join(outsideRoot, 'secret.txt'), 'Secret');
     await symlink(outsideRoot, join(staticRoot, 'linked'), 'junction');
     await writeFile(join(projectRoot, 'main.tex'), 'Original');
@@ -82,6 +82,7 @@ test('serves a writable project through the remote project API', async () => {
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
     try {
+        assert.match(await (await fetch(`${baseUrl}/`)).text(), /data-deployment-mode="server"/);
         const login = await fetch(`${baseUrl}/web-auth/login`, {
             method: 'POST',
             headers: { Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },

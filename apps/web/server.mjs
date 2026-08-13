@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -166,7 +166,7 @@ function sendJson(response, status, value) {
     response.end(JSON.stringify(value));
 }
 
-async function sendFile(response, filePath, headOnly = false) {
+async function sendFile(response, filePath, headOnly = false, deploymentMode) {
     const extension = extname(filePath).toLowerCase();
     if (extension === '.svg') {
         response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
@@ -177,6 +177,11 @@ async function sendFile(response, filePath, headOnly = false) {
     });
     if (headOnly) {
         response.end();
+        return;
+    }
+    if (extension === '.html' && deploymentMode) {
+        const html = await readFile(filePath, 'utf8');
+        response.end(html.replace(/data-deployment-mode="(?:static|server)"/, `data-deployment-mode="${deploymentMode}"`));
         return;
     }
     await pipeline(createReadStream(filePath), response);
@@ -395,7 +400,7 @@ export function createSnapTeXWebServer(options = {}) {
             return;
         }
 
-        await sendFile(response, filePath, request.method === 'HEAD');
+        await sendFile(response, filePath, request.method === 'HEAD', projectsRoot ? 'server' : 'static');
     })().catch(error => {
         console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {
