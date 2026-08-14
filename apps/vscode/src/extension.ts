@@ -172,8 +172,11 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
-        if (!event.affectsConfiguration('snaptex.backendMode')) { return; }
-        fullReloadPreview();
+        if (event.affectsConfiguration('snaptex.backendMode')) {
+            fullReloadPreview();
+        } else if (event.affectsConfiguration('snaptex.previewLayout')) {
+            TexPreviewPanel.currentPanel?.postWebviewConfig();
+        }
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.start', () => {

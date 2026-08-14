@@ -1,6 +1,6 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
 import { createProjectZip } from '../../standalone/src/project-archive';
-import type { BackendMode } from '../../../src/types';
+import type { BackendMode, PreviewLayoutMode } from '../../../src/types';
 import {
     createProjectTree,
     isProjectFile,
@@ -95,6 +95,7 @@ function readControls() {
         virtualModeToggle: requireElement<HTMLInputElement>('virtual-mode-toggle'),
         debugMemoryToggle: requireElement<HTMLInputElement>('debug-memory-toggle'),
         backendModeSelect: requireElement<HTMLSelectElement>('backend-mode-select'),
+        previewLayoutSelect: requireElement<HTMLSelectElement>('preview-layout-select'),
         renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
         autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),
@@ -739,6 +740,7 @@ function syncSettingsControls(host: StandaloneHost): void {
         controls[controlName].checked = settings[setting];
     }
     controls.backendModeSelect.value = settings.backendMode;
+    controls.previewLayoutSelect.value = settings.previewLayout;
     for (const [controlName, setting] of NUMBER_SETTING_CONTROLS) {
         setInputValue(controls[controlName], settings[setting]);
     }
@@ -842,6 +844,9 @@ function bindProjectControls(host: StandaloneHost): void {
     }
     controls.backendModeSelect.addEventListener('change', () => {
         host.updateSettings({ backendMode: controls.backendModeSelect.value as BackendMode });
+    });
+    controls.previewLayoutSelect.addEventListener('change', () => {
+        host.updateSettings({ previewLayout: controls.previewLayoutSelect.value as PreviewLayoutMode });
     });
     for (const [controlName, setting, fallback] of NUMBER_SETTING_CONTROLS) {
         bindNumberSetting(controls[controlName], setting, fallback);

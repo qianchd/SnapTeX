@@ -3,7 +3,7 @@ import type { IFileProvider } from '../../../src/file-provider';
 import { decodeHtmlAttribute, getBasename, normalizeUri } from '../../../src/utils';
 import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
 import type { PreviewUpdateService } from '../../../src/preview-update-service';
-import type { RenderPayload, BackendMode } from '../../../src/types';
+import type { RenderPayload, BackendMode, PreviewLayoutMode } from '../../../src/types';
 import {
     assertNever,
     HostToPreviewCommand,
@@ -69,6 +69,10 @@ export function getVirtualMode(config = vscode.workspace.getConfiguration('snapt
 
 function getBackendMode(config = vscode.workspace.getConfiguration('snaptex')): BackendMode {
     return config.get<BackendMode>('backendMode', 'legacy') === 'ast(experimental)' ? 'ast(experimental)' : 'legacy';
+}
+
+function getPreviewLayout(config = vscode.workspace.getConfiguration('snaptex')): PreviewLayoutMode {
+    return config.get<PreviewLayoutMode>('previewLayout', 'continuous') === 'paged' ? 'paged' : 'continuous';
 }
 
 export function normalizePdfRequestPath(input: unknown): string | undefined {
@@ -360,14 +364,15 @@ export class TexPreviewPanel {
         this._panel.webview.postMessage(message);
     }
 
-    private postWebviewConfig() {
+    postWebviewConfig() {
         const config = vscode.workspace.getConfiguration('snaptex');
         this.postMessage({
             command: HostToPreviewCommand.Config,
             config: {
                 autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
                 debugMemory: config.get<boolean>('debugMemory', false),
-                virtualMode: getVirtualMode(config)
+                virtualMode: getVirtualMode(config),
+                previewLayout: getPreviewLayout(config)
             }
         });
     }

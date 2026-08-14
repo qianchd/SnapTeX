@@ -70,6 +70,7 @@ export interface BlockTextSpan {
 }
 
 export type BackendMode = 'legacy' | 'ast(experimental)';
+export type PreviewLayoutMode = 'continuous' | 'paged';
 
 /**
  * Snapshot retained by the renderer for lazy block rendering after the parsed

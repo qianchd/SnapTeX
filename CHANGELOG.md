@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Added an optional elastic paged preview that keeps rendered blocks atomic, absorbs small edits in flexible page-bottom margins, and gives oversized proofs, styled groups, tables, figures, TikZ, and PDF blocks an extended page instead of clipping or splitting them.
 - **Added**: Replaced the internal notes under `docs/` with a searchable VitePress documentation site covering user workflows, rendering, deployment, security, extension APIs, architecture, performance, and testing.
 - **Changed**: Reorganized the documentation around separate user, self-hosting, and contributor paths, with task-oriented navigation and explicit ownership, call relationships, parameter sources, and return contracts throughout the rendering-rule API.
 - **Changed**: Replaced splitter-specific begin-token matching with reusable `context-wrapper` rules so declaration-style groups and argument-wrapping commands share one configurable coarse-protection and AST-refinement model.

@@ -142,6 +142,15 @@
           ],
           "default": "legacy",
           "description": "Choose the preview processing mode. Use 'ast(experimental)' to test AST-assisted splitting, dependencies, rendering, and sync while keeping the same lazy loading and virtualization runtime."
+        },
+        "snaptex.previewLayout": {
+          "type": "string",
+          "enum": [
+            "continuous",
+            "paged"
+          ],
+          "default": "continuous",
+          "description": "Choose a continuous preview or an elastic page-like layout. Oversized blocks remain intact on extended pages."
         }
       }
     }

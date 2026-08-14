@@ -6,7 +6,7 @@ import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
-import type { BackendMode } from '../../../src/types';
+import type { BackendMode, PreviewLayoutMode } from '../../../src/types';
 import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
@@ -38,6 +38,7 @@ export interface StandalonePreviewSettings {
     autoScrollDelayMs: number;
     virtualMode: boolean;
     backendMode: BackendMode;
+    previewLayout: PreviewLayoutMode;
     debugMemory: boolean;
 }
 
@@ -48,6 +49,7 @@ export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     autoScrollDelayMs: 100,
     virtualMode: true,
     backendMode: 'legacy',
+    previewLayout: 'continuous',
     debugMemory: false
 };
 
@@ -608,7 +610,8 @@ export class StandaloneHost {
             config: {
                 autoScrollDelay: this.settings.autoScrollDelayMs,
                 debugMemory: this.settings.debugMemory,
-                virtualMode: this.settings.virtualMode
+                virtualMode: this.settings.virtualMode,
+                previewLayout: this.settings.previewLayout
             }
         });
     }

@@ -2,6 +2,7 @@
 /* eslint-disable curly */
 import { CoalescingTaskScheduler } from './scheduler';
 import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
+import { PageLayoutController } from './pagination';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
 import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
@@ -441,7 +442,8 @@ const previewBridge = getPreviewBridge();
             this.config = {
                 autoScrollDelay: 100,
                 debugMemory: false,
-                virtualMode: true
+                virtualMode: true,
+                previewLayout: 'continuous'
             };
             this.currentNumbering = null;
             this.blockHtmlRequestSeq = 0;
@@ -451,6 +453,7 @@ const previewBridge = getPreviewBridge();
             this.deferHeavyPreviewWork = false;
             this.initialExpansionFrame = null;
             this.virtualization = new BlockVirtualizationController(this.contentRoot);
+            this.pagination = new PageLayoutController(this.contentRoot);
             this.debugStats = {
                 blockHtmlRequestsSent: 0,
                 blockHtmlResponses: 0,
@@ -512,6 +515,7 @@ const previewBridge = getPreviewBridge();
                 return;
             }
             this.lastPreviewWidth = width;
+            this.pagination.refresh(true);
             this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
             previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
         }
@@ -548,6 +552,8 @@ const previewBridge = getPreviewBridge();
                     }
                     this.config.virtualMode = event.data.config.virtualMode !== false;
                     this.virtualization.setEnabled(event.data.config.virtualMode !== false);
+                    this.config.previewLayout = event.data.config.previewLayout === 'paged' ? 'paged' : 'continuous';
+                    this.pagination.setEnabled(this.config.previewLayout === 'paged');
                     this.updateVirtualizedBlocks({ allowUnmount: true });
                     break;
             }
@@ -575,6 +581,7 @@ const previewBridge = getPreviewBridge();
                     this.smartFullUpdateFromBlocks(payload.htmls, payload.preserveUnchangedBlocks !== false);
                 }
                 this.logDomStats('after full update');
+                this.pagination.refresh();
                 document.fonts.ready.then(() => {
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => { this.onRenderComplete(scrollState, renderSeq); });
@@ -586,6 +593,7 @@ const previewBridge = getPreviewBridge();
                 this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
                 const scrollState = this.saveScrollState();
                 this.applyPatch(payload);
+                this.pagination.refresh();
                 this.logDomStats('after patch update');
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => { this.onPatchComplete(scrollState, renderSeq); });
@@ -602,6 +610,7 @@ const previewBridge = getPreviewBridge();
         resetPreviewRuntimeState() {
             this.pendingBlockHtmlRequests.clear();
             this.virtualization.resetCaches();
+            this.pagination.reset();
             this.isFirstLoad = true;
             this.deferHeavyPreviewWork = false;
             this.pendingScroll = null;
@@ -722,6 +731,7 @@ const previewBridge = getPreviewBridge();
 
         replaceBlockPreservingTikz(oldBlock, newBlock) {
             this.virtualization.rememberBlockHeight(oldBlock);
+            this.pagination.transferPageStart(oldBlock, newBlock);
             oldBlock.replaceWith(newBlock);
             this.attachStaleTikzPreviews(newBlock, this.collectTikzPreviews(oldBlock));
         }
@@ -749,6 +759,7 @@ const previewBridge = getPreviewBridge();
             if (!this.deferHeavyPreviewWork) {
                 this.scheduleHeavyPreviewWork();
             }
+            this.pagination.refresh();
         }
 
         requestVirtualizedUpdate(options = {}) {
@@ -1426,6 +1437,7 @@ const previewBridge = getPreviewBridge();
 
                 const previews = this.collectTikzPreviews(shell);
                 const newShell = this.virtualization.createShellForBlock(replacement);
+                this.pagination.transferPageStart(shell, newShell);
                 this.stashStaleTikzPreviewsOnShell(newShell, previews);
                 this.virtualization.unobserveShell(shell);
                 shell.replaceWith(newShell);
