@@ -4,6 +4,10 @@ export interface PreviewBridge {
     postMessage(message: PreviewToHostMessage): void;
 }
 
+export function resolvePreviewAssetUri(uri: string, baseUri = document.baseURI): string {
+    return uri ? new URL(uri, baseUri).href : '';
+}
+
 declare global {
     interface Window {
         snaptexPreviewBridge?: PreviewBridge;

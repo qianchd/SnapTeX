@@ -17,6 +17,10 @@ function rewriteSimpleMetaArrowTips(text: string): string {
         .replace(new RegExp(`\\b${tipPattern}\\s*-${delimiter}`, 'g'), '<-');
 }
 
+function lowerPreviewSource(text: string): string {
+    return rewriteSimpleMetaArrowTips(text).replace(/\\bm(?=\s*\{)/g, '\\boldsymbol');
+}
+
 /**
  * Applies preview-only source simplifications for expensive TikZ libraries.
  *
@@ -26,9 +30,9 @@ function rewriteSimpleMetaArrowTips(text: string): string {
  */
 export function optimizeTikzPreviewSource(source: TikzPreviewSourceParts): TikzPreviewSourceParts {
     return {
-        globalPreamble: rewriteSimpleMetaArrowTips(source.globalPreamble),
-        options: rewriteSimpleMetaArrowTips(source.options),
-        content: rewriteSimpleMetaArrowTips(source.content),
-        macroDefinitions: rewriteSimpleMetaArrowTips(source.macroDefinitions)
+        globalPreamble: lowerPreviewSource(source.globalPreamble),
+        options: lowerPreviewSource(source.options),
+        content: lowerPreviewSource(source.content),
+        macroDefinitions: lowerPreviewSource(source.macroDefinitions)
     };
 }

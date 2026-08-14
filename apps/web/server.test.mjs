@@ -234,6 +234,7 @@ test('protects remote projects with an independent web session', async () => {
         const page = await fetch(`${baseUrl}/`, { headers: { cookie } });
         assert.equal(page.status, 200);
         assert.match(page.headers.get('content-security-policy'), /object-src 'none'/);
+        assert.match(page.headers.get('content-security-policy'), /connect-src 'self' blob:/);
         assert.equal((await fetch(`${baseUrl}/api/projects/paper/files/.private/hidden.tex`, {
             headers: { cookie }
         })).status, 404);

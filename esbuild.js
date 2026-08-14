@@ -74,13 +74,14 @@ function createTikzJaxBootstrapPatch(runtimeAssetFiles) {
         "const e=N.href.replace(/\\/tikzjax\\.js(?:\\?.*)?$/,\"\");",
         "let r,snaptexBlobUrls=[],snaptexAssets={};",
         "try{",
+        "if(/^https?:/.test(e)&&new URL(e).origin===location.origin){r=await t(new o(`${e}/run-tex.js`),{timeout:60000})}else{",
         `const c=async A=>{const t=await fetch(\`${"${"}e}/${"${"}A}\`);if(!t.ok)throw new Error(\`Failed to load ${"${"}A}: ${"${"}t.status}\`);return URL.createObjectURL(await t.blob())};`,
         `const u=await fetch(\`${"${"}e}/run-tex.js\`);`,
         `if(!u.ok)throw new Error(\`Failed to load run-tex.js: ${"${"}u.status}\`);`,
         "const s=URL.createObjectURL(new Blob([await u.text()],{type:'text/javascript'}));",
         "snaptexBlobUrls.push(s);",
         `await Promise.all(${JSON.stringify(runtimeAssetFiles)}.map((async A=>{snaptexAssets[A]=await c(A),snaptexBlobUrls.push(snaptexAssets[A])})));`,
-        "r=await t(new o(s,{CORSWorkaround:!1}),{timeout:60000})",
+        "r=await t(new o(s,{CORSWorkaround:!1}),{timeout:60000})}",
         "}catch(e){throw snaptexBlobUrls.forEach((e=>e&&URL.revokeObjectURL(e))),e}",
         "r.__snaptexRunTexBlobUrls=snaptexBlobUrls;"
     ].join("");

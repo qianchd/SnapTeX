@@ -1,4 +1,5 @@
 import { AffiliationMetadata, AuthorMetadata, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleMetadata, TextRange } from './types';
+import { REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
 import { findCommand, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
 
 type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providenewcommand' | 'def' | 'gdef' | 'DeclareMathOperator';
@@ -101,6 +102,7 @@ function transpileToDef(header: MacroDefinitionHeader, fullDef: string): string 
 }
 
 interface DefinitionRecord extends TextRange {
+    command: string;
     fullDef: string;
 }
 
@@ -172,7 +174,7 @@ function blankOutRanges(text: string, ranges: TextRange[]): string {
 
 function collectDefinitions(text: string): DefinitionRecord[] {
     const records: DefinitionRecord[] = [];
-    const defRegex = /\\(provide|re)?(newcommand|def|gdef|DeclareMathOperator|usetikzlibrary|tikzset|definecolor)(\*?)/g;
+    const defRegex = new RegExp(`\\\\(${REGEX_STR.PREAMBLE_DEFINITIONS})\\*?`, 'g');
 
     let defMatch;
     while ((defMatch = defRegex.exec(text)) !== null) {
@@ -180,7 +182,7 @@ function collectDefinitions(text: string): DefinitionRecord[] {
         const end = findDefinitionEnd(text, start + defMatch[0].length);
         if (end === -1) { continue; }
 
-        records.push({ start, end, fullDef: text.substring(start, end) });
+        records.push({ start, end, command: defMatch[1], fullDef: text.substring(start, end) });
         defRegex.lastIndex = end;
     }
 
@@ -631,9 +633,9 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
 
     const definitionRecords = collectDefinitions(cleanedText);
     for (const record of definitionRecords) {
-        const { fullDef } = record;
+        const { command, fullDef } = record;
 
-        if (/\\(usetikzlibrary|tikzset|definecolor)/.test(fullDef)) {
+        if (TIKZ_GLOBAL_COMMANDS.includes(command)) {
             if (!tikzGlobalParts.includes(fullDef)) {
                 tikzGlobalParts.push(fullDef);
             }

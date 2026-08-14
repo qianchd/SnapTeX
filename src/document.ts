@@ -2,7 +2,7 @@ import type { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
 import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, DocumentDiagnostic, RenderDocumentView, BackendMode, UriLike } from './types';
-import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
+import { REGEX_STR, R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
 import { extractAstBlockArtifact, type AstBlockArtifact } from './ast/block-metadata';
@@ -466,7 +466,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         const portableLines: number[] = [];
         let capturingDefinition = false;
         let braceDepth = 0;
-        const portableCommandRegex = /^\\(?:(?:provide|re)?newcommand\*?|g?def|DeclareMathOperator\*?|usetikzlibrary|tikzset|definecolor)(?=\s|\\|\{|\[|$)/;
+        const portableCommandRegex = new RegExp(`^\\\\(?:${REGEX_STR.PREAMBLE_DEFINITIONS})\\*?(?=\\s|\\\\|\\{|\\[|$)`);
 
         for (let index = 0; index < endExclusive; index++) {
             const line = lines[index];

@@ -188,17 +188,22 @@ export function renderTikzPictureHtml(
     const fontConfig = `\\tikzset{every node/.append style={font=\\sffamily\\small}}\n`;
 
     const fullCode = [
+        '\\makeatletter',
         globalPreamble,
         optimized.macroDefinitions,
+        '\\makeatother',
         fontConfig,
         `\\begin{tikzpicture}${opts}`,
         optimized.content,
         `\\end{tikzpicture}`
     ].join('\n');
+    const packageAttribute = /\\boldsymbol\b/.test(fullCode)
+        ? ` data-tex-packages='{"amsbsy":""}'`
+        : '';
 
     return {
         html: `<div class="tikz-container">
-                    <script type="text/snaptex-tikz" data-show-console="false">
+                    <script type="text/snaptex-tikz" data-show-console="false"${packageAttribute}>
                         ${escapeScriptRawText(fullCode)}
                     </script>
                 </div>`,

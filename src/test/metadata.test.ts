@@ -18,6 +18,8 @@ suite('Metadata extraction', () => {
             '\\DeclareMathOperator{\\rank}{rank}',
             '\\usetikzlibrary{arrows.meta}',
             '\\tikzset{box/.style={draw}}',
+            '\\pgfkeys{/pgf/custom offset/.initial=2mm}',
+            '\\pgfdeclareshape{custom shape}{\\inheritanchor[from=rectangle]{center}}',
             '\\newcommand{\\origin}{(0,0)}',
             '\\begin{document}',
             '\\maketitle',
@@ -35,6 +37,8 @@ suite('Metadata extraction', () => {
         assert.equal(result.data.macros['\\rank'], '\\operatorname{rank}');
         assert.match(result.data.tikzGlobal, /\\usetikzlibrary\{arrows\.meta\}/);
         assert.match(result.data.tikzGlobal, /\\tikzset\{box\/.style=\{draw\}\}/);
+        assert.match(result.data.tikzGlobal, /\\pgfkeys\{\/pgf\/custom offset/);
+        assert.match(result.data.tikzGlobal, /\\pgfdeclareshape\{custom shape\}/);
         assert.equal(result.data.tikzMacroMap.get('\\origin'), '\\def\\origin{(0,0)}');
         assert.equal(result.data.tikzMacroMap.get('\\vect'), '\\def\\vect#1{\\mathbf{#1}}');
         assert.equal(result.data.tikzMacroMap.get('\\oldmacro'), '\\def\\oldmacro{\\mathrm{o}}');

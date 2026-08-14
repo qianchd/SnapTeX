@@ -7,6 +7,7 @@ import { basename, join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
 import { runInNewContext } from 'vm';
+import { resolvePreviewAssetUri } from '../webview/bridge';
 
 type WebServerModule = {
     createSnapTeXWebServer(options: { root: string; indexPath?: string }): Server;
@@ -92,6 +93,7 @@ suite('Standalone web assets', () => {
             assert.match(indexHtml, /href="media\/icon-32\.png"/);
             assert.match(indexHtml, /href="media\/icon-192\.png"/);
             assert.match(indexHtml, /src="media\/icon\.png"/);
+            assert.match(indexHtml, /connect-src 'self' blob:/);
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
             assert.equal((await fetch(new URL(`/%2e%2e/${basename(outsideAsset)}`, baseUrl))).status, 404);
 
@@ -183,6 +185,7 @@ suite('Standalone web assets', () => {
         const runtimeAssets = readPatchedTikzRuntimeAssets(tikzJaxSource);
 
         assert.match(tikzJaxSource, /URL\.createObjectURL\(new Blob\(\[await u\.text\(\)\]/);
+        assert.match(tikzJaxSource, /new URL\(e\)\.origin===location\.origin/);
         assert.match(tikzJaxSource, /r\.load\(\{base:e,assets:snaptexAssets\}\)/);
         assert.match(runTexSource, /snaptexAssetUrls&&snaptexAssetUrls\[A\]\|\|`\$\{zn\}\/\$\{A\}`/);
         assert.match(runTexSource, /this\.values\[2\]=-n\*r\+g\*e,this\.values\[3\]=-B\*r\+s\*e/);
@@ -192,5 +195,14 @@ suite('Standalone web assets', () => {
         for (const asset of runtimeAssets) {
             assert.ok(existsSync(join(tikzRoot, asset)), `Missing TikZJax runtime asset: ${asset}`);
         }
+    });
+
+    test('resolves relative preview assets from the deployed page directory', () => {
+        assert.equal(
+            resolvePreviewAssetUri('media/vendor/pdfjs/pdf.mjs', 'https://example.com/SnapTeX/'),
+            'https://example.com/SnapTeX/media/vendor/pdfjs/pdf.mjs'
+        );
+        const webviewUri = 'https://file+.vscode-resource.vscode-cdn.net/media/vendor/pdfjs/pdf.mjs';
+        assert.equal(resolvePreviewAssetUri(webviewUri, 'vscode-webview://preview/'), webviewUri);
     });
 });

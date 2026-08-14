@@ -374,7 +374,7 @@ export function createSnapTeXWebServer(options = {}) {
         response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
         response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
         response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-        response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob:; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
         const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
         if (pathname === '/healthz') {
             if (request.method === 'GET') {

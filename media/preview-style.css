@@ -176,20 +176,15 @@ p:has(.no-indent-marker) {
 .tikz-container svg {
     width: 100% !important;
     height: auto !important;
-
-    display: flex;
-    margin: 0 auto;
-
-    max-width: none !important;
-
+    display: block;
     color: var(--vscode-editor-foreground);
-    text-align: center;
 }
 
+/* Hidden SVGs remain measurable so their generated page bounds can be cropped. */
 .tikz-container[data-tikz-state="queued"] > svg:not(.tikz-stale-preview),
 .tikz-container[data-tikz-state="rendering"] > svg:not(.tikz-stale-preview),
 .tikz-container[data-tikz-state="stale"] > svg:not(.tikz-stale-preview) {
-    display: none;
+    visibility: hidden;
 }
 
 .tikz-stale-preview {

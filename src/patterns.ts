@@ -34,6 +34,15 @@ const SECTION_LEVELS = [
     'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'
 ] as const;
 
+export const TIKZ_GLOBAL_COMMANDS = [
+    'usetikzlibrary', 'tikzset', 'definecolor', 'pgfkeys', 'pgfdeclareshape'
+];
+
+const PREAMBLE_DEFINITION_COMMANDS = [
+    ...TIKZ_GLOBAL_COMMANDS, 'newcommand', 'renewcommand', 'providenewcommand',
+    'DeclareMathOperator', 'gdef', 'def'
+];
+
 export const CITATION_COMMANDS = [
     'cite', 'citep', 'citet', 'citeyear', 'citenum'
 ] as const;
@@ -61,6 +70,7 @@ export const REGEX_STR = {
     THEOREM_ENVS: join(THEOREM_ENVS),
     SECTION_LEVELS: join(SECTION_LEVELS),
     CITATION_CMDS: join(CITATION_COMMANDS),
+    PREAMBLE_DEFINITIONS: join(PREAMBLE_DEFINITION_COMMANDS),
     SPLITTER_IGNORED: join(SPLITTER_IGNORED_ENVS),
     SPLITTER_MAJOR: join(SPLITTER_MAJOR_ENVS)
 };

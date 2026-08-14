@@ -24,6 +24,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Fixed**: Kept source synchronization accurate when comments contain document markers such as `% \begin{document}`.
 - **Fixed**: Restored external bibliography rendering in the AST backend by carrying the document citation set into AST render contexts.
 - **Changed**: Unified citation resolution across HTML and TikZ rendering so `\cite`, `\citep`, `\citet`, `\citeyear`, and `\citenum` are converted before TikZJax compilation in both preview backends.
+- **Fixed**: Restored PDF and TikZ rendering in the Web host by resolving deployed runtime assets against the page URL, permitting browser-local Blob resources, and preserving custom PGF shape definitions and bold-symbol macros in TikZ previews.
 
 ## [0.7.1] - 2026-07-09
 - **Added**: Added the experimental `snaptex.backendMode` setting with an AST-assisted preview backend for testing structured splitting, rendering, dependencies, and source sync while keeping the legacy backend as the default.

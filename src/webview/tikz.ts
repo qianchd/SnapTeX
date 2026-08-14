@@ -1,8 +1,9 @@
 // @ts-nocheck
 /* eslint-disable curly */
+import { resolvePreviewAssetUri } from './bridge';
 
-window.tikzJaxJsUri = document.body.dataset.tikzJaxJsUri || '';
-    window.tikzJaxCssUri = document.body.dataset.tikzJaxCssUri || '';
+window.tikzJaxJsUri = resolvePreviewAssetUri(document.body.dataset.tikzJaxJsUri || '');
+    window.tikzJaxCssUri = resolvePreviewAssetUri(document.body.dataset.tikzJaxCssUri || '');
     window.tikzJaxCssLoadPromise = null;
     window.tikzJaxLoadPromise = null;
     window.tikzJaxFailed = false;
@@ -97,6 +98,21 @@ export function hasRenderedTikz(container) {
         const target = event.target;
         return target && target.closest ? target.closest('.tikz-container') : null;
     }
+
+    function fitTikzSvgToContent(container) {
+        const svg = container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
+        if (!svg) return;
+
+        const bounds = svg.getBBox();
+        if (bounds.width <= 0 || bounds.height <= 0) return;
+
+        const padding = 6;
+        const width = bounds.width + 2 * padding;
+        const height = bounds.height + 2 * padding;
+        svg.setAttribute('viewBox', `${bounds.x - padding} ${bounds.y - padding} ${width} ${height}`);
+        svg.setAttribute('width', `${width}pt`);
+        svg.setAttribute('height', `${height}pt`);
+    }
 export function setTikzContainerState(container, state) {
         container.setAttribute('data-tikz-state', state);
     }
@@ -181,6 +197,7 @@ export function setTikzContainerState(container, state) {
 
         clearTikzRenderTimer(container);
         container.querySelectorAll('.tikz-stale-preview').forEach(preview => preview.remove());
+        fitTikzSvgToContent(container);
         setTikzContainerState(container, 'rendered');
         notifyTikzContainerSettled(container);
     });

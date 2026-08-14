@@ -1098,6 +1098,13 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(simpleHtml, /arrows\.meta/);
         assert.doesNotMatch(simpleHtml, /-Latex/);
 
+        const macroDoc = createDocument(['\\begin{tikzpicture}\\node {$\\btheta$};\\end{tikzpicture}']);
+        macroDoc.metadata.tikzMacroMap.set('\\btheta', '\\def\\btheta{\\bm{\\theta}}');
+        const macroHtml = renderer.render(macroDoc).htmls?.join('') ?? '';
+        assert.match(macroHtml, /\\def\\btheta\{\\boldsymbol\{\\theta\}\}/);
+        assert.doesNotMatch(macroHtml, /\\bm\{/);
+        assert.match(macroHtml, /data-tex-packages='\{"amsbsy":""\}'/);
+
         const exactDoc = createDocument([
             [
                 '\\begin{tikzpicture}',

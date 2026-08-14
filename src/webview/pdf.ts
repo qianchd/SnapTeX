@@ -1,11 +1,11 @@
 // @ts-nocheck
 /* eslint-disable curly */
 import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
-import { getPreviewBridge } from './bridge';
+import { getPreviewBridge, resolvePreviewAssetUri } from './bridge';
 
 const previewBridge = getPreviewBridge();
-    const pdfJsUri = document.body.dataset.pdfJsUri || '';
-    const pdfWorkerUri = document.body.dataset.pdfWorkerUri || '';
+    const pdfJsUri = resolvePreviewAssetUri(document.body.dataset.pdfJsUri || '');
+    const pdfWorkerUri = resolvePreviewAssetUri(document.body.dataset.pdfWorkerUri || '');
     let pdfjsLib = null;
     let pdfRuntimeReady = null;
 
