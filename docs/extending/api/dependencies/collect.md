@@ -1,6 +1,8 @@
 # `BlockDependencyRule.collect`
 
-Declares document-level values that affect one block's rendered output.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Declares document-level values that affect one block's rendered output. You implement this callback; `SmartRenderer` calls it for a new or source-changed block and stores the returned descriptors.
 
 ## Signature
 
@@ -21,12 +23,19 @@ interface BlockDependencyInput {
 
 A small list of dependency descriptors, or `[]` when the rule does not apply to the block.
 
+The descriptors identify state to read later; they do not copy current metadata or citation lists into the block snapshot.
+
 ## Call relationships
 
 - **Called by:** `SmartRenderer` for newly inserted or source-changed blocks.
 - **All registered collectors run:** their returned descriptors are concatenated.
 - **Descriptors later call:** their internal `read(state)` functions to build a stable fingerprint.
 - **Unchanged blocks:** reuse the stored descriptor list instead of running `collect` again.
+
+```text
+new/changed block -> collect(input) -> stored descriptors
+later update      -> read current descriptor values -> fingerprint -> dirty or unchanged
+```
 
 ```ts
 collect: ({ text, artifact, deps }) => {

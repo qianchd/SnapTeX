@@ -1,5 +1,14 @@
 # Sync Model
 
+Read this page when changing cursor-to-preview sync, preview-to-source navigation, automatic scrolling, or virtualized targets. The document model supplies source spans and optional AST hints; the preview protocol and host adapters consume them.
+
+```text
+document block span + optional source hint
+  -> host-neutral sync message
+  -> preview or editor reveal
+  -> direction-specific feedback suppression
+```
+
 ## Shared source map
 
 Each rendered block maps to a source span and starting line. This block-level map is shared by the VS Code and standalone hosts and remains available when the block's HTML is virtualized away.
@@ -27,3 +36,12 @@ Suppressed work is discarded rather than queued for later replay. Replaying stal
 ## Virtual targets
 
 When a target block is unmounted, the preview asks virtualization to mount it, waits for its measured layout, and then performs one reveal. Shell estimates are used to approach the target without requiring all preceding DOM to exist.
+
+## Debugging ownership
+
+| Symptom | Inspect first |
+| --- | --- |
+| Wrong file, block, or source range | `LatexDocument` source map and stored hints |
+| Correct target but wrong screen position | Host reveal ratio or preview reveal logic |
+| Two panes move each other repeatedly | Direction-specific suppression state |
+| Far target never appears | Virtual-target mount request and completion |

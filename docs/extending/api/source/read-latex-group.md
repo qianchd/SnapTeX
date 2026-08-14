@@ -1,6 +1,8 @@
 # `readLatexGroup`
 
-Reads one balanced brace or bracket group, including nested groups and escaped delimiters.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads one balanced brace or bracket group, including nested groups and escaped delimiters. Use it when reading a group at a known offset; use `replaceLatexCommandCalls` for command-wide search and replacement.
 
 ## Signature
 

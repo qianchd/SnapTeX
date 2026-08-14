@@ -1,6 +1,8 @@
 # `context.renderImage`
 
-Renders an image reference through the current host-aware image renderer.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Renders an image reference through the current host-aware image renderer. Use it instead of constructing browser or VS Code resource URLs inside an AST rule.
 
 ## Signature
 

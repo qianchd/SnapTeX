@@ -1,5 +1,7 @@
 # `PreviewUpdateService.resetState`
 
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
 Clears retained document-render lifecycle state.
 
 ## Signature

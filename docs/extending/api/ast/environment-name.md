@@ -1,6 +1,8 @@
 # `environmentName`
 
-Reads an environment name from the shapes produced by the unified-latex parser.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads an environment name from the shapes produced by the unified-latex parser. Use it when only the name is needed; use `isEnvironmentNode` when the rule also needs type narrowing.
 
 ## Signature
 

@@ -1,6 +1,8 @@
 # `context.renderMath`
 
-Renders TeX math to direct KaTeX HTML in AST mode.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Renders TeX math to direct KaTeX HTML in AST mode. The AST renderer supplies `context` to your rule's `render(input, context)` callback.
 
 ## Signature
 
@@ -16,6 +18,10 @@ KaTeX HTML using the current document macros. Unlike legacy [`renderMath`](../re
 
 - **Calls:** KaTeX with the current AST render context macros.
 - **Called by:** AST math rules and inline rendering callbacks.
+
+```text
+TeX body + current macros -> context.renderMath -> final KaTeX HTML
+```
 
 ```ts
 const mathHtml = context.renderMath('x^2', false);

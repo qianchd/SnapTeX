@@ -1,6 +1,8 @@
 # `defineRuleRegistry`
 
-Creates the registry consumed by document parsing and rendering.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Creates the registry consumed by document parsing and rendering. Call it when assembling the exported `SNAP_TEX_RULES`; it is not called from an individual render callback.
 
 ## Signature
 
@@ -23,6 +25,11 @@ A new registry object. Every array and `splitterConfig` is shallow-copied. `rend
 - **Called while:** constructing `SNAP_TEX_RULES` in `src/rules.ts`.
 - **Consumed by:** `LatexDocument`, `SmartRenderer`, and `PreviewUpdateService`.
 - **Does not call:** rule callbacks or render source.
+
+```text
+rule constants -> defineRuleRegistry -> SNAP_TEX_RULES
+                                      -> LatexDocument + SmartRenderer
+```
 
 ## Example
 

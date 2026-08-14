@@ -1,5 +1,20 @@
 # Testing
 
+Choose tests by observable behavior and ownership. A narrow helper test is appropriate for a parser primitive; a rendering or lifecycle change should pass through `PreviewUpdateService` so the test sees the same block, dependency, and backend behavior as a host.
+
+## Choose the verification level
+
+| Change | During development | Before completion |
+| --- | --- | --- |
+| Pure TypeScript helper/type | `npm run check-types`, targeted compiled test | `npm run lint` and relevant suite |
+| Rendering, splitting, metadata, diff, scanner, or sync map | `npm run compile-tests`, targeted Mocha test | `npm test` |
+| VS Code adapter or webview protocol | Targeted integration test and `npm run compile` | `npm test` |
+| Web UI, browser project storage, or PWA assets | Relevant browser/project test | `npm run web:build-static` |
+| Server API, authentication, or deployment | `npm run web:test-server` | `npm run web:build-server` plus security-path tests |
+| Documentation | `npm run docs:dev` while editing | `npm run docs:build` |
+
+Prefer the lowest level that proves the requirement, then run the broader command required by the affected boundary.
+
 ## Core checks
 
 ```bash
@@ -9,6 +24,8 @@ npm run compile-tests
 ```
 
 The test suite emphasizes rendered behavior, source mapping, block updates, metadata, tables, TikZ source preparation, Web assets, and host-neutral contracts. Avoid tests that merely assert source-code strings or preserve obsolete corner-case implementations.
+
+For a LaTeX rendering feature, assert final HTML or payload behavior in the relevant backend. For shared behavior, one parameterized test can exercise both backends without duplicating fixture setup.
 
 ## VS Code tests
 

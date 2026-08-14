@@ -1,6 +1,8 @@
 # AST Rule Contract
 
-An `AstRenderRule` claims parsed nodes and returns HTML directly.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+An `AstRenderRule` claims parsed nodes and returns HTML directly. Use it when node type, nested structure, or exact AST ownership is more reliable than source-text replacement.
 
 ```ts
 interface AstRenderRule {
@@ -21,6 +23,12 @@ Rules are checked in registry array order. The first [`match`](../ast/match) tha
 
 `consumedNodes` defaults to `1`. Set it to the value returned by [`readAstCommandArguments`](../ast/read-ast-command-arguments) when detached sibling groups were consumed.
 
+Keep the two callbacks separate:
+
+- `match` is a cheap type/name filter that runs frequently;
+- `render` reads arguments, renders children, and creates output;
+- returning `undefined` from `render` declines ownership even after `match` returned `true`.
+
 ## `AstRenderInput`
 
 | Member | Purpose |
@@ -36,6 +44,8 @@ Rules are checked in registry array order. The first [`match`](../ast/match) tha
 The context carries document state plus safe output methods. Its callable members each have a dedicated page under **AST Functions** in the sidebar.
 
 AST output does not pass through Markdown. Return valid, escaped HTML and use context rendering methods for math, references, citations, and images.
+
+Use `input.renderChildren` for nodes that already exist. Use `input.renderSource` only for generated LaTeX that must be parsed again.
 
 ## Related APIs
 

@@ -1,6 +1,8 @@
 # `stripLatexComments`
 
-Removes or masks unescaped LaTeX line comments.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Removes or masks unescaped LaTeX line comments. Use `remove` for rendered text and `mask` when source line/offset relationships must remain meaningful.
 
 ## Signature
 

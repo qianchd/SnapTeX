@@ -1,6 +1,13 @@
 # Install SnapTeX
 
-SnapTeX's preview does not require TeX Live, MiKTeX, or another native TeX distribution. Choose one host; the rendering core is shared across them.
+SnapTeX's preview does not require TeX Live, MiKTeX, or another native TeX distribution. Install only the host you intend to use:
+
+| Goal | Start with |
+| --- | --- |
+| Work in an existing local VS Code repository | VS Code extension |
+| Try the editor without installing an extension | Static Web app |
+| Install an offline-capable browser application | Web app, then PWA install |
+| Store named projects on your own machine/server | Self-hosted server edition |
 
 ## VS Code extension
 

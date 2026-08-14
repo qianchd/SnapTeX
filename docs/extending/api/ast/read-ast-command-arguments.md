@@ -1,6 +1,8 @@
 # `readAstCommandArguments`
 
-Reads optional and required arguments for the current AST macro, including detached sibling groups.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads optional and required arguments for the current AST macro, including detached sibling groups. Use it from `AstRenderRule.render` when a command's arguments may not all be attached to the macro node by the parser.
 
 ## Signature
 
@@ -23,11 +25,19 @@ interface AstCommandArguments {
 
 The function first reads arguments attached to `input.node`. If fewer required arguments are available, it skips sibling whitespace, reads detached bracket groups, then reads detached brace-group nodes until `requiredArgCount` is met.
 
+The helper returns plain argument text for convenient command rendering. Use node-level readers and `input.renderChildren` instead when preserving nested AST formatting is essential.
+
 ## Call relationships
 
 - **Called by:** `AstRenderRule.render` for macro commands.
 - **Calls:** [`readOptionalMacroArgument`](./read-optional-macro-argument), [`readRequiredMacroArgument`](./read-required-macro-argument), and [`argumentText`](./argument-text).
 - **Return feeds:** `AstRenderResult.consumedNodes`.
+
+```text
+AstRenderInput -> attached arguments + following sibling groups
+               -> requiredArgs / optionalArgs / consumedNodes
+               -> AstRenderResult
+```
 
 ```ts
 const args = readAstCommandArguments(input, 1);

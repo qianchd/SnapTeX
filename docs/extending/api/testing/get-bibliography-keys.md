@@ -1,5 +1,7 @@
 # `PreviewUpdateService.getBibliographyKeys`
 
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
 Returns bibliography keys known to the current document.
 
 ## Signature

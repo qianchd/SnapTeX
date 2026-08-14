@@ -1,6 +1,8 @@
 # `context.getCitedKeys`
 
-Reads citation keys currently registered during AST rendering.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads citation keys currently registered during AST rendering. Use it for bibliography output after citation rules have populated the shared state.
 
 ## Signature
 

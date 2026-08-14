@@ -3,6 +3,7 @@ import { scanLatexBraceBalance } from './utils';
 
 type SplitterEnvRule = Extract<SplitterRule, { envPattern: RegExp }>;
 type SplitterEnvRuleKind = SplitterEnvRule['kind'];
+type SplitterContextWrapperRule = Extract<SplitterRule, { kind: 'context-wrapper' }>;
 
 function testPattern(pattern: RegExp, value: string): boolean {
     pattern.lastIndex = 0;
@@ -25,8 +26,25 @@ export function matchesSplitterEnvRule(rules: readonly SplitterRule[], kind: Spl
     return findSplitterEnvRule(rules, kind, envName) !== undefined;
 }
 
-export function matchesSplitterBeginTokenRule(rules: readonly SplitterRule[], buffer: string): boolean {
-    return rules.some(rule => rule.kind === 'no-emergency-split-begin-token' && testPattern(rule.beginTokenPattern, buffer));
+export function findSplitterContextWrapperRule(
+    rules: readonly SplitterRule[],
+    macroName: string
+): SplitterContextWrapperRule | undefined {
+    return rules.find((rule): rule is SplitterContextWrapperRule =>
+        rule.kind === 'context-wrapper' && testPattern(rule.macroPattern, macroName)
+    );
+}
+
+function containsArgumentContextWrapper(text: string, rules: readonly SplitterRule[]): boolean {
+    const macroPattern = /(?<!\\)\\([a-zA-Z@]+)/g;
+    let match: RegExpExecArray | null;
+    while ((match = macroPattern.exec(text)) !== null) {
+        const rule = findSplitterContextWrapperRule(rules, match[1]);
+        if (rule && rule.content !== 'group-remainder') {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -43,6 +61,7 @@ export class LatexBlockSplitter {
         let currentBuffer = "";
         let envStack: string[] = [];
         let braceDepth = 0;
+        let hasContextWrapperStart = false;
         const maxBlockLines = Math.max(1, Math.floor(options.config.maxBlockLines));
         const maxNoEmergencySplitLines = Math.max(maxBlockLines, Math.floor(options.config.maxNoEmergencySplitLines));
 
@@ -64,6 +83,7 @@ export class LatexBlockSplitter {
         const startNextBlock = (line: number, index: number) => {
             bufferStartLine = line;
             bufferStartIndex = index;
+            hasContextWrapperStart = false;
         };
         const pushCurrentBlockAndStartAt = (endIndex: number, startLine: number, startIndex: number) => {
             pushCurrentBlock(endIndex);
@@ -78,6 +98,7 @@ export class LatexBlockSplitter {
             const preMatch = text.substring(lastIndex, match.index);
             const preLines = (preMatch.match(/\n/g) || []).length;
             currentBuffer += preMatch;
+            hasContextWrapperStart ||= containsArgumentContextWrapper(preMatch, options.rules);
             currentLine += preLines;
 
             const fullMatch = match[0];
@@ -89,17 +110,17 @@ export class LatexBlockSplitter {
             const currentBufferLineCount = (currentBuffer.match(/\n/g) || []).length;
 
             const withinNoEmergencySplitBudget = currentBufferLineCount <= maxNoEmergencySplitLines;
-            const hasNoEmergencySplitBeginTokenInBuffer = withinNoEmergencySplitBudget && matchesSplitterBeginTokenRule(options.rules, currentBuffer);
+            const hasNoEmergencySplitProtectionInBuffer = withinNoEmergencySplitBudget && hasContextWrapperStart;
             const isInsideNoEmergencySplitEnv = withinNoEmergencySplitBudget
                 && envStack.some(envName => matchesSplitterEnvRule(options.rules, 'no-emergency-split-env', envName));
             const isTrapped = currentBufferLineCount >= maxBlockLines
                 && !isInsideNoEmergencySplitEnv
-                && !hasNoEmergencySplitBeginTokenInBuffer;
+                && !hasNoEmergencySplitProtectionInBuffer;
 
             if (isDoubleNewline) {
                 let shouldReset = false;
 
-                if (envStack.length === 0 && braceDepth > 0 && !hasNoEmergencySplitBeginTokenInBuffer) {
+                if (envStack.length === 0 && braceDepth > 0 && !hasNoEmergencySplitProtectionInBuffer) {
                     const canCloseSoon = scanLatexBraceBalance(text, {
                         start: regex.lastIndex,
                         initialDepth: braceDepth,
@@ -110,7 +131,7 @@ export class LatexBlockSplitter {
                     if (!canCloseSoon) { shouldReset = true; }
                 }
 
-                if (isTrapped && (envStack.length > 0 || braceDepth > 0) && !hasNoEmergencySplitBeginTokenInBuffer) {
+                if (isTrapped && (envStack.length > 0 || braceDepth > 0) && !hasNoEmergencySplitProtectionInBuffer) {
                     shouldReset = true;
                 }
 
@@ -165,6 +186,11 @@ export class LatexBlockSplitter {
                 }
             }
             else if (isOpenBrace) {
+                const macroName = text.slice(regex.lastIndex).match(/^\s*\\([a-zA-Z@]+)/)?.[1];
+                const wrapperRule = macroName ? findSplitterContextWrapperRule(options.rules, macroName) : undefined;
+                if (wrapperRule?.content === 'group-remainder') {
+                    hasContextWrapperStart = true;
+                }
                 braceDepth++;
                 currentBuffer += fullMatch;
                 currentLine += matchLines;

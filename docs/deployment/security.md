@@ -1,5 +1,16 @@
 # Security Model
 
+This page defines the boundary for the server edition. Static SnapTeX has no remote project API or login surface; its project permissions come from browser storage and directory-handle APIs.
+
+Before exposing SnapTeX Server, verify all of the following:
+
+- it has a dedicated HTTPS origin;
+- Node listens only on loopback;
+- the service runs as a dedicated non-root account;
+- the project root contains only projects intended for remote access;
+- `apps/web/server.env` is private and uses a unique long password;
+- backups cover project data independently of application deployment.
+
 ## Trust boundary
 
 Use a dedicated origin such as `https://snaptex.example.com`. Browser storage, cookies, service workers, and JavaScript authority are isolated by origin, not URL path. Hosting unrelated applications under the same origin makes every same-origin application part of the same trust boundary.
@@ -41,3 +52,5 @@ Nginx should expose only the loopback service over HTTPS. Do not bind the Node l
 ## Secrets
 
 Keep `apps/web/server.env` out of Git. The installer writes a root-readable environment file outside the runtime. Never place real origins, usernames, passwords, tokens, or private project paths in repository documentation or examples.
+
+Return to [SnapTeX Server](./server.md) for installation and operational commands.

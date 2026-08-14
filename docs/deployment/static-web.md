@@ -1,5 +1,7 @@
 # Static Web and PWA
 
+Use this edition when the host serves application assets only and users keep projects in local folders or browser workspaces. It requires no Node process after the build is deployed.
+
 ## Build
 
 ```bash
@@ -41,3 +43,11 @@ Each build hashes its asset set into a new cache name. On activation, the new wo
 ## Static limitations
 
 **Open Server** displays guidance instead of calling unavailable APIs. The static edition cannot store projects on the hosting server. Use direct local folders, IndexedDB workspaces, or deploy the [server edition](./server.md).
+
+## Verify the deployment
+
+1. Open the deployed root and confirm the welcome page identifies the static edition.
+2. Open the demo and render text, math, one image, and one TikZ block.
+3. Import a small folder, save a change, reload the page, and reopen the workspace.
+4. Install the PWA, load it once, disconnect the network, and confirm the shell plus an imported workspace still open.
+5. Select **Open Server** and confirm it shows deployment guidance rather than sending an API request.

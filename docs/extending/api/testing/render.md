@@ -1,6 +1,8 @@
 # `PreviewUpdateService.render`
 
-Parses source, applies incremental document state, and returns a full or patch preview payload.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Parses source, applies incremental document state, and returns a full or patch preview payload. In rule tests, call it to verify final behavior through the same document and renderer lifecycle used by hosts.
 
 ## Signature
 

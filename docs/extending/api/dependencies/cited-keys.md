@@ -1,6 +1,8 @@
 # `deps.citedKeys`
 
-Creates a dependency descriptor for the document's stable cited-key set.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Creates a dependency descriptor for the document's stable cited-key set. Call it through `deps` inside a bibliography dependency collector.
 
 ## Signature
 
@@ -17,6 +19,11 @@ A descriptor with ID `citations:list`. Its current value is a renderer-provided 
 - **Called inside:** bibliography dependency collectors.
 - **Read by:** `SmartRenderer` during dependency fingerprinting.
 - **Can mark dirty:** an unchanged bibliography block after citations elsewhere are added or removed.
+
+```text
+deps.citedKeys() -> descriptor stored on bibliography block
+                 -> current cited-key fingerprint -> dirty or unchanged
+```
 
 ```ts
 collect: ({ text, deps }) => text.includes('\\bibliography')

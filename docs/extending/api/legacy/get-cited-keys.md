@@ -1,6 +1,8 @@
 # `renderer.getCitedKeys`
 
-Reads citation keys currently registered by the renderer.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads citation keys currently registered by the renderer. Use it for bibliography output after citation rules have populated the shared state.
 
 ## Signature
 

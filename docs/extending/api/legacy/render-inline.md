@@ -1,6 +1,8 @@
 # `renderer.renderInline`
 
-Runs the configured Markdown-it inline renderer on a text fragment.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Runs the configured Markdown-it inline renderer on a text fragment. Use it for Markdown-compatible inline text after any LaTeX-specific transformation has already happened.
 
 ## Signature
 

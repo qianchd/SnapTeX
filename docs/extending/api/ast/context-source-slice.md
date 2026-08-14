@@ -1,6 +1,8 @@
 # `context.sourceSlice`
 
-Returns the source represented by one AST node.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Returns the source represented by one AST node. Use it when a structural rule needs the original spelling or whitespace rather than rendered HTML.
 
 ## Signature
 

@@ -1,6 +1,8 @@
 # `readMetadataCommand`
 
-Finds the first balanced one-argument metadata command in source text.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Finds the first balanced one-argument metadata command in source text. Use it inside a metadata extractor for simple `\name{value}` declarations.
 
 ## Signature
 

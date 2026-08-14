@@ -1,5 +1,6 @@
 import { DiffEngine } from '../diff';
 import {
+    findSplitterContextWrapperRule,
     findSplitterEnvRule,
     LatexBlockSplitter,
     matchesSplitterEnvRule
@@ -8,7 +9,15 @@ import type { BlockTextSpan, SplitterOptions, SplitterRule } from '../types';
 import { getBlockSpanText, lineAtOffset, stableHash } from '../utils';
 import { parseLatexToAst } from './parse';
 import type { AstParseResult, AstSourcePosition, SnaptexAstArgument, SnaptexAstNode } from './types';
-import { astNodesRange, environmentName, firstSignificantNode, getSourcePosition, isEnvironmentNode, isMacroNode } from './visit-utils';
+import {
+    astNodesRange,
+    environmentName,
+    firstSignificantNode,
+    getSourcePosition,
+    isEnvironmentNode,
+    isMacroNode,
+    readRequiredMacroArgument
+} from './visit-utils';
 
 export interface AstSplitOptions extends SplitterOptions {
     parse?: (text: string) => Promise<AstParseResult>;
@@ -27,11 +36,12 @@ export interface AstSplitSnapshot {
     coarseSpans?: readonly BlockTextSpan[];
 }
 
-interface DecoratorContext {
+interface ContextWrapper {
     start: number;
     end: number;
     prefix: string;
     suffix: string;
+    nodes: readonly SnaptexAstNode[];
 }
 
 interface RefineResult {
@@ -50,7 +60,7 @@ interface CoarseBlockMeta {
  *
  * The legacy splitter first creates cheap coarse spans with its mature recovery
  * behavior. AST parsing then refines only spans that need structural context,
- * such as long style groups or transparent wrapper environments.
+ * such as long context wrappers or transparent environments.
  */
 export async function splitLatexWithAst(text: string, options: AstSplitOptions): Promise<AstSplitResult> {
     const coarseSpans = createAstCoarseSpans(text, options);
@@ -174,7 +184,7 @@ function shouldRefineCoarseSpan(text: string, span: BlockTextSpan, options: Spli
     if (text.trim().length === 0) {
         return false;
     }
-    if (containsRefinableDecoratorGroup(text, options.rules)) {
+    if (containsRefinableContextWrapper(text, options.rules)) {
         return true;
     }
     if (containsEnvRule(text, options.rules, 'transparent-env')) {
@@ -200,7 +210,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
     const pushAstSpan = (
         start: number,
         end: number,
-        contexts: readonly DecoratorContext[] = [],
+        contexts: readonly ContextWrapper[] = [],
         maxLineCount = blockMaxLineCount
     ) => {
         usedSafetySplit = pushSpan(spans, text, start, end, options, maxLineCount, contexts) || usedSafetySplit;
@@ -223,7 +233,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
     const processTransparentEnvironment = (
         node: SnaptexAstNode,
         position: AstSourcePosition,
-        contexts: readonly DecoratorContext[],
+        contexts: readonly ContextWrapper[],
         preserveWrapper: boolean
     ) => {
         pushAstSpan(blockStart, position.start.offset, contexts);
@@ -257,7 +267,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
         blockStart = position.end.offset;
     };
 
-    const processNodes = (nodes: readonly SnaptexAstNode[], contexts: readonly DecoratorContext[] = []) => {
+    const processNodes = (nodes: readonly SnaptexAstNode[], contexts: readonly ContextWrapper[] = []) => {
         for (const node of nodes) {
             const position = getSourcePosition(node);
             if (!position) {
@@ -271,13 +281,13 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
                 continue;
             }
 
-            const decorator = createDecoratorContext(text, node);
-            if (decorator) {
-                const nestedContexts = [...contexts, decorator];
-                processNodes(Array.isArray(node.content) ? node.content : [], nestedContexts);
-                if (blockStart > decorator.start && blockStart < decorator.end) {
-                    pushAstSpan(blockStart, decorator.end, nestedContexts);
-                    blockStart = decorator.end;
+            const wrapper = createContextWrapper(text, node, options.rules);
+            if (wrapper) {
+                const nestedContexts = [...contexts, wrapper];
+                processNodes(wrapper.nodes, nestedContexts);
+                if (blockStart > wrapper.start && blockStart < wrapper.end) {
+                    pushAstSpan(blockStart, wrapper.end, nestedContexts);
+                    blockStart = wrapper.end;
                 }
                 continue;
             }
@@ -438,46 +448,19 @@ function containsEnvRule(text: string, rules: readonly SplitterRule[], kind: 'tr
     return false;
 }
 
-function containsRefinableDecoratorGroup(text: string, rules: readonly SplitterRule[]): boolean {
-    const openRegex = /\{\\(?:color\{[a-zA-Z0-9]+\}|(?:bf|it|sf|rm|tt)\b)/g;
+function containsRefinableContextWrapper(text: string, rules: readonly SplitterRule[]): boolean {
+    if (!/\n\s*\n/.test(text) && !containsEnvRule(text, rules, 'split-env')) {
+        return false;
+    }
+
+    const macroPattern = /(?<!\\)\\([a-zA-Z@]+)/g;
     let match: RegExpExecArray | null;
-    while ((match = openRegex.exec(text)) !== null) {
-        if (decoratorGroupNeedsRefinement(text, rules, match.index + 1)) {
+    while ((match = macroPattern.exec(text)) !== null) {
+        if (findSplitterContextWrapperRule(rules, match[1])) {
             return true;
         }
     }
     return false;
-}
-
-function decoratorGroupNeedsRefinement(text: string, rules: readonly SplitterRule[], groupStart: number): boolean {
-    let depth = 1;
-
-    for (let index = groupStart + 1; index < text.length; index++) {
-        const char = text[index];
-        if (char === '\\') {
-            const envMatch = text.slice(index).match(/^\\begin\s*\{([^}]+)\}/);
-            if (envMatch && matchesSplitterEnvRule(rules, 'split-env', envMatch[1])) {
-                return true;
-            }
-            index += envMatch ? envMatch[0].length - 1 : 1;
-            continue;
-        }
-        if (char === '\n' && /^\n\s*\n/.test(text.slice(index))) {
-            return true;
-        }
-        if (char === '{') {
-            depth++;
-            continue;
-        }
-        if (char === '}') {
-            depth--;
-            if (depth === 0) {
-                return false;
-            }
-            continue;
-        }
-    }
-    return true;
 }
 
 function offsetSpan(span: BlockTextSpan, offsetDelta: number, lineDelta: number): BlockTextSpan {
@@ -489,33 +472,57 @@ function offsetSpan(span: BlockTextSpan, offsetDelta: number, lineDelta: number)
     };
 }
 
-function createDecoratorContext(text: string, node: SnaptexAstNode): DecoratorContext | undefined {
-    if (node.type !== 'group' || !Array.isArray(node.content)) {
+function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonly SplitterRule[]): ContextWrapper | undefined {
+    const position = getSourcePosition(node);
+    if (!position) {
         return undefined;
     }
 
-    const groupPosition = getSourcePosition(node);
-    const styleMacro = firstSignificantNode(node.content)?.node;
-    if (!groupPosition || !styleMacro || !isStyleMacro(styleMacro)) {
+    if (node.type === 'group' && Array.isArray(node.content)) {
+        const leading = firstSignificantNode(node.content);
+        if (!leading || !isMacroNode(leading.node)) {
+            return undefined;
+        }
+        const rule = findSplitterContextWrapperRule(rules, leading.node.content);
+        if (rule?.content !== 'group-remainder') {
+            return undefined;
+        }
+        const macroEnd = nodeEnd(leading.node);
+        if (macroEnd === undefined) {
+            return undefined;
+        }
+
+        const payloadStart = skipWhitespaceNodes(node.content, macroEnd);
+        return {
+            start: position.start.offset,
+            end: position.end.offset,
+            prefix: text.slice(position.start.offset, payloadStart),
+            suffix: text.slice(position.end.offset - 1, position.end.offset),
+            nodes: node.content.slice(leading.index + 1)
+        };
+    }
+
+    if (!isMacroNode(node)) {
+        return undefined;
+    }
+    const rule = findSplitterContextWrapperRule(rules, node.content);
+    if (!rule || rule.content === 'group-remainder') {
+        return undefined;
+    }
+    const argument = readRequiredMacroArgument(node, rule.content.requiredArgument);
+    const contentRange = argument && astNodesRange(argument.content);
+    const wrapperEnd = nodeEnd(node);
+    if (!argument || !contentRange || wrapperEnd === undefined) {
         return undefined;
     }
 
-    const styleEnd = nodeEnd(styleMacro);
-    if (styleEnd === undefined) {
-        return undefined;
-    }
-
-    const payloadStart = skipWhitespaceNodes(node.content, styleEnd);
     return {
-        start: groupPosition.start.offset,
-        end: groupPosition.end.offset,
-        prefix: text.slice(groupPosition.start.offset, payloadStart),
-        suffix: text.slice(groupPosition.end.offset - 1, groupPosition.end.offset)
+        start: position.start.offset,
+        end: wrapperEnd,
+        prefix: text.slice(position.start.offset, contentRange.start),
+        suffix: text.slice(contentRange.end, wrapperEnd),
+        nodes: argument.content
     };
-}
-
-function isStyleMacro(node: SnaptexAstNode): boolean {
-    return isMacroNode(node) && ['color', 'it', 'bf', 'rm', 'sf', 'tt'].includes(node.content);
 }
 
 function nodeEnd(node: SnaptexAstNode | SnaptexAstArgument): number | undefined {
@@ -570,7 +577,7 @@ function pushSpan(
     end: number,
     options: SplitterOptions,
     maxLineCount: number,
-    contexts: readonly DecoratorContext[] = []
+    contexts: readonly ContextWrapper[] = []
 ): boolean {
     if (start >= end || text.slice(start, end).trim().length === 0) {
         return false;
@@ -588,12 +595,12 @@ function pushSpan(
         end,
         line: lineAtOffset(text, start),
         lineCount,
-        ...decoratorAffixes(contexts, start, end)
+        ...contextWrapperAffixes(contexts, start, end)
     });
     return false;
 }
 
-function decoratorAffixes(contexts: readonly DecoratorContext[], start: number, end: number): Pick<BlockTextSpan, 'prefix' | 'suffix'> {
+function contextWrapperAffixes(contexts: readonly ContextWrapper[], start: number, end: number): Pick<BlockTextSpan, 'prefix' | 'suffix'> {
     const prefix = contexts
         .filter(context => start > context.start && start < context.end)
         .map(context => context.prefix)
@@ -616,7 +623,7 @@ function pushParagraphBudgetSpans(
     end: number,
     options: SplitterOptions,
     maxLineCount: number,
-    contexts: readonly DecoratorContext[] = []
+    contexts: readonly ContextWrapper[] = []
 ) {
     let chunkStart = start;
     const boundaryRegex = /\n\s*\n|\\begin\s*\{([^}]+)\}/g;
@@ -654,7 +661,7 @@ function pushLineBudgetSpans(
     start: number,
     end: number,
     maxLineCount: number,
-    contexts: readonly DecoratorContext[] = []
+    contexts: readonly ContextWrapper[] = []
 ) {
     let chunkStart = start;
     let linesInChunk = 1;
@@ -678,7 +685,7 @@ function pushRawSpan(
     text: string,
     start: number,
     end: number,
-    contexts: readonly DecoratorContext[] = []
+    contexts: readonly ContextWrapper[] = []
 ) {
     if (start >= end || text.slice(start, end).trim().length === 0) {
         return;
@@ -689,7 +696,7 @@ function pushRawSpan(
         end,
         line: lineAtOffset(text, start),
         lineCount: text.slice(start, end).split('\n').length,
-        ...decoratorAffixes(contexts, start, end)
+        ...contextWrapperAffixes(contexts, start, end)
     });
 }
 

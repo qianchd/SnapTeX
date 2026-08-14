@@ -1,6 +1,8 @@
 # `isEnvironmentNode`
 
-Checks whether an unknown value is an AST environment or math-environment node.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Checks whether an unknown value is an AST environment or math-environment node. It is the usual narrow `match` predicate for an environment rule.
 
 ## Signature
 

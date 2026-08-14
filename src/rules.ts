@@ -105,10 +105,12 @@ export const DEFAULT_SPLITTER_RULES: SplitterRule[] = [
     { name: 'split-environments', kind: 'split-env', envPattern: envPattern(`${REGEX_STR.SPLITTER_MAJOR}|thebibliography|tikzpicture`, true) },
     { name: 'list-tikz-and-bibliography', kind: 'no-emergency-split-env', envPattern: envPattern('itemize|enumerate|thebibliography|tikzpicture') },
     {
-        name: 'long-brace-groups',
-        kind: 'no-emergency-split-begin-token',
-        beginTokenPattern: /(?:\{\\(?:color\{[a-zA-Z0-9]+\}|(?:bf|it|sf|rm|tt)\b)|\\resizebox\s*\{[^{}]*\}\s*\{[^{}]*\}\s*\{)/
+        name: 'declaration-style-groups',
+        kind: 'context-wrapper',
+        macroPattern: /^(?:color|bf|it|sf|rm|tt)$/,
+        content: 'group-remainder'
     },
+    { name: 'resizebox', kind: 'context-wrapper', macroPattern: /^resizebox$/, content: { requiredArgument: 2 } },
     { name: 'emergency-split-math-end', kind: 'emergency-split-end-env', envPattern: envPattern(REGEX_STR.MATH_ENVS, true) }
 ];
 

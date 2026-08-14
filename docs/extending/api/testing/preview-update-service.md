@@ -1,6 +1,8 @@
 # `PreviewUpdateService`
 
-Coordinates document parsing and renderer state without depending on a VS Code or Web UI.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Coordinates document parsing and renderer state without depending on a VS Code or Web UI. Use it for end-to-end rule tests and host integration; use lower-level helpers only for isolated parser or formatter tests.
 
 ## Constructor
 
@@ -36,6 +38,12 @@ Useful methods include:
 
 - **Constructs:** `LatexDocument` and `SmartRenderer` with the same registry.
 - **Used by:** VS Code, Web/standalone hosts, and end-to-end tests.
+
+```text
+file provider + registry -> PreviewUpdateService
+                         -> LatexDocument + SmartRenderer
+                         -> RenderPayload / lazy block HTML / sync data
+```
 
 ```ts
 const service = new PreviewUpdateService(

@@ -1,6 +1,8 @@
 # `context.sourceContent`
 
-Returns the source span covered by a list of AST nodes.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Returns the source span covered by a list of AST nodes. Use it to recover one contiguous source fragment; use `renderChildren` when the goal is HTML.
 
 ## Signature
 

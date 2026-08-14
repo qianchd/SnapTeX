@@ -1,6 +1,8 @@
 # `PreviewUpdateService.renderBlockByIndex`
 
-Renders one previously parsed block for lazy or virtualized preview mounting.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Renders one previously parsed block for lazy or virtualized preview mounting. Call it only after `render(..., { deferFullHtml: true })` has established the current block map.
 
 ## Signature
 

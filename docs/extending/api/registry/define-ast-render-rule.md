@@ -1,6 +1,8 @@
 # `defineAstRenderRule`
 
-Preserves an AST rule unchanged while providing contextual TypeScript typing.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Preserves an AST rule unchanged while providing contextual TypeScript typing. Use it while declaring a rule in `src/rules.ts`; adding the result to `astRenderRules` is the separate registration step.
 
 ## Signature
 
@@ -23,6 +25,10 @@ The same rule object. The helper does not register, sort, clone, or wrap it.
 - **Called by:** rule declarations in `src/rules.ts`.
 - **Registered through:** `RuleRegistry.astRenderRules`.
 - **Executed by:** the AST renderer in array order.
+
+```text
+rule object -> defineAstRenderRule -> astRenderRules registration -> AST walker
+```
 
 ## Example
 

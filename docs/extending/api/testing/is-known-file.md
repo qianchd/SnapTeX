@@ -1,5 +1,7 @@
 # `PreviewUpdateService.isKnownFile`
 
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
 Checks whether a URI belongs to the current parsed project.
 
 ## Signature

@@ -7,6 +7,17 @@ Metadata extraction and block dependencies answer different questions:
 
 Both declarations and both registry changes belong in `src/rules.ts`.
 
+## Decide which pieces are required
+
+| Requirement | Add |
+| --- | --- |
+| Read `\editor{...}` into document state | `MetadataExtractor` |
+| Use the value while rendering a block | Read `renderer.metadata` or `context.metadata` in that render rule |
+| Hide the declaration from ordinary body output | Return its source `range` from the extractor |
+| Refresh an unchanged `\maketitle` after the editor changes | `BlockDependencyRule` for that block |
+
+Extraction does not render HTML, and a dependency rule does not extract metadata. Keeping those responsibilities separate lets the same metadata serve more than one renderer without rescanning every block.
+
 ## Example goal
 
 Suppose a template declares an editor:
@@ -21,7 +32,7 @@ The repository already includes this complete example as `EDITOR_METADATA_EXTRAC
 
 ## 1. Define the extractor
 
-Add this in `src/rules.ts`:
+`readMetadataCommand` is already imported from `./metadata` in the current file. Add this declaration in `src/rules.ts`:
 
 ```ts
 export const EDITOR_METADATA_EXTRACTOR = {
@@ -48,6 +59,11 @@ SnapTeX supplies `source` to `extract`. `readMetadataCommand` searches that sour
 ```
 
 The offsets are illustrative. Returning `ranges` tells the document model to blank the declaration from ordinary body rendering while preserving its newline structure for source mapping.
+
+```text
+document source -> extract(source) -> custom.editor + hidden range
+                                   -> LatexDocument metadata/body
+```
 
 Custom scalar values belong under `custom`. Built-in title-page fields such as `title`, `date`, `authors`, `affiliations`, and `keywords` already have structured fields on `PreambleData`.
 
@@ -85,6 +101,8 @@ const editor = context.metadata?.custom.editor ?? '';
 
 Rendering access alone does not make an unchanged block refresh when the value changes. That is the dependency rule's job.
 
+The renderer supplies `renderer` or `context`; your extractor does not pass values directly to a render rule. Both rendering paths read the merged `document.metadata` created by `LatexDocument`.
+
 ## 4. Declare external invalidation
 
 The built-in `\maketitle` dependency follows this pattern:
@@ -117,6 +135,11 @@ SnapTeX supplies the `collect` input:
 | `deps` | Factory for supported dependency descriptors. |
 
 The collector identifies whether this block owns `\maketitle`. When it does, the returned descriptors say which document state affects the output.
+
+```text
+new/changed block -> collect -> store metadata paths
+later metadata edit -> read current paths -> changed fingerprint -> rerender block
+```
 
 Register the declaration in `blockDependencyRules`. There is one backend-neutral dependency list; do not duplicate it for legacy and AST rendering.
 

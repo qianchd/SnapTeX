@@ -1,6 +1,8 @@
 # `context.renderLabel`
 
-Creates the hidden preview anchor for a LaTeX label.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Creates the hidden preview anchor for a LaTeX label. Call it from an AST rule that owns a labeled structure and must expose a target to references and source synchronization.
 
 ## Signature
 

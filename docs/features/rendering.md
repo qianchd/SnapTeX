@@ -2,6 +2,16 @@
 
 SnapTeX converts LaTeX source into a fast structural preview. It does not invoke a native TeX installation for ordinary content; math is rendered with KaTeX, PDFs with PDF.js, and TikZ with the bundled TikZJax runtime.
 
+## Read support levels correctly
+
+| Level | Meaning |
+| --- | --- |
+| Structural support | SnapTeX recognizes the construct and renders readable HTML with labels/navigation where applicable |
+| Preview approximation | Content is preserved, but exact TeX spacing, sizing, float placement, or package styling may differ |
+| Outside the preview boundary | Arbitrary package execution, class hooks, final pagination, and unsupported TeX programming require a full TeX compiler |
+
+The sections below describe structural support. They are not package-compatibility guarantees.
+
 ## Text and structure
 
 Supported structural constructs include:
@@ -73,3 +83,5 @@ TikZJax does not contain every native TeX package. Unsupported package behavior 
 ## Known boundary
 
 SnapTeX does not promise pixel-identical output, final page breaks, floats placed by TeX, or arbitrary class/package execution. Compile the document with a full TeX toolchain for final output.
+
+When a construct fails completely rather than differing typographically, reduce it to the smallest source that still fails and report the selected host/backend with the first relevant error. See [Troubleshooting](../guide/troubleshooting.md#report-a-reproducible-problem).

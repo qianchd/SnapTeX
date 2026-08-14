@@ -1,6 +1,8 @@
 # `escapeHtml`
 
-Escapes plain text for insertion into HTML content.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Escapes plain text for insertion into HTML content. Use it immediately before interpolating source-controlled plain text into generated HTML; it does not render LaTeX.
 
 ## Signature
 

@@ -1,6 +1,8 @@
 # `skipLatexWhitespace`
 
-Advances an index across LaTeX whitespace and complete `%` line comments.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Advances an index across LaTeX whitespace and complete `%` line comments. It is a source-reader primitive, not a document cleanup pass.
 
 ## Signature
 

@@ -101,14 +101,14 @@ suite('LatexBlockSplitter', () => {
         const text = [
             'Before.',
             '',
-            '{\\color{blue}',
+            '{\\color{blue!20}',
             ...lines,
             '}',
             '',
             'After.'
         ].join('\n');
 
-        const colorBlock = singleBlockContaining(text, '\\color{blue}');
+        const colorBlock = singleBlockContaining(text, '\\color{blue!20}');
 
         assert.match(colorBlock, /blue line 54/);
         assert.match(colorBlock, /\}\s*$/);

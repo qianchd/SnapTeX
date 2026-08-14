@@ -1,6 +1,8 @@
 # Legacy Rule Contract
 
-A `PreprocessRule` transforms one block of LaTeX source before Markdown rendering.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+A `PreprocessRule` transforms one block of LaTeX source before Markdown rendering. Use it when the legacy backend can recognize the feature from source text without structural AST traversal.
 
 ```ts
 interface PreprocessRule {
@@ -17,13 +19,25 @@ interface PreprocessRule {
 3. Markdown-it renders the transformed text with raw HTML disabled.
 4. SnapTeX restores HTML registered with `renderer.protectHtml`.
 
+The callback's return value is therefore usually one of three forms:
+
+| Return shape | Use |
+| --- | --- |
+| Unchanged `text` | The rule does not apply |
+| Transformed LaTeX/Markdown-compatible text | A later rule or Markdown should continue processing it |
+| Text containing protected tokens | The rule generated trusted HTML that must survive Markdown |
+
 ```ts
 const RULE: PreprocessRule = {
     name: 'badge',
     priority: 200,
-    apply: (text, renderer) => /* transformed text */ text
+    apply: (text, _renderer) => /* transformed text */ text
 };
 ```
+
+The `_renderer` parameter is present because SnapTeX always supplies the full
+`apply(text, renderer)` interface. Its underscore only says that this minimal
+example does not use the context.
 
 ## `RenderContext`
 
@@ -39,6 +53,8 @@ const RULE: PreprocessRule = {
 | [`getCitedKeys`](../legacy/get-cited-keys) | Read citation keys seen so far |
 
 Legacy rules operate on source text and therefore commonly use the [balanced source readers](../source/replace-latex-command-calls). They do not receive AST nodes and do not run in AST mode.
+
+`name` is diagnostic. It does not select commands. Source matching belongs inside `apply`, normally through `replaceLatexCommandCalls` or another shared reader.
 
 ## Related APIs
 

@@ -1,6 +1,8 @@
 # `context.renderRef`
 
-Renders one or more reference targets as preview links.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Renders one or more reference targets as preview links. Call it from an AST rule after reading the labels from `\ref`, `\ref*`, `\eqref`, or `\eqref*`.
 
 ## Signature
 

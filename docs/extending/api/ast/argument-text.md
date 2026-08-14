@@ -1,6 +1,8 @@
 # `argumentText`
 
-Flattens an AST argument to readable text.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Flattens an AST argument to readable text. Use it for names, keys, and other plain-text arguments; use `renderChildren` when nested formatting must survive.
 
 ## Signature
 

@@ -1,5 +1,7 @@
 # Performance
 
+Read this page when a change affects initial-load latency, heap growth, mounted DOM, layout stability, or heavy resources. Measure the owning layer before optimizing: extension/host heap, serialized payload, and browser DOM/resource memory are different costs.
+
 ## Memory model
 
 SnapTeX's largest avoidable costs are full source duplication, serialized block HTML, mounted DOM, PDF canvases, and TikZ runtimes. The current model limits each one:
@@ -39,3 +41,5 @@ For VS Code, enable `snaptex.debugMemory`; for Web, enable **Debug memory** in S
 - cached HTML count;
 - PDF canvases;
 - active and cached TikZ output.
+
+Change one lifetime or representation at a time and compare the same document, viewport, backend, and production build. A lower stable heap can still hide a higher opening peak, so record both peak and settled measurements.

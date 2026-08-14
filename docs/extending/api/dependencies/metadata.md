@@ -1,6 +1,8 @@
 # `deps.metadata`
 
-Creates a dependency descriptor for one path in document metadata.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Creates a dependency descriptor for one path in document metadata. Call it through `deps` inside `BlockDependencyRule.collect`; it is not a global metadata lookup.
 
 ## Signature
 
@@ -21,6 +23,10 @@ A descriptor with ID `metadata:${path}`. When fingerprinted, string values are u
 - **Called inside:** [`BlockDependencyRule.collect`](./collect).
 - **Read by:** `SmartRenderer` against current `document.metadata`.
 - **Can mark dirty:** a source-unchanged block when the current value differs.
+
+```text
+metadata path -> descriptor stored on block -> current metadata value -> fingerprint
+```
 
 ```ts
 return [

@@ -1,6 +1,12 @@
 # Troubleshooting
 
-Start with the symptom below. SnapTeX is a structural preview, so a difference from final TeX layout is not automatically a rendering failure.
+Start with these three checks before following the symptom-specific section:
+
+1. Confirm that the preview root is the `.tex` file owning the preamble.
+2. Confirm the current host and storage type: VS Code, direct folder, browser workspace/demo, or remote server project.
+3. Confirm the selected backend and whether the behavior persists after one complete preview reload.
+
+SnapTeX is a structural preview, so a difference from final TeX layout is not automatically a rendering failure.
 
 ## The preview is blank on first open
 

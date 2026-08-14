@@ -1,12 +1,33 @@
 # Rendering Rules Tutorial
 
-This tutorial adds a `\badge{...}` command to one selected rendering backend. Every declaration and registry change shown below belongs in `src/rules.ts`; no other source or stylesheet file is required.
+This tutorial adds a `\badge{...}` command by editing only `src/rules.ts`. It shows two independent implementations because SnapTeX has two rendering backends. Follow the section for the backend you want to extend; you do not need to implement both.
 
 For the extension boundaries and registry fields, read [Extension Model](./index.md). For exact function contracts, use the [Rule API Reference](./rule-api.md).
+
+All snippets are repository TypeScript, not code placed in a `.tex` project. [Source API Scope](./api/scope.md) explains imports, callback ownership, output safety, and testing.
 
 ::: warning Source-level API
 SnapTeX does not load executable rules from a TeX project. Rebuild SnapTeX and fully reload the preview after changing `src/rules.ts`.
 :::
+
+## What you will change
+
+There are only two required actions:
+
+1. declare one rule object in `src/rules.ts`;
+2. add that object to `renderRules` or `astRenderRules` in `SNAP_TEX_RULES`.
+
+The declaration explains behavior. The registry makes that behavior active. A rule constant that is never added to the registry never runs.
+
+```text
+one block or AST node
+  -> registered rule callback
+  -> shared argument reader
+  -> safe generated output
+  -> existing preview pipeline
+```
+
+You do not modify `SmartRenderer`, `LatexDocument`, the webview, or host adapters for this command.
 
 ## Expected result
 
@@ -47,13 +68,26 @@ Rendering has two independent rule arrays:
 | `legacy` | `renderRules` | Ordered source transformations followed by Markdown |
 | `ast(experimental)` | `astRenderRules` | Parsed nodes claimed by the first matching AST rule |
 
-Implement the path you intend to use. A legacy rule does not require an AST rule, and an AST rule does not require a legacy rule.
+Implement the path selected in the preview setting. A legacy rule does not require an AST rule, and an AST rule does not require a legacy rule.
 
 ## Legacy implementation
 
-### 1. Add one rule in `src/rules.ts`
+Use this path when extending the `legacy` backend. A legacy rule receives one block as source text, transforms it, and returns text for the next rule. Markdown runs after every registered legacy rule has finished.
 
-`PreprocessRule`, `replaceLatexCommandCalls`, and `escapeHtml` are already used by the file. Add this declaration near the other rule definitions:
+### 1. Reuse the existing imports
+
+`src/rules.ts` already imports these APIs. If an import is absent in a future version, extend the existing import from the same module instead of adding a second import statement:
+
+```ts
+import { PreprocessRule } from './types';
+import { escapeHtml, replaceLatexCommandCalls } from './utils';
+```
+
+`PreprocessRule` is a TypeScript contract. The other two are runtime helpers called by the rule.
+
+### 2. Declare the rule
+
+Add this declaration near the other legacy rule definitions:
 
 ```ts
 const BADGE_RENDER_RULE: PreprocessRule = {
@@ -80,9 +114,20 @@ Read the callback from outside to inside:
 5. `escapeHtml` prevents source text from becoming active HTML.
 6. `protectHtml` hides the generated `span` behind a token until Markdown rendering is complete.
 
+The values have different owners:
+
+| Value | Created by | Meaning |
+| --- | --- | --- |
+| `text` | `SmartRenderer` | Current block after lower-priority rules |
+| `renderer` | `SmartRenderer` | Current document state and legacy output services |
+| `call` | `replaceLatexCommandCalls` | One validated `\badge{...}` call |
+| `call.requiredArgs[0].content` | Balanced command reader | Source inside the first `{...}` group |
+
+The inner `render: call => ...` callback belongs to `replaceLatexCommandCalls`; it is not a second SnapTeX rule.
+
 The priority is after SnapTeX's built-in math and text-style rules. If the argument contains content already converted to a protected token, nesting it inside the badge is safe: the protection manager restores nested tokens after Markdown.
 
-### 2. Register it
+### 3. Register it
 
 Change only the `renderRules` field of `SNAP_TEX_RULES`:
 
@@ -105,7 +150,18 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
 
 `defineRuleRegistry` sorts legacy rules by ascending `priority`, so the declaration's position in this array does not change its execution order.
 
-### 3. Why each API is necessary
+At runtime the complete path is:
+
+```text
+SNAP_TEX_RULES.renderRules
+  -> SmartRenderer sorts/runs apply callbacks
+  -> BADGE_RENDER_RULE reads \badge arguments
+  -> protectHtml returns a temporary token
+  -> Markdown renders surrounding text
+  -> SnapTeX restores the generated span
+```
+
+### 4. Why each API is necessary
 
 | API | Why this rule uses it |
 | --- | --- |
@@ -116,19 +172,24 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
 
 There is no command-specific brace regex, separate postprocessor, renderer switch, or webview modification.
 
+### 5. Preserve unsupported input
+
+`replaceLatexCommandCalls` leaves malformed calls such as `\badge{unclosed` unchanged. Your rule therefore handles valid calls and preserves source it cannot safely understand. Avoid a direct brace regex, which would lose this behavior for nested or commented arguments.
+
 ## AST implementation
 
 This section is an alternative implementation for `ast(experimental)`. It does not depend on the legacy rule above.
 
-### 1. Add one AST rule in `src/rules.ts`
+### 1. Import the AST argument reader
 
-Add a value import for the argument reader at the top of `src/rules.ts` (the existing re-export alone does not create a local binding):
+Replace the existing direct re-export with a local import plus re-export. A re-export alone does not create a binding that code in `src/rules.ts` can call:
 
 ```ts
 import { readAstCommandArguments } from './ast/rules';
+export { readAstCommandArguments };
 ```
 
-Then add the rule declaration:
+`defineAstRenderRule` is declared in `src/rules.ts`, so it needs no import there. Add the rule declaration:
 
 ```ts
 const AST_BADGE_RENDER_RULE = defineAstRenderRule({
@@ -158,6 +219,15 @@ The callback flow is different from legacy:
 4. `context.escapeHtml(content)` safely renders this plain-text version.
 5. `consumedNodes` tells the walker to skip sibling nodes consumed as arguments.
 
+The values have different owners:
+
+| Value | Created by | Meaning |
+| --- | --- | --- |
+| `input` | AST walker | Current node, siblings, index, and recursive render methods |
+| `context` | AST renderer | Current document state and safe HTML services |
+| `args` | `readAstCommandArguments` | Parsed optional/required command arguments |
+| `content` | The argument reader | Plain source text for the first required argument |
+
 AST output is already HTML. It does not pass through Markdown, so AST rules do not call `protectHtml`.
 
 ### 2. Register it
@@ -183,6 +253,16 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
 
 AST precedence is array order. Put a narrow custom command rule before broader defaults that could claim the same macro.
 
+At runtime the complete path is:
+
+```text
+SNAP_TEX_RULES.astRenderRules
+  -> AST walker checks match callbacks in array order
+  -> AST_BADGE_RENDER_RULE reads command arguments
+  -> render returns final escaped HTML
+  -> walker advances by consumedNodes
+```
+
 ## Plain text versus nested LaTeX
 
 Both examples above promise plain argument text and therefore escape it. Decide this contract before writing a rule:
@@ -195,6 +275,8 @@ Both examples above promise plain argument text and therefore escape it. Decide 
 | Generated LaTeX source in AST mode | `input.renderSource(...)` |
 
 Do not add a more powerful renderer unless the command actually promises nested syntax. The [`renderInlineLatexHtml` reference](./api/rendering/render-inline-latex-html) explains every argument, including where its callback parameter comes from.
+
+For the badge example, plain text is an intentional contract. If `\badge{\textbf{important}}` must preserve nested formatting, the AST implementation should render parsed children rather than flattening them, while a specialized legacy implementation may use `renderInlineLatexHtml`. Start with the narrowest input contract the command actually needs.
 
 ## Legacy ordering
 
@@ -249,6 +331,8 @@ const MAKE_COVER_DEPENDENCY = defineBlockDependencyRule({
 
 Register that declaration in `blockDependencyRules`. See [Metadata and Dependencies](./metadata.md) for the complete lifecycle.
 
+The dependency rule is separate because it answers a separate question. `BADGE_RENDER_RULE` explains how to render source that changed. `MAKE_COVER_DEPENDENCY` explains why an unchanged `\makecover` block must rerender after title metadata changes.
+
 ## Test the rendered behavior
 
 Use `PreviewUpdateService` with the registry and selected backend. Assert final output rather than implementation strings:
@@ -271,6 +355,17 @@ assert.doesNotMatch(html, /\\badge/);
 ```
 
 For the AST version, change `backendMode` to `ast(experimental)`. Test only the backend whose rule you added; there is no requirement to create a counterpart solely for test symmetry.
+
+## Debugging checklist
+
+| Symptom | Check |
+| --- | --- |
+| Rule never runs | The rule object appears in the correct `SNAP_TEX_RULES` array and the preview uses that backend |
+| Legacy HTML is printed as text | Generated HTML was not passed through `renderer.protectHtml` |
+| AST rule never owns the node | A preceding rule claims it, or `match` checks the wrong bare macro/environment name |
+| Text disappears after a command | Required argument count or `consumedNodes` is wrong |
+| Nested braces break parsing | A command-specific regex replaced the shared balanced reader |
+| Metadata changes but HTML stays stale | The unchanged block needs a `blockDependencyRules` descriptor |
 
 ## What not to add
 

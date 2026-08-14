@@ -1,6 +1,6 @@
 # SnapTeX Documentation
 
-SnapTeX is a local-first LaTeX editor and structural preview engine for VS Code and the browser. This documentation is organized by what you are trying to do, so everyday use is not mixed with renderer internals.
+SnapTeX is a local-first LaTeX editor and structural preview engine for VS Code and the browser. Choose the path that matches what you want to accomplish; everyday use, deployment, and source development are documented separately.
 
 <div class="doc-actions">
   <a href="./guide/">Use SnapTeX</a>
@@ -10,7 +10,7 @@ SnapTeX is a local-first LaTeX editor and structural preview engine for VS Code 
 
 ## For users
 
-The [User Guide](./guide/index.md) starts with installation and a first preview, then explains VS Code, browser workspaces, saving, source/preview navigation, long documents, settings, and troubleshooting.
+Start with the [User Guide](./guide/index.md) when you want to edit and preview LaTeX. It leads from choosing a host to opening a first project, saving safely, navigating between source and preview, and checking supported rendering.
 
 Choose this path when you want to write LaTeX rather than change SnapTeX itself.
 
@@ -28,6 +28,18 @@ It includes build commands, deployment layout, operation, and the server securit
 The [Developer Guide](./development/index.md) covers repository setup, architecture, the rendering pipeline, AST internals, synchronization, performance, and testing.
 
 All source-level extension declarations are assembled in `src/rules.ts`. The extension guide explains which registry field owns each behavior, and the [Rule API Reference](./extending/rule-api.md) documents the common functions one by one, including where callback values come from.
+
+## Find a topic directly
+
+| I want to... | Read |
+| --- | --- |
+| Try SnapTeX immediately | [Your First Preview](./guide/getting-started.md) |
+| Decide between VS Code, browser storage, and server projects | [User Guide](./guide/index.md#choose-one-host) |
+| Understand what will and will not render | [Rendering Support](./features/rendering.md) |
+| Fix a preview or synchronization problem | [Troubleshooting](./guide/troubleshooting.md) |
+| Build and change the repository | [Developer Guide](./development/index.md) |
+| Add a LaTeX rendering rule | [Rendering Rules Tutorial](./extending/rules.md) |
+| Deploy the Web or server edition | [Deployment Overview](./deployment/overview.md) |
 
 ## Choose your host
 

@@ -1,6 +1,8 @@
 # `input.renderSource`
 
-Parses generated LaTeX source and renders the resulting AST with the current rules.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Parses generated LaTeX source and renders the resulting AST with the current rules. Use it for macro expansion or reconstructed source, not for nodes already present in `input.node`.
 
 ## Signature
 
@@ -17,6 +19,10 @@ Rendered HTML. If parsing fails, SnapTeX falls back to its inline LaTeX renderer
 - **Provided by:** the AST walker.
 - **Calls:** the loaded unified-latex parser, then the AST rule walker.
 - **Creates:** source readers scoped to the generated string.
+
+```text
+generated LaTeX string -> new AST parse -> current AST rules -> HTML
+```
 
 ```ts
 const expanded = input.renderSource('\\textbf{Generated text}');

@@ -1,6 +1,8 @@
 # `isMacroNode`
 
-Checks whether an unknown value is a LaTeX AST macro node and optionally matches its name.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Checks whether an unknown value is a LaTeX AST macro node and optionally matches its name. It is the usual narrow `match` predicate for a command rule.
 
 ## Signature
 

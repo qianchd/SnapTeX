@@ -39,3 +39,9 @@ Open VS Code Settings and search for **SnapTeX**. See the complete [settings ref
 ## vscode.dev
 
 The extension has a browser-compatible entry and can run in `vscode.dev` or a compatible hosted VS Code environment. Files and workspace access remain subject to the host's browser file-system capabilities.
+
+## Next
+
+- Read [Projects and Files](./projects.md) when the root file differs from the active editor.
+- Read [Sync and Navigation](../features/sync.md) for automatic and explicit positioning.
+- Use [Troubleshooting](./troubleshooting.md) when a preview is blank or resources resolve from the wrong directory.

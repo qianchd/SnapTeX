@@ -5,6 +5,8 @@ This file records changes across the SnapTeX repository, including the VS Code e
 ## Unreleased
 
 - **Added**: Added a searchable VitePress documentation site and integrated it into the static GitHub Pages build under `/docs/` without adding documentation to the VSIX or server runtime.
+- **Changed**: Reorganized user, deployment, developer, and extension documentation into task-oriented reading paths and documented every supported rule API with consistent value ownership and call relationships.
+- **Changed**: Generalized splitter context preservation through registry-defined `context-wrapper` rules shared by coarse splitting and AST refinement.
 - **Added**: Added an independently deployable SnapTeX Server security boundary with opaque browser sessions, CSRF protection, project-path confinement, and hardened systemd defaults.
 - **Changed**: Kept the browser-session HTTP contract aligned with gpt-web-connecter while leaving both applications independently deployed and removing cross-service Nginx coupling.
 - **Fixed**: Made PWA navigation network-first so self-hosted login redirects cannot be bypassed by a cached application shell while offline fallback remains available.

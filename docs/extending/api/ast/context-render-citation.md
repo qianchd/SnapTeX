@@ -1,6 +1,8 @@
 # `context.renderCitation`
 
-Renders a supported citation command using the current bibliography and citation state.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Renders a supported citation command using the current bibliography and citation state. Prefer it over rebuilding cite/citep/citet formatting inside a custom AST rule.
 
 ## Signature
 

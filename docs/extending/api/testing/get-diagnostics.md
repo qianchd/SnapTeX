@@ -1,5 +1,7 @@
 # `PreviewUpdateService.getDiagnostics`
 
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
 Reads diagnostics from the most recent document parse.
 
 ## Signature

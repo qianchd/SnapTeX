@@ -1,13 +1,14 @@
 # Rule API Reference
 
-This section documents the supported extension surface exposed through `src/rules.ts`. Each callable API has its own page, with its signature, parameters, return value, call relationships, and an example.
+This section documents the supported extension surface assembled through `src/rules.ts`. Use it as a lookup after choosing an extension point; the [Rendering Rules Tutorial](./rules) is the guided starting point.
 
-Start with the [call relationships](./api/call-relationships) if you need to understand where an API runs. Use the categories below when you already know what you need to implement.
+These are contributor APIs compiled into SnapTeX, not commands imported by a `.tex` project and not a published npm plugin surface. Read [Source API Scope](./api/scope) first for exact code location, import paths, callback ownership, output safety, and the minimum test harness. Then use [Call Relationships](./api/call-relationships) to see where an API runs.
 
-## Choose an entry point
+## Find the API by task
 
 | Goal | Start here |
 | --- | --- |
+| Understand where API code belongs and who supplies callback values | [Source API Scope](./api/scope) |
 | Assemble a complete custom registry | [`defineRuleRegistry`](./api/registry/define-rule-registry) |
 | Add a source-text rendering rule | [Legacy rule contract](./api/contracts/legacy-rules) |
 | Add a structural AST rendering rule | [AST rule contract](./api/contracts/ast-rules) |
@@ -17,6 +18,34 @@ Start with the [call relationships](./api/call-relationships) if you need to und
 | Re-render a block when external state changes | [`BlockDependencyRule.collect`](./api/dependencies/collect) |
 | Change block splitting behavior | [Splitter contract](./api/contracts/splitter) |
 | Test a registry through the real document pipeline | [`PreviewUpdateService`](./api/testing/preview-update-service) |
+
+## Recognize who owns a function
+
+The spelling of a signature tells you how it reaches your code:
+
+| Signature shape | What you do | Who supplies the arguments |
+| --- | --- | --- |
+| `function escapeHtml(text)` | Import and call the helper | Your code supplies every argument |
+| `apply(text, renderer)` | Implement this property on a `PreprocessRule` | `SmartRenderer` calls it |
+| `render(input, context)` | Implement this property on an `AstRenderRule` | The AST walker calls it |
+| `renderer.protectHtml(...)` | Call a method on the received legacy context | `SmartRenderer` created `renderer` |
+| `input.renderChildren(...)` | Call a method on the received AST input | The AST walker created `input` |
+| `context.renderMath(...)` | Call a method on the received AST context | The AST renderer created `context` |
+
+A declaration helper such as `defineAstRenderRule(...)` provides typing but does not register or execute the rule. Execution starts only after the returned object appears in the matching `SNAP_TEX_RULES` array.
+
+## Follow values through the pipeline
+
+```text
+src/rules.ts declaration
+  -> SNAP_TEX_RULES registration
+  -> parser/renderer calls your callback
+  -> callback uses imported helpers and injected context methods
+  -> callback returns transformed source, HTML, metadata, or dependencies
+  -> the owning service consumes that return value
+```
+
+Each API page identifies the caller and the next consumer under **Call relationships**. This distinction matters: returning HTML from an AST rule is final, while returning HTML-looking text from a legacy rule is unsafe unless it has first passed through `renderer.protectHtml`.
 
 ## API categories
 
@@ -45,6 +74,8 @@ Start with the [call relationships](./api/call-relationships) if you need to und
 The reference intentionally covers the APIs used to extend `SNAP_TEX_RULES`. Internal exports used only by SnapTeX implementation modules are not presented as stable extension contracts.
 
 The legacy and AST backends are independent execution paths. A custom rule may target either backend; developers are not required to implement the same feature twice.
+
+If an exported helper is absent from this reference, treat it as internal implementation rather than a supported extension contract. Internal APIs may still be reused by built-in modules, but extension documentation and compatibility promises do not follow them automatically.
 
 ## Definition locations
 

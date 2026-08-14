@@ -1,6 +1,8 @@
 # `readRequiredMacroArgument`
 
-Reads an argument attached to an AST macro whose opening delimiter is `{`.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads an argument attached to an AST macro whose opening delimiter is `{`. Use it when the parser is known to attach the command arguments; use `readAstCommandArguments` for unknown commands with detached sibling groups.
 
 ## Signature
 

@@ -2,6 +2,17 @@
 
 SnapTeX can move from source to preview, from preview to source, or keep the panes aligned automatically. These controls are available in both the legacy and AST backends.
 
+## Choose a navigation method
+
+| Goal | Use |
+| --- | --- |
+| Reveal the current editor cursor once | `Ctrl+Alt+M` / `Cmd+Alt+M` |
+| Return from visible preview content to source | Double-click the content |
+| Keep ordinary scrolling aligned | Automatic sync |
+| Jump to a label/citation target | Rendered link or hover tooltip |
+
+All methods require the preview to be rooted at the document that includes the active source file.
+
 ## Source to preview
 
 Place the editor cursor at the content you want to reveal, then use:

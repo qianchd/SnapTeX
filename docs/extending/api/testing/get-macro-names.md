@@ -1,5 +1,7 @@
 # `PreviewUpdateService.getMacroNames`
 
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
 Returns macro names known to the current document.
 
 ## Signature

@@ -51,7 +51,7 @@ const deploymentSidebar = [
 ];
 
 const apiReferenceItems = [
-    { text: 'API Overview', link: '/extending/rule-api' },
+    { text: 'Source API Scope', link: '/extending/api/scope' },
     { text: 'Call Relationships', link: '/extending/api/call-relationships' },
     {
         text: 'Contracts',
@@ -74,7 +74,7 @@ const apiReferenceItems = [
         ]
     },
     {
-        text: 'Legacy Context',
+        text: 'Legacy Rules and Context',
         collapsed: true,
         items: [
             { text: 'PreprocessRule.apply', link: '/extending/api/legacy/apply' },
@@ -105,7 +105,7 @@ const apiReferenceItems = [
         ]
     },
     {
-        text: 'AST Functions',
+        text: 'AST Rules and Context',
         collapsed: true,
         items: [
             { text: 'AstRenderRule.match', link: '/extending/api/ast/match' },
@@ -167,15 +167,17 @@ const developerSidebar = [
             { text: 'Overview', link: '/development/' },
             { text: 'Development Setup', link: '/development/getting-started' },
             { text: 'Architecture', link: '/development/architecture' },
-            { text: 'Rendering Pipeline', link: '/development/rendering-pipeline' }
+            { text: 'Rendering Pipeline', link: '/development/rendering-pipeline' },
+            { text: 'Testing Changes', link: '/development/testing' }
         ]
     },
     {
         text: 'Extend SnapTeX',
         items: [
-            { text: 'Extension Model', link: '/extending/' },
+            { text: 'Choose an Extension Point', link: '/extending/' },
             { text: 'Rendering Rules Tutorial', link: '/extending/rules' },
-            { text: 'Metadata and Dependencies', link: '/extending/metadata' }
+            { text: 'Metadata and Dependencies', link: '/extending/metadata' },
+            { text: 'Rule API Overview', link: '/extending/rule-api' }
         ]
     },
     {
@@ -189,8 +191,7 @@ const developerSidebar = [
         items: [
             { text: 'AST Backend', link: '/development/ast-backend' },
             { text: 'Sync Model', link: '/development/sync-model' },
-            { text: 'Performance', link: '/development/performance' },
-            { text: 'Testing', link: '/development/testing' }
+            { text: 'Performance', link: '/development/performance' }
         ]
     }
 ];

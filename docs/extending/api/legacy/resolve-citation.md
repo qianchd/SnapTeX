@@ -1,6 +1,8 @@
 # `renderer.resolveCitation`
 
-Returns the stable first-seen citation number for one bibliography key.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Returns the stable first-seen citation number for one bibliography key. It mutates citation state; use it while rendering a citation, not to test whether a key exists.
 
 ## Signature
 

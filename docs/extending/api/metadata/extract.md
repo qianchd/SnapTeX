@@ -1,6 +1,8 @@
 # `MetadataExtractor.extract`
 
-Extracts document-level metadata and source ranges from LaTeX source.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Extracts document-level metadata and source ranges from LaTeX source. You implement this callback on a `MetadataExtractor`; `LatexDocument` calls it during document parsing.
 
 ## Signature
 
@@ -14,11 +16,21 @@ A partial metadata result. It may include built-in metadata fields, `custom` sca
 
 The input has already passed through comment masking: each unescaped comment body is shortened to `%`, while line structure is preserved. `\\today` has also been expanded before extractors run.
 
+| Returned field | Consumer |
+| --- | --- |
+| Metadata values | Merged into `document.metadata` |
+| `custom` values | Stored under `metadata.custom` |
+| `ranges` | Blanked from body rendering while preserving source lines |
+
 ## Call relationships
 
 - **Called by:** `LatexDocument` during metadata parsing, in registry array order.
 - **Usually calls:** [`readMetadataCommand`](./read-metadata-command) or shared balanced readers.
 - **Output merged into:** `PreambleData`; later non-empty values can replace earlier values.
+
+```text
+comment-masked source -> extract(source) -> metadata + hidden ranges -> LatexDocument
+```
 
 ```ts
 extract: source => {

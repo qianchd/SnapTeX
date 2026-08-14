@@ -1,6 +1,8 @@
 # `readLatexCommandAt`
 
-Reads one named LaTeX command at a specified source position.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Reads one named LaTeX command at a specified source position. Use it when a caller already controls the scan position; it deliberately does not search the remaining source.
 
 ## Signature
 

@@ -2,6 +2,8 @@
 
 The `ast(experimental)` backend augments the existing document and preview pipeline. It is not a second UI, message protocol, virtualization system, or file-access implementation.
 
+Read this page when changing AST refinement, artifacts, source hints, or AST render rules. First read the shared [Rendering Pipeline](./rendering-pipeline.md); everything below plugs into that lifecycle rather than replacing it.
+
 ## Split strategy
 
 SnapTeX keeps two block levels:
@@ -38,3 +40,9 @@ An AST scanner implementation exists and has been compared with the legacy scann
 ## Backend switch
 
 Changing backend mode performs a complete document reload. Mixing legacy block boundaries with AST artifacts or source maps from the previous lifecycle is not supported.
+
+## Related extension APIs
+
+- Use the [AST rule contract](../extending/api/contracts/ast-rules.md) to add node rendering behavior.
+- Use the [splitter contract](../extending/api/contracts/splitter.md) when AST refinement receives an unsuitable coarse block.
+- Use [Sync Model](./sync-model.md) to understand how stored source hints improve navigation without reparsing during each sync.

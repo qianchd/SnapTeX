@@ -1,6 +1,8 @@
 # Registry Contract
 
-`RuleRegistry` is the single extension definition consumed by the document model and renderer.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+`RuleRegistry` is the single assembly object consumed by the document model and renderer. Individual rule constants are inert until they appear in the corresponding registry field.
 
 ```ts
 interface RuleRegistry {
@@ -21,12 +23,24 @@ interface RuleRegistry {
 | `renderRules` | Legacy `SmartRenderer` | Ascending `priority` |
 | `astRenderRules` | AST renderer | Array order; first returned result wins |
 | `blockDependencyRules` | `SmartRenderer` | All collectors contribute descriptors |
-| `splitterConfig` | Document splitter | Numeric limits |
-| `splitterRules` | Document splitter | Declarative structural hints |
+| `splitterConfig` | Legacy coarse splitter and AST refinement | Numeric limits |
+| `splitterRules` | Legacy coarse splitter and AST refinement | Declarative structural hints selected by `kind` |
 
 Build a registry with [`defineRuleRegistry`](../registry/define-rule-registry). The default instance is `SNAP_TEX_RULES` in `src/rules.ts`.
 
 The two rendering arrays are independent. Add a rule only to the backend it targets.
+
+## From field to callback
+
+| Registry field | SnapTeX later calls | Callback return becomes |
+| --- | --- | --- |
+| `metadataExtractors` | `extract(source)` | Merged document metadata and hidden source ranges |
+| `renderRules` | `apply(text, renderer)` | Input text for the next legacy rule |
+| `astRenderRules` | `match(input)`, then `render(input, context)` | Final HTML for one claimed AST node |
+| `blockDependencyRules` | `collect(input)` | Stored descriptors used to dirty unchanged blocks |
+| `splitterRules` | No user callback; the splitter reads declarations | Source block spans |
+
+`splitterConfig` and `splitterRules` influence parsing before either render-rule array runs. They are not fallback renderers.
 
 ## Related APIs
 

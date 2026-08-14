@@ -1,5 +1,7 @@
 # `PreviewUpdateService.getSourceSyncData`
 
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
 Maps a preview position back to source synchronization data.
 
 ## Signature

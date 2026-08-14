@@ -221,12 +221,14 @@ export interface SplitterConfig {
     maxNoEmergencySplitLines: number;
 }
 
+export type SplitterWrapperContent = 'group-remainder' | { requiredArgument: number };
+
 export type SplitterRule =
     | { name: string; kind: 'ignored-env'; envPattern: RegExp }
     | { name: string; kind: 'transparent-env'; envPattern: RegExp; preserveWrapper?: boolean }
     | { name: string; kind: 'split-env'; envPattern: RegExp }
     | { name: string; kind: 'no-emergency-split-env'; envPattern: RegExp }
-    | { name: string; kind: 'no-emergency-split-begin-token'; beginTokenPattern: RegExp }
+    | { name: string; kind: 'context-wrapper'; macroPattern: RegExp; content: SplitterWrapperContent }
     | { name: string; kind: 'emergency-split-end-env'; envPattern: RegExp };
 
 export interface SplitterOptions {

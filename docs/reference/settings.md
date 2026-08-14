@@ -1,5 +1,7 @@
 # Settings Reference
 
+Most settings apply while the preview is open. Settings that change document or DOM ownership trigger or require a full lifecycle reload, as noted below.
+
 ## VS Code settings
 
 | Setting | Default | Effect |
@@ -13,6 +15,15 @@
 | `snaptex.retainContextWhenHidden` | `false` | Keep the webview alive while its tab is hidden. |
 | `snaptex.virtualMode` | `true` | Mount only viewport-near block DOM. Reopen or reload the preview after changing it. |
 | `snaptex.backendMode` | `legacy` | Select `legacy` or `ast(experimental)` processing. |
+
+## Which settings reload the preview
+
+| Setting type | Behavior |
+| --- | --- |
+| `backendMode` | SnapTeX performs a full root reload so block spans, artifacts, rules, and source maps come from one backend |
+| `virtualMode` | Reopen or reload the preview so DOM ownership switches cleanly |
+| Live preview, delays, auto sync, memory logging | Apply to subsequent events without rebuilding document structure |
+| `retainContextWhenHidden` | Affects the next hidden/shown webview lifecycle |
 
 ## Web settings
 

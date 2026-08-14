@@ -1,6 +1,8 @@
 # `renderer.protectHtml`
 
-Stores trusted generated HTML behind a temporary token while Markdown renders surrounding text.
+<!--@include: ../../../.vitepress/partials/api-context.md-->
+
+Stores trusted generated HTML behind a temporary token while Markdown renders surrounding text. Call it only from the legacy path when your rule has already generated trusted HTML.
 
 ## Signature
 
@@ -24,11 +26,17 @@ renderer.protectHtml(
 
 A temporary text token. Return or embed the token in transformed rule text; do not expose it to users directly.
 
+The returned token belongs to the current block's protection manager. Do not cache it across blocks or preview updates.
+
 ## Call relationships
 
 - **Called by:** legacy `PreprocessRule.apply` callbacks and helpers such as [`renderMath`](../rendering/render-math).
 - **Calls:** `ProtectionManager.protect`.
 - **Resolved after:** Markdown-it finishes rendering the block.
+
+```text
+escaped/generated HTML -> protectHtml -> temporary token -> Markdown -> restored HTML
+```
 
 ## Choosing a mode
 
