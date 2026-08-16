@@ -93,6 +93,7 @@ suite('Standalone web assets', () => {
             assert.match(indexHtml, /href="media\/icon-32\.png"/);
             assert.match(indexHtml, /href="media\/icon-192\.png"/);
             assert.match(indexHtml, /src="media\/icon\.png"/);
+            assert.match(indexHtml, /src="web-main\.js\?v=[a-f0-9]{12}"/);
             assert.match(indexHtml, /connect-src 'self' blob:/);
             assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
             assert.equal((await fetch(new URL(`/%2e%2e/${basename(outsideAsset)}`, baseUrl))).status, 404);
@@ -131,9 +132,12 @@ suite('Standalone web assets', () => {
             };
             const handlers = new Map<string, (event: ServiceWorkerTestEvent) => void>();
             const deletedCaches: string[] = [];
+            let networkAvailable = false;
             runInNewContext(serviceWorker, {
                 URL,
-                fetch: () => Promise.reject(new Error('Unexpected network request.')),
+                fetch: () => networkAvailable
+                    ? Promise.resolve('network-response')
+                    : Promise.reject(new Error('Offline')),
                 caches: {
                     delete: async (name: string) => { deletedCaches.push(name); return true; },
                     keys: async () => [
@@ -162,6 +166,12 @@ suite('Standalone web assets', () => {
                 respondWith: response => { cachedResponse = response; }
             });
             assert.equal(await cachedResponse, 'cached-response');
+            networkAvailable = true;
+            handlers.get('fetch')?.({
+                request: { method: 'GET', mode: 'same-origin', url: 'https://snaptex.test/web-main.js' },
+                respondWith: response => { cachedResponse = response; }
+            });
+            assert.equal(await cachedResponse, 'network-response');
             await fetchText(baseUrl, tikzJaxUri);
             await fetchText(baseUrl, tikzCssUri);
             await fetchText(baseUrl, `${tikzBaseUri}/run-tex.js`);

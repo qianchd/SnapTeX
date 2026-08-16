@@ -35,14 +35,14 @@ function copyPath(source, destination) {
     }
 }
 
-function makeStaticIndex(source, deploymentMode) {
+function makeStaticIndex(source, deploymentMode, entryVersion) {
     return source
         .replace('data-deployment-mode="static"', `data-deployment-mode="${deploymentMode}"`)
         .replace(/\b(href|src|data-[\w-]+)="\/media\//g, '$1="media/')
         .replace('href="/apps/web/manifest.webmanifest"', 'href="manifest.webmanifest"')
         .replaceAll('href="/apps/web/web.css"', 'href="web.css"')
         .replaceAll('src="/apps/web/preview-bridge.js"', 'src="preview-bridge.js"')
-        .replaceAll('src="/apps/web/dist/web-main.js"', 'src="web-main.js"')
+        .replaceAll('src="/apps/web/dist/web-main.js"', `src="web-main.js?v=${entryVersion}"`)
         .replace('</body>', '    <script src="register-service-worker.js"></script>\n</body>');
 }
 
@@ -64,6 +64,7 @@ function serviceWorkerSource(cacheVersion, assets) {
         "const CACHE_PREFIX = `snaptex-web:${self.registration.scope}:`;",
         `const CACHE_NAME = CACHE_PREFIX + ${JSON.stringify(cacheVersion)};`,
         `const ASSETS = ${JSON.stringify(['./', ...assets.map(asset => `./${asset}`)], null, 4)};`,
+        "const NETWORK_FIRST = /(?:^|\\/)(?:index\\.html|web-main\\.js|web\\.css|register-service-worker\\.js|media\\/(?:preview-style\\.css|webview-(?:main|pdf)\\.js))$/;",
         '',
         "self.addEventListener('install', event => {",
         '    event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));',
@@ -84,7 +85,12 @@ function serviceWorkerSource(cacheVersion, assets) {
         '        return;',
         '    }',
         '',
-        '    event.respondWith(caches.open(CACHE_NAME).then(cache => cache.match(event.request)).then(cached => cached || fetch(event.request)));',
+        '    if (NETWORK_FIRST.test(url.pathname)) {',
+        '        event.respondWith(fetch(event.request).catch(() => caches.open(CACHE_NAME).then(cache => cache.match(event.request, { ignoreSearch: true }))));',
+        '        return;',
+        '    }',
+        '',
+        '    event.respondWith(caches.open(CACHE_NAME).then(cache => cache.match(event.request, { ignoreSearch: true })).then(cached => cached || fetch(event.request)));',
         '});',
         ''
     ].join('\n');
@@ -113,7 +119,8 @@ export function buildStaticWeb(options = {}) {
         copyPath(join(root, source), join(outDir, destination));
     }
 
-    writeFileSync(join(outDir, 'index.html'), makeStaticIndex(readFileSync(join(root, 'apps/web/index.html'), 'utf8'), deploymentMode));
+    const entryVersion = createHash('sha256').update(readFileSync(join(outDir, 'web-main.js'))).digest('hex').slice(0, 12);
+    writeFileSync(join(outDir, 'index.html'), makeStaticIndex(readFileSync(join(root, 'apps/web/index.html'), 'utf8'), deploymentMode, entryVersion));
     writeFileSync(join(outDir, 'manifest.webmanifest'), readFileSync(join(root, 'apps/web/manifest.webmanifest'), 'utf8').replaceAll('"/media/', '"media/'));
     writeFileSync(join(outDir, '.nojekyll'), '');
     const assets = listFiles(outDir).filter(asset => asset !== 'service-worker.js' && !asset.startsWith('.'));

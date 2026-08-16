@@ -74,10 +74,6 @@ function fileKey(projectId: string, path: string): string {
     return `${projectId}\u0000${normalizeBrowserPath(path)}`;
 }
 
-function now(): number {
-    return Date.now();
-}
-
 async function contentHash(content: Blob): Promise<string> {
     const digest = await crypto.subtle.digest('SHA-256', await content.arrayBuffer());
     return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -144,7 +140,7 @@ async function touchProject(
     if (!project) {
         return;
     }
-    const timestamp = now();
+    const timestamp = Date.now();
     await projects.put({
         ...project,
         activePath: activePath ?? project.activePath,
@@ -264,7 +260,7 @@ export class BrowserWorkspaceStore {
             return conflicts;
         }
 
-        const timestamp = now();
+        const timestamp = Date.now();
         const updatedProject: StoredProjectRecord = {
             ...project,
             rootPath: incomingByPath.has(project.rootPath) ? project.rootPath : rootPathFor(normalizedFiles),
@@ -352,7 +348,7 @@ export class BrowserWorkspaceStore {
             throw new Error(`Browser project root does not exist: ${normalizedPath}`);
         }
         project.rootPath = normalizedPath;
-        project.lastOpenedAt = now();
+        project.lastOpenedAt = Date.now();
         await db.put('projects', project);
     }
 
@@ -376,7 +372,7 @@ export class BrowserWorkspaceStore {
         }
         const rootPath = rootPathFor(files);
         const projectId = createProjectId();
-        const timestamp = now();
+        const timestamp = Date.now();
         const project: StoredProjectRecord = {
             id: projectId,
             name: name.trim() || 'Browser Project',

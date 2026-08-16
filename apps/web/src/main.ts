@@ -1,6 +1,6 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
 import { createProjectZip } from '../../standalone/src/project-archive';
-import type { BackendMode, PreviewLayoutMode } from '../../../src/types';
+import type { BackendMode, PreviewLayoutMode, PreviewStyleSettings } from '../../../src/types';
 import {
     createProjectTree,
     isProjectFile,
@@ -38,13 +38,20 @@ interface BrowserFilePickerWindow extends Window {
 let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
 const browserWorkspaces = new BrowserWorkspaceStore();
-let startupRestoreActive = true;
 let activeBrowserWorkspaceId: string | undefined;
 type WebTheme = 'light' | 'dark' | 'blue' | 'rose';
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
 type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
+type TextPreviewSetting = keyof PreviewStyleSettings;
 type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
 type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput';
+type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'previewContentWidthInput' | 'previewFontFamilyInput';
+
+const DEFAULT_WEB_PREVIEW_SETTINGS: StandalonePreviewSettings = {
+    ...DEFAULT_STANDALONE_PREVIEW_SETTINGS,
+    fontSize: 'clamp(12px, 2.35cqw, 40px)',
+    contentMaxWidth: '920px'
+};
 
 const BOOLEAN_SETTING_CONTROLS: ReadonlyArray<[BooleanSettingControl, BooleanPreviewSetting]> = [
     ['livePreviewToggle', 'livePreview'],
@@ -54,9 +61,43 @@ const BOOLEAN_SETTING_CONTROLS: ReadonlyArray<[BooleanSettingControl, BooleanPre
 ];
 
 const NUMBER_SETTING_CONTROLS: ReadonlyArray<[NumberSettingControl, NumberPreviewSetting, number]> = [
-    ['renderDelayInput', 'renderDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.renderDelayMs],
-    ['autoScrollDelayInput', 'autoScrollDelayMs', DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs]
+    ['renderDelayInput', 'renderDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.renderDelayMs],
+    ['autoScrollDelayInput', 'autoScrollDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.autoScrollDelayMs]
 ];
+
+const TEXT_SETTING_CONTROLS: ReadonlyArray<[TextSettingControl, TextPreviewSetting]> = [
+    ['previewFontSizeInput', 'fontSize'],
+    ['previewLineHeightInput', 'lineHeight'],
+    ['previewContentWidthInput', 'contentMaxWidth'],
+    ['previewFontFamilyInput', 'fontFamily']
+];
+const PREVIEW_STYLE_STORAGE_KEY = 'snaptex.previewStyle';
+
+function loadPreviewStyleSettings(): StandalonePreviewSettings {
+    try {
+        const stored = JSON.parse(localStorage.getItem(PREVIEW_STYLE_STORAGE_KEY) || '{}') as Record<string, unknown>;
+        const settings = { ...DEFAULT_WEB_PREVIEW_SETTINGS };
+        for (const [, setting] of TEXT_SETTING_CONTROLS) {
+            const value = stored[setting];
+            if (typeof value === 'string' && value.trim()) {
+                settings[setting] = value.trim();
+            }
+        }
+        return settings;
+    } catch {
+        return { ...DEFAULT_WEB_PREVIEW_SETTINGS };
+    }
+}
+
+function storePreviewStyleSettings(settings: StandalonePreviewSettings): void {
+    try {
+        localStorage.setItem(PREVIEW_STYLE_STORAGE_KEY, JSON.stringify(Object.fromEntries(
+            TEXT_SETTING_CONTROLS.map(([, setting]) => [setting, settings[setting]])
+        )));
+    } catch {
+        // Preview settings remain available for this page when storage is unavailable.
+    }
+}
 
 function getElement<T extends HTMLElement>(id: string): T | null {
     return document.getElementById(id) as T | null;
@@ -98,6 +139,10 @@ function readControls() {
         previewLayoutSelect: requireElement<HTMLSelectElement>('preview-layout-select'),
         renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
         autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
+        previewFontSizeInput: requireElement<HTMLInputElement>('preview-font-size-input'),
+        previewLineHeightInput: requireElement<HTMLInputElement>('preview-line-height-input'),
+        previewContentWidthInput: requireElement<HTMLInputElement>('preview-content-width-input'),
+        previewFontFamilyInput: requireElement<HTMLInputElement>('preview-font-family-input'),
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),
         welcomePage: requireElement('welcome-page'),
         welcomeOpenFolderButton: requireElement('welcome-open-folder-button'),
@@ -134,7 +179,6 @@ function getControls(): ReturnType<typeof readControls> {
 function enableSplitPaneResize(splitter: HTMLElement): void {
     const shell = document.getElementById('workspace');
     const editorPane = document.getElementById('editor-pane');
-    const contentRoot = document.getElementById('content-root');
     const restoreButton = getElement<HTMLButtonElement>('restore-pane-button');
     if (!shell || !editorPane || !restoreButton) {
         return;
@@ -152,9 +196,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         minPreviewWidth: number;
         splitterWidth: number;
         collapseDistance: number;
-        previewFontMin: number;
-        previewFontMax: number;
-        previewFontScale: number;
         nextWidth: number;
         appliedWidth: number;
         lastAppliedAt: number;
@@ -187,12 +228,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             shell.style.setProperty('--snaptex-web-editor-width', `${width}px`);
             state.appliedWidth = width;
         }
-        const previewWidth = Math.max(state.minPreviewWidth, state.availableWidth - width - state.splitterWidth);
-        const previewFontSize = Math.min(
-            state.previewFontMax,
-            Math.max(state.previewFontMin, previewWidth * state.previewFontScale / 100)
-        );
-        contentRoot?.style.setProperty('--snaptex-web-resize-preview-font-size', `${previewFontSize.toFixed(2)}px`);
     };
 
     const scheduleEditorWidth = (clientX: number): void => {
@@ -242,9 +277,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             minPreviewWidth,
             splitterWidth,
             collapseDistance: cssNumber('--snaptex-web-collapse-distance'),
-            previewFontMin: cssNumber('--snaptex-preview-font-min'),
-            previewFontMax: cssNumber('--snaptex-preview-font-max'),
-            previewFontScale: cssNumber('--snaptex-preview-font-scale'),
             nextWidth: Math.round(editorRect.width),
             appliedWidth: Math.round(editorRect.width),
             lastAppliedAt: 0,
@@ -275,7 +307,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             }
         }
         dragState = undefined;
-        contentRoot?.style.removeProperty('--snaptex-web-resize-preview-font-size');
         document.body.classList.remove('is-resizing-split');
         if (splitter.hasPointerCapture(event.pointerId)) {
             splitter.releasePointerCapture(event.pointerId);
@@ -307,13 +338,7 @@ function reportFailure(action: string, error: unknown): void {
     setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-async function loadProject(host: StandaloneHost, project: BrowserProject, automatic = false): Promise<void> {
-    if (automatic && !startupRestoreActive) {
-        return;
-    }
-    if (!automatic) {
-        startupRestoreActive = false;
-    }
+async function loadProject(host: StandaloneHost, project: BrowserProject): Promise<void> {
     const rootPath = await host.loadProject(project);
     activeBrowserWorkspaceId = project.id;
 
@@ -662,7 +687,6 @@ async function openBrowserWorkspaceDialog(host: StandaloneHost): Promise<void> {
 }
 
 function openImportFolder(input: HTMLInputElement): void {
-    startupRestoreActive = false;
     reimportWorkspaceId = undefined;
     input.click();
 }
@@ -715,7 +739,7 @@ function setDiagnosticsVisible(visible: boolean): void {
     getControls().showDiagnosticsToggle.checked = visible;
 }
 
-function setInputValue(input: HTMLInputElement, value: number): void {
+function setInputValue(input: HTMLInputElement, value: string | number): void {
     if (document.activeElement !== input) {
         input.value = String(value);
     }
@@ -744,6 +768,9 @@ function syncSettingsControls(host: StandaloneHost): void {
     for (const [controlName, setting] of NUMBER_SETTING_CONTROLS) {
         setInputValue(controls[controlName], settings[setting]);
     }
+    for (const [controlName, setting] of TEXT_SETTING_CONTROLS) {
+        setInputValue(controls[controlName], settings[setting]);
+    }
 }
 
 function bindProjectControls(host: StandaloneHost): void {
@@ -765,43 +792,34 @@ function bindProjectControls(host: StandaloneHost): void {
     const bindNumberSetting = (input: HTMLInputElement, setting: NumberPreviewSetting, fallback: number): void => {
         input.addEventListener('change', () => host.updateSettings({ [setting]: readClampedNumber(input, fallback) } as Partial<StandalonePreviewSettings>));
     };
+    const bindTextSetting = (input: HTMLInputElement, setting: TextPreviewSetting): void => {
+        input.addEventListener('change', () => {
+            const value = input.value.trim() || DEFAULT_WEB_PREVIEW_SETTINGS[setting];
+            input.value = value;
+            host.updateSettings({ [setting]: value } as Partial<StandalonePreviewSettings>);
+            storePreviewStyleSettings(host.getSettings());
+        });
+    };
+    const openFolderProject = () => openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
+    const openWorkspace = () => openBrowserWorkspaceDialog(host).catch(error => reportFailure('Open workspace', error));
+    const openRemoteProject = () => { void openRemoteProjectDialog(); };
 
     controls.toggleExplorerButton.addEventListener('click', () => {
         setExplorerCollapsed(!explorerCollapsed);
     });
     controls.openFileButton.addEventListener('click', () => {
-        startupRestoreActive = false;
         openSingleFile(host, controls.openFileInput).catch(error => reportFailure('Open', error));
     });
-    controls.openFolderButton.addEventListener('click', () => {
-        startupRestoreActive = false;
-        openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
-    });
-    controls.importFolderButton.addEventListener('click', () => openImportFolder(controls.openFolderInput));
-    controls.openWorkspaceButton.addEventListener('click', () => {
-        startupRestoreActive = false;
-        openBrowserWorkspaceDialog(host).catch(error => reportFailure('Open workspace', error));
-    });
-    controls.openRemoteButton.addEventListener('click', () => {
-        startupRestoreActive = false;
-        void openRemoteProjectDialog();
-    });
-    controls.welcomeOpenFolderButton.addEventListener('click', () => {
-        startupRestoreActive = false;
-        openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
-    });
-    controls.welcomeImportFolderButton.addEventListener('click', () => openImportFolder(controls.openFolderInput));
+    [controls.openFolderButton, controls.welcomeOpenFolderButton]
+        .forEach(button => button.addEventListener('click', openFolderProject));
+    [controls.importFolderButton, controls.welcomeImportFolderButton]
+        .forEach(button => button.addEventListener('click', () => openImportFolder(controls.openFolderInput)));
+    [controls.openWorkspaceButton, controls.welcomeOpenWorkspaceButton]
+        .forEach(button => button.addEventListener('click', openWorkspace));
+    [controls.openRemoteButton, controls.welcomeOpenRemoteButton]
+        .forEach(button => button.addEventListener('click', openRemoteProject));
     controls.welcomeOpenDemoButton.addEventListener('click', () => {
-        startupRestoreActive = false;
         loadDefaultDemoProject(host).catch(error => reportFailure('Load demo', error));
-    });
-    controls.welcomeOpenWorkspaceButton.addEventListener('click', () => {
-        startupRestoreActive = false;
-        openBrowserWorkspaceDialog(host).catch(error => reportFailure('Open workspace', error));
-    });
-    controls.welcomeOpenRemoteButton.addEventListener('click', () => {
-        startupRestoreActive = false;
-        void openRemoteProjectDialog();
     });
     controls.remoteProjectForm.addEventListener('submit', event => {
         event.preventDefault();
@@ -850,6 +868,9 @@ function bindProjectControls(host: StandaloneHost): void {
     });
     for (const [controlName, setting, fallback] of NUMBER_SETTING_CONTROLS) {
         bindNumberSetting(controls[controlName], setting, fallback);
+    }
+    for (const [controlName, setting] of TEXT_SETTING_CONTROLS) {
+        bindTextSetting(controls[controlName], setting);
     }
     controls.themeSelect.addEventListener('change', () => {
         setTheme(controls.themeSelect.value as WebTheme);
@@ -937,14 +958,6 @@ async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
     await loadProject(host, await browserWorkspaces.open(summary.id));
 }
 
-async function restoreLastBrowserWorkspace(host: StandaloneHost): Promise<void> {
-    const [summary] = await browserWorkspaces.list();
-    if (summary) {
-        await loadProject(host, await browserWorkspaces.open(summary.id), true);
-    }
-    startupRestoreActive = false;
-}
-
 const editorParent = requireElement('editor');
 
 const splitter = getElement('splitter');
@@ -960,7 +973,7 @@ let host: StandaloneHost;
 host = createStandaloneSnapTeXApp({
     editorParent,
     initialText: '',
-    settings: DEFAULT_STANDALONE_PREVIEW_SETTINGS,
+    settings: loadPreviewStyleSettings(),
     onStateChange: renderProjectState
 });
 bindProjectControls(host);
@@ -969,4 +982,3 @@ if (supportsRemoteProjects()) {
 }
 window.addEventListener('pagehide', () => { void host.flushProjectWrites(); });
 renderProjectState(host);
-void restoreLastBrowserWorkspace(host).catch(() => undefined);
