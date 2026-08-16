@@ -22,6 +22,21 @@ export interface LatexScanner {
     scan(provider: BlockTextProvider): ScanResult;
 }
 
+export function createBlockScanInput(provider: BlockTextProvider) {
+    const count = provider.getBlockCount();
+    const textCache = new Map<number, string>();
+    const getText = (index: number) => {
+        if (!textCache.has(index)) {
+            textCache.set(index, provider.getBlockText(index) ?? '');
+        }
+        return textCache.get(index) ?? '';
+    };
+    const hashes = Array.from({ length: count }, (_unused, index) => (
+        provider.getBlockHash(index) ?? stableHash(getText(index))
+    ));
+    return { count, getText, hashes };
+}
+
 export type SectionLevel = 'section' | 'subsection' | 'subsubsection' | 'paragraph' | 'subparagraph';
 export type FloatKind = 'fig' | 'tbl' | 'alg';
 
@@ -169,24 +184,7 @@ export class LatexCounterScanner implements LatexScanner {
     }
 
     private updateSummaries(provider: BlockTextProvider): BlockScanSummary[] {
-        const count = provider.getBlockCount();
-        const textCache = new Map<number, string>();
-
-        const getText = (index: number) => {
-            if (!textCache.has(index)) {
-                textCache.set(index, provider.getBlockText(index) ?? '');
-            }
-            return textCache.get(index) ?? '';
-        };
-
-        const hashes = Array.from({ length: count }, (_unused, index) => {
-            const hash = provider.getBlockHash(index);
-            if (hash !== undefined) { return hash; }
-
-            const text = provider.getBlockText(index) ?? '';
-            textCache.set(index, text);
-            return stableHash(text);
-        });
+        const { count, getText, hashes } = createBlockScanInput(provider);
         const previous = this.summaries;
         const currentHashes = hashes.map(hash => ({ hash }));
         const diff = DiffEngine.compute(previous, currentHashes);

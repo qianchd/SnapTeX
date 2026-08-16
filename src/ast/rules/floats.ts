@@ -24,7 +24,7 @@ import {
     describeAlgorithmicCommand
 } from '../../latex-algorithm';
 import { renderLatexMakecellHtml } from '../../latex-table';
-import { renderSubfigureWidthStyle } from '../../rule-helpers';
+import { renderCaptionHtml, renderSubfigureWidthStyle } from '../../rule-helpers';
 
 const FLOATS = new Set(['figure', 'figure*', 'table', 'table*', 'algorithm']);
 const SUBFIGURE_ENVS = new Set(['subfigure', 'subfigure*']);
@@ -36,6 +36,11 @@ const RULE_TABLE_MACROS = new Set(['hline', 'cline']);
 const IGNORED_TABLE_MACROS = new Set([...BOOKTABS_TABLE_MACROS, ...RULE_TABLE_MACROS]);
 const TABLE_NOTE_LAYOUT_MACROS = new Set(['footnotesize', 'small', 'scriptsize', 'tiny']);
 const FLOAT_LAYOUT_MACROS = new Set(['centering', 'hfill', 'small', 'footnotesize']);
+
+function matchesEnvironment(input: AstRenderInput, environments: ReadonlySet<string>): boolean {
+    const envName = environmentName(input.node);
+    return Boolean(envName && environments.has(envName));
+}
 
 function captionHtml(
     input: AstRenderInput,
@@ -56,7 +61,11 @@ function captionHtml(
     const content = readRequiredMacroArgument(caption)?.content ?? [];
     const className = counterType === 'alg' ? 'alg-caption' : `${label.toLowerCase()}-caption`;
     return {
-        html: `<div class="${className}"><strong>${label} <span class="sn-cnt" data-type="${counterType}"></span>:</strong> ${input.renderChildren(content)}</div>`,
+        html: renderCaptionHtml(
+            className,
+            input.renderChildren(content),
+            `<strong>${label} <span class="sn-cnt" data-type="${counterType}"></span>:</strong> `
+        ),
         nodes
     };
 }
@@ -71,7 +80,7 @@ function plainCaptionHtml(input: AstRenderInput, contentNodes: readonly SnaptexA
     nodes.add(caption);
     const content = readRequiredMacroArgument(caption)?.content ?? [];
     return {
-        html: `<div class="${className}">${prefixHtml}${input.renderChildren(content)}</div>`,
+        html: renderCaptionHtml(className, input.renderChildren(content), prefixHtml),
         nodes
     };
 }
@@ -528,10 +537,7 @@ function renderAlgorithm(input: AstRenderInput, context: AstRenderContext): stri
 
 export const AST_FLOAT_RULE: AstRenderRule = {
     name: 'ast-float',
-    match: input => {
-        const envName = environmentName(input.node);
-        return Boolean(envName && FLOATS.has(envName));
-    },
+    match: input => matchesEnvironment(input, FLOATS),
     render: (input, context) => {
         if (!isEnvironmentNode(input.node) || !Array.isArray(input.node.content)) {
             return undefined;
@@ -550,10 +556,7 @@ export const AST_FLOAT_RULE: AstRenderRule = {
 
 export const AST_SUBFIGURE_RULE: AstRenderRule = {
     name: 'ast-subfigure',
-    match: input => {
-        const envName = environmentName(input.node);
-        return Boolean(envName && SUBFIGURE_ENVS.has(envName));
-    },
+    match: input => matchesEnvironment(input, SUBFIGURE_ENVS),
     render: input => {
         if (!isEnvironmentNode(input.node) || !Array.isArray(input.node.content)) {
             return undefined;
@@ -564,10 +567,7 @@ export const AST_SUBFIGURE_RULE: AstRenderRule = {
 
 export const AST_TABULAR_RULE: AstRenderRule = {
     name: 'ast-tabular',
-    match: input => {
-        const envName = environmentName(input.node);
-        return Boolean(envName && TABULAR_ENVS.has(envName));
-    },
+    match: input => matchesEnvironment(input, TABULAR_ENVS),
     render: input => ({ html: renderAstTabular(input, input.node) })
 };
 

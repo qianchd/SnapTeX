@@ -313,6 +313,14 @@ export function expandLatexTextMacros(text: string, macros: Record<string, strin
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
 export function resolveLatexStyles(text: string, protectHtml?: StyleHtmlProtector): string {
+    const renderColorCommand = (call: LatexCommandCall) => renderLatexStyle(
+        colorStyleSpec(call.requiredArgs[0].content.trim()),
+        call.requiredArgs[1].content,
+        protectHtml,
+        text,
+        call.start
+    );
+
     text = replaceLatexCommandCalls(text, [
         ...LATEX_TEXT_STYLE_COMMANDS
             .map(name => ({
@@ -329,24 +337,12 @@ export function resolveLatexStyles(text: string, protectHtml?: StyleHtmlProtecto
         {
             name: 'textcolor',
             requiredArgs: 2,
-            render: call => renderLatexStyle(
-                colorStyleSpec(call.requiredArgs[0].content.trim()),
-                call.requiredArgs[1].content,
-                protectHtml,
-                text,
-                call.start
-            )
+            render: renderColorCommand
         },
         {
             name: 'color',
             requiredArgs: 2,
-            render: call => renderLatexStyle(
-                colorStyleSpec(call.requiredArgs[0].content.trim()),
-                call.requiredArgs[1].content,
-                protectHtml,
-                text,
-                call.start
-            )
+            render: renderColorCommand
         }
     ]);
 

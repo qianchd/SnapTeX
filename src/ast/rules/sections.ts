@@ -1,5 +1,4 @@
-import type { SnaptexAstMacro } from '../visit-utils';
-import { argumentText, isMacroNode, readNodeArgument, readRequiredMacroArgument } from '../visit-utils';
+import { argumentText, isMacroNode, readNodeArgument, readRequiredMacroArgument, type SnaptexAstMacro } from '../visit-utils';
 import { AST_SECTION_MACROS, type AstRenderRule, readAstCommandArguments } from './index';
 
 const SECTION_TAGS: Record<string, string> = {

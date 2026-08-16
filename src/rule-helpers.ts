@@ -274,6 +274,10 @@ export function renderCaptionContent(captionText: string, renderer: RenderContex
     return renderer.renderInline(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
 }
 
+export function renderCaptionHtml(className: string, contentHtml: string, prefixHtml = ''): string {
+    return `<div class="${className}">${prefixHtml}${contentHtml}</div>`;
+}
+
 export function renderSubfigureWidthStyle(widthSpec: string): string {
     const fraction = widthSpec.match(/([0-9]*\.?[0-9]+)\s*\\(?:textwidth|linewidth)/);
     const percent = fraction ? Math.max(1, Math.min(100, Number((Number(fraction[1]) * 100).toFixed(3)))) : undefined;

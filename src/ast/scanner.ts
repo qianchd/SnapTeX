@@ -1,6 +1,7 @@
 import { REGEX_STR } from '../patterns';
 import {
     buildScanResultFromSummaries,
+    createBlockScanInput,
     floatKindFromEnvironment,
     type BlockScanSummary,
     type BlockTextProvider,
@@ -8,7 +9,6 @@ import {
     type ScanToken,
     type SectionLevel
 } from '../scanner';
-import { stableHash } from '../utils';
 import { parseLatexToAst } from './parse';
 import { DiffEngine } from '../diff';
 import {
@@ -22,8 +22,7 @@ import {
     readRequiredMacroArgument,
     visitLatexAst
 } from './visit-utils';
-import type { SnaptexAstNode } from './types';
-import type { AstParseResult } from './types';
+import type { AstParseResult, SnaptexAstNode } from './types';
 
 /**
  * AST-based numbering scanner.
@@ -83,21 +82,7 @@ export class AstLatexScanner {
     }
 
     private async updateSummaries(provider: BlockTextProvider): Promise<BlockScanSummary[]> {
-        const count = provider.getBlockCount();
-        const textCache = new Map<number, string>();
-        const getText = (index: number) => {
-            if (!textCache.has(index)) {
-                textCache.set(index, provider.getBlockText(index) ?? '');
-            }
-            return textCache.get(index) ?? '';
-        };
-        const hashes = Array.from({ length: count }, (_unused, index) => {
-            const hash = provider.getBlockHash(index);
-            if (hash !== undefined) { return hash; }
-
-            const text = getText(index);
-            return stableHash(text);
-        });
+        const { count, getText, hashes } = createBlockScanInput(provider);
         const diff = DiffEngine.compute(this.summaries, hashes.map(hash => ({ hash })));
         const next = await DiffEngine.rebuildArrayAsync(
             this.summaries,

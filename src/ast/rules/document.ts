@@ -2,8 +2,7 @@ import { BibTexParser } from '../../bib';
 import { renderBibliographyItemsHtml, renderExternalLinkHtml, renderMaketitleAuthorsHtml } from '../../rule-helpers';
 import { toRoman } from '../../utils';
 import { environmentName, isEnvironmentNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
-import type { AstRenderContext, AstRenderRule } from './index';
-import { readAstCommandArguments, renderInlineLatexSource } from './index';
+import { readAstCommandArguments, renderInlineLatexSource, type AstRenderContext, type AstRenderRule } from './index';
 
 const ABSTRACT_MACROS = new Set(['Abstract', 'abstract']);
 const KEYWORD_MACROS = new Set(['Keywords', 'keywords', 'Keyword', 'keyword']);

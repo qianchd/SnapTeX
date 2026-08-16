@@ -1,6 +1,5 @@
 import { isMacroNode } from '../visit-utils';
-import type { AstRenderRule } from './index';
-import { readAstCommandArguments } from './index';
+import { readAstCommandArguments, type AstRenderRule } from './index';
 
 export const AST_LABEL_RULE: AstRenderRule = {
     name: 'ast-label',

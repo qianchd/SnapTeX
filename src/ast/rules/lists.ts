@@ -1,8 +1,7 @@
 import { formatEnumerateLabel } from '../../utils';
 import type { SnaptexAstArgument, SnaptexAstNode } from '../types';
 import { argumentText, environmentName, isEnvironmentNode, isMacroNode, readNodeArgument } from '../visit-utils';
-import type { AstRenderContext, AstRenderRule } from './index';
-import { renderInlineLatexSource } from './index';
+import { renderInlineLatexSource, type AstRenderContext, type AstRenderRule } from './index';
 
 interface AstListItem {
     label?: SnaptexAstArgument;

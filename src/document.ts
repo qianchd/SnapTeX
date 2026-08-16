@@ -6,8 +6,7 @@ import { REGEX_STR, R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES } from './rules';
 import { LatexBlockSplitter } from './splitter';
 import { extractAstBlockArtifact, type AstBlockArtifact } from './ast/block-metadata';
-import type { AstSplitSnapshot } from './ast/splitter';
-import { splitLatexWithAstIncremental } from './ast/splitter';
+import { splitLatexWithAstIncremental, type AstSplitSnapshot } from './ast/splitter';
 import { getBlockSpanText, lineAtOffset, normalizeUri, scanLatexBraceBalance, stableHash, stripLatexComments } from './utils';
 
 export interface DocumentParseResult {

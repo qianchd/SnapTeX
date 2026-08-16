@@ -1,6 +1,6 @@
 import { PreprocessRule, RenderContext } from './types';
 import { escapeHtmlAttribute, extractAndHideLabels, findCommand, resolveLatexStyles } from './utils';
-import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, renderSubfigureWidthStyle, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
+import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, renderCaptionHtml, renderSubfigureWidthStyle, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 import { findFirstTabularEnvironment, renderLatexTabular, renderLatexTableInlineContent } from './latex-table';
 import { renderAlgorithmicList } from './latex-algorithm';
 
@@ -32,7 +32,8 @@ function extractRenderedCaption(content: string, renderer: RenderContext, config
         return { content, captionHtml: '' };
     }
 
-    const captionHtml = `<div class="${config.className}"><strong>${config.label} <span class="sn-cnt" data-type="${config.counterType}"></span>:</strong> ${renderCaptionContent(captionRes.content, renderer)}</div>`;
+    const prefix = `<strong>${config.label} <span class="sn-cnt" data-type="${config.counterType}"></span>:</strong> `;
+    const captionHtml = renderCaptionHtml(config.className, renderCaptionContent(captionRes.content, renderer), prefix);
     return {
         content: content.substring(0, captionRes.start) + content.substring(captionRes.end),
         captionHtml
@@ -47,7 +48,7 @@ function extractRenderedPlainCaption(content: string, renderer: RenderContext, c
 
     return {
         content: content.substring(0, captionRes.start) + content.substring(captionRes.end),
-        captionHtml: `<div class="${className}">${prefixHtml}${renderCaptionContent(captionRes.content, renderer)}</div>`
+        captionHtml: renderCaptionHtml(className, renderCaptionContent(captionRes.content, renderer), prefixHtml)
     };
 }
 
