@@ -72,7 +72,7 @@ npm test
 Web and documentation commands:
 
 ```bash
-npm run web:serve          # static Web app + docs
+npm run web:serve-static   # static Web app + docs
 npm run docs:dev           # documentation development server
 npm run web:build-server   # server-enabled Web assets
 ```

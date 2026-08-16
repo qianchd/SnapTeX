@@ -63,7 +63,7 @@ Use [Testing Changes](./testing.md) to choose the narrowest behavior test and fi
 Build and serve the static Web edition:
 
 ```bash
-npm run web:serve
+npm run web:serve-static
 ```
 
 For source-oriented development, build the Web bundle and serve from the repository tree:
@@ -74,7 +74,7 @@ npm run web:serve-source
 
 The terminal prints the local URL. Do not open the HTML through a `file:` URL; workers, modules, resource loading, and PWA behavior require an HTTP origin.
 
-`web:serve-source` is the faster development path. `web:serve` first creates the exact static deploy tree under `dist-web/`, so use it when validating PWA paths, documentation placement, or deployment output.
+`web:serve-source` is the faster development path. `web:serve-static` first creates the exact static deploy tree under `dist-web/`, so use it when validating PWA paths, documentation placement, or deployment output.
 
 ## Run this documentation
 

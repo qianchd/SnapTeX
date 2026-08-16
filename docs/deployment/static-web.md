@@ -14,7 +14,7 @@ The command builds the Web application and this documentation site. The deployab
 Serve the output over HTTP for local verification:
 
 ```bash
-npm run web:serve
+npm run web:serve-static
 ```
 
 Opening `index.html` directly with a `file:` URL is not supported because module workers, service workers, and browser resource policies require an HTTP origin.
