@@ -4,7 +4,15 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
-- **Added**: Added an optional elastic paged preview that keeps rendered blocks atomic, absorbs small edits in flexible page-bottom margins, and gives oversized proofs, styled groups, tables, figures, TikZ, and PDF blocks an extended page instead of clipping or splitting them.
+## [0.8.0] - 2026-08-16
+
+- **Highlights**: Made the elastic paged preview the default layout, keeping rendered blocks intact while using flexible page-bottom space and extended pages for oversized proofs, styled groups, tables, figures, TikZ, and PDF blocks. Continuous preview remains available in settings.
+- **Added**: Exposed preview font size, line height, content width, and font family settings in both VS Code and the Web app, with immediate layout refresh, height-cache recalculation, and cross-project Web persistence; content width now also constrains and centers paged pages, and container-relative font units resolve against the continuous content or paged paper width.
+- **Changed**: Added a one-block-at-a-time virtual height warm-up pass that stabilizes long-document scroll geometry without retaining offscreen measurement DOM or generated SVG nodes, measures PDF page geometry without rasterizing a canvas bitmap, and reuses cached height data across compatible preview widths.
+- **Fixed**: Matched background height measurement to the mounted block layout, refreshed width-sensitive heights after pane resizing, and waited for final TikZ SVG cropping before caching its height.
+- **Changed**: Centered paged paper within the configured content width, kept the surrounding preview background visible, and replaced shadows and inter-page gaps with a compact divider and smaller page numbers matching the document typography.
+- **Fixed**: Made character-range selections clearly visible in the Web editor instead of letting the active-line background obscure the selected text.
+- **Fixed**: Matched reference tooltip typography to the preview text and anchored page markers to page-start blocks so virtualized height corrections cannot leave dividers crossing rendered content.
 - **Added**: Replaced the internal notes under `docs/` with a searchable VitePress documentation site covering user workflows, rendering, deployment, security, extension APIs, architecture, performance, and testing.
 - **Changed**: Reorganized the documentation around separate user, self-hosting, and contributor paths, with task-oriented navigation and explicit ownership, call relationships, parameter sources, and return contracts throughout the rendering-rule API.
 - **Changed**: Replaced splitter-specific begin-token matching with reusable `context-wrapper` rules so declaration-style groups and argument-wrapping commands share one configurable coarse-protection and AST-refinement model.
@@ -21,6 +29,9 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 - **Fixed**: Made PWA page navigation network-first so self-hosted updates and on-demand server authentication are not masked by a cached application shell.
 - **Fixed**: Scoped PWA cache cleanup and lookups to the current SnapTeX deployment so colocated applications and other SnapTeX paths keep their own caches.
 - **Added**: Added a local-first web welcome screen, persistent demo editing, a larger auto-hidden toolbar trigger, and collapsible editor/preview panes.
+- **Fixed**: Kept Web startup on the welcome screen instead of automatically reopening the latest workspace, and versioned the application entry so an older PWA cache cannot restore the previous demo-first behavior.
+- **Fixed**: Kept programmatic project and file loads out of CodeMirror's undo history so repeated undo stops at the loaded document instead of clearing it.
+- **Changed**: Renamed the local static deployment command to `npm run web:serve-static` to distinguish it from the authenticated Server edition.
 - **Fixed**: Let user-defined text macros wrap block structures such as tables, figures, lists, and theorem environments in the AST backend by routing expanded macro content through the shared AST rule pipeline.
 - **Fixed**: Kept source synchronization accurate when comments contain document markers such as `% \begin{document}`.
 - **Fixed**: Restored external bibliography rendering in the AST backend by carrying the document citation set into AST render contexts.

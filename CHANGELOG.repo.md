@@ -4,6 +4,15 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+## [0.8.0] - 2026-08-16
+
+- **Highlights**: Made the elastic paged preview the shared default across VS Code and Web hosts, with atomic blocks, flexible page bottoms, extended oversized pages, compact dividers, and page numbering.
+- **Added**: Added low-memory background block-height warm-up, width-aware height reuse, and viewport anchoring to stabilize virtualized paged and continuous scrolling.
+- **Added**: Added cross-host preview font size, line height, content width, and font family settings, including persistent Web preferences and page-width-relative typography.
+- **Fixed**: Kept programmatic CodeMirror document loads outside undo history, improved character-range selection visibility, and kept the Web app on its welcome page until a project is chosen.
+- **Fixed**: Versioned Web entry assets and made application-shell resources network-first so updated static and self-hosted deployments do not remain behind stale PWA caches.
+- **Changed**: Simplified shared scanner, caption, style, and AST internals; removed the unused AST benchmark module; and enabled stricter TypeScript unused-code and control-flow checks.
+- **Changed**: Renamed the local static deployment command to `npm run web:serve-static`.
 - **Added**: Added a searchable VitePress documentation site and integrated it into the static GitHub Pages build under `/docs/` without adding documentation to the VSIX or server runtime.
 - **Changed**: Reorganized user, deployment, developer, and extension documentation into task-oriented reading paths and documented every supported rule API with consistent value ownership and call relationships.
 - **Changed**: Generalized splitter context preservation through registry-defined `context-wrapper` rules shared by coarse splitting and AST refinement.
