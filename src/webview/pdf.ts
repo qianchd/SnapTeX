@@ -99,9 +99,11 @@ const previewBridge = getPreviewBridge();
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
             }
-            const context = canvas.getContext('2d');
-            if (!context) return;
-            await page.render({ canvasContext: context, viewport: viewport }).promise;
+            if (canvas.getAttribute('data-pdf-measure-only') !== 'true') {
+                const context = canvas.getContext('2d');
+                if (!context) return;
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+            }
 
             markPdfRendered(canvas);
 

@@ -3,7 +3,7 @@ import type { IFileProvider } from '../../../src/file-provider';
 import { decodeHtmlAttribute, getBasename, normalizeUri } from '../../../src/utils';
 import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
 import type { PreviewUpdateService } from '../../../src/preview-update-service';
-import type { RenderPayload, BackendMode, PreviewLayoutMode } from '../../../src/types';
+import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type RenderPayload, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings } from '../../../src/types';
 import {
     assertNever,
     HostToPreviewCommand,
@@ -72,7 +72,19 @@ function getBackendMode(config = vscode.workspace.getConfiguration('snaptex')): 
 }
 
 function getPreviewLayout(config = vscode.workspace.getConfiguration('snaptex')): PreviewLayoutMode {
-    return config.get<PreviewLayoutMode>('previewLayout', 'continuous') === 'paged' ? 'paged' : 'continuous';
+    return config.get<PreviewLayoutMode>('previewLayout', DEFAULT_PREVIEW_LAYOUT) === 'continuous'
+        ? 'continuous'
+        : DEFAULT_PREVIEW_LAYOUT;
+}
+
+function getPreviewStyle(config = vscode.workspace.getConfiguration('snaptex')): PreviewStyleSettings {
+    const read = (name: string, fallback: string) => config.get<string>(name, fallback).trim() || fallback;
+    return {
+        fontSize: read('previewFontSize', DEFAULT_PREVIEW_STYLE_SETTINGS.fontSize),
+        lineHeight: read('previewLineHeight', DEFAULT_PREVIEW_STYLE_SETTINGS.lineHeight),
+        contentMaxWidth: read('previewContentMaxWidth', DEFAULT_PREVIEW_STYLE_SETTINGS.contentMaxWidth),
+        fontFamily: read('previewFontFamily', DEFAULT_PREVIEW_STYLE_SETTINGS.fontFamily)
+    };
 }
 
 export function normalizePdfRequestPath(input: unknown): string | undefined {
@@ -372,7 +384,8 @@ export class TexPreviewPanel {
                 autoScrollDelay: Math.max(0, config.get<number>('autoScrollDelay', 100)),
                 debugMemory: config.get<boolean>('debugMemory', false),
                 virtualMode: getVirtualMode(config),
-                previewLayout: getPreviewLayout(config)
+                previewLayout: getPreviewLayout(config),
+                style: getPreviewStyle(config)
             }
         });
     }

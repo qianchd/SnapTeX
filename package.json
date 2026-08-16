@@ -149,8 +149,28 @@
             "continuous",
             "paged"
           ],
-          "default": "continuous",
+          "default": "paged",
           "description": "Choose a continuous preview or an elastic page-like layout. Oversized blocks remain intact on extended pages."
+        },
+        "snaptex.previewFontSize": {
+          "type": "string",
+          "default": "clamp(4px, 2.3cqw, 25px)",
+          "description": "CSS font-size value used by the preview, such as '18px' or 'clamp(12px, 2vw, 24px)'."
+        },
+        "snaptex.previewLineHeight": {
+          "type": "string",
+          "default": "1.25",
+          "description": "CSS line-height value used by the preview."
+        },
+        "snaptex.previewContentMaxWidth": {
+          "type": "string",
+          "default": "3000px",
+          "description": "CSS max-width value for preview content."
+        },
+        "snaptex.previewFontFamily": {
+          "type": "string",
+          "default": "\"Times New Roman\", \"Cambria\", \"Latin Modern Roman\", \"Georgia\", serif",
+          "description": "CSS font-family value used by preview text."
         }
       }
     }

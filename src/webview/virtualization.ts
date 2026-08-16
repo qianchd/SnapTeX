@@ -31,13 +31,15 @@ export function isElementWithinViewportMargins(element, margins) {
  * stable scroll geometry while only nearby blocks stay mounted in the DOM.
  */
 export class BlockVirtualizationController {
-        constructor(contentRoot) {
+        constructor(contentRoot, viewportAnchor) {
             this.contentRoot = contentRoot;
+            this.viewportAnchor = viewportAnchor;
             this.enabled = false;
+            this.fontSize = 16;
             this.heightCache = new Map();
             this.htmlCache = new Map();
+            this.measurementHost = null;
             this.observedShells = new Set();
-            this.viewportAnchorPreserveDepth = 0;
             this.resizeObserver = typeof ResizeObserver !== 'undefined'
                 ? new ResizeObserver(entries => this.onShellResize(entries))
                 : null;
@@ -51,9 +53,23 @@ export class BlockVirtualizationController {
             return this.enabled;
         }
 
-        resetCaches() {
+        setFontSize(value) {
+            this.fontSize = parseFloat(value) || this.fontSize;
+        }
+
+        resetHeightCache() {
             this.heightCache.clear();
+            this.cancelHeightMeasurement();
+        }
+
+        resetCaches() {
+            this.resetHeightCache();
             this.htmlCache.clear();
+        }
+
+        cancelHeightMeasurement() {
+            this.measurementHost?.remove();
+            this.measurementHost = null;
         }
 
         getBlockKey(element) {
@@ -76,6 +92,37 @@ export class BlockVirtualizationController {
             return Math.max(BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT, Math.min(1400, lineCount * 28));
         }
 
+        getContentWidth() {
+            const style = getComputedStyle(this.contentRoot);
+            const horizontalPadding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+            return Math.max(1, this.contentRoot.clientWidth - horizontalPadding);
+        }
+
+        cacheBlockHeight(key, height, fontSize = this.fontSize, width = this.getContentWidth()) {
+            if (key && Number.isFinite(height) && height >= 0) {
+                this.heightCache.set(key, {
+                    heightEm: height / fontSize,
+                    widthEm: width / fontSize
+                });
+            }
+        }
+
+        getCachedBlockHeight(key) {
+            const cached = key ? this.heightCache.get(key) : undefined;
+            return cached === undefined ? undefined : cached.heightEm * this.fontSize;
+        }
+
+        hasMeasuredHeight(element, contentWidth = this.getContentWidth()) {
+            const cached = this.heightCache.get(this.getBlockKey(element));
+            if (!cached) return false;
+            const widthEm = contentWidth / this.fontSize;
+            return Math.abs(cached.widthEm - widthEm) <= Math.max(0.5, widthEm * 0.01);
+        }
+
+        forgetBlockHeight(element) {
+            this.heightCache.delete(this.getBlockKey(element));
+        }
+
         rememberBlockHeight(block) {
             if (!block) return;
 
@@ -83,9 +130,7 @@ export class BlockVirtualizationController {
             if (!key) return;
 
             const rect = block.getBoundingClientRect();
-            if (rect.height > 0) {
-                this.heightCache.set(key, Math.ceil(rect.height));
-            }
+            this.cacheBlockHeight(key, Math.ceil(rect.height));
         }
 
         getAnchorIdsFromBlock(block) {
@@ -112,13 +157,15 @@ export class BlockVirtualizationController {
         getShellHeightBaseline(shell) {
             const rect = shell.getBoundingClientRect();
             if (rect.height > 0) return rect.height;
-            return parseFloat(shell.style.height || shell.style.minHeight || '') || BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT;
+            const explicitHeight = parseFloat(shell.style.height || shell.style.minHeight || '');
+            return Number.isFinite(explicitHeight) ? explicitHeight : BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT;
         }
 
         lockShellHeight(shell, height) {
-            const safeHeight = Math.max(1, Math.ceil(height || this.getShellHeightBaseline(shell)));
-            shell.style.height = `${safeHeight}px`;
-            shell.style.minHeight = `${safeHeight}px`;
+            const safeHeight = Math.max(0, Math.ceil(height ?? this.getShellHeightBaseline(shell)));
+            const normalizedHeight = safeHeight / this.fontSize;
+            shell.style.height = `${normalizedHeight}em`;
+            shell.style.minHeight = `${normalizedHeight}em`;
             shell.style.overflow = 'hidden';
         }
 
@@ -131,7 +178,7 @@ export class BlockVirtualizationController {
         measureMountedBlockHeight(shell) {
             const block = this.getShellBlock(shell);
             if (!block) return this.getShellHeightBaseline(shell);
-            return Math.ceil(block.getBoundingClientRect().height || block.scrollHeight || this.getShellHeightBaseline(shell));
+            return Math.ceil(Math.max(block.getBoundingClientRect().height, block.scrollHeight));
         }
 
         isShellAboveViewport(shell) {
@@ -142,62 +189,22 @@ export class BlockVirtualizationController {
             return shell.getBoundingClientRect().top + previousHeight <= 0;
         }
 
-        captureViewportAnchor(shells = this.getShells()) {
-            if (window.scrollY <= 0) return null;
-
-            let anchor = null;
-            let bestDistance = Infinity;
-            shells.forEach(shell => {
-                const rect = shell.getBoundingClientRect();
-                if (rect.bottom <= 0 || rect.top >= window.innerHeight) return;
-
-                const distance = rect.top <= 0 ? 0 : rect.top;
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    anchor = { element: shell, top: rect.top };
-                }
-            });
-            return anchor;
-        }
-
-        restoreViewportAnchor(anchor) {
-            if (!anchor?.element?.isConnected) return;
-
-            const delta = anchor.element.getBoundingClientRect().top - anchor.top;
-            if (Math.abs(delta) >= 1) {
-                window.scrollBy(0, delta);
-            }
-        }
-
         withViewportAnchorPreserved(callback, shells) {
-            if (this.viewportAnchorPreserveDepth > 0) {
-                return callback();
-            }
-
-            const anchor = this.captureViewportAnchor(shells);
-            this.viewportAnchorPreserveDepth += 1;
-            try {
-                const result = callback();
-                this.restoreViewportAnchor(anchor);
-                return result;
-            } finally {
-                this.viewportAnchorPreserveDepth -= 1;
-            }
+            return this.viewportAnchor.preserve(shells || this.getShells(), callback);
         }
 
         refreshMountedShellHeight(shell) {
-            if (!this.getShellBlock(shell)) return;
+            if (!this.getShellBlock(shell)) return undefined;
 
             const height = this.measureMountedBlockHeight(shell);
             const key = this.getBlockKey(shell);
-            if (key && height > 0) {
-                this.heightCache.set(key, height);
-            }
+            this.cacheBlockHeight(key, height);
             if (this.isShellAboveViewport(shell)) {
                 this.lockShellHeight(shell, height);
             } else {
                 this.unlockShellHeight(shell);
             }
+            return height;
         }
 
         observeShell(shell) {
@@ -220,17 +227,17 @@ export class BlockVirtualizationController {
 
         onShellResize(entries) {
             let scrollDelta = 0;
+            const contentWidth = this.getContentWidth();
             entries.forEach(entry => {
                 const shell = entry.target;
                 const nextHeight = Math.ceil(entry.contentRect.height);
                 const key = this.getBlockKey(shell);
-                const previousHeight = key ? this.heightCache.get(key) : undefined;
-                if (previousHeight && nextHeight > 0 && this.wasShellAboveViewport(shell, previousHeight)) {
+                const previousHeight = this.getCachedBlockHeight(key);
+                if (previousHeight !== undefined
+                    && this.wasShellAboveViewport(shell, previousHeight)) {
                     scrollDelta += nextHeight - previousHeight;
                 }
-                if (key && nextHeight > 0) {
-                    this.heightCache.set(key, nextHeight);
-                }
+                this.cacheBlockHeight(key, nextHeight, this.fontSize, contentWidth);
             });
             if (Math.abs(scrollDelta) >= 1 && window.scrollY > 0) {
                 window.scrollBy(0, scrollDelta);
@@ -255,11 +262,11 @@ export class BlockVirtualizationController {
             const html = block.outerHTML;
 
             this.htmlCache.set(key || index, html);
-            return this.createShell(index, hash, this.heightCache.get(key) || this.estimateBlockHeightFromHtml(html), this.getAnchorIdsFromBlock(block));
+            return this.createShell(index, hash, this.getCachedBlockHeight(key) ?? this.estimateBlockHeightFromHtml(html), this.getAnchorIdsFromBlock(block));
         }
 
         createShellForMeta(meta) {
-            return this.createShell(meta.index, meta.hash, this.heightCache.get(meta.hash) || this.estimateBlockHeightFromMeta(meta), meta.anchors);
+            return this.createShell(meta.index, meta.hash, this.getCachedBlockHeight(meta.hash) ?? this.estimateBlockHeightFromMeta(meta), meta.anchors);
         }
 
         pruneCaches(activeKeys) {
@@ -330,7 +337,7 @@ export class BlockVirtualizationController {
             if (!this.enabled || this.getShellBlock(shell)) return null;
 
             const key = this.getBlockKey(shell);
-            const html = this.htmlCache.get(key) || this.htmlCache.get(this.getBlockIndex(shell));
+            const html = this.getBlockHtml(shell);
             if (!html) {
                 if (onMissingHtml) { onMissingHtml(shell); }
                 return null;
@@ -360,7 +367,7 @@ export class BlockVirtualizationController {
 
             this.rememberBlockHeight(block);
             const key = this.getBlockKey(block);
-            const height = this.heightCache.get(key) || Math.ceil(block.getBoundingClientRect().height) || BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT;
+            const height = this.getCachedBlockHeight(key) ?? Math.ceil(block.getBoundingClientRect().height);
             block.remove();
             this.lockShellHeight(shell, height);
             shell.setAttribute('data-mounted', 'false');
@@ -371,7 +378,7 @@ export class BlockVirtualizationController {
             if (!this.enabled) return [];
 
             const shells = this.getShells();
-            return this.withViewportAnchorPreserved(() => {
+            const update = () => {
                 const mounted = [];
                 const phase = options.phase || 'normal';
                 const allowUnmount = options.allowUnmount !== false;
@@ -392,7 +399,10 @@ export class BlockVirtualizationController {
                     this.pruneHtmlCacheOutsideRetainRange(shells);
                 }
                 return mounted;
-            }, shells);
+            };
+            return options.preserveViewportAnchor === false
+                ? update()
+                : this.withViewportAnchorPreserved(update, shells);
         }
 
         replaceContentWithShellElements(shells, onMount, onMissingHtml, options = {}) {
@@ -422,13 +432,82 @@ export class BlockVirtualizationController {
 
         storeBlockHtml(index, hash, html) {
             const key = hash || String(index);
-            const shell = this.contentRoot.querySelector(`.latex-block-shell[data-index="${index}"]`);
+            const shell = this.findMatchingShell(index, hash);
             if (!shell) return null;
-            const shellHash = shell.getAttribute('data-block-hash') || '';
-            if (hash && shellHash && shellHash !== hash) return null;
 
             this.htmlCache.set(key, html);
             return shell;
+        }
+
+        findMatchingShell(index, hash) {
+            const shell = this.contentRoot.querySelector(`.latex-block-shell[data-index="${index}"]`);
+            const shellHash = shell?.getAttribute('data-block-hash') || '';
+            return shell && (!hash || !shellHash || shellHash === hash) ? shell : null;
+        }
+
+        getBlockHtml(shell) {
+            return this.htmlCache.get(this.getBlockKey(shell))
+                || this.htmlCache.get(this.getBlockIndex(shell));
+        }
+
+        ensureMeasurementHost() {
+            const style = getComputedStyle(this.contentRoot);
+            if (!this.measurementHost?.isConnected) {
+                this.measurementHost = document.createElement('div');
+                (this.contentRoot.parentElement ?? document.body).appendChild(this.measurementHost);
+            }
+            Object.assign(this.measurementHost.style, {
+                position: 'fixed',
+                left: '-100000px',
+                top: '0',
+                width: `${this.getContentWidth()}px`,
+                visibility: 'hidden',
+                pointerEvents: 'none',
+                contain: 'layout style paint',
+                height: 'auto',
+                overflow: 'visible',
+                font: style.font,
+                fontSize: style.fontSize,
+                lineHeight: style.lineHeight,
+                letterSpacing: style.letterSpacing,
+                wordSpacing: style.wordSpacing,
+                textAlign: style.textAlign
+            });
+            return this.measurementHost;
+        }
+
+        async measureBlockHtml(shell, html, prepareBlock) {
+            if (!shell?.isConnected) return undefined;
+            if (this.getShellBlock(shell)) return this.refreshMountedShellHeight(shell);
+
+            const block = parseFirstElementFromHtml(html);
+            if (!block) return undefined;
+
+            const host = this.ensureMeasurementHost();
+            const measurementShell = document.createElement('div');
+            measurementShell.className = 'latex-block-shell';
+            measurementShell.setAttribute('data-mounted', 'true');
+            measurementShell.appendChild(block);
+            host.replaceChildren(measurementShell);
+
+            try {
+                if (prepareBlock && await prepareBlock(block) === false) return undefined;
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                if (!host.isConnected || measurementShell.parentElement !== host) return undefined;
+                const height = Math.ceil(Math.max(measurementShell.getBoundingClientRect().height, measurementShell.scrollHeight));
+                if (!shell.isConnected || this.getBlockKey(shell) !== this.getBlockKey(block)) return undefined;
+                const key = this.getBlockKey(shell);
+                this.cacheBlockHeight(
+                    key,
+                    height,
+                    parseFloat(host.style.fontSize) || this.fontSize,
+                    parseFloat(host.style.width) || this.getContentWidth()
+                );
+                this.withViewportAnchorPreserved(() => this.lockShellHeight(shell, height));
+                return height;
+            } finally {
+                host.replaceChildren();
+            }
         }
 
         remapShellIndicesFromDomPosition(startDomIndex, delta) {

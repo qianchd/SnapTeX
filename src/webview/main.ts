@@ -3,11 +3,18 @@
 import { CoalescingTaskScheduler } from './scheduler';
 import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
 import { PageLayoutController } from './pagination';
+import { ViewportAnchorController } from './viewport';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
 import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
 const previewBridge = getPreviewBridge();
     const PREVIEW_LAYOUT_WIDTH_CHANGE_EPSILON_PX = 12;
+    const PREVIEW_STYLE_PROPERTIES = [
+        ['fontSize', '--snaptex-preview-base-font-size', 'font-size'],
+        ['lineHeight', '--snaptex-preview-line-height', 'line-height'],
+        ['contentMaxWidth', '--snaptex-preview-content-max-width', 'max-width'],
+        ['fontFamily', '--snaptex-preview-font-family-setting', 'font-family']
+    ];
     const PDF_RENDER_MARGIN_VH = 130;
     const PDF_RELEASE_MARGIN_VH = 380;
     window.pdfReqQueue = [];
@@ -441,19 +448,25 @@ const previewBridge = getPreviewBridge();
             this.virtualCleanupTimer = null;
             this.config = {
                 autoScrollDelay: 100,
-                debugMemory: false,
-                virtualMode: true,
-                previewLayout: 'continuous'
+                debugMemory: false
             };
             this.currentNumbering = null;
             this.blockHtmlRequestSeq = 0;
+            this.measurementResourceSeq = 0;
             this.pendingBlockHtmlRequests = new Map();
+            this.heightWarmupGeneration = 0;
+            this.heightWarmupTimer = null;
+            this.heightWarmupBusy = false;
+            this.heightWarmupCursor = null;
+            this.heightWarmupFailedKeys = new Set();
             this.pdfObserver = null;
             this.pdfRenderTimer = null;
             this.deferHeavyPreviewWork = false;
             this.initialExpansionFrame = null;
-            this.virtualization = new BlockVirtualizationController(this.contentRoot);
-            this.pagination = new PageLayoutController(this.contentRoot);
+            this.typographyMeasurementHost = null;
+            this.viewportAnchor = new ViewportAnchorController();
+            this.virtualization = new BlockVirtualizationController(this.contentRoot, this.viewportAnchor);
+            this.pagination = new PageLayoutController(this.contentRoot, this.viewportAnchor);
             this.debugStats = {
                 blockHtmlRequestsSent: 0,
                 blockHtmlResponses: 0,
@@ -474,6 +487,7 @@ const previewBridge = getPreviewBridge();
                 }
             });
 
+            this.syncPreviewTypography();
             new TooltipManager();
 
             this.initPdfObserver();
@@ -483,6 +497,15 @@ const previewBridge = getPreviewBridge();
 
         bindEvents() {
             window.addEventListener('message', event => this.onMessage(event));
+            const deferHeightWarmup = () => this.deferHeightWarmup();
+            ['wheel', 'touchmove', 'pointerdown'].forEach(eventName => {
+                window.addEventListener(eventName, deferHeightWarmup, { passive: true });
+            });
+            window.addEventListener('keydown', event => {
+                if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+                    deferHeightWarmup();
+                }
+            });
             window.addEventListener('scroll', () => {
                 this.requestVirtualizedUpdate({ allowUnmount: false });
                 this.scheduleVirtualizedCleanup();
@@ -509,12 +532,62 @@ const previewBridge = getPreviewBridge();
             return rect && rect.width > 0 ? rect.width : window.innerWidth;
         }
 
+        syncPreviewTypography() {
+            if (!this.contentRoot) return;
+            if (!this.typographyMeasurementHost?.isConnected) {
+                const host = document.createElement('div');
+                const probe = document.createElement('span');
+                Object.assign(host.style, {
+                    position: 'fixed',
+                    left: '-100000px',
+                    top: '0',
+                    visibility: 'hidden',
+                    pointerEvents: 'none',
+                    contain: 'strict',
+                    containerType: 'size'
+                });
+                host.appendChild(probe);
+                document.body.appendChild(host);
+                this.typographyMeasurementHost = host;
+            }
+            const rect = this.contentRoot.getBoundingClientRect();
+            const host = this.typographyMeasurementHost;
+            host.style.width = `${Math.max(1, rect.width)}px`;
+            host.style.height = `${Math.max(1, rect.height)}px`;
+            const probe = host.firstElementChild;
+            probe.style.fontSize = getComputedStyle(this.contentRoot).getPropertyValue('--base-font-size');
+            const fontSize = getComputedStyle(probe).fontSize;
+            if (!fontSize) return;
+            document.documentElement.style.setProperty('--snaptex-preview-text-size', fontSize);
+            this.virtualization?.setFontSize(fontSize);
+        }
+
+        applyPreviewStyle(style) {
+            if (!style) return false;
+            let changed = false;
+            for (const [setting, variable, property] of PREVIEW_STYLE_PROPERTIES) {
+                const value = typeof style[setting] === 'string' ? style[setting].trim() : '';
+                const nextValue = value && CSS.supports(property, value) ? value : '';
+                if (document.documentElement.style.getPropertyValue(variable) === nextValue) continue;
+                if (nextValue) {
+                    document.documentElement.style.setProperty(variable, nextValue);
+                } else {
+                    document.documentElement.style.removeProperty(variable);
+                }
+                changed = true;
+            }
+            return changed;
+        }
+
         onPreviewResize(width = this.getPreviewWidth()) {
+            this.syncPreviewTypography();
             this.updateVirtualizedBlocks({ allowUnmount: true });
             if (!Number.isFinite(width) || width <= 0 || Math.abs(width - this.lastPreviewWidth) < PREVIEW_LAYOUT_WIDTH_CHANGE_EPSILON_PX) {
                 return;
             }
             this.lastPreviewWidth = width;
+            this.heightWarmupFailedKeys.clear();
+            this.scheduleHeightWarmup(250);
             this.pagination.refresh(true);
             this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
             previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
@@ -544,16 +617,30 @@ const previewBridge = getPreviewBridge();
                     break;
 
                 case HostToPreviewCommand.Config:
-                    if (event.data.config && typeof event.data.config.autoScrollDelay === 'number') {
-                        this.config.autoScrollDelay = Math.max(0, event.data.config.autoScrollDelay);
+                    const config = event.data.config;
+                    const styleChanged = this.applyPreviewStyle(config.style);
+                    if (typeof config.autoScrollDelay === 'number') {
+                        this.config.autoScrollDelay = Math.max(0, config.autoScrollDelay);
                     }
-                    if (event.data.config && typeof event.data.config.debugMemory === 'boolean') {
-                        this.config.debugMemory = event.data.config.debugMemory;
+                    if (typeof config.debugMemory === 'boolean') {
+                        this.config.debugMemory = config.debugMemory;
                     }
-                    this.config.virtualMode = event.data.config.virtualMode !== false;
-                    this.virtualization.setEnabled(event.data.config.virtualMode !== false);
-                    this.config.previewLayout = event.data.config.previewLayout === 'paged' ? 'paged' : 'continuous';
-                    this.pagination.setEnabled(this.config.previewLayout === 'paged');
+                    const virtualMode = config.virtualMode !== false;
+                    const virtualModeChanged = virtualMode !== this.virtualization.isEnabled();
+                    this.virtualization.setEnabled(virtualMode);
+                    const paged = config.previewLayout === 'paged';
+                    this.pagination.setEnabled(paged);
+                    if (styleChanged) {
+                        this.syncPreviewTypography();
+                        this.virtualization.resetHeightCache();
+                        this.heightWarmupFailedKeys.clear();
+                        this.pagination.refresh(true);
+                    }
+                    if (virtualMode && (virtualModeChanged || styleChanged)) {
+                        this.scheduleHeightWarmup(styleChanged ? 150 : 400);
+                    } else if (!virtualMode) {
+                        this.cancelHeightWarmup();
+                    }
                     this.updateVirtualizedBlocks({ allowUnmount: true });
                     break;
             }
@@ -561,6 +648,10 @@ const previewBridge = getPreviewBridge();
 
         handleUpdate(payload) {
             this.logPayloadStats(payload);
+            const resetHeightState = payload.resetPreviewState
+                || (payload.type === 'full' && payload.preserveUnchangedBlocks === false);
+            this.cancelHeightWarmup(resetHeightState);
+            this.clearPendingBlockHtmlRequests();
             if (payload.resetPreviewState) {
                 this.resetPreviewRuntimeState();
             }
@@ -573,6 +664,9 @@ const previewBridge = getPreviewBridge();
                 this.deferHeavyPreviewWork = this.isFirstLoad && !!payload.blocks && this.virtualization.isEnabled();
                 const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
+                if (!payload.resetPreviewState && payload.preserveUnchangedBlocks === false && this.virtualization.isEnabled()) {
+                    this.virtualization.resetCaches();
+                }
                 if (payload.blocks && this.virtualization.isEnabled()) {
                     this.smartFullUpdateFromBlockMetadata(payload.blocks, {
                         phase: this.deferHeavyPreviewWork ? 'initial' : 'normal'
@@ -608,7 +702,6 @@ const previewBridge = getPreviewBridge();
         }
 
         resetPreviewRuntimeState() {
-            this.pendingBlockHtmlRequests.clear();
             this.virtualization.resetCaches();
             this.pagination.reset();
             this.isFirstLoad = true;
@@ -731,7 +824,6 @@ const previewBridge = getPreviewBridge();
 
         replaceBlockPreservingTikz(oldBlock, newBlock) {
             this.virtualization.rememberBlockHeight(oldBlock);
-            this.pagination.transferPageStart(oldBlock, newBlock);
             oldBlock.replaceWith(newBlock);
             this.attachStaleTikzPreviews(newBlock, this.collectTikzPreviews(oldBlock));
         }
@@ -751,6 +843,7 @@ const previewBridge = getPreviewBridge();
             this.debugStats.blockMounts += 1;
 
             const shell = block.closest('.latex-block-shell');
+            this.heightWarmupFailedKeys.delete(this.virtualization.getBlockKey(shell || block));
             this.attachStaleTikzPreviews(block, this.consumeStaleTikzPreviewsFromShell(shell));
 
             if (this.currentNumbering) {
@@ -759,7 +852,7 @@ const previewBridge = getPreviewBridge();
             if (!this.deferHeavyPreviewWork) {
                 this.scheduleHeavyPreviewWork();
             }
-            this.pagination.refresh();
+            this.pagination.invalidateItem(shell || block);
         }
 
         requestVirtualizedUpdate(options = {}) {
@@ -789,17 +882,14 @@ const previewBridge = getPreviewBridge();
                 {
                     allowUnmount: options.allowUnmount !== false,
                     phase: options.phase || 'normal',
-                    pruneHtmlCache: options.pruneHtmlCache === true
+                    pruneHtmlCache: options.pruneHtmlCache === true,
+                    preserveViewportAnchor: !this.pagination.isEnabled() || this.viewportAnchor.isPinned()
                 }
             );
         }
 
         getBlockByIndex(index) {
             return this.contentRoot.querySelector('.latex-block[data-index="' + index + '"]');
-        }
-
-        getShellByIndex(index) {
-            return this.contentRoot.querySelector('.latex-block-shell[data-index="' + index + '"]');
         }
 
         forEachDirtyBlock(payload, callback) {
@@ -840,7 +930,7 @@ const previewBridge = getPreviewBridge();
             let target = this.getBlockByIndex(index);
             if (target) return target;
 
-            const shell = this.getShellByIndex(index);
+            const shell = this.virtualization.findMatchingShell(index);
             if (!shell) return null;
 
             const mounted = this.virtualization.mountShell(shell, missingShell => this.requestVirtualBlockHtml(missingShell));
@@ -884,7 +974,7 @@ const previewBridge = getPreviewBridge();
                 const timeout = setTimeout(() => finish(null), 6000);
                 const requested = this.requestVirtualBlockHtml(shell, {
                     forceMount: true,
-                    onLoaded: finish
+                    onMounted: finish
                 });
                 if (!requested) { finish(null); }
             });
@@ -894,7 +984,7 @@ const previewBridge = getPreviewBridge();
             const target = this.getBlockByIndex(index);
             if (target) return { target, mounted: false };
 
-            const shell = this.getShellByIndex(index);
+            const shell = this.virtualization.findMatchingShell(index);
             if (!shell) return { target: null, mounted: false };
 
             const block = await this.ensureShellMounted(shell);
@@ -939,15 +1029,14 @@ const previewBridge = getPreviewBridge();
 
         requestVirtualBlockHtml(shell, options = {}) {
             if (!shell) return false;
-            const requestOptions = typeof options === 'function'
-                ? { onLoaded: options, forceMount: true }
-                : options;
 
             const existingId = shell.getAttribute('data-html-request-id');
             if (existingId && this.pendingBlockHtmlRequests.has(existingId)) {
                 const pending = this.pendingBlockHtmlRequests.get(existingId);
-                if (requestOptions.onLoaded) { pending.callbacks.push(requestOptions.onLoaded); }
-                pending.forceMount = pending.forceMount || requestOptions.forceMount === true;
+                if (options.onMounted) { pending.mountCallbacks.push(options.onMounted); }
+                if (options.onHtml) { pending.htmlCallbacks.push(options.onHtml); }
+                pending.mountRequested ||= options.measureOnly !== true;
+                pending.forceMount ||= options.forceMount === true;
                 return true;
             }
 
@@ -960,25 +1049,38 @@ const previewBridge = getPreviewBridge();
             this.pendingBlockHtmlRequests.set(id, {
                 index,
                 hash,
-                forceMount: requestOptions.forceMount === true,
-                callbacks: requestOptions.onLoaded ? [requestOptions.onLoaded] : []
+                mountRequested: options.measureOnly !== true,
+                forceMount: options.forceMount === true,
+                mountCallbacks: options.onMounted ? [options.onMounted] : [],
+                htmlCallbacks: options.onHtml ? [options.onHtml] : []
             });
             this.debugStats.blockHtmlRequestsSent += 1;
             previewBridge.postMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash });
             return true;
         }
 
+        clearPendingBlockHtmlRequests() {
+            for (const pending of this.pendingBlockHtmlRequests.values()) {
+                pending.mountCallbacks.forEach(callback => callback(null));
+                pending.htmlCallbacks.forEach(callback => callback(null));
+            }
+            this.pendingBlockHtmlRequests.clear();
+            this.contentRoot.querySelectorAll('.latex-block-shell[data-html-request-id]')
+                .forEach(shell => shell.removeAttribute('data-html-request-id'));
+        }
+
         handleBlockHtml(message) {
             const pending = this.pendingBlockHtmlRequests.get(message.id);
             if (!pending) return;
             this.pendingBlockHtmlRequests.delete(message.id);
+            const resolveHtmlCallbacks = html => pending.htmlCallbacks.forEach(callback => callback(html));
             if (message.error || !message.html) {
-                const index = pending.index;
-                const shell = this.getShellByIndex(index);
-                if (shell) {
+                const shell = this.virtualization.findMatchingShell(pending.index, pending.hash);
+                if (shell?.getAttribute('data-html-request-id') === message.id) {
                     shell.removeAttribute('data-html-request-id');
                 }
-                pending.callbacks.forEach(callback => callback(null));
+                pending.mountCallbacks.forEach(callback => callback(null));
+                resolveHtmlCallbacks(null);
                 return;
             }
 
@@ -988,22 +1090,230 @@ const previewBridge = getPreviewBridge();
             this.debugStats.blockHtmlResponses += 1;
             this.debugStats.blockHtmlChars += htmlChars;
             this.debugStats.maxBlockHtmlChars = Math.max(this.debugStats.maxBlockHtmlChars, htmlChars);
-            const shell = this.virtualization.storeBlockHtml(index, hash, message.html);
-            if (shell) {
+            const shell = pending.mountRequested
+                ? this.virtualization.storeBlockHtml(index, hash, message.html)
+                : this.virtualization.findMatchingShell(index, hash);
+            if (shell?.getAttribute('data-html-request-id') === message.id) {
                 shell.removeAttribute('data-html-request-id');
             }
             if (!shell) {
-                pending.callbacks.forEach(callback => callback(null));
+                pending.mountCallbacks.forEach(callback => callback(null));
+                resolveHtmlCallbacks(message.html);
                 return;
             }
-            if (!pending.forceMount && !this.virtualization.isShellInMountRange(shell)) return;
+            if (pending.mountRequested && (pending.forceMount || this.virtualization.isShellInMountRange(shell))) {
+                const block = this.virtualization.withViewportAnchorPreserved(() => this.virtualization.mountShell(
+                    shell,
+                    missingShell => this.requestVirtualBlockHtml(missingShell)
+                ));
+                if (block) { this.onVirtualBlockMounted(block); }
+                pending.mountCallbacks.forEach(callback => callback(block || null));
+            }
+            resolveHtmlCallbacks(message.html);
+        }
 
-            const block = this.virtualization.withViewportAnchorPreserved(() => this.virtualization.mountShell(
-                shell,
-                missingShell => this.requestVirtualBlockHtml(missingShell)
-            ));
-            if (block) { this.onVirtualBlockMounted(block); }
-            pending.callbacks.forEach(callback => callback(block || null));
+        invalidateHeightWarmup() {
+            this.heightWarmupGeneration += 1;
+            if (this.heightWarmupTimer) {
+                clearTimeout(this.heightWarmupTimer);
+                this.heightWarmupTimer = null;
+            }
+            this.virtualization.cancelHeightMeasurement();
+            this.viewportAnchor.clear();
+        }
+
+        cancelHeightWarmup(clearFailures = false) {
+            this.invalidateHeightWarmup();
+            this.heightWarmupCursor = null;
+            if (clearFailures) { this.heightWarmupFailedKeys.clear(); }
+        }
+
+        scheduleHeightWarmup(delay = 400) {
+            if (!this.virtualization.isEnabled()) return;
+
+            this.invalidateHeightWarmup();
+            const generation = this.heightWarmupGeneration;
+            this.heightWarmupCursor = 0;
+            if (this.heightWarmupFailedKeys.size > 0) {
+                const activeKeys = new Set(this.virtualization.getShells().map(shell => this.virtualization.getBlockKey(shell)));
+                for (const key of this.heightWarmupFailedKeys) {
+                    if (!activeKeys.has(key)) { this.heightWarmupFailedKeys.delete(key); }
+                }
+            }
+            this.scheduleHeightWarmupStep(generation, delay);
+        }
+
+        deferHeightWarmup(delay = BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS) {
+            if (!this.virtualization.isEnabled() || this.heightWarmupCursor === null) return;
+
+            this.scheduleHeightWarmup(delay);
+        }
+
+        scheduleHeightWarmupStep(generation, delay = 0) {
+            this.heightWarmupTimer = setTimeout(() => {
+                this.heightWarmupTimer = null;
+                const run = () => {
+                    if (generation !== this.heightWarmupGeneration) return;
+                    if (this.heightWarmupBusy) {
+                        this.scheduleHeightWarmupStep(generation, 100);
+                    } else {
+                        this.runHeightWarmupStep(generation);
+                    }
+                };
+                if (typeof window.requestIdleCallback === 'function') {
+                    window.requestIdleCallback(run, { timeout: 1000 });
+                } else {
+                    run();
+                }
+            }, delay);
+        }
+
+        async runHeightWarmupStep(generation) {
+            if (generation !== this.heightWarmupGeneration || !this.virtualization.isEnabled()) return;
+
+            if (this.heightWarmupCursor === 0) {
+                this.viewportAnchor.pin(this.virtualization.getShells());
+            }
+
+            let shell = null;
+            const contentWidth = this.virtualization.getContentWidth();
+            while (this.heightWarmupCursor < this.contentRoot.children.length) {
+                const candidate = this.contentRoot.children[this.heightWarmupCursor++];
+                const key = this.virtualization.getBlockKey(candidate);
+                if (key
+                    && !this.heightWarmupFailedKeys.has(key)
+                    && !this.virtualization.hasMeasuredHeight(candidate, contentWidth)) {
+                    shell = candidate;
+                    break;
+                }
+            }
+            if (!shell) {
+                this.heightWarmupCursor = null;
+                this.virtualization.cancelHeightMeasurement();
+                this.pagination.refresh(true);
+                requestAnimationFrame(() => this.viewportAnchor.clear());
+                return;
+            }
+
+            const key = this.virtualization.getBlockKey(shell);
+            const measure = async html => {
+                if (generation !== this.heightWarmupGeneration) return undefined;
+                if (!html) return undefined;
+                this.heightWarmupBusy = true;
+                try {
+                    return await this.virtualization.measureBlockHtml(
+                        shell,
+                        html,
+                        block => this.prepareBlockHeightMeasurement(block)
+                    );
+                } catch (error) {
+                    console.warn('[SnapTeX] Background block height measurement failed.', error);
+                    return undefined;
+                } finally {
+                    this.heightWarmupBusy = false;
+                }
+            };
+            const continueWarmup = measured => {
+                if (generation !== this.heightWarmupGeneration) return;
+                if (measured === undefined) { this.heightWarmupFailedKeys.add(key); }
+                this.scheduleHeightWarmupStep(generation);
+            };
+            const cachedHtml = this.virtualization.getBlockHtml(shell);
+            if (cachedHtml) {
+                continueWarmup(await measure(cachedHtml));
+                return;
+            }
+
+            const requested = this.requestVirtualBlockHtml(shell, {
+                measureOnly: true,
+                onHtml: async html => {
+                    continueWarmup(await measure(html));
+                }
+            });
+            if (!requested) { continueWarmup(undefined); }
+        }
+
+        waitForMeasurement(check, element, timeout = 30000) {
+            return new Promise(resolve => {
+                const startedAt = Date.now();
+                const poll = () => {
+                    if (!element.isConnected) { resolve(false); return; }
+                    if (check()) { resolve(true); return; }
+                    if (Date.now() - startedAt >= timeout) { resolve(false); return; }
+                    setTimeout(poll, 50);
+                };
+                poll();
+            });
+        }
+
+        async prepareBlockHeightMeasurement(block) {
+            if (this.currentNumbering) {
+                const index = block.getAttribute('data-index');
+                this.fillBlockNumbering(block, this.currentNumbering.blocks?.[index]);
+                this.fillReferences(block, this.currentNumbering.labels);
+            }
+
+            const images = Array.from(block.querySelectorAll('img')).map(image => ({
+                image,
+                src: image.getAttribute('src'),
+                srcset: image.getAttribute('srcset')
+            }));
+            images.forEach(({ image }) => {
+                image.removeAttribute('src');
+                image.removeAttribute('srcset');
+            });
+            for (const { image, src, srcset } of images) {
+                image.loading = 'eager';
+                if (srcset) { image.setAttribute('srcset', srcset); }
+                if (src) { image.setAttribute('src', src); }
+                const loaded = await this.waitForMeasurement(
+                    () => image.complete,
+                    image,
+                    15000
+                );
+                if (!loaded || image.naturalWidth <= 0) return false;
+
+                const rect = image.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return false;
+                image.style.width = `${Math.ceil(rect.width)}px`;
+                image.style.height = `${Math.ceil(rect.height)}px`;
+                image.removeAttribute('src');
+                image.removeAttribute('srcset');
+            }
+
+            for (const canvas of block.querySelectorAll('canvas[data-req-path]')) {
+                canvas.id = `measure-pdf-${++this.measurementResourceSeq}`;
+                canvas.setAttribute('data-pdf-measure-only', 'true');
+                this.requestPdfCanvas(canvas);
+                const rendered = await this.waitForMeasurement(
+                    () => canvas.getAttribute('data-rendered') === 'true',
+                    canvas
+                );
+                if (!rendered) return false;
+                if (canvas.getBoundingClientRect().height <= 0) return false;
+                this.releasePdfCanvasBitmap(canvas);
+            }
+
+            const tikzContainers = Array.from(block.querySelectorAll('.tikz-container'));
+            if (tikzContainers.length > 0) {
+                try {
+                    await window.ensureTikzJaxLoaded();
+                } catch {
+                    return false;
+                }
+                for (const container of tikzContainers) {
+                    window.watchPendingTikzContainers(block, [container]);
+                    window.activatePendingTikzScripts(block, [container]);
+                    await this.waitForTikzBatch([container]);
+                    if (!hasRenderedTikz(container)) return false;
+
+                    const height = Math.ceil(container.getBoundingClientRect().height);
+                    if (height <= 0) return false;
+                    container.replaceChildren();
+                    container.style.height = `${height}px`;
+                }
+            }
+            return block.isConnected;
         }
 
         getPendingTikzContainers(root = document) {
@@ -1015,7 +1325,6 @@ const previewBridge = getPreviewBridge();
 
         waitForTikzBatch(containers) {
             return new Promise(resolve => {
-                let interval = null;
                 let timeout = null;
                 let resolved = false;
                 const isSettled = container => (
@@ -1025,9 +1334,6 @@ const previewBridge = getPreviewBridge();
                 );
                 const cleanup = () => {
                     document.removeEventListener('snaptex-tikz-settled', check, true);
-                    if (interval) {
-                        clearInterval(interval);
-                    }
                     if (timeout) {
                         clearTimeout(timeout);
                     }
@@ -1041,7 +1347,6 @@ const previewBridge = getPreviewBridge();
                 };
 
                 document.addEventListener('snaptex-tikz-settled', check, true);
-                interval = setInterval(check, 100);
                 timeout = setTimeout(() => {
                     if (resolved) return;
 
@@ -1129,6 +1434,7 @@ const previewBridge = getPreviewBridge();
             } else {
                 this.schedulePendingPdfRender();
             }
+            this.scheduleHeightWarmup();
         }
 
         onPatchComplete(savedScrollState, renderSeq) {
@@ -1140,9 +1446,11 @@ const previewBridge = getPreviewBridge();
             } else {
                 this.restoreScrollState(savedScrollState);
             }
+            this.scheduleHeightWarmup(150);
         }
 
         handleScrollCommand(data) {
+            this.deferHeightWarmup();
             if (this.state === 'RENDERING' || this.isFirstLoad) { this.pendingScroll = data; }
             else { this.executeScroll(data); }
         }
@@ -1287,7 +1595,7 @@ const previewBridge = getPreviewBridge();
                 return;
             }
 
-            const shell = this.getShellByIndex(index);
+            const shell = this.virtualization.findMatchingShell(index);
             if (!shell) return;
 
             scrollToTarget(shell, false);
@@ -1431,13 +1739,14 @@ const previewBridge = getPreviewBridge();
             }
 
             this.forEachDirtyBlock(payload, (idx, html) => {
-                const shell = this.getShellByIndex(idx);
+                const shell = this.virtualization.findMatchingShell(idx);
                 const replacement = shell ? parseFirstElementFromHtml(html) : null;
                 if (!replacement) return;
 
                 const previews = this.collectTikzPreviews(shell);
+                this.heightWarmupFailedKeys.delete(this.virtualization.getBlockKey(shell));
+                this.virtualization.forgetBlockHeight(shell);
                 const newShell = this.virtualization.createShellForBlock(replacement);
-                this.pagination.transferPageStart(shell, newShell);
                 this.stashStaleTikzPreviewsOnShell(newShell, previews);
                 this.virtualization.unobserveShell(shell);
                 shell.replaceWith(newShell);
@@ -1454,21 +1763,26 @@ const previewBridge = getPreviewBridge();
                 const idx = parseInt(idxStr);
                 const blockEl = this.getBlockByIndex(idx);
                 if (!blockEl) continue;
-                const fill = (type, values) => {
-                    if (!values || !values.length) return;
-                    const spans = blockEl.querySelectorAll('.sn-cnt[data-type="' + type + '"]');
-                    spans.forEach((span, i) => { if (values[i]) span.textContent = values[i]; });
-                };
-                fill('eq', counts.eq); fill('fig', counts.fig); fill('subfig', counts.subfig); fill('tbl', counts.tbl);
-                fill('alg', counts.alg); fill('sec', counts.sec); fill('thm', counts.thm);
+                this.fillBlockNumbering(blockEl, counts);
             }
-            if (labels) {
-                const refs = document.querySelectorAll('.sn-ref');
-                refs.forEach(ref => {
-                    const key = ref.getAttribute('data-key');
-                    if (key && labels[key]) { ref.textContent = labels[key]; } else { ref.textContent = "??"; }
-                });
+            this.fillReferences(document, labels);
+        }
+
+        fillBlockNumbering(block, counts) {
+            if (!counts) return;
+            for (const [type, values] of Object.entries(counts)) {
+                if (!Array.isArray(values) || values.length === 0) continue;
+                block.querySelectorAll(`.sn-cnt[data-type="${type}"]`)
+                    .forEach((span, index) => { if (values[index]) span.textContent = values[index]; });
             }
+        }
+
+        fillReferences(root, labels) {
+            if (!labels) return;
+            root.querySelectorAll('.sn-ref').forEach(ref => {
+                const key = ref.getAttribute('data-key');
+                ref.textContent = key && labels[key] ? labels[key] : '??';
+            });
         }
 
         initPdfObserver() {

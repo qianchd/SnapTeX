@@ -26,7 +26,8 @@ function restoreTikzScriptText(text) {
         return String(text || '').replace(/<\\\/script/gi, '</script');
     }
 export function hasRenderedTikz(container) {
-        return !!container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
+        return container.getAttribute('data-tikz-state') === 'rendered'
+            && !!container.querySelector('svg[role="img"]:not(.tikz-stale-preview)');
     }
 
     function notifyTikzContainerSettled(container) {

@@ -1,4 +1,4 @@
-import type { PreviewLayoutMode, RenderPayload } from './types';
+import type { PreviewLayoutMode, PreviewStyleSettings, RenderPayload } from './types';
 
 /**
  * Typed message contract between a preview host and the preview runtime.
@@ -108,6 +108,7 @@ interface ConfigMessage {
         debugMemory: boolean;
         virtualMode: boolean;
         previewLayout: PreviewLayoutMode;
+        style: PreviewStyleSettings;
     };
 }
 

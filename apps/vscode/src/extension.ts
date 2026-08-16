@@ -174,7 +174,13 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('snaptex.backendMode')) {
             fullReloadPreview();
-        } else if (event.affectsConfiguration('snaptex.previewLayout')) {
+        } else if ([
+            'previewLayout',
+            'previewFontSize',
+            'previewLineHeight',
+            'previewContentMaxWidth',
+            'previewFontFamily'
+        ].some(setting => event.affectsConfiguration(`snaptex.${setting}`))) {
             TexPreviewPanel.currentPanel?.postWebviewConfig();
         }
     }));

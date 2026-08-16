@@ -11,7 +11,6 @@ function normalizeEditorText(text: string): string {
 
 class TestEditorView {
     public selectionAnchor = -1;
-    public scrollEffects = 0;
     public lastEffects: unknown;
     public scrollDOM = { scrollTop: 0, clientHeight: 100 };
 
@@ -36,7 +35,6 @@ class TestEditorView {
         }
         if (update.effects) {
             this.lastEffects = update.effects;
-            this.scrollEffects += 1;
         }
     }
 
@@ -403,7 +401,11 @@ suite('StandaloneHost', () => {
             autoScrollSync: false,
             autoScrollDelayMs: 250,
             debugMemory: true,
-            virtualMode: false
+            virtualMode: false,
+            fontSize: '18px',
+            lineHeight: '1.5',
+            contentMaxWidth: '800px',
+            fontFamily: 'Arial, sans-serif'
         });
 
         try {
@@ -422,6 +424,13 @@ suite('StandaloneHost', () => {
             assert.equal(config.config.autoScrollDelay, 250);
             assert.equal(config.config.debugMemory, true);
             assert.equal(config.config.virtualMode, false);
+            assert.equal(config.config.previewLayout, 'paged');
+            assert.deepEqual(config.config.style, {
+                fontSize: '18px',
+                lineHeight: '1.5',
+                contentMaxWidth: '800px',
+                fontFamily: 'Arial, sans-serif'
+            });
 
             editor.replaceText('Changed paragraph.');
             host.handleEditorUpdate();
@@ -492,7 +501,15 @@ suite('StandaloneHost', () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
-        const host = new StandaloneHost(editor as unknown as EditorView);
+        let cancelledEditorSyncs = 0;
+        const host = new StandaloneHost(
+            editor as unknown as EditorView,
+            '/main.tex',
+            undefined,
+            undefined,
+            {},
+            () => { cancelledEditorSyncs += 1; }
+        );
 
         try {
             await host.loadProject({ files: [
@@ -525,7 +542,8 @@ suite('StandaloneHost', () => {
             await host.syncPreviewScroll(scroll.index, scroll.ratio);
 
             assert.equal(host.getActivePath(), '/chapter.tex');
-            assert.ok(editor.scrollEffects > 0);
+            assert.ok(editor.scrollDOM.scrollTop > 0);
+            assert.equal(cancelledEditorSyncs, 1);
         } finally {
             restoreWindow();
         }

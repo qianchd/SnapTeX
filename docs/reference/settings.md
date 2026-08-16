@@ -15,7 +15,13 @@ Most settings apply while the preview is open. Settings that change document or 
 | `snaptex.retainContextWhenHidden` | `false` | Keep the webview alive while its tab is hidden. |
 | `snaptex.virtualMode` | `true` | Mount only viewport-near block DOM. Reopen or reload the preview after changing it. |
 | `snaptex.backendMode` | `legacy` | Select `legacy` or `ast(experimental)` processing. |
-| `snaptex.previewLayout` | `continuous` | Select a continuous document or an elastic paged preview. |
+| `snaptex.previewLayout` | `paged` | Select an elastic paged preview or a continuous document. |
+| `snaptex.previewFontSize` | `clamp(4px, 2.3cqw, 25px)` | Set preview text size with any valid CSS `font-size` value. |
+| `snaptex.previewLineHeight` | `1.25` | Set preview line spacing with any valid CSS `line-height` value. |
+| `snaptex.previewContentMaxWidth` | `3000px` | Limit the continuous content or paged-page width with any valid CSS `max-width` value. |
+| `snaptex.previewFontFamily` | Times-style serif stack | Set the CSS font family used by preview text. |
+
+Container-relative font units such as `cqw` use the rendered content width in continuous mode and the centered paper width in paged mode, rather than the full preview-panel width.
 
 ## Which settings reload the preview
 
@@ -24,6 +30,7 @@ Most settings apply while the preview is open. Settings that change document or 
 | `backendMode` | SnapTeX performs a full root reload so block spans, artifacts, rules, and source maps come from one backend |
 | `virtualMode` | Reopen or reload the preview so DOM ownership switches cleanly |
 | `previewLayout` | Applies immediately without reparsing the document |
+| Preview typography and content width | Apply immediately, keep rendered block HTML, and recalculate layout-dependent height data |
 | Live preview, delays, auto sync, memory logging | Apply to subsequent events without rebuilding document structure |
 | `retainContextWhenHidden` | Affects the next hidden/shown webview lifecycle |
 
@@ -39,9 +46,10 @@ The Web settings menu exposes the host-independent subset:
 - backend mode;
 - continuous or paged preview layout;
 - render and sync delays;
+- preview font size, line height, content width, and font family;
 - light, dark, blue, and rose themes.
 
-Web settings apply to the running application. Project contents are stored by the selected project backend, independently of display settings.
+Preview font size, line height, content width, and font family are stored for the current Web origin and reused across projects and browser restarts. Project contents remain stored by the selected project backend, independently of these display settings.
 
 ## Backend mode
 

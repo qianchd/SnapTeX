@@ -1,10 +1,11 @@
+import type { ViewportAnchorController } from './viewport';
+
 const PAGE_ASPECT_RATIO = 297 / 210;
 const PAGE_TOP_MARGIN_RATIO = 20 / 210;
 const PAGE_BOTTOM_MARGIN_RATIO = 20 / 210;
 const PAGE_MIN_BOTTOM_MARGIN_RATIO = 10 / 210;
 const PAGE_MAX_BOTTOM_MARGIN_RATIO = 34 / 210;
 const PAGE_SIDE_MARGIN_RATIO = 18 / 210;
-const PAGE_GAP_RATIO = 5 / 210;
 
 export interface PageMetrics {
     pageHeight: number;
@@ -12,55 +13,43 @@ export interface PageMetrics {
     idealBottomMargin: number;
     minBottomMargin: number;
     maxBottomMargin: number;
-    gap: number;
 }
 
-export interface PageRange {
+interface PageRange {
     start: number;
     end: number;
     usedHeight: number;
     pageHeight: number;
-    extended: boolean;
-}
-
-function sumRange(values: readonly number[], start: number, end: number): number {
-    let total = 0;
-    for (let index = start; index < end; index++) {
-        total += values[index];
-    }
-    return total;
 }
 
 function createPage(start: number, end: number, usedHeight: number, metrics: PageMetrics): PageRange {
-    const extended = end === start + 1 && usedHeight > metrics.pageHeight - metrics.topMargin - metrics.minBottomMargin;
     return {
         start,
         end,
         usedHeight,
-        pageHeight: extended
+        pageHeight: end === start + 1 && usedHeight > metrics.pageHeight - metrics.topMargin - metrics.minBottomMargin
             ? metrics.topMargin + usedHeight + metrics.idealBottomMargin
-            : metrics.pageHeight,
-        extended
+            : metrics.pageHeight
     };
 }
 
-function isStablePage(heights: readonly number[], start: number, end: number, metrics: PageMetrics, isLast: boolean): boolean {
-    if (end <= start) {return false;}
-    const usedHeight = sumRange(heights, start, end);
+function retainPage(heights: readonly number[], start: number, end: number, metrics: PageMetrics, isLast: boolean): PageRange | undefined {
+    if (end <= start) {return undefined;}
     const hardCapacity = metrics.pageHeight - metrics.topMargin - metrics.minBottomMargin;
-    if (end === start + 1 && usedHeight > hardCapacity) {return true;}
+    let usedHeight = 0;
     for (let index = start; index < end; index++) {
-        if (heights[index] > hardCapacity) {return false;}
+        usedHeight += heights[index];
     }
-    if (usedHeight > hardCapacity) {return false;}
-    return isLast || usedHeight >= metrics.pageHeight - metrics.topMargin - metrics.maxBottomMargin;
+    if (usedHeight > hardCapacity && end !== start + 1) {return undefined;}
+    if (!isLast && usedHeight < metrics.pageHeight - metrics.topMargin - metrics.maxBottomMargin) {return undefined;}
+    return createPage(start, end, usedHeight, metrics);
 }
 
-function findGreedyPageEnd(heights: readonly number[], start: number, metrics: PageMetrics): number {
+function createGreedyPage(heights: readonly number[], start: number, metrics: PageMetrics): PageRange {
     const idealCapacity = metrics.pageHeight - metrics.topMargin - metrics.idealBottomMargin;
     const hardCapacity = metrics.pageHeight - metrics.topMargin - metrics.minBottomMargin;
     const minimumFill = metrics.pageHeight - metrics.topMargin - metrics.maxBottomMargin;
-    if (heights[start] > hardCapacity) {return start + 1;}
+    if (heights[start] > hardCapacity) {return createPage(start, start + 1, heights[start], metrics);}
 
     let end = start;
     let usedHeight = 0;
@@ -71,7 +60,7 @@ function findGreedyPageEnd(heights: readonly number[], start: number, metrics: P
         usedHeight = candidate;
         end += 1;
     }
-    return Math.max(start + 1, end);
+    return createPage(start, end, usedHeight, metrics);
 }
 
 /**
@@ -94,11 +83,12 @@ export function paginateBlockHeights(
         while (starts[preferredCursor] <= cursor) {preferredCursor += 1;}
         const nextPreferred = starts[preferredCursor];
         const preferredEnd = nextPreferred ?? heights.length;
-        const canRetain = (cursor === 0 || preferred.has(cursor))
-            && isStablePage(heights, cursor, preferredEnd, metrics, preferredEnd === heights.length);
-        const end = canRetain ? preferredEnd : findGreedyPageEnd(heights, cursor, metrics);
-        pages.push(createPage(cursor, end, sumRange(heights, cursor, end), metrics));
-        cursor = end;
+        const retained = cursor === 0 || preferred.has(cursor)
+            ? retainPage(heights, cursor, preferredEnd, metrics, preferredEnd === heights.length)
+            : undefined;
+        const page = retained ?? createGreedyPage(heights, cursor, metrics);
+        pages.push(page);
+        cursor = page.end;
     }
 
     return pages;
@@ -112,16 +102,18 @@ export class PageLayoutController {
     private readonly heights = new WeakMap<Element, number>();
     private readonly resizeObserver?: ResizeObserver;
     private readonly observedItems = new Set<HTMLElement>();
-    private pageLayer?: HTMLElement;
-    private pageLayerSignature = '';
+    private markerLayer?: HTMLElement;
 
-    constructor(private readonly contentRoot: HTMLElement) {
+    constructor(
+        private readonly contentRoot: HTMLElement,
+        private readonly viewportAnchor: ViewportAnchorController
+    ) {
         if (typeof ResizeObserver !== 'undefined') {
             this.resizeObserver = new ResizeObserver(entries => {
                 let changed = false;
                 entries.forEach(entry => {
                     const height = Math.ceil(entry.contentRect.height);
-                    if (height <= 0 || this.heights.get(entry.target) === height) {return;}
+                    if (this.heights.get(entry.target) === height) {return;}
                     this.heights.set(entry.target, height);
                     changed = true;
                 });
@@ -148,17 +140,19 @@ export class PageLayoutController {
         this.schedule();
     }
 
+    isEnabled(): boolean {
+        return this.enabled;
+    }
+
+    invalidateItem(item: Element | null): void {
+        if (item) {this.heights.delete(item);}
+        this.refresh();
+    }
+
     reset(): void {
         this.forceMeasure = true;
         this.clearLayout();
         if (this.enabled) {this.schedule();}
-    }
-
-    transferPageStart(source: Element, target: Element): void {
-        if (!source.classList.contains('snaptex-page-start')) {return;}
-        target.classList.add('snaptex-page-start');
-        const spacing = (source as HTMLElement).style.getPropertyValue('--snaptex-page-before');
-        if (spacing) {(target as HTMLElement).style.setProperty('--snaptex-page-before', spacing);}
     }
 
     private getItems(): HTMLElement[] {
@@ -188,7 +182,7 @@ export class PageLayoutController {
         });
         return items.map(item => {
             const cached = forceMeasure ? undefined : this.heights.get(item);
-            const height = cached ?? Math.ceil(item.getBoundingClientRect().height || item.scrollHeight || 1);
+            const height = cached ?? Math.ceil(Math.max(item.getBoundingClientRect().height, item.scrollHeight));
             this.heights.set(item, height);
             if (this.resizeObserver && !this.observedItems.has(item)) {
                 this.resizeObserver.observe(item);
@@ -204,21 +198,8 @@ export class PageLayoutController {
             topMargin: pageWidth * PAGE_TOP_MARGIN_RATIO,
             idealBottomMargin: pageWidth * PAGE_BOTTOM_MARGIN_RATIO,
             minBottomMargin: pageWidth * PAGE_MIN_BOTTOM_MARGIN_RATIO,
-            maxBottomMargin: pageWidth * PAGE_MAX_BOTTOM_MARGIN_RATIO,
-            gap: Math.max(16, pageWidth * PAGE_GAP_RATIO)
+            maxBottomMargin: pageWidth * PAGE_MAX_BOTTOM_MARGIN_RATIO
         };
-    }
-
-    private captureViewportAnchor(items: readonly HTMLElement[]): { element: HTMLElement; top: number } | undefined {
-        if (window.scrollY <= 0) {return undefined;}
-        const element = items.find(item => item.getBoundingClientRect().bottom > 0);
-        return element ? { element, top: element.getBoundingClientRect().top } : undefined;
-    }
-
-    private restoreViewportAnchor(anchor: { element: HTMLElement; top: number } | undefined): void {
-        if (!anchor?.element.isConnected) {return;}
-        const delta = anchor.element.getBoundingClientRect().top - anchor.top;
-        if (Math.abs(delta) >= 1) {window.scrollBy(0, delta);}
     }
 
     private layout(): void {
@@ -236,9 +217,7 @@ export class PageLayoutController {
             .map((item, index) => item.classList.contains('snaptex-page-start') ? index : -1)
             .filter(index => index >= 0);
         const pages = paginateBlockHeights(this.measure(items), metrics, preferredStarts);
-        const anchor = this.captureViewportAnchor(items);
-        this.applyLayout(items, pages, metrics, pageWidth);
-        this.restoreViewportAnchor(anchor);
+        this.viewportAnchor.preserve(items, () => this.applyLayout(items, pages, metrics, pageWidth));
     }
 
     private applyLayout(items: readonly HTMLElement[], pages: readonly PageRange[], metrics: PageMetrics, pageWidth: number): void {
@@ -255,8 +234,8 @@ export class PageLayoutController {
             }
 
             const before = previousPage
-                ? previousPage.pageHeight - metrics.topMargin - previousPage.usedHeight + metrics.gap + metrics.topMargin
-                : metrics.gap + metrics.topMargin;
+                ? previousPage.pageHeight - previousPage.usedHeight
+                : metrics.topMargin;
             const spacing = `${Math.round(Math.max(0, before))}px`;
             item.classList.add('snaptex-page-start');
             if (item.style.getPropertyValue('--snaptex-page-before') !== spacing) {
@@ -266,40 +245,43 @@ export class PageLayoutController {
         });
 
         const lastPage = pages[pages.length - 1];
-        this.contentRoot.style.setProperty('--snaptex-page-side-margin', `${Math.round(pageWidth * PAGE_SIDE_MARGIN_RATIO)}px`);
-        this.contentRoot.style.setProperty('--snaptex-page-tail', `${Math.round(lastPage.pageHeight - metrics.topMargin - lastPage.usedHeight + metrics.gap)}px`);
-        this.renderPageLayer(pages, metrics, pageWidth);
+        this.contentRoot.style.setProperty('--snaptex-page-tail', `${Math.round(lastPage.pageHeight - metrics.topMargin - lastPage.usedHeight)}px`);
+        this.renderPageMarkers(items, pages, metrics, pageWidth);
     }
 
-    private renderPageLayer(pages: readonly PageRange[], metrics: PageMetrics, pageWidth: number): void {
-        const signature = `${Math.round(pageWidth)}:${pages.map(page => Math.round(page.pageHeight)).join(',')}`;
-        if (signature === this.pageLayerSignature) {return;}
-        this.pageLayerSignature = signature;
-        const layer = this.ensurePageLayer();
-        const fragment = document.createDocumentFragment();
-        let top = metrics.gap;
+    private renderPageMarkers(items: readonly HTMLElement[], pages: readonly PageRange[], metrics: PageMetrics, pageWidth: number): void {
+        const layer = this.ensureMarkerLayer();
+        while (layer.children.length < pages.length) {
+            const marker = document.createElement('div');
+            marker.className = 'snaptex-page-marker';
+            const number = document.createElement('span');
+            number.className = 'snaptex-page-number';
+            marker.appendChild(number);
+            layer.appendChild(marker);
+        }
+        while (layer.children.length > pages.length) {layer.lastElementChild?.remove();}
+
+        const host = layer.parentElement ?? document.body;
+        const hostTop = host.getBoundingClientRect().top;
+        host.style.setProperty('--snaptex-page-side-margin', `${Math.round(pageWidth * PAGE_SIDE_MARGIN_RATIO)}px`);
         pages.forEach((page, index) => {
-            const paper = document.createElement('div');
-            paper.className = 'snaptex-page-paper';
-            paper.style.top = `${top}px`;
-            paper.style.width = `${pageWidth}px`;
-            paper.style.height = `${page.pageHeight}px`;
-            paper.dataset.pageNumber = String(index + 1);
-            if (page.extended) {paper.dataset.extended = 'true';}
-            fragment.appendChild(paper);
-            top += page.pageHeight + metrics.gap;
+            const marker = layer.children[index] as HTMLElement;
+            marker.style.top = `${Math.round(items[page.start].getBoundingClientRect().top - hostTop - metrics.topMargin)}px`;
+            marker.classList.toggle('snaptex-first-page-marker', index === 0);
+            const number = marker.firstElementChild as HTMLElement;
+            number.textContent = String(index + 1);
         });
-        layer.replaceChildren(fragment);
+        layer.style.height = `${Math.ceil(this.contentRoot.getBoundingClientRect().height)}px`;
     }
 
-    private ensurePageLayer(): HTMLElement {
-        if (this.pageLayer?.isConnected) {return this.pageLayer;}
+    private ensureMarkerLayer(): HTMLElement {
+        if (this.markerLayer?.isConnected) {return this.markerLayer;}
         const host = this.contentRoot.parentElement ?? document.body;
         host.classList.add('snaptex-page-host');
-        this.pageLayer = document.createElement('div');
-        this.pageLayer.className = 'snaptex-page-layer';
-        host.insertBefore(this.pageLayer, this.contentRoot);
-        return this.pageLayer;
+        this.markerLayer = document.createElement('div');
+        this.markerLayer.className = 'snaptex-page-marker-layer';
+        host.insertBefore(this.markerLayer, this.contentRoot);
+        return this.markerLayer;
     }
 
     private clearLayout(): void {
@@ -313,11 +295,11 @@ export class PageLayoutController {
             item.classList.remove('snaptex-page-start');
             item.style.removeProperty('--snaptex-page-before');
         });
-        this.contentRoot.style.removeProperty('--snaptex-page-side-margin');
         this.contentRoot.style.removeProperty('--snaptex-page-tail');
-        this.pageLayer?.remove();
-        this.pageLayer = undefined;
-        this.pageLayerSignature = '';
-        this.contentRoot.parentElement?.classList.remove('snaptex-page-host');
+        this.markerLayer?.remove();
+        this.markerLayer = undefined;
+        const host = this.contentRoot.parentElement ?? document.body;
+        host.style.removeProperty('--snaptex-page-side-margin');
+        host.classList.remove('snaptex-page-host');
     }
 }

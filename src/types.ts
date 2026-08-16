@@ -71,6 +71,21 @@ export interface BlockTextSpan {
 
 export type BackendMode = 'legacy' | 'ast(experimental)';
 export type PreviewLayoutMode = 'continuous' | 'paged';
+export const DEFAULT_PREVIEW_LAYOUT: PreviewLayoutMode = 'paged';
+
+export interface PreviewStyleSettings {
+    fontSize: string;
+    lineHeight: string;
+    contentMaxWidth: string;
+    fontFamily: string;
+}
+
+export const DEFAULT_PREVIEW_STYLE_SETTINGS: PreviewStyleSettings = {
+    fontSize: 'clamp(4px, 2.3cqw, 25px)',
+    lineHeight: '1.25',
+    contentMaxWidth: '3000px',
+    fontFamily: '"Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif'
+};
 
 /**
  * Snapshot retained by the renderer for lazy block rendering after the parsed

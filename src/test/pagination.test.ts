@@ -7,8 +7,7 @@ suite('Paged preview layout', () => {
         topMargin: 100,
         idealBottomMargin: 100,
         minBottomMargin: 50,
-        maxBottomMargin: 200,
-        gap: 20
+        maxBottomMargin: 200
     };
 
     test('retains existing page boundaries while edits fit the elastic margin', () => {
@@ -27,7 +26,6 @@ suite('Paged preview layout', () => {
         const pages = paginateBlockHeights([900, 200], metrics);
 
         assert.deepEqual(pages.map(page => [page.start, page.end]), [[0, 1], [1, 2]]);
-        assert.equal(pages[0].extended, true);
         assert.equal(pages[0].pageHeight, 1100);
     });
 });

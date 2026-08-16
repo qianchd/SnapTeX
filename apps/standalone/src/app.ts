@@ -1,12 +1,12 @@
 import { basicSetup, EditorView } from 'codemirror';
-import { EditorState, StateEffect, StateField } from '@codemirror/state';
+import { EditorState, StateEffect, StateField, Transaction } from '@codemirror/state';
 import { Decoration, type DecorationSet, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
-import type { BackendMode, PreviewLayoutMode } from '../../../src/types';
+import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings } from '../../../src/types';
 import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
@@ -31,7 +31,7 @@ export interface StandaloneSaveResult {
     wroteToSource: boolean;
 }
 
-export interface StandalonePreviewSettings {
+export interface StandalonePreviewSettings extends PreviewStyleSettings {
     livePreview: boolean;
     autoScrollSync: boolean;
     renderDelayMs: number;
@@ -43,13 +43,14 @@ export interface StandalonePreviewSettings {
 }
 
 export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
+    ...DEFAULT_PREVIEW_STYLE_SETTINGS,
     livePreview: true,
     autoScrollSync: true,
     renderDelayMs: 150,
     autoScrollDelayMs: 100,
     virtualMode: true,
     backendMode: 'legacy',
-    previewLayout: 'continuous',
+    previewLayout: DEFAULT_PREVIEW_LAYOUT,
     debugMemory: false
 };
 
@@ -113,7 +114,8 @@ export class StandaloneHost {
         rootPath: string = '/main.tex',
         private readonly scheduleRender: () => void = () => undefined,
         private readonly onStateChange: () => void = () => undefined,
-        settings: Partial<StandalonePreviewSettings> = {}
+        settings: Partial<StandalonePreviewSettings> = {},
+        private readonly cancelPendingEditorSync: () => void = () => undefined
     ) {
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
@@ -280,13 +282,10 @@ export class StandaloneHost {
 
     private replaceEditorText(text: string) {
         const editorText = normalizeEditorText(text);
-        if (this.editorView.state.doc.toString() === editorText) {
-            this.programmaticEditorText = undefined;
-            return;
-        }
         this.programmaticEditorText = editorText;
         this.editorView.dispatch({
-            changes: { from: 0, to: this.editorView.state.doc.length, insert: editorText }
+            changes: { from: 0, to: this.editorView.state.doc.length, insert: editorText },
+            annotations: Transaction.addToHistory.of(false)
         });
     }
 
@@ -449,6 +448,7 @@ export class StandaloneHost {
     }
 
     async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5, sourceStart?: number, sourceEnd?: number) {
+        this.cancelPendingEditorSync();
         const target = await this.openSourceForPreview(index, ratio, anchors, sourceStart, sourceEnd);
         if (!target) {
             return;
@@ -484,6 +484,7 @@ export class StandaloneHost {
             return;
         }
 
+        this.cancelPendingEditorSync();
         const target = await this.openSourceForPreview(index, ratio);
         if (!target) {
             return;
@@ -491,9 +492,7 @@ export class StandaloneHost {
 
         const position = Math.min(this.editorView.state.doc.length, offsetAtLine(target.text, Math.max(0, target.source.line)));
         this.suppressEditorToPreview();
-        this.editorView.dispatch({
-            effects: EditorView.scrollIntoView(position, { y: 'center' })
-        });
+        this.scrollEditorPositionToViewRatio(position, 0.5);
     }
 
     handleEditorUpdate() {
@@ -611,7 +610,13 @@ export class StandaloneHost {
                 autoScrollDelay: this.settings.autoScrollDelayMs,
                 debugMemory: this.settings.debugMemory,
                 virtualMode: this.settings.virtualMode,
-                previewLayout: this.settings.previewLayout
+                previewLayout: this.settings.previewLayout,
+                style: {
+                    fontSize: this.settings.fontSize,
+                    lineHeight: this.settings.lineHeight,
+                    contentMaxWidth: this.settings.contentMaxWidth,
+                    fontFamily: this.settings.fontFamily
+                }
             }
         });
     }
@@ -642,13 +647,15 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     let activeCursorScreenRatio = 0.5;
     let pendingSelection: { line: number; character: number; text: string; auto: boolean } | undefined;
     const scheduleSelectionSync = debounce(() => {
-        if (pendingSelection && !host?.shouldSuppressEditorToPreview()) {
+        const selection = pendingSelection;
+        pendingSelection = undefined;
+        if (selection && !host?.shouldSuppressEditorToPreview()) {
             void host?.syncEditorSelection(
-                pendingSelection.line,
-                pendingSelection.character,
-                pendingSelection.text,
+                selection.line,
+                selection.character,
+                selection.text,
                 activeCursorScreenRatio,
-                pendingSelection.auto
+                selection.auto
             );
         }
     }, () => host?.getSettings().autoScrollDelayMs ?? DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs);
@@ -747,7 +754,9 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
         if (host) {
             options.onStateChange?.(host);
         }
-    }, options.settings);
+    }, options.settings, () => {
+        pendingSelection = undefined;
+    });
     host.start();
     return host;
 }
