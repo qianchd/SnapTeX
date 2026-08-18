@@ -335,11 +335,13 @@ body[data-explorer-collapsed="true"] {
 }
 
 #project-status,
+#offline-status,
 #active-path-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--snaptex-muted);
 }
 
 #active-path-label {
@@ -349,7 +351,10 @@ body[data-explorer-collapsed="true"] {
 
 #project-status {
     max-width: 34vw;
-    color: var(--snaptex-muted);
+}
+
+#offline-status {
+    font-size: 12px;
 }
 
 #settings-menu {

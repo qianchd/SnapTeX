@@ -10,6 +10,7 @@ npm run web:build-static
 ```
 
 The command builds the Web application and this documentation site. The deployable tree is written to `dist-web/`, with documentation under `dist-web/docs/`.
+Release builds minify the browser bundles and add content hashes to application URLs. Unchanged versioned files can therefore remain in the browser cache across page loads without being downloaded again.
 
 Serve the output over HTTP for local verification:
 
@@ -36,9 +37,11 @@ Upload the contents of `dist-web/` without changing their relative layout. Confi
 
 ## PWA and updates
 
-The service worker precaches versioned application assets. Navigation is network-first and falls back to the cached shell when offline. API and authentication routes are never intercepted.
+The service worker still prepares the complete application for offline use, including KaTeX, PDF.js, TikZJax, the demo, and their runtime files. The toolbar reports **Preparing offline use...** during the first installation and **Offline ready** only after all required groups have been cached.
 
-Each build hashes its asset set into a new cache name. On activation, the new worker removes older caches within the same registration scope.
+Assets are divided into core, KaTeX, PDF.js, TikZ, and demo caches. Each group has its own content version, so an update reuses unchanged groups and downloads only changed groups. Navigation returns the cached application shell immediately; revalidation of the fixed Service Worker URL installs changed resource groups in the background. API and authentication routes are never intercepted.
+
+The fixed `service-worker.js` and HTML URLs use revalidation rather than permanent caching. Versioned JavaScript, CSS, icons, and other linked resources use long-lived immutable caching. Hosts should preserve query strings and support ETag or equivalent conditional requests; the bundled SnapTeX Server provides this behavior directly.
 
 ## Static limitations
 

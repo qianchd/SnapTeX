@@ -3,6 +3,7 @@ import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { writeCompressedAssets } from './build-static.mjs';
 import { createSnapTeXWebServer } from './server.mjs';
 
 test('serves a writable project through the remote project API', async () => {
@@ -112,7 +113,11 @@ test('serves a writable project through the remote project API', async () => {
             rootPath: '/main.tex',
             files: ['/figure.png', '/main.tex', '/sections/intro.tex']
         });
-        assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`)).text(), 'Original');
+        const projectFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`);
+        assert.equal(projectFile.headers.get('cache-control'), 'no-store');
+        assert.equal(projectFile.headers.get('etag'), null);
+        assert.equal(projectFile.headers.get('vary'), null);
+        assert.equal(await projectFile.text(), 'Original');
         const saved = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
             method: 'PUT',
             headers: { 'Content-Type': 'text/plain; charset=utf-8' },
@@ -351,6 +356,58 @@ test('protects remote projects with an independent web session', async () => {
     }
 });
 
+test('serves production assets with compression and conditional caching', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'snaptex-cache-'));
+    const script = 'const preview = "SnapTeX";\n'.repeat(100);
+    const hash = '123456789abc';
+    await writeFile(join(root, 'index.html'), '<body data-deployment-mode="static">SnapTeX</body>');
+    await writeFile(join(root, 'service-worker.js'), 'self.addEventListener("fetch", () => {});');
+    await writeFile(join(root, 'web-main.js'), script);
+    await writeFile(join(root, 'asset-manifest.json'), JSON.stringify({
+        version: 1,
+        assets: { 'web-main.js': hash }
+    }));
+    writeCompressedAssets(root, ['web-main.js']);
+    await access(join(root, 'web-main.js.br'));
+    await access(join(root, 'web-main.js.gz'));
+    const server = createSnapTeXWebServer({ root });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+        const brotli = await fetch(`${baseUrl}/web-main.js?v=${hash}`, {
+            headers: { 'Accept-Encoding': 'br, gzip' }
+        });
+        assert.equal(brotli.headers.get('content-encoding'), 'br');
+        assert.equal(brotli.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+        assert.equal(await brotli.text(), script);
+
+        const gzip = await fetch(`${baseUrl}/web-main.js?v=${hash}`, {
+            headers: { 'Accept-Encoding': 'br;q=0, gzip' }
+        });
+        assert.equal(gzip.headers.get('content-encoding'), 'gzip');
+        assert.equal(await gzip.text(), script);
+
+        const unversioned = await fetch(`${baseUrl}/web-main.js`);
+        assert.equal(unversioned.headers.get('cache-control'), 'public, no-cache, must-revalidate');
+        const conditional = await fetch(`${baseUrl}/web-main.js`, {
+            headers: { 'If-None-Match': unversioned.headers.get('etag').replace(/^W\//, '') }
+        });
+        assert.equal(conditional.status, 304);
+        assert.equal((await conditional.arrayBuffer()).byteLength, 0);
+        assert.equal((await fetch(`${baseUrl}/`)).headers.get('cache-control'), 'public, no-cache, must-revalidate');
+        assert.equal((await fetch(`${baseUrl}/service-worker.js`)).headers.get('cache-control'), 'public, no-cache, must-revalidate');
+        await writeFile(join(root, 'asset-manifest.json'), '{}');
+        assert.throws(() => createSnapTeXWebServer({ root }), /Invalid static asset manifest/);
+    } finally {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 test('limits the source development server to public web assets', async () => {
     const server = createSnapTeXWebServer({ root: process.cwd() });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -359,6 +416,11 @@ test('limits the source development server to public web assets', async () => {
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
         assert.equal((await fetch(`${baseUrl}/`)).status, 200);
+        const serviceWorker = await fetch(`${baseUrl}/service-worker.js`);
+        assert.equal(serviceWorker.status, 200);
+        assert.equal(serviceWorker.headers.get('cache-control'), 'no-store');
+        assert.match(await serviceWorker.text(), /registration\.unregister\(\)/);
+        assert.equal((await fetch(`${baseUrl}/service-worker.js`, { method: 'POST' })).status, 405);
         assert.equal((await fetch(`${baseUrl}/web-auth/session`)).status, 404);
         assert.equal((await fetch(`${baseUrl}/package.json`)).status, 404);
         assert.equal((await fetch(`${baseUrl}/apps/web/server.env`)).status, 404);

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { createReadStream, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -22,6 +22,18 @@ const sourceWebFiles = new Set([
     '/apps/web/preview-bridge.js',
     '/apps/web/web.css'
 ]);
+const sourceServiceWorker = `
+const CACHE_PREFIX = \`snaptex-web:\${self.registration.scope}:\`;
+self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate', event => event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key.startsWith(CACHE_PREFIX)).map(key => caches.delete(key)));
+    await self.clients.claim();
+    await self.registration.unregister();
+    const clients = await self.clients.matchAll({ type: 'window' });
+    await Promise.all(clients.map(client => client.navigate(client.url)));
+})()));
+`;
 
 const contentTypes = new Map([
     ['.css', 'text/css; charset=utf-8'],
@@ -40,8 +52,16 @@ const contentTypes = new Map([
     ['.webmanifest', 'application/manifest+json; charset=utf-8'],
     ['.mjs', 'text/javascript; charset=utf-8'],
     ['.wasm', 'application/wasm'],
-    ['.gz', 'application/gzip']
+    ['.gz', 'application/gzip'],
+    ['.tex', 'text/plain; charset=utf-8'],
+    ['.bib', 'text/plain; charset=utf-8'],
+    ['.sty', 'text/plain; charset=utf-8'],
+    ['.cls', 'text/plain; charset=utf-8'],
+    ['.bst', 'text/plain; charset=utf-8'],
+    ['.md', 'text/markdown; charset=utf-8'],
+    ['.txt', 'text/plain; charset=utf-8']
 ]);
+const compressibleAssetPattern = /\.(?:css|html|js|json|mjs|svg|tex|bib|md|txt|wasm|webmanifest)$/i;
 
 function defaultIndexPath(root) {
     return root === repoRoot ? '/apps/web/index.html' : '/index.html';
@@ -172,25 +192,103 @@ function sendJson(response, status, value) {
     response.end(JSON.stringify(value));
 }
 
-async function sendFile(response, filePath, headOnly = false, deploymentMode) {
+function loadAssetHashes(root) {
+    const manifestPath = join(root, 'asset-manifest.json');
+    if (!existsSync(manifestPath)) return {};
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (manifest?.version !== 1 || !manifest.assets || typeof manifest.assets !== 'object' ||
+        Array.isArray(manifest.assets) || Object.values(manifest.assets).some(hash =>
+            typeof hash !== 'string' || !/^[a-f0-9]{12}$/.test(hash))) {
+        throw new Error(`Invalid static asset manifest: ${manifestPath}`);
+    }
+    return manifest.assets;
+}
+
+function fileVersion(filePath, root, assetHashes) {
+    const asset = root ? relative(root, filePath).split(sep).join('/') : '';
+    if (Object.hasOwn(assetHashes, asset)) return { asset, hash: assetHashes[asset] };
+    const stat = statSync(filePath);
+    return { asset, hash: `${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}` };
+}
+
+function acceptedEncodings(request) {
+    const value = request.headers['accept-encoding'];
+    if (!value) return [];
+    const qualities = new Map(value.split(',').map(part => {
+        const [name, ...parameters] = part.trim().toLowerCase().split(';');
+        const quality = parameters.find(parameter => parameter.trim().startsWith('q='));
+        return [name, quality ? Number(quality.split('=')[1]) : 1];
+    }));
+    const quality = encoding => qualities.get(encoding) ?? qualities.get('*') ?? 0;
+    return ['br', 'gzip'].filter(encoding => quality(encoding) > 0)
+        .sort((left, right) => quality(right) - quality(left));
+}
+
+function requestHasEtag(request, etag) {
+    const value = request.headers['if-none-match'];
+    const normalizedEtag = etag.replace(/^W\//, '');
+    return value === '*' || value?.split(',').some(candidate => candidate.trim().replace(/^W\//, '') === normalizedEtag);
+}
+
+async function sendFile(request, response, filePath, options = {}) {
+    const { headOnly = false, deploymentMode, root, assetHashes = {}, staticAsset = false } = options;
     const extension = extname(filePath).toLowerCase();
+    let content;
+    let asset = '';
+    let hash = '';
+    if (staticAsset) ({ asset, hash } = fileVersion(filePath, root, assetHashes));
+    if (extension === '.html' && deploymentMode) {
+        const source = readFileSync(filePath, 'utf8');
+        const transformed = source.replace(/data-deployment-mode="(?:static|server)"/, `data-deployment-mode="${deploymentMode}"`);
+        if (transformed !== source) {
+            content = Buffer.from(transformed);
+            hash = createHash('sha256').update(content).digest('hex').slice(0, 12);
+        }
+    }
+    const version = staticAsset ? new URL(request.url ?? '/', 'http://localhost').searchParams.get('v') : undefined;
+    const responseCacheControl = !staticAsset
+        ? 'no-store'
+        : extension === '.html' || asset === 'service-worker.js'
+            ? 'public, no-cache, must-revalidate'
+            : version === hash
+                ? 'public, max-age=31536000, immutable'
+                : 'public, no-cache, must-revalidate';
+    const headers = {
+        'Content-Type': contentTypes.get(extension) ?? 'application/octet-stream',
+        'Cache-Control': responseCacheControl
+    };
+    if (staticAsset) headers.ETag = `W/"${hash}"`;
+    if (staticAsset && compressibleAssetPattern.test(filePath)) headers.Vary = 'Accept-Encoding';
     if (extension === '.svg') {
         response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
     }
-    response.writeHead(200, {
-        'Content-Type': contentTypes.get(extension) ?? 'application/octet-stream',
-        'Cache-Control': 'no-store'
-    });
+    if (staticAsset && requestHasEtag(request, headers.ETag)) {
+        response.writeHead(304, headers);
+        response.end();
+        return;
+    }
+
+    let responsePath = filePath;
+    if (!content && staticAsset) {
+        for (const encoding of acceptedEncodings(request)) {
+            const suffix = encoding === 'br' ? '.br' : '.gz';
+            if (!existsSync(`${filePath}${suffix}`)) continue;
+            responsePath = `${filePath}${suffix}`;
+            headers['Content-Encoding'] = encoding;
+            break;
+        }
+    }
+    headers['Content-Length'] = String(content?.length ?? statSync(responsePath).size);
+    response.writeHead(200, headers);
     if (headOnly) {
         response.end();
         return;
     }
-    if (extension === '.html' && deploymentMode) {
-        const html = await readFile(filePath, 'utf8');
-        response.end(html.replace(/data-deployment-mode="(?:static|server)"/, `data-deployment-mode="${deploymentMode}"`));
+    if (content) {
+        response.end(content);
         return;
     }
-    await pipeline(createReadStream(filePath), response);
+    await pipeline(createReadStream(responsePath), response);
 }
 
 async function readTextBody(request) {
@@ -321,7 +419,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
         return true;
     }
     if (request.method === 'GET') {
-        await sendFile(response, filePath);
+        await sendFile(request, response, filePath);
         return true;
     }
     if (request.method === 'PUT' && projectTextFilePattern.test(filePath)) {
@@ -359,6 +457,8 @@ async function handleProjectRequest(request, response, projectsRoot) {
 export function createSnapTeXWebServer(options = {}) {
     const root = realpathSync(resolve(options.root ?? defaultRoot));
     const indexPath = options.indexPath ?? defaultIndexPath(root);
+    const indexFilePath = resolveRequestPath(root, indexPath, indexPath);
+    const assetHashes = loadAssetHashes(root);
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
     if (projectsRoot && !options.auth) {
         throw new Error('Remote projects require authentication.');
@@ -399,6 +499,15 @@ export function createSnapTeXWebServer(options = {}) {
             response.end('Method not allowed');
             return;
         }
+        if (root === repoRoot && pathname === '/service-worker.js') {
+            response.writeHead(200, {
+                'Content-Type': 'text/javascript; charset=utf-8',
+                'Cache-Control': 'no-store',
+                'Service-Worker-Allowed': '/'
+            });
+            response.end(request.method === 'HEAD' ? undefined : sourceServiceWorker);
+            return;
+        }
         const filePath = resolveRequestPath(root, request.url ?? '/', indexPath);
         if (!filePath || !statSync(filePath).isFile()) {
             response.writeHead(404);
@@ -406,7 +515,13 @@ export function createSnapTeXWebServer(options = {}) {
             return;
         }
 
-        await sendFile(response, filePath, request.method === 'HEAD', projectsRoot ? 'server' : 'static');
+        await sendFile(request, response, filePath, {
+            headOnly: request.method === 'HEAD',
+            deploymentMode: filePath === indexFilePath ? (projectsRoot ? 'server' : 'static') : undefined,
+            root,
+            assetHashes,
+            staticAsset: true
+        });
     })().catch(error => {
         console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {

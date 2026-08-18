@@ -4,6 +4,11 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Changed**: Minified production Web bundles and added build-time Brotli plus gzip assets for the server edition, reducing the main browser bundle from about 3.3 MB of development JavaScript to about 372 KB over Brotli.
+- **Changed**: Added per-file asset hashes, versioned static URLs, ETag/304 responses, immutable caching for versioned assets, and revalidation caching for HTML and the Service Worker.
+- **Changed**: Kept the complete PWA available offline while splitting its cache into reusable core, KaTeX, PDF.js, TikZ, and demo groups, so upgrades download only resource groups whose contents changed.
+- **Changed**: Deferred PWA preparation until the initial page is usable, removed the duplicate Service Worker probe request, and exposed offline preparation/readiness in the Web toolbar.
+
 ## [0.8.0] - 2026-08-16
 
 - **Highlights**: Made the elastic paged preview the default layout, keeping rendered blocks intact while using flexible page-bottom space and extended pages for oversized proofs, styled groups, tables, figures, TikZ, and PDF blocks. Continuous preview remains available in settings.

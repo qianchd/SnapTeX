@@ -66,6 +66,8 @@ The installer:
 6. atomically switches the runtime and checks `/healthz`;
 7. restores the previous runtime if deployment fails.
 
+The production build minifies browser JavaScript and precompresses eligible text assets with Brotli and gzip. The Node service prefers Brotli, falls back to gzip, and serves the original file when neither encoding is accepted. It also supplies per-file ETags, `304 Not Modified` responses, immutable caching for content-versioned URLs, and revalidation caching for HTML and `service-worker.js`. API, authentication, and project-file responses remain `no-store`.
+
 After installation, `systemctl status snaptex-web` should show an active service and `curl http://127.0.0.1:3000/healthz` should return a successful health response. Replace the service name and port when your configuration differs.
 
 ## Nginx and TLS
