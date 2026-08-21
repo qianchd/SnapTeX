@@ -3,11 +3,26 @@ interface ViewportAnchor {
     top: number;
 }
 
+export const PREVIEW_RESIZE_ACTIVE_CLASS = 'snaptex-preview-resizing';
+
 function findViewportAnchor(elements: readonly HTMLElement[]): ViewportAnchor | undefined {
+    // Preview blocks are vertically ordered, so skip the offscreen prefix without scanning it.
+    let low = 0;
+    let high = elements.length;
+    while (low < high) {
+        const middle = (low + high) >> 1;
+        if (elements[middle].getBoundingClientRect().bottom <= 0) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+
     let spanningAnchor: { element: HTMLElement; top: number } | undefined;
-    for (const element of elements) {
+    for (let index = low; index < elements.length; index++) {
+        const element = elements[index];
         const rect = element.getBoundingClientRect();
-        if (rect.bottom <= 0 || rect.top >= window.innerHeight) {continue;}
+        if (rect.top >= window.innerHeight) {break;}
         const candidate = { element, top: rect.top };
         if (rect.top >= 0) {return candidate;}
         spanningAnchor ??= candidate;
@@ -29,6 +44,10 @@ export class ViewportAnchorController {
 
     isPinned(): boolean {
         return this.pinnedAnchor?.element.isConnected === true;
+    }
+
+    compensatePinnedPosition(): void {
+        this.preserve([], () => undefined);
     }
 
     preserve<T>(elements: readonly HTMLElement[], update: () => T): T {

@@ -85,6 +85,7 @@ const previewBridge = getPreviewBridge();
         canvas.removeAttribute('data-requested');
         canvas.removeAttribute('data-pdf-released');
         canvas.style.height = '';
+        canvas.dispatchEvent(new CustomEvent('snaptex-pdf-settled'));
     }
 
     async function renderPdfDocument(canvas, loadingTask) {
@@ -149,7 +150,7 @@ const previewBridge = getPreviewBridge();
 
     if (window.pdfReqQueue && window.pdfReqQueue.length > 0) {
         console.log(`[SnapTeX] Processing ${window.pdfReqQueue.length} queued PDF requests.`);
-        window.pdfReqQueue.forEach(req => realRequestPdf(req.path, req.canvasId));
+        window.pdfReqQueue.splice(0).forEach(req => realRequestPdf(req.path, req.canvasId));
     }
 
     window.renderPdfToCanvas = realRequestPdf;

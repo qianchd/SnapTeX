@@ -16,17 +16,14 @@ export class CoalescingTaskScheduler {
     declare private readonly debounceMs: number;
     declare private readonly run: () => MaybePromise<void>;
     declare private readonly onError: (error: unknown) => void;
-    declare private timer: ReturnType<typeof setTimeout> | null;
-    declare private pending: boolean;
-    declare private running: boolean;
+    private timer: ReturnType<typeof setTimeout> | null = null;
+    private pending = false;
+    private running = false;
 
     constructor({ debounceMs, run, onError }: CoalescingTaskSchedulerOptions) {
         this.debounceMs = debounceMs;
         this.run = run;
         this.onError = onError || (() => {});
-        this.timer = null;
-        this.pending = false;
-        this.running = false;
     }
 
     request(): void {
@@ -36,7 +33,7 @@ export class CoalescingTaskScheduler {
     }
 
     private schedule(): void {
-        if (this.timer) {
+        if (this.timer !== null) {
             clearTimeout(this.timer);
         }
         this.timer = setTimeout(() => this.flush(), this.debounceMs);

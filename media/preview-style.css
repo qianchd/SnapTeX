@@ -1,6 +1,6 @@
 :root {
     /* Hosts can override these defaults through the shared preview config. */
-    --base-font-size: var(--snaptex-preview-base-font-size, clamp(4px, 2.3cqw, 25px));
+    --base-font-size: var(--snaptex-preview-base-font-size, 2.8cqw);
     --base-line-height: var(--snaptex-preview-line-height, 1.25);
     --content-max-width: var(--snaptex-preview-content-max-width, 3000px);
     --snaptex-preview-font-family: var(--snaptex-preview-font-family-setting, "Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif);
@@ -135,15 +135,13 @@ h4 {
     contain-intrinsic-size: unset;
 }
 
-/* Page markers stay outside block containment so virtualization cannot clip them. */
 .snaptex-page-host,
 #preview-pane.snaptex-page-host {
     position: relative;
     background: var(--snaptex-shell-bg, color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-editor-foreground) 12%));
 }
 
-.snaptex-page-host::before,
-.snaptex-page-marker-layer {
+.snaptex-page-host::before {
     position: absolute;
     left: 0;
     right: 0;
@@ -161,41 +159,13 @@ h4 {
     pointer-events: none;
 }
 
-.snaptex-page-marker-layer {
-    top: 0;
-    z-index: 2;
-    pointer-events: none;
-    font-family: var(--snaptex-preview-font-family);
-    font-size: var(--snaptex-preview-text-size, var(--base-font-size));
-}
-
-.snaptex-page-marker {
-    position: absolute;
-    left: 0;
-    width: 100%;
-    box-sizing: border-box;
-    border-top: 2px solid color-mix(in srgb, var(--vscode-editor-foreground) 22%, transparent);
-}
-
-.snaptex-first-page-marker {
-    border-top-color: transparent;
-}
-
-.snaptex-page-number {
-    position: absolute;
-    top: 8px;
-    right: var(--snaptex-page-side-margin);
-    color: color-mix(in srgb, var(--vscode-editor-foreground) 55%, transparent);
-    font-size: 0.68em;
-    line-height: 1;
-}
-
 body.snaptex-paged-preview {
     max-width: none;
     padding: 0;
 }
 
 body.snaptex-paged-preview #content-root {
+    counter-reset: snaptex-page;
     position: relative;
     z-index: 1;
     display: flex;
@@ -203,12 +173,57 @@ body.snaptex-paged-preview #content-root {
     width: 100%;
     max-width: var(--content-max-width);
     margin: 0 auto;
-    padding: 0 var(--snaptex-page-side-margin) var(--snaptex-page-tail);
+    padding: 0 var(--snaptex-page-side-margin);
     background: transparent;
 }
 
 body.snaptex-paged-preview #content-root > .snaptex-page-start {
+    counter-increment: snaptex-page;
+    position: relative;
     margin-top: var(--snaptex-page-before) !important;
+    overflow: visible !important;
+}
+
+body.snaptex-paged-preview #content-root > .latex-block.snaptex-page-start {
+    contain: none;
+    content-visibility: visible;
+    contain-intrinsic-size: unset;
+}
+
+body.snaptex-paged-preview #content-root > .snaptex-page-end {
+    margin-bottom: var(--snaptex-page-after) !important;
+}
+
+body.snaptex-paged-preview #content-root > .snaptex-page-start::before,
+body.snaptex-paged-preview #content-root > .snaptex-page-start::after {
+    /* Expand the 174 mm content box back to the full 210 mm A4 sheet. */
+    position: absolute;
+    bottom: 100%;
+    left: -10.3448276%;
+    width: 120.6896552%;
+    aspect-ratio: 210 / 24;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 2;
+}
+
+body.snaptex-paged-preview #content-root > .snaptex-page-start::before {
+    content: "";
+    border-top: 2px solid color-mix(in srgb, var(--vscode-editor-foreground) 22%, transparent);
+}
+
+body.snaptex-paged-preview #content-root > .snaptex-page-start:first-child::before {
+    border-top-color: transparent;
+}
+
+body.snaptex-paged-preview #content-root > .snaptex-page-start::after {
+    content: counter(snaptex-page);
+    padding: 8px 8.5714286% 0;
+    color: color-mix(in srgb, var(--vscode-editor-foreground) 55%, transparent);
+    font-family: var(--snaptex-preview-font-family);
+    font-size: 0.68em;
+    line-height: 1;
+    text-align: right;
 }
 
 /* --- Body Text Typography --- */
@@ -339,29 +354,6 @@ body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg text {
 .latex-theorem p:first-of-type {
     margin-top: 0;
     display: inline;
-}
-
-/* Proof QED Symbol */
-.latex-qed {
-    color: var(--vscode-editor-foreground);
-    opacity: 0.7;
-}
-
-
-/* --- Float Placeholders (Figure/Table) --- */
-.latex-float-placeholder {
-    display: block;
-    border: 2px dashed #ff7875;
-    background-color: rgba(255, 120, 117, 0.05);
-    color: #cf1322;
-    padding: 1em;
-    margin: 1.5em 0;
-    border-radius: 6px;
-    font-family: "Courier New", monospace;
-    font-size: 0.7em;
-    line-height: 1.0;
-    white-space: pre-wrap;
-    overflow-x: auto;
 }
 
 /* Verbatim/code blocks */
@@ -644,15 +636,6 @@ ol ol ol { list-style-type: lower-roman; }
     transition: background-color 0.2s;
 }
 
-.latex-cite, .latex-citep, .latex-citet {
-    color: #2e7d32;
-}
-
-.latex-citep-container::before { content: "("; }
-.latex-citep-container::after { content: ")"; }
-
-.latex-eqref::before { content: "("; }
-.latex-eqref::after { content: ")"; }
 /* Hover Effect */
 .latex-link:hover {
     background-color: rgba(0, 122, 204, 0.2);

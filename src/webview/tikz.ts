@@ -119,7 +119,7 @@ export function setTikzContainerState(container, state) {
     }
 
     function clearTikzRenderTimer(container) {
-        if (container.__snaptexTikzRenderTimer) {
+        if (container.__snaptexTikzRenderTimer !== null && container.__snaptexTikzRenderTimer !== undefined) {
             clearTimeout(container.__snaptexTikzRenderTimer);
             container.__snaptexTikzRenderTimer = null;
         }

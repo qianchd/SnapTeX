@@ -1,4 +1,5 @@
-import type { PreviewLayoutMode, PreviewStyleSettings, RenderPayload } from './types';
+import type { PreviewLayoutMode, PreviewStyleSettings, RenderPayload, SourceSyncOptions } from './types';
+import { isRecord } from './utils';
 
 /**
  * Typed message contract between a preview host and the preview runtime.
@@ -15,6 +16,8 @@ export const PreviewToHostCommand = {
     RequestBlockHtml: 'requestBlockHtml'
 } as const;
 
+export const MAX_BLOCK_HTML_BATCH_SIZE = 4;
+
 export const HostToPreviewCommand = {
     Update: 'update',
     ScrollToBlock: 'scrollToBlock',
@@ -27,17 +30,14 @@ interface PreviewLoadedMessage {
     command: typeof PreviewToHostCommand.PreviewLoaded;
 }
 
-export interface RevealLineMessage {
+export interface RevealLineMessage extends SourceSyncOptions {
     command: typeof PreviewToHostCommand.RevealLine;
     index: number;
     ratio: number;
-    anchors?: string[];
-    sourceStart?: number;
-    sourceEnd?: number;
     viewRatio?: number;
 }
 
-interface SyncScrollMessage {
+export interface SyncScrollMessage extends SourceSyncOptions {
     command: typeof PreviewToHostCommand.SyncScroll;
     index: number;
     ratio: number;
@@ -53,11 +53,15 @@ export interface RequestPdfMessage {
     path: string;
 }
 
-export interface RequestBlockHtmlMessage {
-    command: typeof PreviewToHostCommand.RequestBlockHtml;
+export interface BlockHtmlRequest {
     id: string;
     index: number;
     hash: string;
+}
+
+export interface RequestBlockHtmlMessage {
+    command: typeof PreviewToHostCommand.RequestBlockHtml;
+    requests: BlockHtmlRequest[];
 }
 
 export type PreviewToHostMessage =
@@ -73,13 +77,11 @@ interface UpdateMessage {
     payload: RenderPayload;
 }
 
-interface ScrollToBlockMessage {
+interface ScrollToBlockMessage extends SourceSyncOptions {
     command: typeof HostToPreviewCommand.ScrollToBlock;
     index: number;
     ratio: number;
     anchor?: string;
-    sourceStart?: number;
-    sourceEnd?: number;
     auto?: boolean;
     viewRatio?: number;
 }
@@ -119,12 +121,27 @@ export type HostToPreviewMessage =
     | BlockHtmlMessage
     | ConfigMessage;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
 }
 
-function isOptionalType(value: unknown, type: 'string' | 'number'): boolean {
-    return value === undefined || typeof value === type;
+function isOptionalFiniteNumber(value: unknown): boolean {
+    return value === undefined || isFiniteNumber(value);
+}
+
+function hasSourceSyncPosition(value: Record<string, unknown>): boolean {
+    return isFiniteNumber(value.index)
+        && isFiniteNumber(value.ratio)
+        && isOptionalFiniteNumber(value.sourceStart)
+        && isOptionalFiniteNumber(value.sourceEnd);
+}
+
+function isBlockHtmlRequest(value: unknown): value is BlockHtmlRequest {
+    return isRecord(value)
+        && typeof value.id === 'string'
+        && value.id.length > 0
+        && isFiniteNumber(value.index)
+        && typeof value.hash === 'string';
 }
 
 export function isPreviewToHostMessage(value: unknown): value is PreviewToHostMessage {
@@ -134,26 +151,22 @@ export function isPreviewToHostMessage(value: unknown): value is PreviewToHostMe
 
     switch (value.command) {
         case PreviewToHostCommand.PreviewLoaded:
-            return true;
-        case PreviewToHostCommand.RevealLine:
-            return typeof value.index === 'number'
-                && typeof value.ratio === 'number'
-                && (value.anchors === undefined || (Array.isArray(value.anchors) && value.anchors.every(anchor => typeof anchor === 'string')))
-                && isOptionalType(value.sourceStart, 'number')
-                && isOptionalType(value.sourceEnd, 'number')
-                && isOptionalType(value.viewRatio, 'number');
-        case PreviewToHostCommand.SyncScroll:
-            return typeof value.index === 'number'
-                && typeof value.ratio === 'number';
         case PreviewToHostCommand.PreviewLayoutChanged:
             return true;
+        case PreviewToHostCommand.RevealLine:
+            return hasSourceSyncPosition(value)
+                && (value.anchors === undefined || (Array.isArray(value.anchors) && value.anchors.every(anchor => typeof anchor === 'string')))
+                && isOptionalFiniteNumber(value.viewRatio);
+        case PreviewToHostCommand.SyncScroll:
+            return hasSourceSyncPosition(value);
         case PreviewToHostCommand.RequestPdf:
-            return typeof value.id === 'string'
+            return typeof value.id === 'string' && value.id.length > 0
                 && typeof value.path === 'string';
         case PreviewToHostCommand.RequestBlockHtml:
-            return typeof value.id === 'string'
-                && typeof value.index === 'number'
-                && typeof value.hash === 'string';
+            return Array.isArray(value.requests)
+                && value.requests.length > 0
+                && value.requests.length <= MAX_BLOCK_HTML_BATCH_SIZE
+                && value.requests.every(isBlockHtmlRequest);
         default:
             return false;
     }

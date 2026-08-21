@@ -1,14 +1,16 @@
 // @ts-nocheck
 /* eslint-disable curly */
 import { CoalescingTaskScheduler } from './scheduler';
-import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
+import { BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS, BlockVirtualizationController, HEIGHT_MEASUREMENT_CANCEL_EVENT, isElementWithinViewportMargins, parseFirstElementFromHtml, viewportHeightToPixels } from './virtualization';
 import { PageLayoutController } from './pagination';
-import { ViewportAnchorController } from './viewport';
+import { PREVIEW_RESIZE_ACTIVE_CLASS, ViewportAnchorController } from './viewport';
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
-import { HostToPreviewCommand, PreviewToHostCommand } from '../preview-messages';
+import { HostToPreviewCommand, MAX_BLOCK_HTML_BATCH_SIZE, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
 const previewBridge = getPreviewBridge();
-    const PREVIEW_LAYOUT_WIDTH_CHANGE_EPSILON_PX = 12;
+    const PREVIEW_LAYOUT_WIDTH_TOLERANCE = 0.01;
+    const PREVIEW_RESIZE_SETTLE_DELAY_MS = 150;
+    const HEIGHT_WARMUP_BATCH_SIZE = 8;
     const PREVIEW_STYLE_PROPERTIES = [
         ['fontSize', '--snaptex-preview-base-font-size', 'font-size'],
         ['lineHeight', '--snaptex-preview-line-height', 'line-height'],
@@ -256,16 +258,17 @@ const previewBridge = getPreviewBridge();
             this.clearHideTimer();
             if (this.currentLink === link && this.element.classList.contains('visible')) return;
 
-            if (this.showTimer) clearTimeout(this.showTimer);
+            if (this.showTimer !== null) clearTimeout(this.showTimer);
             this.anchorY = anchorY ?? null;
 
             this.showTimer = setTimeout(() => {
+                this.showTimer = null;
                 this.onLinkEnter(link);
             }, 200);
         }
 
         cancelShow() {
-            if (this.showTimer) {
+            if (this.showTimer !== null) {
                 clearTimeout(this.showTimer);
                 this.showTimer = null;
             }
@@ -285,14 +288,15 @@ const previewBridge = getPreviewBridge();
         startHideTimer() {
             if (this.isPinned) return;
 
-            if (this.hideTimer) clearTimeout(this.hideTimer);
+            if (this.hideTimer !== null) clearTimeout(this.hideTimer);
             this.hideTimer = setTimeout(() => {
+                this.hideTimer = null;
                 this.hide();
             }, 300);
         }
 
         clearHideTimer() {
-            if (this.hideTimer) {
+            if (this.hideTimer !== null) {
                 clearTimeout(this.hideTimer);
                 this.hideTimer = null;
             }
@@ -443,7 +447,7 @@ const previewBridge = getPreviewBridge();
             this.scrollCommandSeq = 0;
             this.renderCompletionSeq = 0;
             this.previewLayoutSyncSuppressedUntil = 0;
-            this.lastPreviewWidth = this.getPreviewWidth();
+            this.lastLayoutWidth = this.getPageWidth();
             this.virtualUpdateFrame = null;
             this.virtualCleanupTimer = null;
             this.config = {
@@ -458,7 +462,12 @@ const previewBridge = getPreviewBridge();
             this.heightWarmupTimer = null;
             this.heightWarmupBusy = false;
             this.heightWarmupCursor = null;
+            this.heightWarmupEndIndex = null;
+            this.heightWarmupMeasurementWidth = null;
             this.heightWarmupFailedKeys = new Set();
+            this.heightWarmupHtml = new Map();
+            this.interactiveResizeActive = false;
+            this.interactiveResizeTimer = null;
             this.pdfObserver = null;
             this.pdfRenderTimer = null;
             this.deferHeavyPreviewWork = false;
@@ -507,16 +516,15 @@ const previewBridge = getPreviewBridge();
                 }
             });
             window.addEventListener('scroll', () => {
+                if (this.interactiveResizeActive) return;
+                this.viewportAnchor.pin(this.virtualization.getShells());
                 this.requestVirtualizedUpdate({ allowUnmount: false });
                 this.scheduleVirtualizedCleanup();
                 this.onScroll();
             });
             window.addEventListener('resize', () => this.onPreviewResize());
             if (typeof ResizeObserver !== 'undefined' && this.contentRoot) {
-                this.previewResizeObserver = new ResizeObserver(entries => {
-                    const width = entries[0]?.contentRect?.width;
-                    this.onPreviewResize(width);
-                });
+                this.previewResizeObserver = new ResizeObserver(() => this.onPreviewResize());
                 this.previewResizeObserver.observe(this.contentRoot);
             }
             document.addEventListener('dblclick', event => this.onDoubleClick(event));
@@ -527,9 +535,54 @@ const previewBridge = getPreviewBridge();
             return Math.max(500, this.config.autoScrollDelay + 300);
         }
 
-        getPreviewWidth() {
+        getPageWidth() {
             const rect = this.contentRoot?.getBoundingClientRect();
-            return rect && rect.width > 0 ? rect.width : window.innerWidth;
+            return rect && rect.width > 0 ? rect.width : 0;
+        }
+
+        beginInteractiveResize() {
+            this.clearInteractiveResizeTimer();
+            if (this.interactiveResizeActive) return;
+            this.cancelHeightWarmup();
+            this.interactiveResizeActive = true;
+            document.body.classList.add(PREVIEW_RESIZE_ACTIVE_CLASS);
+            this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
+            if (!this.viewportAnchor.isPinned()) {
+                this.viewportAnchor.pin(this.virtualization.getShells());
+            }
+            previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
+        }
+
+        clearInteractiveResizeTimer() {
+            if (this.interactiveResizeTimer === null) return;
+            clearTimeout(this.interactiveResizeTimer);
+            this.interactiveResizeTimer = null;
+        }
+
+        finishInteractiveResize(update = () => {}) {
+            this.clearInteractiveResizeTimer();
+            if (!this.interactiveResizeActive) {
+                update();
+                return;
+            }
+            this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
+            previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
+            try {
+                this.viewportAnchor.preserve([], update);
+            } finally {
+                this.interactiveResizeActive = false;
+                document.body.classList.remove(PREVIEW_RESIZE_ACTIVE_CLASS);
+            }
+            this.applySettledPreviewResize();
+            this.refreshViewportAnchorAfterLayout();
+        }
+
+        refreshViewportAnchorAfterLayout() {
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (!this.interactiveResizeActive && this.heightWarmupCursor === null) {
+                    this.viewportAnchor.pin(this.virtualization.getShells());
+                }
+            }));
         }
 
         syncPreviewTypography() {
@@ -552,14 +605,20 @@ const previewBridge = getPreviewBridge();
             }
             const rect = this.contentRoot.getBoundingClientRect();
             const host = this.typographyMeasurementHost;
-            host.style.width = `${Math.max(1, rect.width)}px`;
+            const style = getComputedStyle(this.contentRoot);
+            const measurementWidth = this.pagination.syncContentWidth()
+                ?? this.virtualization.getMeasurementWidth(style);
+            host.style.width = `${measurementWidth}px`;
             host.style.height = `${Math.max(1, rect.height)}px`;
             const probe = host.firstElementChild;
-            probe.style.fontSize = getComputedStyle(this.contentRoot).getPropertyValue('--base-font-size');
+            probe.style.fontSize = style.getPropertyValue('--base-font-size');
             const fontSize = getComputedStyle(probe).fontSize;
             if (!fontSize) return;
             document.documentElement.style.setProperty('--snaptex-preview-text-size', fontSize);
-            this.virtualization?.setFontSize(fontSize);
+            return {
+                measurementWidth,
+                fontScale: this.virtualization.setFontSize(fontSize)
+            };
         }
 
         applyPreviewStyle(style) {
@@ -579,24 +638,63 @@ const previewBridge = getPreviewBridge();
             return changed;
         }
 
-        onPreviewResize(width = this.getPreviewWidth()) {
-            this.syncPreviewTypography();
-            this.updateVirtualizedBlocks({ allowUnmount: true });
-            if (!Number.isFinite(width) || width <= 0 || Math.abs(width - this.lastPreviewWidth) < PREVIEW_LAYOUT_WIDTH_CHANGE_EPSILON_PX) {
+        applySettledPreviewResize() {
+            const layoutWidth = this.getPageWidth();
+            if (layoutWidth <= 0) {
+                this.cancelHeightWarmup();
+                this.viewportAnchor.clear();
                 return;
             }
-            this.lastPreviewWidth = width;
+            let typography;
+            this.viewportAnchor.preserve(this.virtualization.getShells(), () => {
+                typography = this.syncPreviewTypography();
+                this.updateVirtualizedBlocks({ allowUnmount: true });
+            });
+            const previousWidth = this.lastLayoutWidth;
+            this.lastLayoutWidth = layoutWidth;
+            if (this.isFirstLoad) {
+                return;
+            }
+            if (Math.abs(layoutWidth - previousWidth) / Math.max(layoutWidth, previousWidth)
+                    < PREVIEW_LAYOUT_WIDTH_TOLERANCE) {
+                return;
+            }
+            const shells = this.virtualization.getShells();
+            if (typography && shells.length > 0
+                && shells.every(shell => this.virtualization.hasMeasuredHeight(shell, typography.measurementWidth))) {
+                this.heightWarmupFailedKeys.clear();
+                this.pagination.rescaleHeights(typography.fontScale);
+                return;
+            }
             this.heightWarmupFailedKeys.clear();
             this.scheduleHeightWarmup(250);
-            this.pagination.refresh(true);
-            this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
-            previewBridge.postMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
+            if (!this.virtualization.isEnabled()) {this.pagination.refresh(true);}
+        }
+
+        onPreviewResize() {
+            const layoutWidth = this.getPageWidth();
+            if (layoutWidth <= 0) {
+                this.cancelHeightWarmup();
+                this.viewportAnchor.clear();
+                return;
+            }
+            if (!this.interactiveResizeActive && Math.abs(layoutWidth - this.lastLayoutWidth) < 1) return;
+
+            // VS Code owns its splitter, so infer the same lifecycle from observed width changes.
+            this.beginInteractiveResize();
+            this.viewportAnchor.compensatePinnedPosition();
+            this.clearInteractiveResizeTimer();
+            this.interactiveResizeTimer = setTimeout(() => {
+                this.interactiveResizeTimer = null;
+                this.finishInteractiveResize();
+            }, PREVIEW_RESIZE_SETTLE_DELAY_MS);
         }
 
         lockScrolling(duration) {
             this.state = 'SCROLLING_AUTO';
-            if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
+            if (this.scrollTimeout !== null) clearTimeout(this.scrollTimeout);
             this.scrollTimeout = setTimeout(() => {
+                this.scrollTimeout = null;
                 if (this.state === 'SCROLLING_AUTO') { this.state = 'IDLE'; }
             }, duration);
         }
@@ -634,7 +732,7 @@ const previewBridge = getPreviewBridge();
                         this.syncPreviewTypography();
                         this.virtualization.resetHeightCache();
                         this.heightWarmupFailedKeys.clear();
-                        this.pagination.refresh(true);
+                        if (!virtualMode) {this.pagination.refresh(true);}
                     }
                     if (virtualMode && (virtualModeChanged || styleChanged)) {
                         this.scheduleHeightWarmup(styleChanged ? 150 : 400);
@@ -658,45 +756,48 @@ const previewBridge = getPreviewBridge();
             if (payload.numbering) {
                 this.currentNumbering = payload.numbering;
             }
+            const renderSeq = ++this.renderCompletionSeq;
+            this.state = 'RENDERING';
+            const scrollState = this.saveScrollState();
             if (payload.type === 'full') {
-                const renderSeq = ++this.renderCompletionSeq;
-                this.state = 'RENDERING';
                 this.deferHeavyPreviewWork = this.isFirstLoad && !!payload.blocks && this.virtualization.isEnabled();
-                const scrollState = this.saveScrollState();
                 document.body.classList.add('preload-mode');
                 if (!payload.resetPreviewState && payload.preserveUnchangedBlocks === false && this.virtualization.isEnabled()) {
                     this.virtualization.resetCaches();
                 }
                 if (payload.blocks && this.virtualization.isEnabled()) {
-                    this.smartFullUpdateFromBlockMetadata(payload.blocks, {
-                        phase: this.deferHeavyPreviewWork ? 'initial' : 'normal'
-                    });
+                    this.virtualization.replaceContentWithBlockMetadata(
+                        payload.blocks,
+                        block => this.onVirtualBlockMounted(block),
+                        shell => this.requestVirtualBlockHtml(shell),
+                        { phase: this.deferHeavyPreviewWork ? 'initial' : 'normal' }
+                    );
                 } else if (payload.htmls) {
-                    this.smartFullUpdateFromBlocks(payload.htmls, payload.preserveUnchangedBlocks !== false);
+                    this.smartFullUpdate(payload.htmls, payload.preserveUnchangedBlocks !== false);
                 }
                 this.logDomStats('after full update');
                 this.pagination.refresh();
-                document.fonts.ready.then(() => {
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => { this.onRenderComplete(scrollState, renderSeq); });
-                    });
-                });
+                document.fonts.ready
+                    .then(() => this.waitForLayout())
+                    .then(() => this.onRenderComplete(scrollState, renderSeq));
             } else if (payload.type === 'patch') {
-                const renderSeq = ++this.renderCompletionSeq;
-                this.state = 'RENDERING';
                 this.previewLayoutSyncSuppressedUntil = Date.now() + this.getSyncSuppressionDuration();
-                const scrollState = this.saveScrollState();
+                const paginationRange = this.virtualization.isEnabled()
+                    ? this.getPatchPaginationRange(payload)
+                    : undefined;
                 this.applyPatch(payload);
-                this.pagination.refresh();
+                if (this.virtualization.isEnabled()) {
+                    this.scheduleHeightWarmup(0, paginationRange);
+                } else {
+                    this.pagination.refresh();
+                }
                 this.logDomStats('after patch update');
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => { this.onPatchComplete(scrollState, renderSeq); });
-                });
+                void this.waitForLayout().then(() => this.onPatchComplete(scrollState, renderSeq));
             }
             if (payload.numbering) {
                 requestAnimationFrame(() => this.applyNumbering(payload.numbering));
             }
-            if (!this.deferHeavyPreviewWork) {
+            if (!this.deferHeavyPreviewWork && !this.virtualization.isEnabled()) {
                 this.scheduleHeavyPreviewWork();
             }
         }
@@ -825,6 +926,7 @@ const previewBridge = getPreviewBridge();
         replaceBlockPreservingTikz(oldBlock, newBlock) {
             this.virtualization.rememberBlockHeight(oldBlock);
             oldBlock.replaceWith(newBlock);
+            this.pagination.transferPatchLayout([oldBlock], [newBlock]);
             this.attachStaleTikzPreviews(newBlock, this.collectTikzPreviews(oldBlock));
         }
 
@@ -846,17 +948,30 @@ const previewBridge = getPreviewBridge();
             this.heightWarmupFailedKeys.delete(this.virtualization.getBlockKey(shell || block));
             this.attachStaleTikzPreviews(block, this.consumeStaleTikzPreviewsFromShell(shell));
 
-            if (this.currentNumbering) {
-                requestAnimationFrame(() => this.applyNumbering(this.currentNumbering));
-            }
+            this.fillCurrentNumbering(block);
             if (!this.deferHeavyPreviewWork) {
-                this.scheduleHeavyPreviewWork();
+                void this.stabilizeMountedBlockHeight(block);
             }
-            this.pagination.invalidateItem(shell || block);
+        }
+
+        async stabilizeMountedBlockHeight(block) {
+            const shell = block?.closest('.latex-block-shell');
+            if (!shell) return undefined;
+            if (block._snaptexHeightStabilization) return block._snaptexHeightStabilization;
+            block._snaptexHeightStabilization = (async () => {
+                const settled = await this.prepareBlockHeightResources(block, false);
+                if (!settled || this.virtualization.getShellBlock(shell) !== block) return undefined;
+                return this.virtualization.settleMountedShellHeight(shell);
+            })();
+            try {
+                return await block._snaptexHeightStabilization;
+            } finally {
+                delete block._snaptexHeightStabilization;
+            }
         }
 
         requestVirtualizedUpdate(options = {}) {
-            if (!this.virtualization.isEnabled() || this.virtualUpdateFrame) return;
+            if (!this.virtualization.isEnabled() || this.virtualUpdateFrame !== null) return;
 
             this.virtualUpdateFrame = requestAnimationFrame(() => {
                 this.virtualUpdateFrame = null;
@@ -865,7 +980,7 @@ const previewBridge = getPreviewBridge();
         }
 
         scheduleVirtualizedCleanup() {
-            if (this.virtualCleanupTimer) {
+            if (this.virtualCleanupTimer !== null) {
                 clearTimeout(this.virtualCleanupTimer);
             }
             this.virtualCleanupTimer = setTimeout(() => {
@@ -949,10 +1064,7 @@ const previewBridge = getPreviewBridge();
 
         ensureShellMounted(shell) {
             const existingBlock = this.virtualization.getShellBlock(shell);
-            if (existingBlock) {
-                this.virtualization.refreshMountedShellHeight(shell);
-                return Promise.resolve(existingBlock);
-            }
+            if (existingBlock) return Promise.resolve(existingBlock);
 
             const mounted = this.virtualization.mountShell(
                 shell,
@@ -1027,9 +1139,8 @@ const previewBridge = getPreviewBridge();
             setTimeout(() => block.classList.remove('jump-highlight'), 1000);
         }
 
-        requestVirtualBlockHtml(shell, options = {}) {
-            if (!shell) return false;
-
+        registerVirtualBlockHtmlRequest(shell, options = {}) {
+            if (!shell) return undefined;
             const existingId = shell.getAttribute('data-html-request-id');
             if (existingId && this.pendingBlockHtmlRequests.has(existingId)) {
                 const pending = this.pendingBlockHtmlRequests.get(existingId);
@@ -1037,12 +1148,12 @@ const previewBridge = getPreviewBridge();
                 if (options.onHtml) { pending.htmlCallbacks.push(options.onHtml); }
                 pending.mountRequested ||= options.measureOnly !== true;
                 pending.forceMount ||= options.forceMount === true;
-                return true;
+                return null;
             }
 
             const index = parseInt(shell.getAttribute('data-index'));
             const hash = shell.getAttribute('data-block-hash') || '';
-            if (Number.isNaN(index)) return false;
+            if (Number.isNaN(index)) return undefined;
 
             const id = `block-${++this.blockHtmlRequestSeq}`;
             shell.setAttribute('data-html-request-id', id);
@@ -1055,7 +1166,15 @@ const previewBridge = getPreviewBridge();
                 htmlCallbacks: options.onHtml ? [options.onHtml] : []
             });
             this.debugStats.blockHtmlRequestsSent += 1;
-            previewBridge.postMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash });
+            return { id, index, hash };
+        }
+
+        requestVirtualBlockHtml(shell, options = {}) {
+            const request = this.registerVirtualBlockHtmlRequest(shell, options);
+            if (request === undefined) return false;
+            if (request) {
+                previewBridge.postMessage({ command: PreviewToHostCommand.RequestBlockHtml, requests: [request] });
+            }
             return true;
         }
 
@@ -1101,39 +1220,52 @@ const previewBridge = getPreviewBridge();
                 resolveHtmlCallbacks(message.html);
                 return;
             }
+            let block = null;
             if (pending.mountRequested && (pending.forceMount || this.virtualization.isShellInMountRange(shell))) {
-                const block = this.virtualization.withViewportAnchorPreserved(() => this.virtualization.mountShell(
+                block = this.virtualization.withViewportAnchorPreserved(() => this.virtualization.mountShell(
                     shell,
                     missingShell => this.requestVirtualBlockHtml(missingShell)
                 ));
                 if (block) { this.onVirtualBlockMounted(block); }
-                pending.mountCallbacks.forEach(callback => callback(block || null));
             }
+            pending.mountCallbacks.forEach(callback => callback(block || null));
             resolveHtmlCallbacks(message.html);
         }
 
         invalidateHeightWarmup() {
             this.heightWarmupGeneration += 1;
-            if (this.heightWarmupTimer) {
+            this.heightWarmupHtml.clear();
+            if (this.heightWarmupTimer !== null) {
                 clearTimeout(this.heightWarmupTimer);
                 this.heightWarmupTimer = null;
             }
             this.virtualization.cancelHeightMeasurement();
-            this.viewportAnchor.clear();
         }
 
         cancelHeightWarmup(clearFailures = false) {
             this.invalidateHeightWarmup();
             this.heightWarmupCursor = null;
+            this.heightWarmupEndIndex = null;
+            this.heightWarmupMeasurementWidth = null;
+            this.pagination.cancelIncremental();
             if (clearFailures) { this.heightWarmupFailedKeys.clear(); }
         }
 
-        scheduleHeightWarmup(delay = 400) {
-            if (!this.virtualization.isEnabled()) return;
+        scheduleHeightWarmup(delay = 400, range = {}) {
+            if (!this.virtualization.isEnabled() || this.isFirstLoad || this.contentRoot.children.length === 0) return;
 
             this.invalidateHeightWarmup();
             const generation = this.heightWarmupGeneration;
-            this.heightWarmupCursor = 0;
+            const lastIndex = Math.max(0, this.contentRoot.children.length - 1);
+            const startIndex = Math.min(Math.max(0, range.startIndex ?? 0), lastIndex);
+            const lastChangedIndex = Math.min(
+                Math.max(startIndex, range.lastChangedIndex ?? lastIndex),
+                lastIndex
+            );
+            this.lastLayoutWidth = this.getPageWidth();
+            this.heightWarmupCursor = this.pagination.beginIncremental(startIndex, lastChangedIndex);
+            this.heightWarmupEndIndex = this.pagination.isEnabled() ? lastIndex : lastChangedIndex;
+            this.heightWarmupMeasurementWidth = this.virtualization.getMeasurementWidth();
             if (this.heightWarmupFailedKeys.size > 0) {
                 const activeKeys = new Set(this.virtualization.getShells().map(shell => this.virtualization.getBlockKey(shell)));
                 for (const key of this.heightWarmupFailedKeys) {
@@ -1146,7 +1278,8 @@ const previewBridge = getPreviewBridge();
         deferHeightWarmup(delay = BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS) {
             if (!this.virtualization.isEnabled() || this.heightWarmupCursor === null) return;
 
-            this.scheduleHeightWarmup(delay);
+            this.invalidateHeightWarmup();
+            this.scheduleHeightWarmupStep(this.heightWarmupGeneration, delay);
         }
 
         scheduleHeightWarmupStep(generation, delay = 0) {
@@ -1154,13 +1287,9 @@ const previewBridge = getPreviewBridge();
                 this.heightWarmupTimer = null;
                 const run = () => {
                     if (generation !== this.heightWarmupGeneration) return;
-                    if (this.heightWarmupBusy) {
-                        this.scheduleHeightWarmupStep(generation, 100);
-                    } else {
-                        this.runHeightWarmupStep(generation);
-                    }
+                    this.runHeightWarmupStep(generation);
                 };
-                if (typeof window.requestIdleCallback === 'function') {
+                if (delay > 0 && typeof window.requestIdleCallback === 'function') {
                     window.requestIdleCallback(run, { timeout: 1000 });
                 } else {
                     run();
@@ -1168,34 +1297,106 @@ const previewBridge = getPreviewBridge();
             }, delay);
         }
 
+        getHeightWarmupRequestKey(shell) {
+            return `${shell.getAttribute('data-index')}:${shell.getAttribute('data-block-hash') || ''}`;
+        }
+
+        requestHeightWarmupBatch(generation) {
+            const requests = [];
+            const requestedBlockKeys = new Set();
+            for (let index = this.heightWarmupCursor;
+                index <= this.heightWarmupEndIndex
+                    && index < this.contentRoot.children.length
+                    && requests.length < MAX_BLOCK_HTML_BATCH_SIZE;
+                index++) {
+                const shell = this.contentRoot.children[index];
+                const blockKey = this.virtualization.getBlockKey(shell);
+                if (!blockKey
+                    || requestedBlockKeys.has(blockKey)
+                    || this.virtualization.getShellBlock(shell)
+                    || this.virtualization.hasMeasuredHeight(shell, this.heightWarmupMeasurementWidth)
+                    || this.heightWarmupFailedKeys.has(blockKey)) {
+                    continue;
+                }
+                requestedBlockKeys.add(blockKey);
+                const requestKey = this.getHeightWarmupRequestKey(shell);
+                if (this.heightWarmupHtml.has(requestKey)) {continue;}
+
+                const isCurrent = index === this.heightWarmupCursor;
+                if (!isCurrent && shell.getAttribute('data-html-request-id')) {continue;}
+                const request = this.registerVirtualBlockHtmlRequest(shell, {
+                    measureOnly: true,
+                    onHtml: html => {
+                        if (generation !== this.heightWarmupGeneration) return;
+                        this.heightWarmupHtml.set(requestKey, html);
+                        const currentShell = this.contentRoot.children[this.heightWarmupCursor];
+                        if (!this.heightWarmupBusy
+                            && currentShell
+                            && this.getHeightWarmupRequestKey(currentShell) === requestKey) {
+                            void this.runHeightWarmupStep(generation);
+                        }
+                    }
+                });
+                if (request === undefined) {continue;}
+                if (isCurrent && request === null) {return true;}
+                if (request) {requests.push(request);}
+            }
+            if (requests.length > 0) {
+                previewBridge.postMessage({
+                    command: PreviewToHostCommand.RequestBlockHtml,
+                    requests
+                });
+            }
+            return requests.length > 0;
+        }
+
         async runHeightWarmupStep(generation) {
             if (generation !== this.heightWarmupGeneration || !this.virtualization.isEnabled()) return;
+            if (this.heightWarmupCursor === 0 && document.fonts?.status === 'loading') {
+                await document.fonts.ready;
+                if (generation !== this.heightWarmupGeneration) return;
+            }
 
-            if (this.heightWarmupCursor === 0) {
+            if (!this.viewportAnchor.isPinned()) {
                 this.viewportAnchor.pin(this.virtualization.getShells());
             }
 
             let shell = null;
-            const contentWidth = this.virtualization.getContentWidth();
-            while (this.heightWarmupCursor < this.contentRoot.children.length) {
-                const candidate = this.contentRoot.children[this.heightWarmupCursor++];
+            const measurementWidth = this.heightWarmupMeasurementWidth ?? this.virtualization.getMeasurementWidth();
+            while (this.heightWarmupCursor <= this.heightWarmupEndIndex
+                && this.heightWarmupCursor < this.contentRoot.children.length) {
+                const candidate = this.contentRoot.children[this.heightWarmupCursor];
                 const key = this.virtualization.getBlockKey(candidate);
-                if (key
-                    && !this.heightWarmupFailedKeys.has(key)
-                    && !this.virtualization.hasMeasuredHeight(candidate, contentWidth)) {
+                let height;
+                if (key && this.virtualization.hasMeasuredHeight(candidate, measurementWidth)) {
+                    height = this.virtualization.getCachedBlockHeight(key);
+                } else if (this.virtualization.getShellBlock(candidate)) {
+                    height = await this.stabilizeMountedBlockHeight(this.virtualization.getShellBlock(candidate));
+                    if (generation !== this.heightWarmupGeneration) return;
+                    if (height === undefined) {
+                        if (!this.virtualization.getShellBlock(candidate) && key) {
+                            shell = candidate;
+                            break;
+                        }
+                        if (key) {this.heightWarmupFailedKeys.add(key);}
+                        height = this.virtualization.getShellHeightBaseline(candidate);
+                    }
+                } else if (key && this.heightWarmupFailedKeys.has(key)) {
+                    height = this.virtualization.getShellHeightBaseline(candidate);
+                } else if (key) {
                     shell = candidate;
                     break;
                 }
+                if (this.acceptWarmupHeight(height ?? 0)) { return; }
             }
             if (!shell) {
-                this.heightWarmupCursor = null;
-                this.virtualization.cancelHeightMeasurement();
-                this.pagination.refresh(true);
-                requestAnimationFrame(() => this.viewportAnchor.clear());
+                this.finishHeightWarmup();
                 return;
             }
+            if (this.heightWarmupBusy) return;
 
             const key = this.virtualization.getBlockKey(shell);
+            const requestKey = this.getHeightWarmupRequestKey(shell);
             const measure = async html => {
                 if (generation !== this.heightWarmupGeneration) return undefined;
                 if (!html) return undefined;
@@ -1204,94 +1405,136 @@ const previewBridge = getPreviewBridge();
                     return await this.virtualization.measureBlockHtml(
                         shell,
                         html,
-                        block => this.prepareBlockHeightMeasurement(block)
+                        block => this.prepareBlockHeightResources(block, true),
+                        measurementWidth
                     );
                 } catch (error) {
                     console.warn('[SnapTeX] Background block height measurement failed.', error);
                     return undefined;
                 } finally {
                     this.heightWarmupBusy = false;
+                    if (generation !== this.heightWarmupGeneration
+                        && this.heightWarmupCursor !== null
+                        && this.heightWarmupTimer === null) {
+                        this.scheduleHeightWarmupStep(this.heightWarmupGeneration);
+                    }
                 }
             };
             const continueWarmup = measured => {
                 if (generation !== this.heightWarmupGeneration) return;
                 if (measured === undefined) { this.heightWarmupFailedKeys.add(key); }
-                this.scheduleHeightWarmupStep(generation);
+                const height = measured ?? this.virtualization.getShellHeightBaseline(shell);
+                if (!this.acceptWarmupHeight(height)) {
+                    if (this.heightWarmupCursor % HEIGHT_WARMUP_BATCH_SIZE === 0) {
+                        this.scheduleHeightWarmupStep(generation);
+                    } else {
+                        void this.runHeightWarmupStep(generation);
+                    }
+                }
             };
             const cachedHtml = this.virtualization.getBlockHtml(shell);
             if (cachedHtml) {
                 continueWarmup(await measure(cachedHtml));
                 return;
             }
-
-            const requested = this.requestVirtualBlockHtml(shell, {
-                measureOnly: true,
-                onHtml: async html => {
-                    continueWarmup(await measure(html));
-                }
-            });
-            if (!requested) { continueWarmup(undefined); }
-        }
-
-        waitForMeasurement(check, element, timeout = 30000) {
-            return new Promise(resolve => {
-                const startedAt = Date.now();
-                const poll = () => {
-                    if (!element.isConnected) { resolve(false); return; }
-                    if (check()) { resolve(true); return; }
-                    if (Date.now() - startedAt >= timeout) { resolve(false); return; }
-                    setTimeout(poll, 50);
-                };
-                poll();
-            });
-        }
-
-        async prepareBlockHeightMeasurement(block) {
-            if (this.currentNumbering) {
-                const index = block.getAttribute('data-index');
-                this.fillBlockNumbering(block, this.currentNumbering.blocks?.[index]);
-                this.fillReferences(block, this.currentNumbering.labels);
+            if (this.heightWarmupHtml.has(requestKey)) {
+                const html = this.heightWarmupHtml.get(requestKey);
+                this.heightWarmupHtml.delete(requestKey);
+                continueWarmup(await measure(html));
+                return;
             }
+            if (!this.requestHeightWarmupBatch(generation)) {continueWarmup(undefined);}
+        }
+
+        acceptWarmupHeight(height) {
+            const complete = this.pagination.acceptHeight(this.heightWarmupCursor, height);
+            this.heightWarmupCursor += 1;
+            if (complete) { this.finishHeightWarmup(); }
+            return complete;
+        }
+
+        finishHeightWarmup() {
+            this.invalidateHeightWarmup();
+            this.heightWarmupCursor = null;
+            this.heightWarmupEndIndex = null;
+            this.heightWarmupMeasurementWidth = null;
+            this.pagination.finishIncremental();
+            this.refreshViewportAnchorAfterLayout();
+        }
+
+        waitForMeasurement(element, events, check, timeout = 30000) {
+            if (!element.isConnected || check()) {
+                return Promise.resolve(element.isConnected && check());
+            }
+            return new Promise(resolve => {
+                const block = element.closest('.latex-block');
+                const cleanup = () => {
+                    clearTimeout(timer);
+                    events.forEach(event => element.removeEventListener(event, finish));
+                    block?.removeEventListener(HEIGHT_MEASUREMENT_CANCEL_EVENT, finish);
+                };
+                const finish = () => {
+                    cleanup();
+                    resolve(element.isConnected && check());
+                };
+                const timer = setTimeout(finish, timeout);
+                events.forEach(event => element.addEventListener(event, finish, { once: true }));
+                block?.addEventListener(HEIGHT_MEASUREMENT_CANCEL_EVENT, finish, { once: true });
+            });
+        }
+
+        async prepareBlockHeightResources(block, measurementOnly) {
+            if (measurementOnly) {this.fillCurrentNumbering(block);}
 
             const images = Array.from(block.querySelectorAll('img')).map(image => ({
                 image,
                 src: image.getAttribute('src'),
                 srcset: image.getAttribute('srcset')
             }));
-            images.forEach(({ image }) => {
-                image.removeAttribute('src');
-                image.removeAttribute('srcset');
-            });
+            if (measurementOnly) {
+                images.forEach(({ image }) => {
+                    image.removeAttribute('src');
+                    image.removeAttribute('srcset');
+                });
+            }
             for (const { image, src, srcset } of images) {
                 image.loading = 'eager';
-                if (srcset) { image.setAttribute('srcset', srcset); }
-                if (src) { image.setAttribute('src', src); }
+                if (measurementOnly) {
+                    if (srcset) { image.setAttribute('srcset', srcset); }
+                    if (src) { image.setAttribute('src', src); }
+                }
                 const loaded = await this.waitForMeasurement(
-                    () => image.complete,
                     image,
+                    ['load', 'error'],
+                    () => image.complete,
                     15000
                 );
                 if (!loaded || image.naturalWidth <= 0) return false;
 
                 const rect = image.getBoundingClientRect();
                 if (rect.width <= 0 || rect.height <= 0) return false;
-                image.style.width = `${Math.ceil(rect.width)}px`;
-                image.style.height = `${Math.ceil(rect.height)}px`;
-                image.removeAttribute('src');
-                image.removeAttribute('srcset');
+                if (measurementOnly) {
+                    image.style.width = `${Math.ceil(rect.width)}px`;
+                    image.style.height = `${Math.ceil(rect.height)}px`;
+                    image.removeAttribute('src');
+                    image.removeAttribute('srcset');
+                }
             }
 
             for (const canvas of block.querySelectorAll('canvas[data-req-path]')) {
-                canvas.id = `measure-pdf-${++this.measurementResourceSeq}`;
-                canvas.setAttribute('data-pdf-measure-only', 'true');
+                if (measurementOnly) {
+                    canvas.id = `measure-pdf-${++this.measurementResourceSeq}`;
+                    canvas.setAttribute('data-pdf-measure-only', 'true');
+                }
                 this.requestPdfCanvas(canvas);
                 const rendered = await this.waitForMeasurement(
-                    () => canvas.getAttribute('data-rendered') === 'true',
-                    canvas
+                    canvas,
+                    ['snaptex-pdf-settled'],
+                    () => canvas.getAttribute('data-rendered') === 'true'
                 );
                 if (!rendered) return false;
                 if (canvas.getBoundingClientRect().height <= 0) return false;
-                this.releasePdfCanvasBitmap(canvas);
+                if (measurementOnly) {this.releasePdfCanvasBitmap(canvas);}
             }
 
             const tikzContainers = Array.from(block.querySelectorAll('.tikz-container'));
@@ -1309,8 +1552,10 @@ const previewBridge = getPreviewBridge();
 
                     const height = Math.ceil(container.getBoundingClientRect().height);
                     if (height <= 0) return false;
-                    container.replaceChildren();
-                    container.style.height = `${height}px`;
+                    if (measurementOnly) {
+                        container.replaceChildren();
+                        container.style.height = `${height}px`;
+                    }
                 }
             }
             return block.isConnected;
@@ -1324,38 +1569,12 @@ const previewBridge = getPreviewBridge();
         }
 
         waitForTikzBatch(containers) {
-            return new Promise(resolve => {
-                let timeout = null;
-                let resolved = false;
-                const isSettled = container => (
-                    !container.isConnected
-                    || hasRenderedTikz(container)
-                    || container.getAttribute('data-tikz-state') === 'failed'
-                );
-                const cleanup = () => {
-                    document.removeEventListener('snaptex-tikz-settled', check, true);
-                    if (timeout) {
-                        clearTimeout(timeout);
-                    }
-                };
-                const check = () => {
-                    if (resolved || !containers.every(isSettled)) return;
-
-                    resolved = true;
-                    cleanup();
-                    resolve();
-                };
-
-                document.addEventListener('snaptex-tikz-settled', check, true);
-                timeout = setTimeout(() => {
-                    if (resolved) return;
-
-                    resolved = true;
-                    cleanup();
-                    resolve();
-                }, TIKZ_BATCH_RENDER_TIMEOUT_MS);
-                setTimeout(check, 0);
-            });
+            return Promise.all(containers.map(container => this.waitForMeasurement(
+                container,
+                ['snaptex-tikz-settled'],
+                () => hasRenderedTikz(container) || container.getAttribute('data-tikz-state') === 'failed',
+                TIKZ_BATCH_RENDER_TIMEOUT_MS
+            )));
         }
 
         async runTikzRenderBatch() {
@@ -1392,7 +1611,7 @@ const previewBridge = getPreviewBridge();
         }
 
         scheduleInitialVirtualExpansion(includeHeavyWork) {
-            if (this.initialExpansionFrame) {
+            if (this.initialExpansionFrame !== null) {
                 cancelAnimationFrame(this.initialExpansionFrame);
             }
 
@@ -1446,22 +1665,37 @@ const previewBridge = getPreviewBridge();
             } else {
                 this.restoreScrollState(savedScrollState);
             }
-            this.scheduleHeightWarmup(150);
+        }
+
+        getPatchPaginationRange(payload) {
+            const dirtyIndices = Object.keys(payload.dirtyBlocks || {}).map(Number).filter(Number.isFinite);
+            const firstChangedIndex = Math.min(payload.start, ...dirtyIndices);
+            const insertedEnd = payload.start + Math.max(0, (payload.htmls?.length || 0) - 1);
+            const paginationIndex = payload.deleteCount === 0 && (payload.htmls?.length || 0) > 0
+                ? Math.min(firstChangedIndex, Math.max(0, payload.start - 1))
+                : firstChangedIndex;
+            return {
+                startIndex: this.pagination.isEnabled()
+                    ? this.pagination.getPageStartIndex(paginationIndex)
+                    : paginationIndex,
+                lastChangedIndex: Math.max(payload.start, insertedEnd, ...dirtyIndices)
+            };
         }
 
         handleScrollCommand(data) {
+            if (this.interactiveResizeActive) return;
             this.deferHeightWarmup();
             if (this.state === 'RENDERING' || this.isFirstLoad) { this.pendingScroll = data; }
             else { this.executeScroll(data); }
         }
 
         onScroll() {
-            if (this.state !== 'IDLE') return;
+            if (this.state !== 'IDLE' || this.interactiveResizeActive) return;
             const now = Date.now();
             if (now < this.previewLayoutSyncSuppressedUntil) return;
             if (now - this.lastScrollTime < this.config.autoScrollDelay) return;
             this.lastScrollTime = now;
-            const blocks = document.querySelectorAll('.latex-block, .latex-block-shell');
+            const blocks = this.contentRoot.children;
             const viewCenter = window.innerHeight / 2;
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
@@ -1472,7 +1706,17 @@ const previewBridge = getPreviewBridge();
                         const offset = viewCenter - rect.top;
                         ratio = Math.max(0, Math.min(1, offset / rect.height));
                     }
-                    previewBridge.postMessage({ command: PreviewToHostCommand.SyncScroll, index: index, ratio: ratio });
+                    const sourceAnchor = Array.from(block.querySelectorAll('[data-sn-src-start]')).find(element => {
+                        const anchorRect = element.getBoundingClientRect();
+                        return anchorRect.top <= viewCenter && anchorRect.bottom >= viewCenter;
+                    });
+                    previewBridge.postMessage({
+                        command: PreviewToHostCommand.SyncScroll,
+                        index,
+                        ratio,
+                        sourceStart: sourceAnchor ? Number(sourceAnchor.getAttribute('data-sn-src-start')) : undefined,
+                        sourceEnd: sourceAnchor ? Number(sourceAnchor.getAttribute('data-sn-src-end')) : undefined
+                    });
                     break;
                 }
             }
@@ -1530,7 +1774,7 @@ const previewBridge = getPreviewBridge();
                 return { scrollY: 0 };
             }
 
-            const blocks = document.querySelectorAll('.latex-block, .latex-block-shell');
+            const blocks = this.contentRoot.children;
             for (const block of blocks) {
                 const rect = block.getBoundingClientRect();
                 if (rect.bottom > 0 && rect.top < window.innerHeight) {
@@ -1615,33 +1859,10 @@ const previewBridge = getPreviewBridge();
             }
         }
 
-        shouldReplaceBlock(oldBlock, newBlock, preserveUnchangedBlocks) {
-            if (!preserveUnchangedBlocks) return true;
-
-            const oldHash = oldBlock.getAttribute('data-block-hash');
-            const newHash = newBlock.getAttribute('data-block-hash');
-            if (!oldHash || !newHash) return true;
-
-            return oldHash !== newHash;
-        }
-
-        smartFullUpdateFromBlocks(htmls, preserveUnchangedBlocks = true) {
+        smartFullUpdate(htmls, preserveUnchangedBlocks = true) {
             const newElements = htmls
                 .map(html => parseFirstElementFromHtml(html))
                 .filter(Boolean);
-            this.smartFullUpdateElements(newElements, preserveUnchangedBlocks);
-        }
-
-        smartFullUpdateFromBlockMetadata(blocks, options = {}) {
-            this.virtualization.replaceContentWithBlockMetadata(
-                blocks,
-                block => this.onVirtualBlockMounted(block),
-                shell => this.requestVirtualBlockHtml(shell),
-                options
-            );
-        }
-
-        smartFullUpdateElements(newElements, preserveUnchangedBlocks = true) {
             if (this.virtualization.isEnabled()) {
                 this.virtualization.replaceContentWithShells(newElements, block => this.onVirtualBlockMounted(block));
                 return;
@@ -1660,7 +1881,9 @@ const previewBridge = getPreviewBridge();
                     continue;
                 }
                 if (!oldEl) { this.contentRoot.appendChild(newEl); continue; }
-                if (this.shouldReplaceBlock(oldEl, newEl, preserveUnchangedBlocks)) {
+                const oldHash = oldEl.getAttribute('data-block-hash');
+                const newHash = newEl.getAttribute('data-block-hash');
+                if (!preserveUnchangedBlocks || !oldHash || !newHash || oldHash !== newHash) {
                     this.replaceBlockPreservingTikz(oldEl, newEl);
                 }
             }
@@ -1676,18 +1899,20 @@ const previewBridge = getPreviewBridge();
             const { start, deleteCount, htmls = [], shift = 0 } = payload;
             const targetIndex = start + deleteCount;
             const referenceNode = this.contentRoot.children[targetIndex] || null;
+            const previousSibling = start > 0 ? this.contentRoot.children[start - 1] : null;
             const staleTikzByIndex = new Map();
+            const removedBlocks = [];
 
             for (let i = 0; i < deleteCount; i++) {
-                const block = this.contentRoot.children[start + i];
+                const block = this.contentRoot.children[start];
+                if (!block) break;
+                removedBlocks.push(block);
                 this.rememberStaleTikzPreviews(block, staleTikzByIndex);
-            }
-
-            for (let i = 0; i < deleteCount; i++) {
-                if (this.contentRoot.children[start]) this.contentRoot.removeChild(this.contentRoot.children[start]);
+                block.remove();
             }
             const insertedBlocks = htmls.map(html => parseFirstElementFromHtml(html)).filter(Boolean);
             this.insertElementsBefore(insertedBlocks, referenceNode);
+            this.pagination.transferPatchLayout(removedBlocks, insertedBlocks, previousSibling, referenceNode);
             insertedBlocks.forEach(block => {
                 const index = block.getAttribute('data-index');
                 this.attachStaleTikzPreviews(block, staleTikzByIndex.get(index));
@@ -1711,11 +1936,14 @@ const previewBridge = getPreviewBridge();
         applyVirtualPatch(payload) {
             const { start, deleteCount, htmls = [], shift = 0 } = payload;
             const referenceNode = this.contentRoot.children[start + deleteCount] || null;
+            const previousSibling = start > 0 ? this.contentRoot.children[start - 1] : null;
             const staleTikzByIndex = new Map();
+            const removedShells = [];
 
             for (let i = 0; i < deleteCount; i++) {
                 const shell = this.contentRoot.children[start];
                 if (!shell) break;
+                removedShells.push(shell);
                 this.rememberStaleTikzPreviews(shell, staleTikzByIndex);
                 this.virtualization.unobserveShell(shell);
                 shell.remove();
@@ -1733,6 +1961,7 @@ const previewBridge = getPreviewBridge();
             });
 
             this.insertElementsBefore(insertedShells, referenceNode);
+            this.pagination.transferPatchLayout(removedShells, insertedShells, previousSibling, referenceNode);
 
             if (shift !== 0) {
                 this.virtualization.remapShellIndicesFromDomPosition(start + insertedShells.length, shift);
@@ -1750,6 +1979,7 @@ const previewBridge = getPreviewBridge();
                 this.stashStaleTikzPreviewsOnShell(newShell, previews);
                 this.virtualization.unobserveShell(shell);
                 shell.replaceWith(newShell);
+                this.pagination.transferPatchLayout([shell], [newShell]);
             });
 
             this.updateVirtualizedBlocks();
@@ -1766,6 +1996,13 @@ const previewBridge = getPreviewBridge();
                 this.fillBlockNumbering(blockEl, counts);
             }
             this.fillReferences(document, labels);
+        }
+
+        fillCurrentNumbering(block) {
+            if (!this.currentNumbering) return;
+            const index = block.getAttribute('data-index');
+            this.fillBlockNumbering(block, this.currentNumbering.blocks?.[index]);
+            this.fillReferences(block, this.currentNumbering.labels);
         }
 
         fillBlockNumbering(block, counts) {
@@ -1822,12 +2059,12 @@ const previewBridge = getPreviewBridge();
         }
 
         schedulePendingPdfRender() {
-            if (this.pdfRenderTimer) clearTimeout(this.pdfRenderTimer);
+            if (this.pdfRenderTimer !== null) clearTimeout(this.pdfRenderTimer);
 
             let timeout;
             const run = () => {
                 if (this.pdfRenderTimer !== timeout) return;
-                if (this.pdfRenderTimer) {
+                if (this.pdfRenderTimer !== null) {
                     clearTimeout(this.pdfRenderTimer);
                     this.pdfRenderTimer = null;
                 }

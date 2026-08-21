@@ -1,11 +1,15 @@
 // @ts-nocheck
 /* eslint-disable curly */
 
+import { PREVIEW_RESIZE_ACTIVE_CLASS } from './viewport';
+
 const BLOCK_VIRTUALIZATION_INITIAL_PRELOAD_MARGIN_VH = 120;
 const BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN_VH = 250;
 const BLOCK_VIRTUALIZATION_RETAIN_MARGIN_VH = 400;
 export const BLOCK_VIRTUALIZATION_CLEANUP_DELAY_MS = 700;
+export const HEIGHT_MEASUREMENT_CANCEL_EVENT = 'snaptex-height-measurement-cancelled';
 const BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT = 180;
+const HEIGHT_CACHE_WIDTH_TOLERANCE = 0.005;
 
 export function viewportHeightToPixels(valueInVh) {
     return Math.max(0, Math.round(window.innerHeight * valueInVh / 100));
@@ -54,7 +58,9 @@ export class BlockVirtualizationController {
         }
 
         setFontSize(value) {
-            this.fontSize = parseFloat(value) || this.fontSize;
+            const previous = this.fontSize;
+            this.fontSize = parseFloat(value) || previous;
+            return this.fontSize / previous;
         }
 
         resetHeightCache() {
@@ -68,6 +74,8 @@ export class BlockVirtualizationController {
         }
 
         cancelHeightMeasurement() {
+            this.measurementHost?.querySelector('.latex-block')
+                ?.dispatchEvent(new Event(HEIGHT_MEASUREMENT_CANCEL_EVENT));
             this.measurementHost?.remove();
             this.measurementHost = null;
         }
@@ -92,17 +100,17 @@ export class BlockVirtualizationController {
             return Math.max(BLOCK_VIRTUALIZATION_DEFAULT_HEIGHT, Math.min(1400, lineCount * 28));
         }
 
-        getContentWidth() {
-            const style = getComputedStyle(this.contentRoot);
+        getMeasurementWidth(style = getComputedStyle(this.contentRoot)) {
             const horizontalPadding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
             return Math.max(1, this.contentRoot.clientWidth - horizontalPadding);
         }
 
-        cacheBlockHeight(key, height, fontSize = this.fontSize, width = this.getContentWidth()) {
+        cacheBlockHeight(key, height, fontSize = this.fontSize, measurementWidth = this.getMeasurementWidth(), settled = false) {
             if (key && Number.isFinite(height) && height >= 0) {
                 this.heightCache.set(key, {
                     heightEm: height / fontSize,
-                    widthEm: width / fontSize
+                    widthEm: measurementWidth / fontSize,
+                    settled
                 });
             }
         }
@@ -112,11 +120,11 @@ export class BlockVirtualizationController {
             return cached === undefined ? undefined : cached.heightEm * this.fontSize;
         }
 
-        hasMeasuredHeight(element, contentWidth = this.getContentWidth()) {
+        hasMeasuredHeight(element, measurementWidth = this.getMeasurementWidth()) {
             const cached = this.heightCache.get(this.getBlockKey(element));
-            if (!cached) return false;
-            const widthEm = contentWidth / this.fontSize;
-            return Math.abs(cached.widthEm - widthEm) <= Math.max(0.5, widthEm * 0.01);
+            if (!cached?.settled) return false;
+            const widthEm = measurementWidth / this.fontSize;
+            return Math.abs(cached.widthEm - widthEm) / Math.max(cached.widthEm, widthEm) < HEIGHT_CACHE_WIDTH_TOLERANCE;
         }
 
         forgetBlockHeight(element) {
@@ -130,7 +138,8 @@ export class BlockVirtualizationController {
             if (!key) return;
 
             const rect = block.getBoundingClientRect();
-            this.cacheBlockHeight(key, Math.ceil(rect.height));
+            const settled = this.hasMeasuredHeight(block);
+            this.cacheBlockHeight(key, Math.ceil(rect.height), this.fontSize, this.getMeasurementWidth(), settled);
         }
 
         getAnchorIdsFromBlock(block) {
@@ -193,18 +202,25 @@ export class BlockVirtualizationController {
             return this.viewportAnchor.preserve(shells || this.getShells(), callback);
         }
 
-        refreshMountedShellHeight(shell) {
+        refreshMountedShellHeight(shell, settled = false) {
             if (!this.getShellBlock(shell)) return undefined;
 
             const height = this.measureMountedBlockHeight(shell);
             const key = this.getBlockKey(shell);
-            this.cacheBlockHeight(key, height);
+            this.cacheBlockHeight(key, height, this.fontSize, this.getMeasurementWidth(), settled);
             if (this.isShellAboveViewport(shell)) {
                 this.lockShellHeight(shell, height);
             } else {
                 this.unlockShellHeight(shell);
             }
             return height;
+        }
+
+        settleMountedShellHeight(shell) {
+            if (!this.getShellBlock(shell)) return undefined;
+            delete shell._snaptexReservedHeight;
+            this.unlockShellHeight(shell);
+            return this.refreshMountedShellHeight(shell, true);
         }
 
         observeShell(shell) {
@@ -226,18 +242,24 @@ export class BlockVirtualizationController {
         }
 
         onShellResize(entries) {
+            if (document.body.classList.contains(PREVIEW_RESIZE_ACTIVE_CLASS)
+                || this.contentRoot.getBoundingClientRect().width <= 0) return;
             let scrollDelta = 0;
-            const contentWidth = this.getContentWidth();
+            const preserveViewport = !this.viewportAnchor.isPinned();
+            const measurementWidth = this.getMeasurementWidth();
             entries.forEach(entry => {
                 const shell = entry.target;
-                const nextHeight = Math.ceil(entry.contentRect.height);
+                if (Number.isFinite(shell._snaptexReservedHeight)) return;
+                const nextHeight = this.measureMountedBlockHeight(shell);
                 const key = this.getBlockKey(shell);
                 const previousHeight = this.getCachedBlockHeight(key);
-                if (previousHeight !== undefined
+                const settled = this.hasMeasuredHeight(shell, measurementWidth);
+                if (preserveViewport
+                    && previousHeight !== undefined
                     && this.wasShellAboveViewport(shell, previousHeight)) {
                     scrollDelta += nextHeight - previousHeight;
                 }
-                this.cacheBlockHeight(key, nextHeight, this.fontSize, contentWidth);
+                this.cacheBlockHeight(key, nextHeight, this.fontSize, measurementWidth, settled);
             });
             if (Math.abs(scrollDelta) >= 1 && window.scrollY > 0) {
                 window.scrollBy(0, scrollDelta);
@@ -301,7 +323,12 @@ export class BlockVirtualizationController {
         }
 
         getShells() {
-            return Array.from(this.contentRoot.querySelectorAll('.latex-block-shell'));
+            const shells = [];
+            for (let index = 0; index < this.contentRoot.children.length; index++) {
+                const element = this.contentRoot.children[index];
+                if (element.classList.contains('latex-block-shell')) { shells.push(element); }
+            }
+            return shells;
         }
 
         getShellBlock(shell) {
@@ -318,21 +345,6 @@ export class BlockVirtualizationController {
             return isElementWithinViewportMargins(shell, this.getMountMargin(phase));
         }
 
-        isShellInRetainRange(shell) {
-            return isElementWithinViewportMargins(shell, viewportHeightToPixels(BLOCK_VIRTUALIZATION_RETAIN_MARGIN_VH));
-        }
-
-        pruneHtmlCacheOutsideRetainRange(shells = this.getShells()) {
-            shells.forEach(shell => {
-                if (this.getShellBlock(shell) || shell.getAttribute('data-html-request-id') || this.isShellInRetainRange(shell)) return;
-
-                const key = this.getBlockKey(shell);
-                const index = this.getBlockIndex(shell);
-                if (key) { this.htmlCache.delete(key); }
-                if (index && index !== key) { this.htmlCache.delete(index); }
-            });
-        }
-
         mountShell(shell, onMissingHtml) {
             if (!this.enabled || this.getShellBlock(shell)) return null;
 
@@ -347,17 +359,23 @@ export class BlockVirtualizationController {
             if (!block) return null;
 
             const reservedHeight = this.getShellHeightBaseline(shell);
+            const preserveMeasuredHeight = this.hasMeasuredHeight(shell);
             shell.textContent = '';
             shell.appendChild(block);
             if (this.isShellAboveViewport(shell)) {
                 this.lockShellHeight(shell, reservedHeight);
+                if (preserveMeasuredHeight) {shell._snaptexReservedHeight = reservedHeight;}
+            } else if (preserveMeasuredHeight) {
+                this.unlockShellHeight(shell);
+                shell.style.minHeight = `${reservedHeight / this.fontSize}em`;
+                shell._snaptexReservedHeight = reservedHeight;
             } else {
                 this.unlockShellHeight(shell);
             }
             shell.setAttribute('data-mounted', 'true');
             this.setShellAnchors(shell, this.getAnchorIdsFromBlock(block));
             this.observeShell(shell);
-            this.refreshMountedShellHeight(shell);
+            if (!preserveMeasuredHeight) {this.refreshMountedShellHeight(shell);}
             return block;
         }
 
@@ -365,9 +383,14 @@ export class BlockVirtualizationController {
             const block = this.getShellBlock(shell);
             if (!block) return;
 
-            this.rememberBlockHeight(block);
             const key = this.getBlockKey(block);
-            const height = this.getCachedBlockHeight(key) ?? Math.ceil(block.getBoundingClientRect().height);
+            const reservedHeight = shell._snaptexReservedHeight;
+            if (!Number.isFinite(reservedHeight)) {this.rememberBlockHeight(block);}
+            const height = Number.isFinite(reservedHeight)
+                ? reservedHeight
+                : this.getCachedBlockHeight(key) ?? Math.ceil(block.getBoundingClientRect().height);
+            delete shell._snaptexReservedHeight;
+            block.dispatchEvent(new Event(HEIGHT_MEASUREMENT_CANCEL_EVENT));
             block.remove();
             this.lockShellHeight(shell, height);
             shell.setAttribute('data-mounted', 'false');
@@ -375,29 +398,39 @@ export class BlockVirtualizationController {
         }
 
         updateMountedShells(onMount, onMissingHtml, options = {}) {
-            if (!this.enabled) return [];
+            if (!this.enabled || this.contentRoot.getBoundingClientRect().width <= 0) return [];
 
             const shells = this.getShells();
             const update = () => {
                 const mounted = [];
                 const phase = options.phase || 'normal';
                 const allowUnmount = options.allowUnmount !== false;
+                const mountMargin = this.getMountMargin(phase);
+                const retainMargin = viewportHeightToPixels(BLOCK_VIRTUALIZATION_RETAIN_MARGIN_VH);
                 shells.forEach(shell => {
-                    if (this.isShellInMountRange(shell, phase)) {
-                        const block = this.mountShell(shell, onMissingHtml);
-                        if (block) {
-                            mounted.push(block);
-                            if (onMount) { onMount(block); }
-                        } else {
-                            this.refreshMountedShellHeight(shell);
+                    const rect = shell.getBoundingClientRect();
+                    const inMountRange = rect.bottom >= -mountMargin && rect.top <= window.innerHeight + mountMargin;
+                    const inRetainRange = rect.bottom >= -retainMargin && rect.top <= window.innerHeight + retainMargin;
+                    let block = this.getShellBlock(shell);
+                    if (inMountRange) {
+                        if (!block) {
+                            block = this.mountShell(shell, onMissingHtml);
+                            if (block) {
+                                mounted.push(block);
+                                if (onMount) { onMount(block); }
+                            }
                         }
-                    } else if (allowUnmount && this.getShellBlock(shell) && !this.isShellInRetainRange(shell)) {
+                    } else if (allowUnmount && block && !inRetainRange) {
                         this.unmountShell(shell);
+                        block = null;
                     }
+                    if (!options.pruneHtmlCache || block || shell.getAttribute('data-html-request-id') || inRetainRange) return;
+
+                    const key = this.getBlockKey(shell);
+                    const index = this.getBlockIndex(shell);
+                    if (key) { this.htmlCache.delete(key); }
+                    if (index && index !== key) { this.htmlCache.delete(index); }
                 });
-                if (options.pruneHtmlCache) {
-                    this.pruneHtmlCacheOutsideRetainRange(shells);
-                }
                 return mounted;
             };
             return options.preserveViewportAnchor === false
@@ -450,40 +483,40 @@ export class BlockVirtualizationController {
                 || this.htmlCache.get(this.getBlockIndex(shell));
         }
 
-        ensureMeasurementHost() {
-            const style = getComputedStyle(this.contentRoot);
+        ensureMeasurementHost(measurementWidth) {
             if (!this.measurementHost?.isConnected) {
+                const style = getComputedStyle(this.contentRoot);
                 this.measurementHost = document.createElement('div');
                 (this.contentRoot.parentElement ?? document.body).appendChild(this.measurementHost);
+                Object.assign(this.measurementHost.style, {
+                    position: 'fixed',
+                    left: '-100000px',
+                    top: '0',
+                    width: `${measurementWidth ?? this.getMeasurementWidth(style)}px`,
+                    visibility: 'hidden',
+                    pointerEvents: 'none',
+                    contain: 'layout style paint',
+                    height: 'auto',
+                    overflow: 'visible',
+                    font: style.font,
+                    fontSize: style.fontSize,
+                    lineHeight: style.lineHeight,
+                    letterSpacing: style.letterSpacing,
+                    wordSpacing: style.wordSpacing,
+                    textAlign: style.textAlign
+                });
             }
-            Object.assign(this.measurementHost.style, {
-                position: 'fixed',
-                left: '-100000px',
-                top: '0',
-                width: `${this.getContentWidth()}px`,
-                visibility: 'hidden',
-                pointerEvents: 'none',
-                contain: 'layout style paint',
-                height: 'auto',
-                overflow: 'visible',
-                font: style.font,
-                fontSize: style.fontSize,
-                lineHeight: style.lineHeight,
-                letterSpacing: style.letterSpacing,
-                wordSpacing: style.wordSpacing,
-                textAlign: style.textAlign
-            });
             return this.measurementHost;
         }
 
-        async measureBlockHtml(shell, html, prepareBlock) {
+        async measureBlockHtml(shell, html, prepareBlock, measurementWidth) {
             if (!shell?.isConnected) return undefined;
             if (this.getShellBlock(shell)) return this.refreshMountedShellHeight(shell);
 
             const block = parseFirstElementFromHtml(html);
             if (!block) return undefined;
 
-            const host = this.ensureMeasurementHost();
+            const host = this.ensureMeasurementHost(measurementWidth);
             const measurementShell = document.createElement('div');
             measurementShell.className = 'latex-block-shell';
             measurementShell.setAttribute('data-mounted', 'true');
@@ -492,7 +525,6 @@ export class BlockVirtualizationController {
 
             try {
                 if (prepareBlock && await prepareBlock(block) === false) return undefined;
-                await new Promise(resolve => requestAnimationFrame(resolve));
                 if (!host.isConnected || measurementShell.parentElement !== host) return undefined;
                 const height = Math.ceil(Math.max(measurementShell.getBoundingClientRect().height, measurementShell.scrollHeight));
                 if (!shell.isConnected || this.getBlockKey(shell) !== this.getBlockKey(block)) return undefined;
@@ -501,7 +533,8 @@ export class BlockVirtualizationController {
                     key,
                     height,
                     parseFloat(host.style.fontSize) || this.fontSize,
-                    parseFloat(host.style.width) || this.getContentWidth()
+                    parseFloat(host.style.width) || this.getMeasurementWidth(),
+                    true
                 );
                 this.withViewportAnchorPreserved(() => this.lockShellHeight(shell, height));
                 return height;
