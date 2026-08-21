@@ -14,7 +14,6 @@ media/demo/*.gif
 **/*.ts
 **/.vscode-test.*
 .conda
-!node_modules\@iktakahiro\markdown-it-katex\node_modules\katex\dist
 dist-web/**
 apps/**
 demo/**

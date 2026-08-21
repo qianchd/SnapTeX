@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { TexPreviewPanel } from './panel';
-import { findNearestSyncAnchorLine, getSyncAnchorContext, normalizeUri } from '../../../src/utils';
-import { HostToPreviewCommand } from '../../../src/preview-messages';
+import { getSyncAnchorContext, normalizeUri } from '../../../src/utils';
+import { HostToPreviewCommand, type RevealLineMessage, type SyncScrollMessage } from '../../../src/preview-messages';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { VscodeFileProvider } from './vscode-file-provider';
 
@@ -17,20 +17,30 @@ const FLASH_ANIMATION_STEPS = [
 
 let isEditorScrolling = false;
 let scrollEndTimer: NodeJS.Timeout | undefined;
-let autoSyncTimer: NodeJS.Timeout | undefined;
 let currentRenderedUri: vscode.Uri | undefined;
-let activeCursorScreenRatio: number = 0.5;
+let activeCursorScreenRatio = 0.5;
 let suppressTextToPreviewUntil = 0;
 let suppressPreviewToTextUntil = 0;
 
 const isAutoScrollSyncEnabled = () => vscode.workspace.getConfiguration('snaptex').get<boolean>('autoScrollSync', true);
 
-const debounce = <Args extends unknown[]>(func: (...args: Args) => void, waitGetter: () => number) => {
+type Debounced<Args extends unknown[]> = ((...args: Args) => void) & { cancel(): void };
+
+const debounce = <Args extends unknown[]>(func: (...args: Args) => void, waitGetter: () => number): Debounced<Args> => {
     let timeout: NodeJS.Timeout | undefined;
-    return (...args: Args) => {
-        if (timeout) { clearTimeout(timeout); }
-        timeout = setTimeout(() => func(...args), waitGetter());
+    const cancel = () => {
+        if (timeout !== undefined) { clearTimeout(timeout); }
+        timeout = undefined;
     };
+    const debounced = (...args: Args) => {
+        cancel();
+        timeout = setTimeout(() => {
+            timeout = undefined;
+            func(...args);
+        }, waitGetter());
+    };
+    debounced.cancel = cancel;
+    return debounced;
 };
 
 const getAutoScrollDelay = () => Math.max(0, vscode.workspace.getConfiguration('snaptex').get<number>('autoScrollDelay', 100));
@@ -94,29 +104,24 @@ export function activate(context: vscode.ExtensionContext) {
         });
     };
 
-    const clearPendingAutoSync = () => {
-        if (autoSyncTimer) { clearTimeout(autoSyncTimer); }
-        autoSyncTimer = undefined;
+    const shouldSuppressTextToPreview = () => Date.now() < suppressTextToPreviewUntil;
+    const canAutoSyncTextToPreview = () => {
+        if (!TexPreviewPanel.currentPanel || !isAutoScrollSyncEnabled()) { return false; }
+        if (!shouldSuppressTextToPreview()) { return true; }
+        scheduleAutoSyncToPreview.cancel();
+        return false;
     };
 
-    const shouldSuppressTextToPreview = () => Date.now() < suppressTextToPreviewUntil;
-
-    const scheduleAutoSyncToPreview = (
+    const scheduleAutoSyncToPreview = debounce((
         editor: vscode.TextEditor,
         targetLine: number,
         viewRatio: number,
-        targetChar?: number,
-        delayMs: number = getAutoScrollDelay()
+        targetChar?: number
     ) => {
-        clearPendingAutoSync();
-        autoSyncTimer = setTimeout(() => {
-            autoSyncTimer = undefined;
-            if (shouldSuppressTextToPreview()) {
-                return;
-            }
+        if (!shouldSuppressTextToPreview()) {
             void triggerSyncToPreview(editor, targetLine, true, viewRatio, targetChar);
-        }, delayMs);
-    };
+        }
+    }, getAutoScrollDelay);
 
     /**
      * Updates the preview target according to the active editor, subfile mapping,
@@ -163,7 +168,8 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
         const rootUri = currentRenderedUri ?? vscode.window.activeTextEditor?.document.uri;
-        clearPendingAutoSync();
+        scheduleAutoSyncToPreview.cancel();
+        debouncedUpdatePreview.cancel();
         if (rootUri) {
             currentRenderedUri = rootUri;
         }
@@ -211,21 +217,19 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.syncToPreview', () => {
         const editor = vscode.window.activeTextEditor;
-        clearPendingAutoSync();
+        scheduleAutoSyncToPreview.cancel();
         if (editor) { void triggerSyncToPreview(editor, editor.selection.active.line, false, activeCursorScreenRatio, editor.selection.active.character); }
     }));
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('snaptex.internal.revealLine', async (_uri: vscode.Uri, index: number, ratio: number, anchors: string[] = [], viewRatio: number = 0.5, sourceStart?: number, sourceEnd?: number) => {
-            clearPendingAutoSync();
+        vscode.commands.registerCommand('snaptex.internal.revealLine', async (message: RevealLineMessage) => {
+            scheduleAutoSyncToPreview.cancel();
             suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
-            const sourceLoc = updateService.getSourceSyncData(index, ratio, anchors, sourceStart, sourceEnd);
+            const sourceLoc = updateService.getSourceSyncData(message.index, message.ratio, message);
             if (!sourceLoc) {return;}
 
             const targetUri = vscode.Uri.parse(sourceLoc.file);
-            let targetLine = sourceLoc.line;
-
             let targetEditor = vscode.window.visibleTextEditors.find(e => areUrisEqual(e.document.uri, targetUri));
 
             if (!targetEditor) {
@@ -240,18 +244,13 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.window.showTextDocument(targetEditor.document, { viewColumn: targetEditor.viewColumn });
             }
 
-            if (anchors.length > 0) {
-                const startLine = Math.max(0, sourceLoc.blockRange?.startLine ?? targetLine - 5);
-                const endLine = Math.min(targetEditor.document.lineCount - 1, sourceLoc.blockRange?.endLine ?? targetLine + 10);
-                targetLine = findNearestSyncAnchorLine(anchors, startLine, endLine, targetLine, line => targetEditor.document.lineAt(line).text) ?? targetLine;
-            }
-
-            const range = targetEditor.document.lineAt(Math.max(0, Math.min(targetLine, targetEditor.document.lineCount - 1))).range;
+            const targetLine = Math.max(0, Math.min(sourceLoc.line, targetEditor.document.lineCount - 1));
+            const range = targetEditor.document.lineAt(targetLine).range;
 
             const visible = targetEditor.visibleRanges[0];
             if (visible) {
                 const height = visible.end.line - visible.start.line;
-                const startLine = Math.max(0, Math.floor(targetLine - height * viewRatio));
+                const startLine = Math.max(0, Math.floor(targetLine - height * (message.viewRatio ?? 0.5)));
                 targetEditor.revealRange(new vscode.Range(startLine, 0, startLine, 0), vscode.TextEditorRevealType.AtTop);
             } else {
                 targetEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
@@ -262,14 +261,14 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.syncScroll', (index: number, ratio: number) => {
+    context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.syncScroll', (message: SyncScrollMessage) => {
         if (!isAutoScrollSyncEnabled()) { return; }
         if (Date.now() < suppressPreviewToTextUntil) { return; }
 
-        clearPendingAutoSync();
+        scheduleAutoSyncToPreview.cancel();
         suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
 
-        const sourceLoc = updateService.getSourceSyncData(index, ratio);
+        const sourceLoc = updateService.getSourceSyncData(message.index, message.ratio, message);
         if (!sourceLoc) {return;}
 
         const targetUri = vscode.Uri.parse(sourceLoc.file);
@@ -283,7 +282,7 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.previewLayoutChanged', () => {
-        clearPendingAutoSync();
+        scheduleAutoSyncToPreview.cancel();
         const until = Date.now() + getSyncSuppressionDuration();
         suppressTextToPreviewUntil = Math.max(suppressTextToPreviewUntil, until);
         suppressPreviewToTextUntil = Math.max(suppressPreviewToTextUntil, until);
@@ -299,27 +298,20 @@ export function activate(context: vscode.ExtensionContext) {
             activeCursorScreenRatio = Math.max(0.1, Math.min(0.9, activeCursorScreenRatio));
         }
 
-        if (!TexPreviewPanel.currentPanel) { return; }
-        if (!isAutoScrollSyncEnabled()) { return; }
-        if (shouldSuppressTextToPreview()) {
-            clearPendingAutoSync();
-            return;
-        }
+        if (!canAutoSyncTextToPreview()) { return; }
 
         scheduleAutoSyncToPreview(e.textEditor, sel.line, activeCursorScreenRatio, sel.character);
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
-        if (!TexPreviewPanel.currentPanel) { return; }
-        if (!isAutoScrollSyncEnabled()) { return; }
-        if (shouldSuppressTextToPreview()) {
-            clearPendingAutoSync();
-            return;
-        }
+        if (!canAutoSyncTextToPreview()) { return; }
 
         isEditorScrolling = true;
-        if (scrollEndTimer) {clearTimeout(scrollEndTimer);}
-        scrollEndTimer = setTimeout(() => { isEditorScrolling = false; }, getAutoScrollDelay());
+        if (scrollEndTimer !== undefined) {clearTimeout(scrollEndTimer);}
+        scrollEndTimer = setTimeout(() => {
+            scrollEndTimer = undefined;
+            isEditorScrolling = false;
+        }, getAutoScrollDelay());
 
         if (e.visibleRanges.length > 0) {
             const range = e.visibleRanges[0];

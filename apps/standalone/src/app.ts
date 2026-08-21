@@ -6,8 +6,8 @@ import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
-import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings } from '../../../src/types';
-import { decodeHtmlAttribute, escapeHtmlAttribute, findNearestSyncAnchorLine, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
+import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
+import { decodeHtmlAttribute, escapeHtmlAttribute, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
 declare global {
@@ -17,7 +17,9 @@ declare global {
     }
 }
 
-export interface StandaloneAppOptions {
+type PreviewRevealOptions = SourceSyncOptions & { viewRatio?: number };
+
+interface StandaloneAppOptions {
     editorParent: HTMLElement;
     initialText: string;
     rootPath?: string;
@@ -25,7 +27,7 @@ export interface StandaloneAppOptions {
     onStateChange?: (host: StandaloneHost) => void;
 }
 
-export interface StandaloneSaveResult {
+interface StandaloneSaveResult {
     path: string;
     text: string;
     wroteToSource: boolean;
@@ -75,7 +77,10 @@ function debounce(callback: () => void, delayMs: number | (() => number)): () =>
         if (timer !== undefined) {
             window.clearTimeout(timer);
         }
-        timer = window.setTimeout(callback, typeof delayMs === 'function' ? delayMs() : delayMs);
+        timer = window.setTimeout(() => {
+            timer = undefined;
+            callback();
+        }, typeof delayMs === 'function' ? delayMs() : delayMs);
     };
 }
 
@@ -103,9 +108,11 @@ export class StandaloneHost {
     private autosaveQueue: Promise<void> = Promise.resolve();
     private labels: string[] = [];
     private previewReady = false;
-    private programmaticEditorText: string | undefined;
+    private previewVisible = true;
+    private programmaticEditorUpdate = false;
     private suppressNextSelectionSync = false;
     private suppressEditorToPreviewUntil = 0;
+    private suppressPreviewToEditorUntil = 0;
     private editorFlashToken = 0;
     private settings: StandalonePreviewSettings;
 
@@ -282,15 +289,18 @@ export class StandaloneHost {
 
     private replaceEditorText(text: string) {
         const editorText = normalizeEditorText(text);
-        this.programmaticEditorText = editorText;
-        this.editorView.dispatch({
-            changes: { from: 0, to: this.editorView.state.doc.length, insert: editorText },
-            annotations: Transaction.addToHistory.of(false)
-        });
+        this.programmaticEditorUpdate = true;
+        try {
+            this.editorView.dispatch({
+                changes: { from: 0, to: this.editorView.state.doc.length, insert: editorText },
+                annotations: Transaction.addToHistory.of(false)
+            });
+        } finally {
+            this.programmaticEditorUpdate = false;
+        }
     }
 
-    private persistActiveEditorText() {
-        const text = this.editorView.state.doc.toString();
+    private persistActiveEditorText(text = this.editorView.state.doc.toString()) {
         this.fileProvider.setFile(this.activeUri, text);
         this.updateDirtyState(this.activeUri.path, text);
     }
@@ -332,14 +342,15 @@ export class StandaloneHost {
     }
 
     private markSaved(path: string, text: string) {
-        this.savedTexts.set(path, normalizeEditorText(text));
-        this.updateDirtyState(path, text);
+        const normalizedText = normalizeEditorText(text);
+        this.savedTexts.set(path, normalizedText);
+        this.updateDirtyState(path, normalizedText);
     }
 
     private updateDirtyState(path: string, text: string) {
         const wasDirty = this.dirtyPaths.has(path);
         const savedText = this.savedTexts.get(path);
-        const isDirty = savedText !== undefined && normalizeEditorText(text) !== savedText;
+        const isDirty = savedText !== undefined && text !== savedText;
         if (isDirty) {
             this.dirtyPaths.add(path);
         } else {
@@ -376,7 +387,7 @@ export class StandaloneHost {
     }
 
     syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5, auto = true) {
-        if (auto && !this.settings.autoScrollSync) {
+        if (this.shouldSuppressEditorToPreview() || (auto && !this.settings.autoScrollSync)) {
             return;
         }
         if (!this.previewReady) {
@@ -403,7 +414,14 @@ export class StandaloneHost {
     }
 
     shouldSuppressEditorToPreview(): boolean {
-        return Date.now() < this.suppressEditorToPreviewUntil;
+        return !this.previewVisible || Date.now() < this.suppressEditorToPreviewUntil;
+    }
+
+    setPreviewVisible(visible: boolean): void {
+        this.previewVisible = visible;
+        if (!visible) {
+            this.cancelPendingEditorSync();
+        }
     }
 
     private suppressEditorToPreview(durationMs = 500) {
@@ -430,8 +448,8 @@ export class StandaloneHost {
         return suppressed;
     }
 
-    private async openSourceForPreview(index: number, ratio: number, anchors: readonly string[] = [], sourceStart?: number, sourceEnd?: number) {
-        const source = this.updateService.getSourceSyncData(index, ratio, anchors, sourceStart, sourceEnd);
+    private async openSourceForPreview(index: number, ratio: number, options: SourceSyncOptions = {}) {
+        const source = this.updateService.getSourceSyncData(index, ratio, options);
         if (!source) {
             return undefined;
         }
@@ -447,30 +465,22 @@ export class StandaloneHost {
         };
     }
 
-    async revealPreviewLocation(index: number, ratio: number, anchors: readonly string[] = [], viewRatio = 0.5, sourceStart?: number, sourceEnd?: number) {
+    async revealPreviewLocation(index: number, ratio: number, options: PreviewRevealOptions = {}) {
         this.cancelPendingEditorSync();
-        const target = await this.openSourceForPreview(index, ratio, anchors, sourceStart, sourceEnd);
+        const target = await this.openSourceForPreview(index, ratio, options);
         if (!target) {
             return;
         }
 
         const { source, text } = target;
-        let targetLine = source.line;
-        if (anchors.length > 0) {
-            const lines = text.split(/\r?\n/);
-            const startLine = Math.max(0, source.blockRange?.startLine ?? targetLine - 5);
-            const endLine = Math.min(lines.length - 1, source.blockRange?.endLine ?? targetLine + 10);
-            targetLine = findNearestSyncAnchorLine(anchors, startLine, endLine, targetLine, line => lines[line] ?? '') ?? targetLine;
-        }
-
-        const position = Math.min(this.editorView.state.doc.length, offsetAtLine(text, Math.max(0, targetLine)));
+        const position = Math.min(this.editorView.state.doc.length, offsetAtLine(text, Math.max(0, source.line)));
         this.suppressNextSelectionSync = true;
         this.suppressEditorToPreview();
         this.editorView.dispatch({
             selection: { anchor: position },
             effects: flashEditorLineEffect.of(position)
         });
-        this.scrollEditorPositionToViewRatio(position, viewRatio);
+        this.scrollEditorPositionToViewRatio(position, options.viewRatio ?? 0.5);
         const token = ++this.editorFlashToken;
         globalThis.setTimeout(() => {
             if (token === this.editorFlashToken) {
@@ -479,14 +489,14 @@ export class StandaloneHost {
         }, 1200);
     }
 
-    async syncPreviewScroll(index: number, ratio: number) {
-        if (!this.settings.autoScrollSync) {
+    async syncPreviewScroll(index: number, ratio: number, options: SourceSyncOptions = {}) {
+        if (!this.settings.autoScrollSync || Date.now() < this.suppressPreviewToEditorUntil) {
             return;
         }
 
         this.cancelPendingEditorSync();
-        const target = await this.openSourceForPreview(index, ratio);
-        if (!target) {
+        const target = await this.openSourceForPreview(index, ratio, options);
+        if (!target || Date.now() < this.suppressPreviewToEditorUntil) {
             return;
         }
 
@@ -496,13 +506,9 @@ export class StandaloneHost {
     }
 
     handleEditorUpdate() {
+        if (this.programmaticEditorUpdate) { return; }
         const text = this.editorView.state.doc.toString();
-        if (this.programmaticEditorText === text) {
-            this.programmaticEditorText = undefined;
-            return;
-        }
-        this.programmaticEditorText = undefined;
-        this.persistActiveEditorText();
+        this.persistActiveEditorText(text);
         this.scheduleAutosave();
         if (this.settings.livePreview) {
             this.scheduleRender();
@@ -517,20 +523,25 @@ export class StandaloneHost {
                 void this.renderCurrentText();
                 break;
             case PreviewToHostCommand.RequestBlockHtml:
-                await this.handleBlockHtmlRequest(message.id, message.index, message.hash);
+                for (const request of message.requests) {
+                    await this.handleBlockHtmlRequest(request.id, request.index, request.hash);
+                }
                 break;
             case PreviewToHostCommand.RequestPdf:
                 await this.handlePdfRequest(message.id, message.path);
                 break;
             case PreviewToHostCommand.RevealLine:
-                void this.revealPreviewLocation(message.index, message.ratio, message.anchors ?? [], message.viewRatio, message.sourceStart, message.sourceEnd);
+                void this.revealPreviewLocation(message.index, message.ratio, message);
                 break;
             case PreviewToHostCommand.SyncScroll:
-                void this.syncPreviewScroll(message.index, message.ratio);
+                void this.syncPreviewScroll(message.index, message.ratio, message);
                 break;
-            case PreviewToHostCommand.PreviewLayoutChanged:
-                this.suppressEditorToPreview(Math.max(500, this.settings.autoScrollDelayMs + 300));
+            case PreviewToHostCommand.PreviewLayoutChanged: {
+                const duration = Math.max(500, this.settings.autoScrollDelayMs + 300);
+                this.suppressEditorToPreview(duration);
+                this.suppressPreviewToEditorUntil = Math.max(this.suppressPreviewToEditorUntil, Date.now() + duration);
                 break;
+            }
         }
     }
 
@@ -650,7 +661,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
         const selection = pendingSelection;
         pendingSelection = undefined;
         if (selection && !host?.shouldSuppressEditorToPreview()) {
-            void host?.syncEditorSelection(
+            host?.syncEditorSelection(
                 selection.line,
                 selection.character,
                 selection.text,

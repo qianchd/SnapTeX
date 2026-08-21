@@ -44,18 +44,14 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
     }
 
     setProjectFile(file: BrowserProjectFile) {
-        const normalizedPath = normalizeBrowserPath(file.path);
+        const { path, ...entry } = file;
+        const normalizedPath = normalizeBrowserPath(path);
         const existing = this.files.get(normalizedPath);
         if (existing?.objectUrl) {
             this.revokeObjectUrl(existing.objectUrl);
         }
         this.files.set(normalizedPath, {
-            text: file.text,
-            readText: file.readText,
-            writeText: file.writeText,
-            blob: file.blob,
-            readBlob: file.readBlob,
-            resourceUrl: file.resourceUrl,
+            ...entry,
             mtime: this.version++
         });
     }
@@ -93,7 +89,6 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         this.files.set(normalizedPath, {
             ...existing,
             text,
-            writeText: existing?.writeText,
             objectUrl: undefined,
             mtime: this.version++
         });

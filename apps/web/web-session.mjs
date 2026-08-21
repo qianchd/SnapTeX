@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
+import { readRequestText, sendJson } from './http-utils.mjs';
 
 const COOKIE_NAME = '__Host-snaptex-session';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -62,7 +63,7 @@ export function createWebSessionAuth(options) {
         }
         if (pathname === '/web-auth/login' && request.method === 'POST') {
             if (!sameOrigin(request, response, publicOrigin)) return true;
-            const form = new URLSearchParams(await readBody(request, MAX_LOGIN_BYTES));
+            const form = new URLSearchParams(await readRequestText(request, MAX_LOGIN_BYTES));
             const returnTo = safeReturnTo(form.get('return_to'), publicPath);
             const now = Date.now();
             const source = requestSource(request);
@@ -232,17 +233,6 @@ function readCookie(header = '', name) {
     return undefined;
 }
 
-async function readBody(request, maximum) {
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of request) {
-        size += chunk.length;
-        if (size > maximum) throw new Error('Request body is too large.');
-        chunks.push(chunk);
-    }
-    return Buffer.concat(chunks).toString('utf8');
-}
-
 function constantTimeEqual(left, right) {
     return timingSafeEqual(
         createHash('sha256').update(left).digest(),
@@ -257,11 +247,6 @@ function pruneSessions(sessions) {
 
 function sessionCookie(value, maxAge) {
     return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Strict`;
-}
-
-function sendJson(response, status, value) {
-    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    response.end(JSON.stringify(value));
 }
 
 function escapeHtml(value) {

@@ -154,7 +154,7 @@
         },
         "snaptex.previewFontSize": {
           "type": "string",
-          "default": "clamp(4px, 2.3cqw, 25px)",
+          "default": "2.8cqw",
           "description": "CSS font-size value used by the preview, such as '18px' or 'clamp(12px, 2vw, 24px)'."
         },
         "snaptex.previewLineHeight": {

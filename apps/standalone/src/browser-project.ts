@@ -104,7 +104,7 @@ export function createProjectTree(paths: readonly string[]): ProjectTreeNode {
     return root;
 }
 
-export interface BrowserProjectOperations {
+interface BrowserProjectOperations {
     createTextFile(path: string, text: string): Promise<BrowserProjectFile>;
     deleteFile(path: string): Promise<void>;
 }

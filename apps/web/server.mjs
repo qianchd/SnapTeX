@@ -5,6 +5,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { readRequestText, sendJson } from './http-utils.mjs';
 import { createWebSessionAuth } from './web-session.mjs';
 
 const repoRoot = realpathSync(resolve(fileURLToPath(new URL('../..', import.meta.url))));
@@ -184,14 +185,6 @@ async function replaceTextFile(filePath, text) {
     }
 }
 
-function sendJson(response, status, value) {
-    response.writeHead(status, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-store'
-    });
-    response.end(JSON.stringify(value));
-}
-
 function loadAssetHashes(root) {
     const manifestPath = join(root, 'asset-manifest.json');
     if (!existsSync(manifestPath)) return {};
@@ -291,19 +284,6 @@ async function sendFile(request, response, filePath, options = {}) {
     await pipeline(createReadStream(responsePath), response);
 }
 
-async function readTextBody(request) {
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of request) {
-        size += chunk.length;
-        if (size > maxWriteBytes) {
-            throw new Error('Request body is too large.');
-        }
-        chunks.push(chunk);
-    }
-    return Buffer.concat(chunks).toString('utf8');
-}
-
 async function handleProjectRequest(request, response, projectsRoot) {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
     if (pathname !== projectApiPrefix && !pathname.startsWith(`${projectApiPrefix}/`)) {
@@ -397,7 +377,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
     if (newFilePath) {
         await ensureProjectParent(projectRoot, newFilePath);
         try {
-            await writeFile(newFilePath, await readTextBody(request), { encoding: 'utf8', flag: 'wx' });
+            await writeFile(newFilePath, await readRequestText(request, maxWriteBytes), { encoding: 'utf8', flag: 'wx' });
         } catch (error) {
             if (error?.code === 'EEXIST') {
                 sendJson(response, 409, { error: 'File already exists.' });
@@ -423,7 +403,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
         return true;
     }
     if (request.method === 'PUT' && projectTextFilePattern.test(filePath)) {
-        await replaceTextFile(filePath, await readTextBody(request));
+        await replaceTextFile(filePath, await readRequestText(request, maxWriteBytes));
         response.writeHead(204);
         response.end();
         return true;

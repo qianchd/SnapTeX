@@ -4,6 +4,7 @@ import { insertNewlineAndIndent, insertNewlineKeepIndent } from '@codemirror/com
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { keymap } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
+import { escapeRegExp } from '../../../src/utils';
 
 // Keep the third-party LaTeX package behind a narrow boundary so its ESM-oriented declarations
 // do not leak into SnapTeX's CommonJS test and extension build.
@@ -72,7 +73,7 @@ function uniqueSorted(values: readonly string[]): string[] {
 
 function commandArgMatch(context: CompletionContext, commands: readonly string[]): { from: number; command: string } | undefined {
     const before = context.state.sliceDoc(Math.max(0, context.pos - 160), context.pos);
-    const commandPattern = commands.map(command => command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const commandPattern = commands.map(escapeRegExp).join('|');
     const match = before.match(new RegExp(`\\\\(${commandPattern})\\*?(?:\\[[^\\]]*\\]){0,2}\\{([^{}]*)$`));
     if (!match) { return undefined; }
     return {

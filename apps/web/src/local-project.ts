@@ -19,20 +19,18 @@ export interface BrowserDirectoryHandle {
     removeEntry(name: string): Promise<void>;
 }
 
-function writableText(handle: BrowserFileHandle): (text: string) => Promise<void> {
-    return async text => {
-        const writable = await handle.createWritable();
-        await writable.write(text);
-        await writable.close();
-    };
+async function writeText(handle: BrowserFileHandle, text: string): Promise<void> {
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
 }
 
-export async function projectFileFromHandle(handle: BrowserFileHandle, path: string): Promise<BrowserProjectFile> {
+async function projectFileFromHandle(handle: BrowserFileHandle, path: string): Promise<BrowserProjectFile> {
     if (isProjectTextFile(path)) {
         return {
             path,
             readText: async () => (await handle.getFile()).text(),
-            writeText: writableText(handle)
+            writeText: text => writeText(handle, text)
         };
     }
     return { path, readBlob: async () => handle.getFile() };
@@ -76,7 +74,7 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
             createTextFile: async (path, text) => {
                 const [parent, name] = await projectFileParent(directory, path, true);
                 const handle = await parent.getFileHandle(name, { create: true });
-                await writableText(handle)(text);
+                await writeText(handle, text);
                 return projectFileFromHandle(handle, normalizeBrowserPath(path));
             },
             deleteFile: async path => {

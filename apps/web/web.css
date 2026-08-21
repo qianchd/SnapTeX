@@ -874,6 +874,19 @@ body.is-resizing-split {
     user-select: none;
 }
 
+body.is-resizing-split::after {
+    content: "";
+    position: fixed;
+    z-index: 30;
+    top: 0;
+    bottom: 0;
+    left: var(--snaptex-web-resize-indicator-left);
+    width: var(--snaptex-web-splitter-width);
+    background: var(--snaptex-active-fg);
+    pointer-events: none;
+    transform: translateX(-50%);
+}
+
 body.is-resizing-split #editor-pane,
 body.is-resizing-split #preview-pane {
     pointer-events: none;
@@ -932,7 +945,7 @@ body.is-resizing-split #preview-pane {
 }
 
 #content-root {
-    --base-font-size: var(--snaptex-preview-base-font-size, clamp(12px, 2.35cqw, 40px));
+    --base-font-size: var(--snaptex-preview-base-font-size, 2.8cqw);
 
     max-width: var(--snaptex-preview-content-max-width, 920px);
     margin: 0 auto;

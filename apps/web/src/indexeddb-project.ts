@@ -58,7 +58,7 @@ export interface BrowserImportFile {
     file: Blob;
 }
 
-export interface BrowserWorkspaceSummary {
+interface BrowserWorkspaceSummary {
     id: string;
     name: string;
     rootPath: string;

@@ -24,8 +24,6 @@ import {
     RemoteProjectNotFoundError
 } from './remote-project';
 
-const RESIZE_WIDTH_STEP_PX = 10;
-const RESIZE_FRAME_INTERVAL_MS = 30;
 
 interface BrowserFilePickerWindow extends Window {
     showOpenFilePicker?: (options?: {
@@ -49,7 +47,7 @@ type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'p
 
 const DEFAULT_WEB_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     ...DEFAULT_STANDALONE_PREVIEW_SETTINGS,
-    fontSize: 'clamp(12px, 2.35cqw, 40px)',
+    fontSize: '2.8cqw',
     contentMaxWidth: '920px'
 };
 
@@ -169,12 +167,7 @@ function readControls() {
     };
 }
 
-let controls: ReturnType<typeof readControls> | undefined;
-
-function getControls(): ReturnType<typeof readControls> {
-    controls ??= readControls();
-    return controls;
-}
+const webControls = readControls();
 
 function enableSplitPaneResize(splitter: HTMLElement): void {
     const shell = document.getElementById('workspace');
@@ -185,20 +178,22 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     }
 
     type PaneLayout = 'split' | 'editor' | 'preview';
+    interface InteractivePreviewController {
+        beginInteractiveResize(): void;
+        finishInteractiveResize(update: () => void): void;
+    }
+    const getPreviewController = (): InteractivePreviewController | undefined =>
+        (window as Window & { snaptexPreviewController?: InteractivePreviewController }).snaptexPreviewController;
     let paneLayout: PaneLayout = 'split';
     let lastSplitEditorWidth: number | undefined;
     let dragState: {
         editorLeft: number;
-        maxWidth: number;
         availableWidth: number;
-        rawEditorWidth: number;
         minEditorWidth: number;
         minPreviewWidth: number;
         splitterWidth: number;
         collapseDistance: number;
         nextWidth: number;
-        appliedWidth: number;
-        lastAppliedAt: number;
         animationFrame: number | undefined;
     } | undefined;
 
@@ -208,11 +203,15 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     };
 
     const clampedEditorWidth = (clientX: number, state: NonNullable<typeof dragState>): number =>
-        Math.round(Math.min(state.maxWidth, Math.max(state.minEditorWidth, clientX - state.editorLeft)));
+        Math.round(Math.min(
+            state.availableWidth - state.collapseDistance - state.splitterWidth,
+            Math.max(state.collapseDistance, clientX - state.editorLeft)
+        ));
 
-    const setPaneLayout = (layout: PaneLayout): void => {
+    const setPaneLayout = (layout: PaneLayout, notify = true): void => {
         paneLayout = layout;
         document.body.dataset.paneLayout = layout;
+        window.snaptexStandaloneHost?.setPreviewVisible(layout !== 'editor');
         restoreButton.hidden = layout === 'split';
         if (layout !== 'split') {
             const showingEditor = layout === 'editor';
@@ -220,14 +219,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             restoreButton.title = showingEditor ? 'Show preview panel' : 'Show editor panel';
             restoreButton.setAttribute('aria-label', restoreButton.title);
         }
-        window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
-    };
-
-    const applyEditorWidth = (state: NonNullable<typeof dragState>, width: number): void => {
-        if (width !== state.appliedWidth) {
-            shell.style.setProperty('--snaptex-web-editor-width', `${width}px`);
-            state.appliedWidth = width;
-        }
+        if (notify) {window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));}
     };
 
     const scheduleEditorWidth = (clientX: number): void => {
@@ -235,7 +227,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             return;
         }
 
-        dragState.rawEditorWidth = clientX - dragState.editorLeft;
         dragState.nextWidth = clampedEditorWidth(clientX, dragState);
         if (dragState.animationFrame !== undefined) {
             return;
@@ -245,15 +236,11 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             if (!dragState) {
                 return;
             }
-            const now = performance.now();
-            const widthDelta = Math.abs(dragState.nextWidth - dragState.appliedWidth);
             dragState.animationFrame = undefined;
-            if (widthDelta >= RESIZE_WIDTH_STEP_PX && now - dragState.lastAppliedAt >= RESIZE_FRAME_INTERVAL_MS) {
-                applyEditorWidth(dragState, dragState.nextWidth);
-                dragState.lastAppliedAt = now;
-            } else if (widthDelta >= RESIZE_WIDTH_STEP_PX) {
-                scheduleEditorWidth(dragState.editorLeft + dragState.nextWidth);
-            }
+            document.body.style.setProperty(
+                '--snaptex-web-resize-indicator-left',
+                `${dragState.editorLeft + dragState.nextWidth}px`
+            );
         });
     };
 
@@ -270,44 +257,62 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         lastSplitEditorWidth = Math.round(editorRect.width);
         dragState = {
             editorLeft: editorRect.left,
-            maxWidth: Math.max(minEditorWidth, availableWidth - minPreviewWidth - splitterWidth),
             availableWidth,
-            rawEditorWidth: editorRect.width,
             minEditorWidth,
             minPreviewWidth,
             splitterWidth,
             collapseDistance: cssNumber('--snaptex-web-collapse-distance'),
             nextWidth: Math.round(editorRect.width),
-            appliedWidth: Math.round(editorRect.width),
-            lastAppliedAt: 0,
             animationFrame: undefined
         };
-        applyEditorWidth(dragState, dragState.appliedWidth);
+        document.body.classList.add('is-resizing-split');
+        document.body.style.setProperty('--snaptex-web-resize-indicator-left', `${editorRect.right}px`);
+        getPreviewController()?.beginInteractiveResize();
 
         splitter.setPointerCapture(event.pointerId);
-        document.body.classList.add('is-resizing-split');
         scheduleEditorWidth(event.clientX);
         event.preventDefault();
     };
 
     const endResize = (event: PointerEvent): void => {
         const state = dragState;
+        let nextLayout: PaneLayout = 'split';
+        let nextEditorWidth: number | undefined;
         if (state?.animationFrame !== undefined) {
             window.cancelAnimationFrame(state.animationFrame);
         }
         if (state) {
-            const rawPreviewWidth = state.availableWidth - state.rawEditorWidth - state.splitterWidth;
-            if (state.rawEditorWidth < state.collapseDistance) {
-                setPaneLayout('preview');
-            } else if (rawPreviewWidth < state.collapseDistance) {
-                setPaneLayout('editor');
+            const rawEditorWidth = event.clientX - state.editorLeft;
+            state.nextWidth = clampedEditorWidth(event.clientX, state);
+            const rawPreviewWidth = state.availableWidth - rawEditorWidth - state.splitterWidth;
+            if (rawEditorWidth <= state.collapseDistance) {
+                nextLayout = 'preview';
+            } else if (rawPreviewWidth <= state.collapseDistance) {
+                nextLayout = 'editor';
             } else {
-                applyEditorWidth(state, state.nextWidth);
-                lastSplitEditorWidth = state.nextWidth;
+                nextEditorWidth = Math.min(
+                    state.availableWidth - state.minPreviewWidth - state.splitterWidth,
+                    Math.max(state.minEditorWidth, state.nextWidth)
+                );
             }
         }
         dragState = undefined;
-        document.body.classList.remove('is-resizing-split');
+        window.requestAnimationFrame(() => {
+            const finish = (): void => {
+                document.body.classList.remove('is-resizing-split');
+                document.body.style.removeProperty('--snaptex-web-resize-indicator-left');
+                if (nextLayout === 'split' && nextEditorWidth !== undefined) {
+                    shell.style.setProperty('--snaptex-web-editor-width', `${nextEditorWidth}px`);
+                    lastSplitEditorWidth = nextEditorWidth;
+                } else if (nextLayout !== 'split') {
+                    setPaneLayout(nextLayout, false);
+                }
+                window.dispatchEvent(new Event('resize'));
+            };
+            const previewController = getPreviewController();
+            if (previewController) {previewController.finishInteractiveResize(finish);}
+            else {finish();}
+        });
         if (splitter.hasPointerCapture(event.pointerId)) {
             splitter.releasePointerCapture(event.pointerId);
         }
@@ -331,7 +336,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
 }
 
 function setStatus(message: string): void {
-    getControls().status.textContent = message;
+    webControls.status.textContent = message;
 }
 
 function reportFailure(action: string, error: unknown): void {
@@ -351,14 +356,14 @@ async function loadProject(host: StandaloneHost, project: BrowserProject): Promi
 function renderProjectState(host: StandaloneHost): void {
     const projectOpen = host.getProjectTextPaths().length > 0;
     document.body.dataset.projectOpen = String(projectOpen);
-    getControls().welcomePage.hidden = projectOpen;
+    webControls.welcomePage.hidden = projectOpen;
     renderChromeState(host, projectOpen);
     renderProjectFiles(host);
     renderProjectDiagnostics(host);
 }
 
 function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
-    const controls = getControls();
+    const controls = webControls;
     const activePath = host.getActivePath();
     const rootPath = host.getRootPath();
     const activePathText = projectOpen ? `${activePath}${host.isDirty(activePath) ? ' *' : ''}` : 'No project open';
@@ -379,7 +384,7 @@ function renderProjectFiles(host: StandaloneHost): void {
     const rows = createProjectTree(host.getProjectTextPaths())
         .children
         .flatMap(node => renderProjectTreeNode(host, node, 0));
-    getControls().projectFiles.replaceChildren(...rows);
+    webControls.projectFiles.replaceChildren(...rows);
 }
 
 function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, depth: number): HTMLElement[] {
@@ -439,7 +444,7 @@ function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, dept
 }
 
 function renderProjectDiagnostics(host: StandaloneHost): void {
-    const panel = getControls().projectDiagnostics;
+    const panel = webControls.projectDiagnostics;
     const diagnostics = host.getDiagnostics();
     if (diagnostics.length === 0) {
         panel.replaceChildren();
@@ -526,7 +531,7 @@ function redirectToServerLogin(): void {
 }
 
 async function openRemoteProjectDialog(): Promise<void> {
-    const controls = getControls();
+    const controls = webControls;
     if (!supportsRemoteProjects()) {
         controls.remoteProjectDialog.showModal();
         return;
@@ -550,7 +555,7 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
     if (!supportsRemoteProjects()) {
         return;
     }
-    const controls = getControls();
+    const controls = webControls;
     controls.remoteProjectConnectButton.disabled = true;
     controls.remoteProjectError.textContent = '';
     setStatus('Connecting to project server...');
@@ -583,7 +588,7 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
 }
 
 function openNewFileDialog(): void {
-    const controls = getControls();
+    const controls = webControls;
     controls.newFileError.textContent = '';
     controls.newFilePath.value = '';
     controls.newFileDialog.showModal();
@@ -591,7 +596,7 @@ function openNewFileDialog(): void {
 }
 
 async function createTextFile(host: StandaloneHost): Promise<void> {
-    const controls = getControls();
+    const controls = webControls;
     try {
         await host.createTextFile(controls.newFilePath.value.trim());
         controls.newFileDialog.close();
@@ -632,7 +637,7 @@ function browserImportName(files: readonly File[], fallback: string): string {
 }
 
 async function openBrowserWorkspaceDialog(host: StandaloneHost): Promise<void> {
-    const controls = getControls();
+    const controls = webControls;
     const summaries = await browserWorkspaces.list();
     if (summaries.length === 0) {
         const empty = document.createElement('p');
@@ -729,14 +734,14 @@ async function setActiveFileAsRoot(host: StandaloneHost): Promise<void> {
 function setExplorerCollapsed(collapsed: boolean): void {
     explorerCollapsed = collapsed;
     document.body.dataset.explorerCollapsed = String(collapsed);
-    const controls = getControls();
+    const controls = webControls;
     controls.toggleExplorerButton.setAttribute('aria-expanded', String(!collapsed));
     controls.showExplorerToggle.checked = !collapsed;
 }
 
 function setDiagnosticsVisible(visible: boolean): void {
     document.body.dataset.diagnosticsVisible = String(visible);
-    getControls().showDiagnosticsToggle.checked = visible;
+    webControls.showDiagnosticsToggle.checked = visible;
 }
 
 function setInputValue(input: HTMLInputElement, value: string | number): void {
@@ -754,12 +759,12 @@ function readClampedNumber(input: HTMLInputElement, fallback: number): number {
 
 function setTheme(theme: WebTheme): void {
     document.body.dataset.theme = theme;
-    getControls().themeSelect.value = theme;
+    webControls.themeSelect.value = theme;
 }
 
 function syncSettingsControls(host: StandaloneHost): void {
     const settings = host.getSettings();
-    const controls = getControls();
+    const controls = webControls;
     for (const [controlName, setting] of BOOLEAN_SETTING_CONTROLS) {
         controls[controlName].checked = settings[setting];
     }
@@ -774,7 +779,7 @@ function syncSettingsControls(host: StandaloneHost): void {
 }
 
 function bindProjectControls(host: StandaloneHost): void {
-    const controls = getControls();
+    const controls = webControls;
     const supportsLocalFolderAccess = typeof (window as BrowserFilePickerWindow).showDirectoryPicker === 'function';
     controls.openFolderButton.hidden = !supportsLocalFolderAccess;
     controls.welcomeOpenFolderButton.hidden = !supportsLocalFolderAccess;
@@ -915,7 +920,7 @@ function bindProjectControls(host: StandaloneHost): void {
 }
 
 async function bindLogoutControl(): Promise<void> {
-    const button = getControls().logoutButton;
+    const button = webControls.logoutButton;
     try {
         const response = await fetchWebSession();
         if (!response.ok) {

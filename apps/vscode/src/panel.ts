@@ -9,10 +9,9 @@ import {
     HostToPreviewCommand,
     isPreviewToHostMessage,
     PreviewToHostCommand,
+    type BlockHtmlRequest,
     type HostToPreviewMessage,
-    type RequestBlockHtmlMessage,
-    type RequestPdfMessage,
-    type RevealLineMessage
+    type RequestPdfMessage
 } from '../../../src/preview-messages';
 
 function logHostMemory(label: string) {
@@ -230,10 +229,10 @@ export class TexPreviewPanel {
                         void this.update(this._pendingRootUri);
                         break;
                     case PreviewToHostCommand.RevealLine:
-                        this.handleRevealLine(message);
+                        vscode.commands.executeCommand('snaptex.internal.revealLine', message);
                         break;
                     case PreviewToHostCommand.SyncScroll:
-                        vscode.commands.executeCommand('snaptex.internal.syncScroll', message.index, message.ratio);
+                        vscode.commands.executeCommand('snaptex.internal.syncScroll', message);
                         break;
                     case PreviewToHostCommand.PreviewLayoutChanged:
                         vscode.commands.executeCommand('snaptex.internal.previewLayoutChanged');
@@ -242,7 +241,9 @@ export class TexPreviewPanel {
                         await this.handlePdfRequest(message);
                         break;
                     case PreviewToHostCommand.RequestBlockHtml:
-                        await this.handleBlockHtmlRequest(message);
+                        for (const request of message.requests) {
+                            await this.handleBlockHtmlRequest(request);
+                        }
                         break;
                     default:
                         assertNever(message);
@@ -260,24 +261,6 @@ export class TexPreviewPanel {
     private async _initWebviewHtml() {
         this._webviewReady = false;
         this._panel.webview.html = await this._getWebviewSkeleton();
-    }
-
-    /**
-     * Forwards a webview block/ratio reveal request to the extension command.
-     */
-    private handleRevealLine(message: RevealLineMessage) {
-        if (this._sourceUri) {
-            vscode.commands.executeCommand(
-                'snaptex.internal.revealLine',
-                this._sourceUri,
-                message.index,
-                message.ratio,
-                message.anchors,
-                message.viewRatio,
-                message.sourceStart,
-                message.sourceEnd
-            );
-        }
     }
 
     /**
@@ -338,14 +321,10 @@ export class TexPreviewPanel {
         });
     }
 
-    private async handleBlockHtmlRequest(message: RequestBlockHtmlMessage) {
+    private async handleBlockHtmlRequest(message: BlockHtmlRequest) {
         const id = message.id;
         const index = message.index;
         const requestedHash = message.hash;
-
-        if (!id || Number.isNaN(index)) {
-            return;
-        }
 
         const block = await this._updateService.renderBlockByIndex(index);
         if (!block) {
@@ -390,16 +369,15 @@ export class TexPreviewPanel {
         });
     }
 
-    private resolveUpdateUri(): vscode.Uri | undefined {
-        return vscode.window.activeTextEditor?.document.uri ?? this._sourceUri;
-    }
-
     /**
      * Queues and serializes preview updates. The webview must send PreviewLoaded
      * before parsing begins, which avoids blank previews during VS Code startup.
      */
     public async update(rootUri?: vscode.Uri, options: { resetPreviewState?: boolean } = {}) {
-        const docUri = rootUri ?? this._pendingRootUri ?? this.resolveUpdateUri();
+        const docUri = rootUri
+            ?? this._pendingRootUri
+            ?? vscode.window.activeTextEditor?.document.uri
+            ?? this._sourceUri;
         if (!docUri) { return; }
 
         if (options.resetPreviewState) {
