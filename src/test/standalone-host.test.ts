@@ -71,7 +71,10 @@ function installWindow(messages: HostToPreviewMessage[]) {
 
 async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMessage[], index = 0): Promise<string> {
     const id = `block-${messages.length}`;
-    await host.handlePreviewMessage({ command: PreviewToHostCommand.RequestBlockHtml, id, index, hash: '' });
+    await host.handlePreviewMessage({
+        command: PreviewToHostCommand.RequestBlockHtml,
+        requests: [{ id, index, hash: '' }]
+    });
     const response = [...messages].reverse().find(message => message.command === HostToPreviewCommand.BlockHtml && message.id === id);
     assert.ok(response && response.command === HostToPreviewCommand.BlockHtml);
     return response.html ?? '';
@@ -157,6 +160,38 @@ suite('StandaloneHost', () => {
             assert.equal(host.isDirty('/chapter.tex'), false);
             assert.match(html, /Updated included paragraph/);
             assert.match(html, /Root paragraph/);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('renders batched virtual blocks through the host pipeline', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject({ files: [{
+                path: '/main.tex',
+                text: '\\begin{document}\nFirst paragraph.\n\nSecond paragraph.\n\\end{document}'
+            }], rootPath: '/main.tex' });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await flushAsync();
+            messages.length = 0;
+
+            await host.handlePreviewMessage({
+                command: PreviewToHostCommand.RequestBlockHtml,
+                requests: [
+                    { id: 'batch-0', index: 0, hash: '' },
+                    { id: 'batch-1', index: 1, hash: '' }
+                ]
+            });
+
+            const responses = messages.filter(message => message.command === HostToPreviewCommand.BlockHtml);
+            assert.deepEqual(responses.map(response => response.id), ['batch-0', 'batch-1']);
+            assert.match(responses[0]?.html ?? '', /First paragraph/);
+            assert.match(responses[1]?.html ?? '', /Second paragraph/);
         } finally {
             restoreWindow();
         }
@@ -384,6 +419,11 @@ suite('StandaloneHost', () => {
             await host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.', 0.5, false);
             const manualResponse = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock && message.auto === false);
             assert.ok(manualResponse && manualResponse.command === HostToPreviewCommand.ScrollToBlock);
+
+            host.setPreviewVisible(false);
+            const messageCount = messages.length;
+            host.syncEditorSelection(2, 28);
+            assert.equal(messages.length, messageCount);
         } finally {
             restoreWindow();
         }
@@ -544,6 +584,11 @@ suite('StandaloneHost', () => {
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.ok(editor.scrollDOM.scrollTop > 0);
             assert.equal(cancelledEditorSyncs, 1);
+
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
+            editor.scrollDOM.scrollTop = 0;
+            await host.syncPreviewScroll(scroll.index, scroll.ratio);
+            assert.equal(editor.scrollDOM.scrollTop, 0);
         } finally {
             restoreWindow();
         }
@@ -584,7 +629,10 @@ suite('StandaloneHost', () => {
             assert.ok(scroll && scroll.command === HostToPreviewCommand.ScrollToBlock);
 
             await host.openEditorFile('/main.tex');
-            await host.revealPreviewLocation(scroll.index, scroll.ratio, ['sync anchor'], 0.25);
+            await host.revealPreviewLocation(scroll.index, scroll.ratio, {
+                anchors: ['sync anchor'],
+                viewRatio: 0.25
+            });
 
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.equal(editor.selectionAnchor, chapterText.indexOf('Included second paragraph'));

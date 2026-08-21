@@ -5,7 +5,6 @@ import * as vscode from 'vscode';
 import { DocumentParseResult, LatexDocument } from '../document';
 import type { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
-import { BlockTextProvider, LatexCounterScanner } from '../scanner';
 import { AffiliationMetadata, AuthorMetadata, BlockTextSpan } from '../types';
 import { getBlockSpanText, normalizeUri, stableHash } from '../utils';
 
@@ -77,9 +76,9 @@ export function createDocument(
         bodyText,
         blockSpans,
         blockHashes: blockTexts.map(text => stableHash(text)),
+        astBlockArtifacts: [],
         filePool: [],
-        sourceFileIndices: new Uint16Array(0),
-        sourceLines: new Int32Array(0),
+        sourceMapSegments: [],
         metadata: {
             macros: options.macros ?? {},
             tikzGlobal: options.tikzGlobal ?? '',
@@ -116,20 +115,5 @@ export function spanText(text: string, span: BlockTextSpan): string {
 
 export function resultBlockTexts(result: DocumentParseResult): string[] {
     return result.blockSpans.map(span => spanText(result.bodyText, span));
-}
-
-export function createBlockTextProvider(blocks: string[], reads?: number[]): BlockTextProvider {
-    return {
-        getBlockCount: () => blocks.length,
-        getBlockText: (index: number) => {
-            reads?.push(index);
-            return blocks[index];
-        },
-        getBlockHash: (index: number) => blocks[index] === undefined ? undefined : stableHash(blocks[index])
-    };
-}
-
-export function scanBlocks(blocks: string[], scanner = new LatexCounterScanner()) {
-    return scanner.scan(createBlockTextProvider(blocks));
 }
 

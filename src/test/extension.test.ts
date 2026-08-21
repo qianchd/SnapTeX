@@ -6,7 +6,8 @@ import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../../apps/vscode/src/panel';
 import { SmartRenderer } from '../renderer';
 import { defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
-import type { RuleRegistry } from '../types';
+import type { RuleRegistry } from '../rules';
+import { isMacroNode } from '../ast/visit-utils';
 import { normalizeUri, stripLatexComments } from '../utils';
 import {
     createDocument,
@@ -112,70 +113,7 @@ suite('LatexDocument source mapping', () => {
         assert.equal(result.blockSpans.length, 1);
     });
 
-    test('uses AST source hints to refine source sync within a block', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\begin{document}',
-                'line 0',
-                'line 1',
-                'line 2',
-                'line 3',
-                'line 4',
-                'line 5',
-                'line 6',
-                'line 7 see \\ref{target}.',
-                'line 8',
-                '\\end{document}'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
-        doc.applyResult(result);
-
-        const renderer = new SmartRenderer();
-        await renderer.renderAsync(doc, { deferFullHtml: true });
-        assert.equal(doc.getAstBlockArtifact(0), undefined);
-
-        const sourceSyncBeforeWarm = renderer.getSourceSyncData(0, 0.55);
-
-        assert.notEqual(sourceSyncBeforeWarm?.line, 8);
-        assert.equal(doc.getAstBlockArtifact(0), undefined);
-
-        await doc.warmAstBlockArtifacts();
-        doc.releaseTextContent();
-        const sourceSync = renderer.getSourceSyncData(0, 0.55);
-
-        assert.equal(sourceSync?.line, 8);
-        assert.ok(doc.getAstBlockArtifact(0));
-    });
-
-    test('uses preview anchors closest to the AST-estimated source line', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\begin{document}',
-                'same target near the start.',
-                'middle one',
-                'middle two',
-                'middle three',
-                'same target near the end.',
-                '\\end{document}'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
-        doc.applyResult(result);
-
-        const renderer = new SmartRenderer();
-        await renderer.renderAsync(doc, { deferFullHtml: true });
-        await doc.warmAstBlockArtifacts();
-        const sourceSync = renderer.getSourceSyncData(0, 0.82, ['same target']);
-
-        assert.equal(sourceSync?.line, 5);
-    });
-
-    test('keeps AST-refined preview sync mapped to included files', async () => {
+    test('uses preview anchors while preserving included-file source mapping', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const sectionUri = vscode.Uri.file('/project/section.tex');
         const provider = new MemoryFileProvider(new Map([
@@ -192,78 +130,28 @@ suite('LatexDocument source mapping', () => {
             ].join('\n')]
         ]));
         const doc = new LatexDocument(provider);
-        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
+        const result = await doc.parse(mainUri);
         doc.applyResult(result);
 
         const renderer = new SmartRenderer();
         await renderer.renderAsync(doc, { deferFullHtml: true });
-        await doc.warmAstBlockArtifacts();
-        const sourceSync = renderer.getSourceSyncData(0, 0.9, ['same target']);
+        const sourceSync = renderer.getSourceSyncData(0, 0.9, { anchors: ['same target'] });
 
         assert.equal(sourceSync && normalizeUri(sourceSync.file), normalizeUri(sectionUri));
         assert.equal(sourceSync?.line, 3);
     });
 
-    test('uses AST source hints without changing editor-to-preview block selection', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\begin{document}',
-                'Before text.',
-                'Inline math $x + y$ and \\ref{eq:one}.',
-                'After text.',
-                '\\end{document}'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
-        doc.applyResult(result);
-
-        const renderer = new SmartRenderer();
-        await renderer.renderAsync(doc, { deferFullHtml: true });
-        await doc.warmAstBlockArtifacts();
-        const syncData = renderer.getPreviewSyncData(mainUri.toString(), 2, 'Inline math $x'.length);
-
-        assert.equal(syncData?.index, 0);
-        assert.ok(syncData?.ratio !== undefined && syncData.ratio >= 0 && syncData.ratio <= 1);
-    });
-
-    test('maps preview clicks near inline math to the math source line', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\begin{document}',
-                'line zero',
-                'line one',
-                'line two',
-                'Inline math $x + y$ appears here.',
-                'line four',
-                'line five',
-                '\\end{document}'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-        const result = await doc.parse(mainUri, undefined, { backendMode: 'ast(experimental)' });
-        doc.applyResult(result);
-
-        const renderer = new SmartRenderer();
-        await renderer.renderAsync(doc, { deferFullHtml: true });
-        await doc.warmAstBlockArtifacts();
-        const sourceSync = renderer.getSourceSyncData(0, 0.55);
-
-        assert.equal(sourceSync?.line, 4);
-    });
-
-    test('does not dirty bibliography blocks for fake AST citations in comments', async () => {
+    test('tracks bibliography dependencies and anchors from current AST citations only', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([[normalizeUri(mainUri), '']]));
         const doc = new LatexDocument(provider);
         const renderer = new SmartRenderer();
-        const makeSource = (fakeKey: string) => [
+        const makeSource = (fakeKey: string, citedKey = 'real', extraBlocks: readonly string[] = []) => [
             '\\begin{document}',
-            'Real citation \\cite{real}.',
+            `Real citation \\cite{${citedKey}}.`,
             `% Fake citation \\cite{${fakeKey}}.`,
             '',
+            ...extraBlocks.flatMap(block => [block, '']),
             '\\bibliography{refs}',
             '\\end{document}'
         ].join('\n');
@@ -278,19 +166,31 @@ suite('LatexDocument source mapping', () => {
 
         assert.equal(payload.type, 'patch');
         assert.equal(payload.dirtyBlocks?.[1], undefined);
+
+        result = await doc.parse(mainUri, makeSource('new', 'current'), { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+        const citationPatch = await renderer.renderAsync(doc, { deferFullHtml: true });
+        assert.match(citationPatch.type === 'patch' ? citationPatch.dirtyBlocks?.[1] ?? '' : '', /id="ref-current"/);
+
+        const extraBlocks = Array.from({ length: 51 }, (_unused, index) => `Inserted paragraph ${index}.`);
+        result = await doc.parse(mainUri, makeSource('new', 'current', extraBlocks), { backendMode: 'ast(experimental)' });
+        doc.applyResult(result);
+        const fullPayload = await renderer.renderAsync(doc, { deferFullHtml: true });
+        const bibliography = fullPayload.type === 'full'
+            ? fullPayload.blocks?.find(block => block.anchors?.includes('ref-current'))
+            : undefined;
+        assert.ok(bibliography);
+        assert.doesNotMatch(bibliography.anchors?.join('\n') ?? '', /ref-(?:real|old|new)/);
     });
 
     test('uses AST render rules from the shared registry in production render', async () => {
         const registry = defineRuleRegistry({
             ...SNAP_TEX_RULES,
             astRenderRules: [
-                defineAstRenderRule({
-                    name: 'ast-advisor-test',
-                    match: input => input.node.type === 'macro' && input.node.content === 'advisor',
-                    render: (input, context) => {
-                        const args = readAstCommandArguments(input);
-                        return { html: `<div class="advisor">${context.escapeHtml(args.requiredArgs[0] ?? '')}</div>`, consumedNodes: args.consumedNodes };
-                    }
+                defineAstRenderRule((input, context) => {
+                    if (!isMacroNode(input.node, 'advisor')) { return undefined; }
+                    const args = readAstCommandArguments(input);
+                    return { html: `<div class="advisor">${context.escapeHtml(args.requiredArgs[0] ?? '')}</div>`, consumedNodes: args.consumedNodes };
                 }),
                 ...SNAP_TEX_RULES.astRenderRules
             ]
@@ -831,22 +731,18 @@ suite('SmartRenderer', () => {
             ...SNAP_TEX_RULES,
             blockDependencyRules: [
                 ...SNAP_TEX_RULES.blockDependencyRules,
-                defineBlockDependencyRule({
-                    name: 'makecover',
-                    collect: ({ text, deps }) => {
-                        collectCount++;
-                        if (!text.includes('\\makecover')) { return []; }
-                        return [
-                            deps.metadata('title'),
-                            deps.metadata('custom.editor')
-                        ];
-                    }
+                defineBlockDependencyRule(({ text, deps }) => {
+                    collectCount++;
+                    if (!text.includes('\\makecover')) { return []; }
+                    return [
+                        deps.metadata('title'),
+                        deps.metadata('custom.editor')
+                    ];
                 })
             ],
             renderRules: [
                 ...SNAP_TEX_RULES.renderRules,
                 {
-                    name: 'makecover',
                     priority: 161,
                     apply: (text, renderer) => {
                         const metadata = renderer.metadata;

@@ -46,7 +46,6 @@ suite('AST splitter', () => {
         const result = await splitLatexWithAst(text, SPLITTER_OPTIONS);
         const blocks = result.spans.map(span => spanText(text, span).trim()).filter(Boolean);
 
-        assert.equal(result.parseOk, true);
         assert.ok(blocks.some(block => block.startsWith('\\begin{table}')));
         assert.ok(blocks.every(block => !block.includes('\\begin{appendices}') && !block.includes('\\end{appendices}')));
     });

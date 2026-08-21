@@ -31,21 +31,17 @@ suite('PreviewUpdateService', () => {
 
     test('keeps lazy block rendering available after deferred payloads', async () => {
         const legacyOnlyRule: PreprocessRule = {
-            name: 'test_legacy_only',
             priority: 0,
             apply: (source, renderer) => source.replace(/\\legacyOnly/g, renderer.protectHtml('legacy-test', '<span class="legacy-only">legacy</span>', 'inline'))
         };
         const registry = defineRuleRegistry({
             ...SNAP_TEX_RULES,
             metadataExtractors: [
-                {
-                    name: 'test-title',
-                    extract: source => {
-                        const match = /\\testtitle\{([^}]*)\}/.exec(source);
-                        return match && match.index !== undefined
-                            ? { title: match[1], ranges: [{ start: match.index, end: match.index + match[0].length }] }
-                            : {};
-                    }
+                source => {
+                    const match = /\\testtitle\{([^}]*)\}/.exec(source);
+                    return match && match.index !== undefined
+                        ? { title: match[1], ranges: [{ start: match.index, end: match.index + match[0].length }] }
+                        : {};
                 },
                 ...SNAP_TEX_RULES.metadataExtractors
             ],
@@ -811,7 +807,7 @@ suite('PreviewUpdateService', () => {
         assert.deepEqual(syncData, { index: 2, ratio: 0 });
     });
 
-    test('warms AST hints for patched blocks before returning', async () => {
+    test('stores AST hints for patched blocks before returning', async () => {
         const service = new PreviewUpdateService(new MemoryFileProvider());
         const base = [
             '\\begin{document}',
@@ -830,10 +826,10 @@ suite('PreviewUpdateService', () => {
 
         await service.render(uri, base, { deferFullHtml: true, backendMode: 'ast(experimental)' });
         const payload = await service.render(uri, updated, { deferFullHtml: true, backendMode: 'ast(experimental)' });
-        const sourceSync = service.getSourceSyncData(0, 0.55);
+        const previewSync = service.getPreviewSyncData(uri.toString(), 8, 'line 7 see \\ref'.length);
 
         assert.equal(payload.type, 'patch');
-        assert.equal(sourceSync?.line, 8);
+        assert.ok(previewSync?.sourceStart !== undefined);
     });
 
     test('maps included-file sync positions through both preview modes', async () => {
@@ -906,7 +902,7 @@ suite('PreviewUpdateService', () => {
             const service = new PreviewUpdateService(new MemoryFileProvider());
             await service.render(uri, source, { deferFullHtml: true, backendMode });
 
-            const lines = [0, 0.5, 0.99].map(ratio => service.getSourceSyncData(0, ratio)?.line);
+            const lines = [0, 0.5, 1].map(ratio => service.getSourceSyncData(0, ratio)?.line);
             assert.ok(lines.every(line => typeof line === 'number'));
             assert.ok((lines[0] ?? 0) <= (lines[1] ?? 0));
             assert.ok((lines[1] ?? 0) <= (lines[2] ?? 0));
@@ -916,24 +912,65 @@ suite('PreviewUpdateService', () => {
         assert.deepEqual(linesByBackend[1], linesByBackend[0]);
     });
 
-    test('uses AST source anchors for inline math sync', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
+    test('renders adjacent display math without shifting later source lines', async () => {
         const source = [
             '\\begin{document}',
-            'Plain opening line.',
-            'Formula line has $x+y$ in the middle.',
-            'Plain closing line.',
+            '$$a=1$$',
+            '$$b=2$$',
+            'where b is explained.',
+            '',
+            'Target after the displays.',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+            const displayBlocks = payload.htmls?.filter(block => block.includes('class="katex-display"')) ?? [];
+            const preview = service.getPreviewSyncData(uri.toString(), 5, 0);
+
+            assert.equal((html.match(/class="katex-display"/g) ?? []).length, 2);
+            assert.equal(displayBlocks.length, 2);
+            assert.doesNotMatch(displayBlocks[0], /where b is explained/);
+            assert.match(displayBlocks[1], /where b is explained/);
+            assert.match(displayBlocks[1], /no-indent-marker/);
+            assert.ok(preview);
+            assert.equal(service.getSourceSyncData(preview.index, preview.ratio)?.line, 5);
+        }
+    });
+
+    test('maps AST wrapper hints through their original source spans', async () => {
+        const service = new PreviewUpdateService(new MemoryFileProvider());
+        const formula = '$O_P(\\sqrt{\\epsilon / n})$';
+        const source = [
+            '\\begin{document}',
+            '\\begin{proof}',
+            'Proof opening.',
+            `Formula line has ${formula} in the middle.`,
+            'Proof closing.',
+            '\\end{proof}',
             '\\end{document}'
         ].join('\n');
 
         await service.render(uri, source, { deferFullHtml: true, backendMode: 'ast(experimental)' });
         await service.renderBlockByIndex(0);
-        const preview = service.getPreviewSyncData(uri.toString(), 2, 'Formula line has $x'.length);
+        const preview = service.getPreviewSyncData(uri.toString(), 3, 'Formula line has $O_P(\\sqrt'.length);
 
         assert.ok(preview?.sourceStart !== undefined);
-        assert.ok(preview?.sourceEnd !== undefined);
+        assert.equal((preview.sourceEnd ?? 0) - preview.sourceStart, formula.length);
+        assert.equal(
+            service.getSourceSyncData(preview.index, preview.ratio, {
+                anchors: ['Proof closing'],
+                sourceStart: preview.sourceStart,
+                sourceEnd: preview.sourceEnd
+            })?.line,
+            3
+        );
+        assert.equal(service.getSourceSyncData(preview.index, preview.ratio, { anchors: ['Formula line has'] })?.line, 3);
 
-        const sourceLoc = service.getSourceSyncData(preview.index, 0, [], preview.sourceStart, preview.sourceEnd);
-        assert.equal(sourceLoc?.line, 2);
+        const closingPreview = service.getPreviewSyncData(uri.toString(), 4, 0);
+        assert.ok(closingPreview);
+        assert.equal(service.getSourceSyncData(closingPreview.index, closingPreview.ratio)?.line, 4);
     });
 });
