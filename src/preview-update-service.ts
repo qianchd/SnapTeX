@@ -1,8 +1,8 @@
-import { LatexDocument, type DocumentParseResult } from './document';
+import { LatexDocument } from './document';
 import type { IFileProvider } from './file-provider';
 import { SmartRenderer } from './renderer';
-import { SNAP_TEX_RULES } from './rules';
-import type { DocumentDiagnostic, RenderPayload, BackendMode, UriLike, RuleRegistry } from './types';
+import { SNAP_TEX_RULES, type RuleRegistry } from './rules';
+import type { DocumentDiagnostic, RenderPayload, BackendMode, UriLike, SourceSyncOptions } from './types';
 
 export interface PreviewRenderOptions {
     deferFullHtml: boolean;
@@ -18,7 +18,6 @@ export interface PreviewRenderOptions {
 export class PreviewUpdateService<TUri extends UriLike = UriLike> {
     private readonly document: LatexDocument<TUri>;
     private readonly renderer: SmartRenderer;
-    private diagnostics: DocumentDiagnostic[] = [];
     private backendMode: BackendMode = 'legacy';
 
     constructor(fileProvider: IFileProvider<TUri>, registry: RuleRegistry = SNAP_TEX_RULES) {
@@ -28,30 +27,25 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
 
     public resetState() {
         this.renderer.resetState();
-        this.document.cancelAstArtifactWarmup();
-        this.diagnostics = [];
-    }
-
-    private isAstBackend() {
-        return this.backendMode === 'ast(experimental)';
+        this.document.diagnostics = [];
     }
 
     public async renderBlockByIndex(index: number) {
-        return this.isAstBackend()
+        return this.backendMode === 'ast(experimental)'
             ? this.renderer.renderBlockByIndexAsync(index)
             : this.renderer.renderBlockByIndex(index);
     }
 
     public getDiagnostics(): readonly DocumentDiagnostic[] {
-        return this.diagnostics;
+        return this.document.diagnostics;
     }
 
     public getPreviewSyncData(filePath: string, line: number, character?: number) {
         return this.renderer.getPreviewSyncData(filePath, line, character);
     }
 
-    public getSourceSyncData(blockIndex: number, ratio: number, anchors: readonly string[] = [], sourceStart?: number, sourceEnd?: number) {
-        return this.renderer.getSourceSyncData(blockIndex, ratio, anchors, sourceStart, sourceEnd);
+    public getSourceSyncData(blockIndex: number, ratio: number, options: SourceSyncOptions = {}) {
+        return this.renderer.getSourceSyncData(blockIndex, ratio, options);
     }
 
     public isKnownFile(uriStr: string): boolean {
@@ -59,11 +53,11 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
     }
 
     public getBibliographyKeys(): string[] {
-        return [...this.document.bibEntries.keys()].sort((a, b) => a.localeCompare(b));
+        return [...this.document.bibEntries.keys()];
     }
 
     public getMacroNames(): string[] {
-        return Object.keys(this.document.metadata.macros).sort((a, b) => a.localeCompare(b));
+        return Object.keys(this.document.metadata.macros);
     }
 
     public async render(uri: TUri, text: string, options: PreviewRenderOptions): Promise<RenderPayload> {
@@ -79,7 +73,6 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
             trace: options.trace,
             backendMode
         });
-        this.diagnostics = parseResult.diagnostics;
         options.trace?.('after parse');
 
         this.document.applyResult(parseResult);
@@ -92,44 +85,13 @@ export class PreviewUpdateService<TUri extends UriLike = UriLike> {
             : this.renderer.render(this.document, renderOptions);
         options.trace?.('after render');
 
-        if (useAstBackend) {
-            const priorityIndices = this.getPatchRenderedBlockIndices(payload);
-            if (priorityIndices.length > 0) {
-                await this.document.warmAstBlockArtifactsForIndices(priorityIndices);
-                options.trace?.('after priority ast warmup');
-            }
-            // Sync consumes existing AST hints only; start warm-up before
-            // releasing transient parse text so updates can populate them.
-            void this.document.warmAstBlockArtifacts();
-        }
-
-        this.releaseParseText(parseResult);
+        this.document.releaseTextContent();
         await this.transformPayloadHtml(payload, options.transformHtml);
         if (options.transformHtml) {
             options.trace?.('after transformHtml');
         }
 
         return payload;
-    }
-
-    private getPatchRenderedBlockIndices(payload: RenderPayload): number[] {
-        if (payload.type !== 'patch') { return []; }
-        const indices = Array.from(
-            { length: payload.htmls.length },
-            (_unused, offset) => payload.start + offset
-        );
-        if (payload.dirtyBlocks) {
-            indices.push(...Object.keys(payload.dirtyBlocks).map(Number));
-        }
-        return [...new Set(indices)].sort((a, b) => a - b);
-    }
-
-    private releaseParseText(parseResult: DocumentParseResult) {
-        this.document.releaseTextContent();
-        parseResult.bodyText = "";
-        parseResult.blockSpans = [];
-        parseResult.blockHashes = [];
-        parseResult.astBlockArtifacts = [];
     }
 
     private async transformPayloadHtml(payload: RenderPayload, transformHtml: ((html: string) => string | Promise<string>) | undefined) {

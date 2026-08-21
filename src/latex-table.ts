@@ -23,12 +23,6 @@ interface TabularEnvironment {
     columnSpec: string;
 }
 
-interface RenderedLatexTableCell {
-    html: string;
-    colspan: number;
-    rowspan: number;
-}
-
 interface TableBoundary {
     kind: 'row' | 'rule';
     rule?: TableRuleKind;
@@ -406,7 +400,7 @@ function renderNestedTabulars(content: string, renderer: RenderContext): string 
     return result;
 }
 
-function renderLatexTableCell(cellText: string, renderer: RenderContext, tagName: 'td' | 'th'): RenderedLatexTableCell {
+function renderLatexTableCell(cellText: string, renderer: RenderContext, tagName: 'td' | 'th') {
     let content = cellText.trim();
     let colspan = 1;
     let rowspan = 1;
@@ -451,8 +445,34 @@ function renderLatexTableCell(cellText: string, renderer: RenderContext, tagName
     return {
         html: `<${tagName}${attrText}>${htmlContent}</${tagName}>`,
         colspan,
-        rowspan
+        rowspan,
+        empty: !cellText.trim()
     };
+}
+
+/** Places rendered cells around active row spans and returns one row's cell HTML. */
+export function renderTableRowCells<T>(
+    cells: readonly T[],
+    activeRowspans: number[],
+    renderCell: (cell: T) => { html: string; colspan: number; rowspan: number; empty: boolean }
+): string {
+    let columnIndex = 0;
+    return cells.flatMap(cell => {
+        const rendered = renderCell(cell);
+        while ((activeRowspans[columnIndex] ?? 0) > 0) {
+            activeRowspans[columnIndex]--;
+            columnIndex++;
+            if (rendered.empty) { return []; }
+        }
+
+        if (rendered.rowspan > 1) {
+            for (let offset = 0; offset < rendered.colspan; offset++) {
+                activeRowspans[columnIndex + offset] = Math.max(activeRowspans[columnIndex + offset] ?? 0, rendered.rowspan - 1);
+            }
+        }
+        columnIndex += rendered.colspan;
+        return rendered.html;
+    }).join('');
 }
 
 function renderLatexTableRows(rows: LatexTableRow[], renderer: RenderContext, tagName: 'td' | 'th', suppressFirstRule: boolean): string {
@@ -461,30 +481,11 @@ function renderLatexTableRows(rows: LatexTableRow[], renderer: RenderContext, ta
     return rows.map((row, rowIndex) => {
         const hasRuleAbove = row.rulesBefore.some(rule => rule === 'mid' || rule === 'hline') && !(suppressFirstRule && rowIndex === 0);
         const classAttr = hasRuleAbove ? ' class="table-row-rule-above"' : '';
-        const renderedCells: string[] = [];
-        let columnIndex = 0;
-
-        cellLoop:
-        for (const cell of row.cells) {
-            while ((activeRowspans[columnIndex] ?? 0) > 0) {
-                activeRowspans[columnIndex]--;
-                columnIndex++;
-                if (!cell.trim()) {
-                    continue cellLoop;
-                }
-            }
-
-            const rendered = renderLatexTableCell(cell, renderer, tagName);
-            renderedCells.push(rendered.html);
-            if (rendered.rowspan > 1) {
-                for (let offset = 0; offset < rendered.colspan; offset++) {
-                    activeRowspans[columnIndex + offset] = Math.max(activeRowspans[columnIndex + offset] ?? 0, rendered.rowspan - 1);
-                }
-            }
-            columnIndex += rendered.colspan;
-        }
-
-        return `<tr${classAttr}>${renderedCells.join('')}</tr>`;
+        return `<tr${classAttr}>${renderTableRowCells(
+            row.cells,
+            activeRowspans,
+            cell => renderLatexTableCell(cell, renderer, tagName)
+        )}</tr>`;
     }).join('');
 }
 

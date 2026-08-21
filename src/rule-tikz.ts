@@ -1,7 +1,7 @@
 import type { PreprocessRule, RenderContext } from './types';
 import { CITATION_COMMANDS } from './patterns';
 import { renderCitationTex } from './rule-helpers';
-import { escapeScriptRawText, extractAndHideLabels, replaceLatexCommandCalls, splitLatexCitationKeys } from './utils';
+import { escapeRegExp, escapeScriptRawText, extractAndHideLabels, replaceLatexCommandCalls, splitLatexCitationKeys } from './utils';
 import { optimizeTikzPreviewSource } from './tikz-preview-optimizer';
 
 function resolveDependencies(content: string, macroMap: Map<string, string>): string {
@@ -103,14 +103,14 @@ function extractUsedTikzStyleDefinitions(globalPreamble: string, pictureSource: 
         usedDefinitions.push(definition);
 
         for (const nestedStyle of styleDefinitions.keys()) {
-            if (new RegExp(`(^|[^A-Za-z0-9@./:-])${nestedStyle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9@./:-]|$)`).test(definition)) {
+            if (new RegExp(`(^|[^A-Za-z0-9@./:-])${escapeRegExp(nestedStyle)}([^A-Za-z0-9@./:-]|$)`).test(definition)) {
                 visitStyle(nestedStyle);
             }
         }
     };
 
     for (const styleName of styleDefinitions.keys()) {
-        if (new RegExp(`(^|[^A-Za-z0-9@./:-])${styleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9@./:-]|$)`).test(pictureSource)) {
+        if (new RegExp(`(^|[^A-Za-z0-9@./:-])${escapeRegExp(styleName)}([^A-Za-z0-9@./:-]|$)`).test(pictureSource)) {
             visitStyle(styleName);
         }
     }
@@ -219,7 +219,6 @@ export function renderTikzPictureHtml(
  */
 export function createTikzPictureRule(): PreprocessRule {
     return {
-        name: 'tikzpicture',
         priority: 6,
         apply: (text, renderer: RenderContext) => {
             const regex = /\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g;

@@ -42,3 +42,22 @@ export interface AstParseResult {
     ast?: SnaptexAstRoot;
     errors: AstParseError[];
 }
+
+export interface AstBlockMetadata {
+    labels: string[];
+    citations: string[];
+    environments: string[];
+    macros: string[];
+}
+
+export interface CompactSourceHints {
+    starts: Uint32Array;
+    ends: Uint32Array;
+}
+
+export interface AstBlockArtifact {
+    hash: string;
+    parseOk: boolean;
+    metadata: AstBlockMetadata;
+    sourceHints: CompactSourceHints;
+}

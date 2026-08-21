@@ -5,8 +5,12 @@ export interface DiffResult {
     insertCount: number;
 }
 
-interface HashComparable {
+type HashComparable = string | {
     hash: string;
+};
+
+function readHash(value: HashComparable): string {
+    return typeof value === 'string' ? value : value.hash;
 }
 
 /**
@@ -17,7 +21,7 @@ export class DiffEngine {
         let start = 0;
         const minLen = Math.min(newBlocks.length, oldBlocks.length);
 
-        while (start < minLen && newBlocks[start].hash === oldBlocks[start].hash) {
+        while (start < minLen && readHash(newBlocks[start]) === readHash(oldBlocks[start])) {
             start++;
         }
 
@@ -27,7 +31,7 @@ export class DiffEngine {
         while (end < maxEnd) {
             const oldTail = oldBlocks[oldBlocks.length - 1 - end];
             const newTail = newBlocks[newBlocks.length - 1 - end];
-            if (oldTail.hash !== newTail.hash) {
+            if (readHash(oldTail) !== readHash(newTail)) {
                 break;
             }
             end++;
@@ -48,22 +52,11 @@ export class DiffEngine {
         createChanged: (newIndex: number) => T,
         reuseUnchanged: (oldItem: T, newIndex: number) => T
     ): T[] {
-        const next: T[] = new Array(newLength);
-        const changedEnd = diff.start + diff.insertCount;
-        const suffixOffset = diff.deleteCount - diff.insertCount;
-
-        for (let index = 0; index < diff.start; index++) {
-            next[index] = reuseUnchanged(oldItems[index], index);
-        }
+        const { next, changedEnd } = this.reuseUnchangedItems(oldItems, newLength, diff, reuseUnchanged);
 
         for (let index = diff.start; index < changedEnd; index++) {
             next[index] = createChanged(index);
         }
-
-        for (let index = changedEnd; index < newLength; index++) {
-            next[index] = reuseUnchanged(oldItems[index + suffixOffset], index);
-        }
-
         return next;
     }
 
@@ -74,6 +67,20 @@ export class DiffEngine {
         createChanged: (newIndex: number) => Promise<T>,
         reuseUnchanged: (oldItem: T, newIndex: number) => T
     ): Promise<T[]> {
+        const { next, changedEnd } = this.reuseUnchangedItems(oldItems, newLength, diff, reuseUnchanged);
+
+        for (let index = diff.start; index < changedEnd; index++) {
+            next[index] = await createChanged(index);
+        }
+        return next;
+    }
+
+    private static reuseUnchangedItems<T>(
+        oldItems: readonly T[],
+        newLength: number,
+        diff: DiffResult,
+        reuseUnchanged: (oldItem: T, newIndex: number) => T
+    ): { next: T[]; changedEnd: number } {
         const next: T[] = new Array(newLength);
         const changedEnd = diff.start + diff.insertCount;
         const suffixOffset = diff.deleteCount - diff.insertCount;
@@ -82,14 +89,9 @@ export class DiffEngine {
             next[index] = reuseUnchanged(oldItems[index], index);
         }
 
-        for (let index = diff.start; index < changedEnd; index++) {
-            next[index] = await createChanged(index);
-        }
-
         for (let index = changedEnd; index < newLength; index++) {
             next[index] = reuseUnchanged(oldItems[index + suffixOffset], index);
         }
-
-        return next;
+        return { next, changedEnd };
     }
 }

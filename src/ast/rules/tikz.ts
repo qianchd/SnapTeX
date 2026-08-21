@@ -1,6 +1,6 @@
 import { renderTikzPictureHtml } from '../../rule-tikz';
 import { readLatexGroup } from '../../utils';
-import { argumentText, environmentName, isEnvironmentNode, readNodeArgument } from '../visit-utils';
+import { argumentText, isEnvironmentNode, readNodeArgument } from '../visit-utils';
 import type { AstRenderRule } from './index';
 
 function tikzSourceFromEnvironment(source: string): { options: string; content: string } | undefined {
@@ -23,20 +23,16 @@ function tikzSourceFromEnvironment(source: string): { options: string; content: 
         : undefined;
 }
 
-export const AST_TIKZ_RULE: AstRenderRule = {
-    name: 'ast-tikz',
-    match: input => environmentName(input.node) === 'tikzpicture',
-    render: (input, context) => {
-        if (!isEnvironmentNode(input.node) || !Array.isArray(input.node.content)) {
-            return undefined;
-        }
-
-        const source = tikzSourceFromEnvironment(context.sourceSlice(input.node));
-        const options = source?.options ?? argumentText(readNodeArgument(input.node, '[', 0));
-        const content = source?.content ?? context.sourceContent(input.node.content);
-        const rendered = renderTikzPictureHtml(options, content, context);
-        return {
-            html: rendered.html + rendered.hiddenHtml
-        };
+export const AST_TIKZ_RULE: AstRenderRule = (input, context) => {
+    if (!isEnvironmentNode(input.node, 'tikzpicture') || !Array.isArray(input.node.content)) {
+        return undefined;
     }
+
+    const source = tikzSourceFromEnvironment(context.sourceSlice(input.node));
+    const options = source?.options ?? argumentText(readNodeArgument(input.node, '[', 0));
+    const content = source?.content ?? context.sourceContent(input.node.content);
+    const rendered = renderTikzPictureHtml(options, content, context);
+    return {
+        html: rendered.html + rendered.hiddenHtml
+    };
 };

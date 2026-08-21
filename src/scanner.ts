@@ -1,40 +1,17 @@
 import { DiffEngine } from './diff';
 import { REGEX_STR } from './patterns';
 import { BlockNumberingCounts } from './types';
-import { extractLatexLabelNames, stableHash } from './utils';
-
-export interface BlockNumbering {
-    counts: BlockNumberingCounts;
-}
+import { extractLatexLabelNames } from './utils';
 
 export interface ScanResult {
-    blockNumbering: BlockNumbering[];
+    blockNumbering: BlockNumberingCounts[];
     labelMap: Record<string, string>;
 }
 
-export interface BlockTextProvider {
-    getBlockCount(): number;
-    getBlockText(index: number): string | undefined;
-    getBlockHash(index: number): string | undefined;
-}
-
-export interface LatexScanner {
-    scan(provider: BlockTextProvider): ScanResult;
-}
-
-export function createBlockScanInput(provider: BlockTextProvider) {
-    const count = provider.getBlockCount();
-    const textCache = new Map<number, string>();
-    const getText = (index: number) => {
-        if (!textCache.has(index)) {
-            textCache.set(index, provider.getBlockText(index) ?? '');
-        }
-        return textCache.get(index) ?? '';
-    };
-    const hashes = Array.from({ length: count }, (_unused, index) => (
-        provider.getBlockHash(index) ?? stableHash(getText(index))
-    ));
-    return { count, getText, hashes };
+export interface BlockScanInput {
+    count: number;
+    getText(index: number): string;
+    hashes: readonly string[];
 }
 
 export type SectionLevel = 'section' | 'subsection' | 'subsubsection' | 'paragraph' | 'subparagraph';
@@ -44,7 +21,7 @@ export type ScanToken =
     | { pos: number; kind: 'sec'; level: SectionLevel; label?: string }
     | { pos: number; kind: 'eq'; label?: string; labels?: string[]; tag?: string }
     | { pos: number; kind: 'float'; floatKind: FloatKind; label?: string; labels?: string[] }
-    | { pos: number; kind: 'subfloat'; floatKind: 'fig'; label?: string; labels?: string[] }
+    | { pos: number; kind: 'subfloat'; label?: string; labels?: string[] }
     | { pos: number; kind: 'thm'; envName: string; label?: string; labels?: string[] };
 
 export interface BlockScanSummary {
@@ -63,10 +40,8 @@ interface CounterState {
     alg: number;
 }
 
-function createEmptyBlockNumbering(): BlockNumbering {
-    return {
-        counts: { eq: [], fig: [], subfig: [], tbl: [], alg: [], sec: [], thm: [] }
-    };
+function createEmptyBlockNumbering(): BlockNumberingCounts {
+    return { eq: [], fig: [], subfig: [], tbl: [], alg: [], sec: [], thm: [] };
 }
 
 function assignLabels(labelMap: Record<string, string>, token: { label?: string; labels?: string[] }, value: string) {
@@ -120,7 +95,7 @@ export function buildScanResultFromSummaries(summaries: readonly BlockScanSummar
     const counters: CounterState = { sec: 0, subsec: 0, subsubsec: 0, eq: 0, fig: 0, subfig: 0, tbl: 0, alg: 0 };
     const dynamicCounters: Record<string, number> = {};
     const labelMap: Record<string, string> = {};
-    const results: BlockNumbering[] = [];
+    const results: BlockNumberingCounts[] = [];
 
     summaries.forEach(summary => {
         const blockRes = createEmptyBlockNumbering();
@@ -128,12 +103,12 @@ export function buildScanResultFromSummaries(summaries: readonly BlockScanSummar
         for (const token of summary.tokens) {
             if (token.kind === 'sec') {
                 const numStr = advanceSection(counters, token.level);
-                blockRes.counts.sec.push(numStr);
+                blockRes.sec.push(numStr);
                 assignLabels(labelMap, token, numStr);
             } else if (token.kind === 'eq') {
                 counters.eq++;
                 const numStr = token.tag ?? String(counters.eq);
-                blockRes.counts.eq.push(numStr);
+                blockRes.eq.push(numStr);
                 assignLabels(labelMap, token, numStr);
             } else if (token.kind === 'float') {
                 counters[token.floatKind]++;
@@ -141,17 +116,17 @@ export function buildScanResultFromSummaries(summaries: readonly BlockScanSummar
                     counters.subfig = 0;
                 }
                 const numStr = String(counters[token.floatKind]);
-                blockRes.counts[token.floatKind].push(numStr);
+                blockRes[token.floatKind].push(numStr);
                 assignLabels(labelMap, token, numStr);
             } else if (token.kind === 'subfloat') {
                 counters.subfig++;
                 const suffix = formatSubfigureCounter(counters.subfig);
-                blockRes.counts.subfig.push(suffix);
+                blockRes.subfig.push(suffix);
                 assignLabels(labelMap, token, `${counters.fig}${suffix}`);
             } else {
                 dynamicCounters[token.envName] = (dynamicCounters[token.envName] ?? 0) + 1;
                 const numStr = String(dynamicCounters[token.envName]);
-                blockRes.counts.thm.push(numStr);
+                blockRes.thm.push(numStr);
                 assignLabels(labelMap, token, numStr);
             }
         }
@@ -171,23 +146,21 @@ export function buildScanResultFromSummaries(summaries: readonly BlockScanSummar
  * unchanged blocks reuse their summaries while final numbers are recomputed from
  * the summaries in document order.
  */
-export class LatexCounterScanner implements LatexScanner {
+export class LatexCounterScanner {
     private summaries: BlockScanSummary[] = [];
 
     public reset() {
         this.summaries = [];
     }
 
-    public scan(provider: BlockTextProvider): ScanResult {
-        const summaries = this.updateSummaries(provider);
+    public scan(input: BlockScanInput): ScanResult {
+        const summaries = this.updateSummaries(input);
         return buildScanResultFromSummaries(summaries);
     }
 
-    private updateSummaries(provider: BlockTextProvider): BlockScanSummary[] {
-        const { count, getText, hashes } = createBlockScanInput(provider);
+    private updateSummaries({ count, getText, hashes }: BlockScanInput): BlockScanSummary[] {
         const previous = this.summaries;
-        const currentHashes = hashes.map(hash => ({ hash }));
-        const diff = DiffEngine.compute(previous, currentHashes);
+        const diff = DiffEngine.compute(previous, hashes);
         const next = DiffEngine.rebuildArray(
             previous,
             count,
@@ -202,60 +175,43 @@ export class LatexCounterScanner implements LatexScanner {
 
     private parseBlock(text: string, hash: string): BlockScanSummary {
         const tokens: ScanToken[] = [];
+        const tokenRegex = new RegExp(
+            `\\\\(?:(${REGEX_STR.SECTION_LEVELS})(\\*)?\\s*\\{|begin\\{(?:(${REGEX_STR.MATH_ENVS})(\\*)?|(${REGEX_STR.FLOAT_ENVS})(\\*)?|(${REGEX_STR.THEOREM_ENVS}))\\})`,
+            'g'
+        );
+        let match: RegExpExecArray | null;
 
-        const secRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\s*\\{`, 'g');
-        const eqRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.MATH_ENVS})\\}(\\*?)`, 'g');
-        const floatRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.FLOAT_ENVS})(\\*)?\\}`, 'g');
-        const thmRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}`, 'g');
-
-        let match;
-
-        while ((match = secRegex.exec(text)) !== null) {
-            if (match[2] === '*') { continue; }
-            tokens.push({
-                pos: match.index,
-                kind: 'sec',
-                level: match[1] as SectionLevel,
-                label: this.extractLabelNear(text, match.index)
-            });
-        }
-
-        while ((match = eqRegex.exec(text)) !== null) {
-            if (match[2] === '*') { continue; }
-            const env = this.extractEnvInfo(text, match.index, match[1]);
-            tokens.push({
-                pos: match.index,
-                kind: 'eq',
-                label: env.label,
-                tag: env.tag
-            });
-        }
-
-        while ((match = floatRegex.exec(text)) !== null) {
-            const floatKind = floatKindFromEnvironment(match[1]);
-            if (!floatKind) { continue; }
-            const env = this.extractEnvInfo(text, match.index, match[1], floatKind === 'fig');
-            tokens.push({
-                pos: match.index,
-                kind: 'float',
-                floatKind,
-                label: env.label
-            });
-            if (floatKind === 'fig') {
-                tokens.push(...this.extractSubfigureTokens(env.block, match.index));
+        while ((match = tokenRegex.exec(text)) !== null) {
+            const [section, sectionStar, mathEnv, mathStar, floatEnv, , theoremEnv] = match.slice(1);
+            if (section) {
+                if (sectionStar) { continue; }
+                tokens.push({
+                    pos: match.index,
+                    kind: 'sec',
+                    level: section as SectionLevel,
+                    label: this.extractLabelNear(text, match.index)
+                });
+            } else if (mathEnv) {
+                if (mathStar) { continue; }
+                const env = this.extractEnvInfo(text, match.index, mathEnv);
+                tokens.push({ pos: match.index, kind: 'eq', label: env.label, tag: env.tag });
+            } else if (floatEnv) {
+                const floatKind = floatKindFromEnvironment(floatEnv);
+                if (!floatKind) { continue; }
+                const env = this.extractEnvInfo(text, match.index, floatEnv, floatKind === 'fig');
+                tokens.push({ pos: match.index, kind: 'float', floatKind, label: env.label });
+                if (floatKind === 'fig') {
+                    tokens.push(...this.extractSubfigureTokens(env.block, match.index));
+                }
+            } else if (theoremEnv) {
+                tokens.push({
+                    pos: match.index,
+                    kind: 'thm',
+                    envName: theoremEnv.toLowerCase(),
+                    label: this.extractEnvInfo(text, match.index, theoremEnv).label
+                });
             }
         }
-
-        while ((match = thmRegex.exec(text)) !== null) {
-            const envName = match[1].toLowerCase();
-            tokens.push({
-                pos: match.index,
-                kind: 'thm',
-                envName,
-                label: this.extractEnvInfo(text, match.index, match[1]).label
-            });
-        }
-
         tokens.sort((a, b) => a.pos - b.pos);
         return { hash, tokens };
     }
@@ -289,7 +245,6 @@ export class LatexCounterScanner implements LatexScanner {
             tokens.push({
                 pos: basePos + match.index,
                 kind: 'subfloat',
-                floatKind: 'fig',
                 label: extractLatexLabelNames(match[0])[0]
             });
         }

@@ -84,7 +84,7 @@ export function algorithmicInlineMacroHtml(command: string): string | undefined 
     return INLINE_MACROS.get(normalizeAlgorithmCommand(command));
 }
 
-export function normalizeAlgorithmicInlineMacros(source: string): string {
+function normalizeAlgorithmicInlineMacros(source: string): string {
     return source.replace(/\\([A-Za-z]+)\b/g, (match, command: string) => {
         return algorithmicInlineMacroHtml(command) ?? match;
     });

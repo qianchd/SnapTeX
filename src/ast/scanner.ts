@@ -1,10 +1,9 @@
 import { REGEX_STR } from '../patterns';
 import {
     buildScanResultFromSummaries,
-    createBlockScanInput,
     floatKindFromEnvironment,
+    type BlockScanInput,
     type BlockScanSummary,
-    type BlockTextProvider,
     type ScanResult,
     type ScanToken,
     type SectionLevel
@@ -76,14 +75,13 @@ export class AstLatexScanner {
         this.summaries = [];
     }
 
-    async scan(provider: BlockTextProvider): Promise<ScanResult> {
-        const summaries = await this.updateSummaries(provider);
+    async scan(input: BlockScanInput): Promise<ScanResult> {
+        const summaries = await this.updateSummaries(input);
         return buildScanResultFromSummaries(summaries);
     }
 
-    private async updateSummaries(provider: BlockTextProvider): Promise<BlockScanSummary[]> {
-        const { count, getText, hashes } = createBlockScanInput(provider);
-        const diff = DiffEngine.compute(this.summaries, hashes.map(hash => ({ hash })));
+    private async updateSummaries({ count, getText, hashes }: BlockScanInput): Promise<BlockScanSummary[]> {
+        const diff = DiffEngine.compute(this.summaries, hashes);
         const next = await DiffEngine.rebuildArrayAsync(
             this.summaries,
             count,

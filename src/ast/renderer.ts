@@ -2,25 +2,26 @@ import type { AstParseResult } from './types';
 import { parseLatexToAst } from './parse';
 import { createDefaultAstRenderContext, renderAstNodesWithRules, type AstRenderContext, type AstRenderRule } from './rules';
 import { DEFAULT_AST_RENDER_RULES } from './rules/defaults';
-import { createAstBlockArtifactFromParseResult, type AstBlockArtifact } from './block-metadata';
+import { createAstBlockArtifactFromParseResult } from './block-metadata';
+import type { AstBlockArtifact } from './types';
 import { escapeHtmlAttribute, stableHash } from '../utils';
 import { hasBlockLevelHtml } from '../rule-helpers';
 
-export interface AstBlockWrapperMeta {
+interface AstBlockWrapperMeta {
     index: number;
     hash?: string;
     line?: number;
     lineCount?: number;
 }
 
-export interface AstBlockRenderOptions {
+interface AstBlockRenderOptions {
     rules?: readonly AstRenderRule[];
     context?: AstRenderContext;
     parse?: (text: string) => Promise<AstParseResult>;
     wrapper?: AstBlockWrapperMeta;
 }
 
-export interface AstBlockRenderResult {
+interface AstBlockRenderResult {
     html: string;
     artifact: AstBlockArtifact;
 }

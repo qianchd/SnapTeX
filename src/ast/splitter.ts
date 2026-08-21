@@ -6,7 +6,7 @@ import {
     matchesSplitterEnvRule
 } from '../splitter';
 import type { BlockTextSpan, SplitterOptions, SplitterRule } from '../types';
-import { getBlockSpanText, lineAtOffset, stableHash } from '../utils';
+import { countLineBreaks, escapeRegExp, getBlockSpanText, lineAtOffset, stableHash } from '../utils';
 import { parseLatexToAst } from './parse';
 import type { AstParseResult, AstSourcePosition, SnaptexAstArgument, SnaptexAstNode } from './types';
 import {
@@ -26,8 +26,6 @@ export interface AstSplitOptions extends SplitterOptions {
 export interface AstSplitResult {
     spans: BlockTextSpan[];
     coarseSpans: BlockTextSpan[];
-    parseOk: boolean;
-    usedSafetySplit: boolean;
 }
 
 export interface AstSplitSnapshot {
@@ -46,8 +44,7 @@ interface ContextWrapper {
 
 interface RefineResult {
     spans: BlockTextSpan[];
-    parseOk: boolean;
-    usedSafetySplit: boolean;
+    accepted: boolean;
 }
 
 interface CoarseBlockMeta {
@@ -64,8 +61,7 @@ interface CoarseBlockMeta {
  */
 export async function splitLatexWithAst(text: string, options: AstSplitOptions): Promise<AstSplitResult> {
     const coarseSpans = createAstCoarseSpans(text, options);
-    const refined = await refineCoarseSpans(text, options, coarseSpans);
-    return { ...refined, coarseSpans };
+    return { spans: await refineCoarseSpans(text, options, coarseSpans), coarseSpans };
 }
 
 export async function splitLatexWithAstIncremental(
@@ -79,9 +75,7 @@ export async function splitLatexWithAstIncremental(
     if (previous.text === text) {
         return {
             spans: [...previous.spans],
-            coarseSpans: [...previous.coarseSpans],
-            parseOk: true,
-            usedSafetySplit: false
+            coarseSpans: [...previous.coarseSpans]
         };
     }
 
@@ -90,9 +84,6 @@ export async function splitLatexWithAstIncremental(
     const newCoarse = buildCoarseMeta(text, coarseSpans);
     const diff = DiffEngine.compute(oldCoarse, newCoarse);
     const spans: BlockTextSpan[] = [];
-    let parseOk = true;
-    let usedSafetySplit = false;
-
     const appendReused = (oldIndex: number, newIndex: number) => {
         const oldSpan = oldCoarse[oldIndex]?.span;
         const newSpan = newCoarse[newIndex]?.span;
@@ -109,10 +100,7 @@ export async function splitLatexWithAstIncremental(
     }
 
     for (let index = diff.start; index < diff.start + diff.insertCount; index++) {
-        const result = await refineCoarseSpan(text, options, coarseSpans[index]);
-        spans.push(...result.spans);
-        parseOk = parseOk && result.parseOk;
-        usedSafetySplit = usedSafetySplit || result.usedSafetySplit;
+        spans.push(...await refineCoarseSpan(text, options, coarseSpans[index]));
     }
 
     const suffixOffset = diff.deleteCount - diff.insertCount;
@@ -120,12 +108,7 @@ export async function splitLatexWithAstIncremental(
         appendReused(index + suffixOffset, index);
     }
 
-    return {
-        spans,
-        coarseSpans,
-        parseOk,
-        usedSafetySplit
-    };
+    return { spans, coarseSpans };
 }
 
 function createAstCoarseSpans(text: string, options: SplitterOptions): BlockTextSpan[] {
@@ -147,37 +130,28 @@ async function refineCoarseSpans(
     text: string,
     options: AstSplitOptions,
     coarseSpans: readonly BlockTextSpan[]
-): Promise<RefineResult> {
+): Promise<BlockTextSpan[]> {
     const spans: BlockTextSpan[] = [];
-    let parseOk = true;
-    let usedSafetySplit = false;
 
     for (const coarseSpan of coarseSpans) {
-        const result = await refineCoarseSpan(text, options, coarseSpan);
-        spans.push(...result.spans);
-        parseOk = parseOk && result.parseOk;
-        usedSafetySplit = usedSafetySplit || result.usedSafetySplit;
+        spans.push(...await refineCoarseSpan(text, options, coarseSpan));
     }
 
-    return { spans, parseOk, usedSafetySplit };
+    return spans;
 }
 
-async function refineCoarseSpan(text: string, options: AstSplitOptions, coarseSpan: BlockTextSpan): Promise<RefineResult> {
+async function refineCoarseSpan(text: string, options: AstSplitOptions, coarseSpan: BlockTextSpan): Promise<BlockTextSpan[]> {
     const source = getBlockSpanText(text, coarseSpan);
     if (!shouldRefineCoarseSpan(source, coarseSpan, options)) {
-        return { spans: [coarseSpan], parseOk: true, usedSafetySplit: false };
+        return [coarseSpan];
     }
 
     const local = await refineTextWithAst(source, options);
-    if (local.spans.length === 0 || (!local.parseOk && !local.usedSafetySplit)) {
-        return { spans: [coarseSpan], parseOk: local.parseOk, usedSafetySplit: local.usedSafetySplit };
+    if (local.spans.length === 0 || !local.accepted) {
+        return [coarseSpan];
     }
 
-    return {
-        spans: local.spans.map(span => offsetSpan(span, coarseSpan.start, coarseSpan.line)),
-        parseOk: local.parseOk,
-        usedSafetySplit: local.usedSafetySplit
-    };
+    return local.spans.map(span => offsetSpan(span, coarseSpan.start, coarseSpan.line));
 }
 
 function shouldRefineCoarseSpan(text: string, span: BlockTextSpan, options: SplitterOptions): boolean {
@@ -196,12 +170,11 @@ function shouldRefineCoarseSpan(text: string, span: BlockTextSpan, options: Spli
 async function refineTextWithAst(text: string, options: AstSplitOptions): Promise<RefineResult> {
     const parseResult = await (options.parse ?? parseLatexToAst)(text);
     if (!parseResult.ast) {
-        return { spans: [], parseOk: false, usedSafetySplit: false };
+        return { spans: [], accepted: false };
     }
-    const parseOk = parseResult.errors.length === 0;
 
     const spans: BlockTextSpan[] = [];
-    let usedSafetySplit = false;
+    let accepted = parseResult.errors.length === 0;
     let blockStart = 0;
     let blockMaxLineCount = options.config.maxNoEmergencySplitLines;
     const resetBlockMaxLineCount = () => {
@@ -213,7 +186,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
         contexts: readonly ContextWrapper[] = [],
         maxLineCount = blockMaxLineCount
     ) => {
-        usedSafetySplit = pushSpan(spans, text, start, end, options, maxLineCount, contexts) || usedSafetySplit;
+        accepted = pushSpan(spans, text, start, end, options, maxLineCount, contexts) || accepted;
     };
     const addWrapperAffixes = (firstSpanIndex: number, prefix: string, suffix: string) => {
         if (spans.length <= firstSpanIndex) {
@@ -326,8 +299,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
     pushAstSpan(blockStart, text.length);
     return {
         spans,
-        parseOk,
-        usedSafetySplit
+        accepted
     };
 }
 
@@ -367,7 +339,7 @@ function trimTransparentContainerEdges(
         start,
         end,
         line: lineAtOffset(text, start),
-        lineCount: text.slice(start, end).split('\n').length
+        lineCount: countLineBreaks(text, start, end) + 1
     };
 }
 
@@ -384,7 +356,7 @@ function mergeWrapperTransparentSpans(text: string, spans: readonly BlockTextSpa
 
     const flushPending = () => {
         if (pending.length === 0) { return; }
-        merged.push(mergeSpans(text, pending));
+        merged.push(mergeSpans(pending));
         pending = [];
         balance = 0;
     };
@@ -403,7 +375,9 @@ function mergeWrapperTransparentSpans(text: string, spans: readonly BlockTextSpa
             balance += wrapperTransparentEnvBalance(getBlockSpanText(text, span), options.rules);
         }
 
-        const lineCount = text.slice(pending[0].start, pending[pending.length - 1].end).split('\n').length;
+        const first = pending[0];
+        const last = pending[pending.length - 1];
+        const lineCount = last.line - first.line + last.lineCount;
         if (balance <= 0 || lineCount >= maxLines) {
             flushPending();
         }
@@ -412,14 +386,14 @@ function mergeWrapperTransparentSpans(text: string, spans: readonly BlockTextSpa
     return merged;
 }
 
-function mergeSpans(text: string, spans: readonly BlockTextSpan[]): BlockTextSpan {
+function mergeSpans(spans: readonly BlockTextSpan[]): BlockTextSpan {
     const first = spans[0];
     const last = spans[spans.length - 1];
     return {
         start: first.start,
         end: last.end,
         line: first.line,
-        lineCount: text.slice(first.start, last.end).split('\n').length
+        lineCount: last.line - first.line + last.lineCount
     };
 }
 
@@ -526,33 +500,22 @@ function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonl
 }
 
 function nodeEnd(node: SnaptexAstNode | SnaptexAstArgument): number | undefined {
-    const ends: number[] = [];
-    const position = getSourcePosition(node);
-    if (position) {
-        ends.push(position.end.offset);
-    }
+    let end = getSourcePosition(node)?.end.offset ?? -1;
     if ('args' in node && Array.isArray(node.args)) {
         for (const argument of node.args) {
-            const end = nodeEnd(argument);
-            if (end !== undefined) {
-                ends.push(end);
-            }
+            end = Math.max(end, nodeEnd(argument) ?? -1);
         }
     }
     if ('content' in node && Array.isArray(node.content)) {
-        const contentEnds: number[] = [];
+        let contentEnd = -1;
         for (const child of node.content) {
-            const end = nodeEnd(child);
-            if (end !== undefined) {
-                contentEnds.push(end);
-            }
+            contentEnd = Math.max(contentEnd, nodeEnd(child) ?? -1);
         }
-        if (contentEnds.length > 0) {
-            const contentEnd = Math.max(...contentEnds);
-            ends.push('closeMark' in node && node.closeMark ? contentEnd + node.closeMark.length : contentEnd);
+        if (contentEnd >= 0) {
+            end = Math.max(end, 'closeMark' in node && node.closeMark ? contentEnd + node.closeMark.length : contentEnd);
         }
     }
-    return ends.length === 0 ? undefined : Math.max(...ends);
+    return end < 0 ? undefined : end;
 }
 
 function skipWhitespaceNodes(nodes: readonly SnaptexAstNode[], offset: number): number {
@@ -584,7 +547,7 @@ function pushSpan(
     }
 
     const safeMaxLineCount = Math.max(1, Math.floor(maxLineCount));
-    const lineCount = text.slice(start, end).split('\n').length;
+    const lineCount = countLineBreaks(text, start, end) + 1;
     if (lineCount > safeMaxLineCount) {
         pushParagraphBudgetSpans(spans, text, start, end, options, safeMaxLineCount, contexts);
         return true;
@@ -695,12 +658,12 @@ function pushRawSpan(
         start,
         end,
         line: lineAtOffset(text, start),
-        lineCount: text.slice(start, end).split('\n').length,
+        lineCount: countLineBreaks(text, start, end) + 1,
         ...contextWrapperAffixes(contexts, start, end)
     });
 }
 
 function hasMatchingEnvironmentEnd(text: string, envName: string): boolean {
-    const escapedName = envName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedName = escapeRegExp(envName);
     return new RegExp(`\\\\end\\s*\\{${escapedName}\\}`).test(text);
 }

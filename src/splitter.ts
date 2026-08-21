@@ -1,5 +1,5 @@
 import { BlockTextSpan, SplitterOptions, SplitterRule } from './types';
-import { scanLatexBraceBalance } from './utils';
+import { countLineBreaks, scanLatexBraceBalance } from './utils';
 
 type SplitterEnvRule = Extract<SplitterRule, { envPattern: RegExp }>;
 type SplitterEnvRuleKind = SplitterEnvRule['kind'];
@@ -58,7 +58,8 @@ function containsArgumentContextWrapper(text: string, rules: readonly SplitterRu
 export class LatexBlockSplitter {
     public static split(text: string, options: SplitterOptions): BlockTextSpan[] {
         const blocks: BlockTextSpan[] = [];
-        let currentBuffer = "";
+        let hasBufferedContent = false;
+        let currentBlockLineBreaks = 0;
         let envStack: string[] = [];
         let braceDepth = 0;
         let hasContextWrapperStart = false;
@@ -69,16 +70,22 @@ export class LatexBlockSplitter {
         let bufferStartLine = 0;
         let bufferStartIndex = 0;
 
+        const advanceCurrentBlock = (value: string, lineBreaks = countLineBreaks(value)) => {
+            hasBufferedContent ||= value.trim().length > 0;
+            currentBlockLineBreaks += lineBreaks;
+            currentLine += lineBreaks;
+        };
         const pushCurrentBlock = (endIndex: number) => {
-            if (currentBuffer.trim().length === 0) { return; }
-            const count = currentBuffer.split('\n').length;
-            blocks.push({
-                start: bufferStartIndex,
-                end: endIndex,
-                line: bufferStartLine,
-                lineCount: count
-            });
-            currentBuffer = "";
+            if (hasBufferedContent) {
+                blocks.push({
+                    start: bufferStartIndex,
+                    end: endIndex,
+                    line: bufferStartLine,
+                    lineCount: currentBlockLineBreaks + 1
+                });
+            }
+            hasBufferedContent = false;
+            currentBlockLineBreaks = 0;
         };
         const startNextBlock = (line: number, index: number) => {
             bufferStartLine = line;
@@ -96,24 +103,20 @@ export class LatexBlockSplitter {
 
         while ((match = regex.exec(text)) !== null) {
             const preMatch = text.substring(lastIndex, match.index);
-            const preLines = (preMatch.match(/\n/g) || []).length;
-            currentBuffer += preMatch;
+            advanceCurrentBlock(preMatch);
             hasContextWrapperStart ||= containsArgumentContextWrapper(preMatch, options.rules);
-            currentLine += preLines;
 
             const fullMatch = match[0];
-            const matchLines = (fullMatch.match(/\n/g) || []).length;
+            const matchLines = countLineBreaks(fullMatch);
 
             const [isBegin, beginName, isEnd, endName, isOpenBrace, isCloseBrace, isDoubleNewline, isMathSymbol] =
                   [match[1], match[2], match[3], match[4], match[5], match[6], match[7], match[8]];
 
-            const currentBufferLineCount = (currentBuffer.match(/\n/g) || []).length;
-
-            const withinNoEmergencySplitBudget = currentBufferLineCount <= maxNoEmergencySplitLines;
+            const withinNoEmergencySplitBudget = currentBlockLineBreaks <= maxNoEmergencySplitLines;
             const hasNoEmergencySplitProtectionInBuffer = withinNoEmergencySplitBudget && hasContextWrapperStart;
             const isInsideNoEmergencySplitEnv = withinNoEmergencySplitBudget
                 && envStack.some(envName => matchesSplitterEnvRule(options.rules, 'no-emergency-split-env', envName));
-            const isTrapped = currentBufferLineCount >= maxBlockLines
+            const isTrapped = currentBlockLineBreaks >= maxBlockLines
                 && !isInsideNoEmergencySplitEnv
                 && !hasNoEmergencySplitProtectionInBuffer;
 
@@ -145,8 +148,7 @@ export class LatexBlockSplitter {
                     currentLine += matchLines;
                     startNextBlock(currentLine, regex.lastIndex);
                 } else {
-                    currentBuffer += fullMatch;
-                    currentLine += matchLines;
+                    advanceCurrentBlock(fullMatch, matchLines);
                 }
             }
             else if (isBegin && beginName) {
@@ -157,15 +159,14 @@ export class LatexBlockSplitter {
                     const beginsNoEmergencySplitEnv = matchesSplitterEnvRule(options.rules, 'no-emergency-split-env', beginName);
 
                     if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped && !beginsNoEmergencySplitEnv)) {
-                        if (currentBuffer.trim().length > 0) {
+                        if (hasBufferedContent) {
                             pushCurrentBlockAndStartAt(match.index, currentLine, match.index);
                             if (isTrapped) { envStack = []; braceDepth = 0; }
                         }
                     }
                     envStack.push(beginName);
                 }
-                currentBuffer += fullMatch;
-                currentLine += matchLines;
+                advanceCurrentBlock(fullMatch, matchLines);
             }
             else if (isEnd && endName) {
                 const isIgnoredEnv = matchesSplitterEnvRule(options.rules, 'ignored-env', endName);
@@ -173,12 +174,11 @@ export class LatexBlockSplitter {
                     const idx = envStack.lastIndexOf(endName);
                     if (idx !== -1) { envStack = envStack.slice(0, idx); }
                 }
-                currentBuffer += fullMatch;
-                currentLine += matchLines;
+                advanceCurrentBlock(fullMatch, matchLines);
 
                 const isEmergencySplitEndEnv = matchesSplitterEnvRule(options.rules, 'emergency-split-end-env', endName);
                 if (isEmergencySplitEndEnv && isTrapped) {
-                    if (currentBuffer.trim().length > 0) {
+                    if (hasBufferedContent) {
                         pushCurrentBlockAndStartAt(regex.lastIndex, currentLine, regex.lastIndex);
                         envStack = [];
                         braceDepth = 0;
@@ -192,18 +192,16 @@ export class LatexBlockSplitter {
                     hasContextWrapperStart = true;
                 }
                 braceDepth++;
-                currentBuffer += fullMatch;
-                currentLine += matchLines;
+                advanceCurrentBlock(fullMatch, matchLines);
             } else if (isCloseBrace) {
                 if (braceDepth > 0) {braceDepth--;}
-                currentBuffer += fullMatch;
-                currentLine += matchLines;
+                advanceCurrentBlock(fullMatch, matchLines);
             }
             else if (isMathSymbol) {
                  if (fullMatch === '$$') {
                     if (envStack.length > 0 && envStack[envStack.length - 1] === '$$') {
                         envStack.pop();
-                        currentBuffer += fullMatch;
+                        advanceCurrentBlock(fullMatch, matchLines);
                     } else if ((envStack.length === 0 && braceDepth === 0) || isTrapped) {
                         const remainingText = text.substring(regex.lastIndex);
                         const nextCloseIdx = remainingText.indexOf('$$');
@@ -214,44 +212,42 @@ export class LatexBlockSplitter {
                         const isBrokenByNewline = nextEmptyLineIdx !== -1 && (nextCloseIdx === -1 || nextEmptyLineIdx < nextCloseIdx);
 
                         if ((hasClose && !isBrokenByNewline) || isTrapped) {
-                              if (!isTrapped && currentBuffer.trim().length > 0) {
+                              if (!isTrapped && hasBufferedContent) {
                                 pushCurrentBlockAndStartAt(match.index, currentLine, match.index);
                             }
                             envStack.push('$$');
-                            currentBuffer += fullMatch;
+                            advanceCurrentBlock(fullMatch, matchLines);
                         } else {
-                            currentBuffer += fullMatch;
+                            advanceCurrentBlock(fullMatch, matchLines);
 
-                            if (currentBuffer.trim().length > 0) {
-                                pushCurrentBlockAndStartAt(regex.lastIndex, currentLine + matchLines, regex.lastIndex);
+                            if (hasBufferedContent) {
+                                pushCurrentBlockAndStartAt(regex.lastIndex, currentLine, regex.lastIndex);
                             }
                         }
                     } else {
-                        currentBuffer += fullMatch;
+                        advanceCurrentBlock(fullMatch, matchLines);
                     }
                 } else if (fullMatch === '\\[') {
                     if ((envStack.length === 0 && braceDepth === 0) || isTrapped) {
-                        if (!isTrapped && currentBuffer.trim().length > 0) {
+                        if (!isTrapped && hasBufferedContent) {
                             pushCurrentBlockAndStartAt(match.index, currentLine, match.index);
                         }
                         envStack.push('\\]');
                     }
-                    currentBuffer += fullMatch;
+                    advanceCurrentBlock(fullMatch, matchLines);
                 } else if (fullMatch === '\\]') {
                     if (envStack.length > 0 && envStack[envStack.length - 1] === '\\]') { envStack.pop(); }
-                    currentBuffer += fullMatch;
+                    advanceCurrentBlock(fullMatch, matchLines);
                 }
-                currentLine += matchLines;
             } else {
-                currentBuffer += fullMatch;
-                currentLine += matchLines;
+                advanceCurrentBlock(fullMatch, matchLines);
             }
             lastIndex = regex.lastIndex;
         }
 
         const remaining = text.substring(lastIndex);
         if (remaining.length > 0) {
-             currentBuffer += remaining;
+             advanceCurrentBlock(remaining);
         }
         pushCurrentBlock(text.length);
 

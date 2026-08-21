@@ -14,7 +14,7 @@ import {
     resolveLatexStyles,
     stripLatexComments
 } from './utils';
-import { BlockDependencyRule, PreprocessRule, RenderContext, RuleRegistry, SplitterConfig, SplitterRule } from './types';
+import { BlockDependencyRule, MetadataExtractor, PreprocessRule, RenderContext, SplitterConfig, SplitterRule } from './types';
 import { BibTexParser } from './bib';
 import {
     REGEX_STR,
@@ -26,13 +26,22 @@ import {
     R_THEBIBLIOGRAPHY,
     getTheoremDisplayName
 } from './patterns';
-import { createRefLink, createStyleHtmlProtector, renderBibliographyItemsHtml, renderCitationHtml, renderExternalLinkHtml, renderInlineLatexHtml, renderMaketitleAuthorsHtml, renderMath, renderNumberedEquationHtml, renderReferenceLinksHtml } from './rule-helpers';
+import { createRefLink, createStyleHtmlProtector, normalizeMathEnvironmentForKatex, renderBibliographyItemsHtml, renderCitationHtml, renderCitedBibliographyHtml, renderExternalLinkHtml, renderInlineLatexHtml, renderMaketitleAuthorsHtml, renderMath, renderNumberedEquationHtml, renderReferenceLinksHtml } from './rule-helpers';
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
 import { DEFAULT_AST_RENDER_RULES } from './ast/rules/defaults';
 import type { AstRenderRule } from './ast/rules';
 export { readAstCommandArguments } from './ast/rules';
 export type { AstRenderContext, AstRenderInput, AstRenderResult, AstRenderRule } from './ast/rules';
+
+export interface RuleRegistry {
+    readonly metadataExtractors: readonly MetadataExtractor[];
+    readonly renderRules: readonly PreprocessRule[];
+    readonly astRenderRules: readonly AstRenderRule[];
+    readonly blockDependencyRules: readonly BlockDependencyRule[];
+    readonly splitterConfig: SplitterConfig;
+    readonly splitterRules: readonly SplitterRule[];
+}
 
 function replaceLatexLinkCommands(text: string, renderer: RenderContext): string {
     return replaceLatexCommandCalls(text, [
@@ -120,14 +129,11 @@ export const DEFAULT_SPLITTER_RULES: SplitterRule[] = [
  * It stores \editor{...} as metadata.custom.editor. The default \maketitle
  * rule reads this custom field and refreshes when it changes.
  */
-export const EDITOR_METADATA_EXTRACTOR = {
-    name: 'editor-example',
-    extract: (source: string) => {
-        const editor = readMetadataCommand(source, 'editor');
-        return editor
-            ? { custom: { editor: editor.content }, ranges: [editor.range] }
-            : {};
-    }
+export const EDITOR_METADATA_EXTRACTOR = (source: string) => {
+    const editor = readMetadataCommand(source, 'editor');
+    return editor
+        ? { custom: { editor: editor.content }, ranges: [editor.range] }
+        : {};
 };
 
 function abstractSentinel(content: string): string {
@@ -259,7 +265,6 @@ function splitLatexListItems(content: string): Array<{ label?: string; content: 
 
 export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
-        name: 'clean_comments',
         priority: 5,
         apply: text => stripLatexComments(text)
     },
@@ -267,7 +272,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     createTikzPictureRule(),
 
     {
-        name: 'escaped_char_dollar',
         priority: 10,
         apply: (text, renderer: RenderContext) => {
             return text.replace(/\\([$])/g, () => renderer.protectHtml('raw', '&#36;'));
@@ -275,7 +279,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'clean_layout_cmds',
         priority: 15,
         apply: (text, renderer: RenderContext) => {
 
@@ -291,7 +294,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'mbox',
         priority: 20,
         apply: (text) => {
             return text.replace(/\\mbox/g, '\\text');
@@ -299,7 +301,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'romannumeral',
         priority: 30,
         apply: (text) => {
             return text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (_match, cmd, numStr) => {
@@ -309,7 +310,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'display_math',
         priority: 40,
         apply: (text, renderer: RenderContext) => {
             const mathBlockRegex = new RegExp(
@@ -332,14 +332,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
 
                 finalMath = replaceMathRefs(finalMath, renderer);
 
-                if (envName) {
-                    const name = envName.toLowerCase();
-                    if (['align', 'flalign', 'alignat', 'multline'].includes(name)) {
-                        finalMath = `\\begin{aligned}\n${finalMath}\n\\end{aligned}`;
-                    } else if (name === 'gather') {
-                        finalMath = `\\begin{gathered}\n${finalMath}\n\\end{gathered}`;
-                    }
-                }
+                finalMath = normalizeMathEnvironmentForKatex(finalMath, envName);
 
                 const protectedTag = renderMath(finalMath, true, renderer);
 
@@ -357,7 +350,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'enumerate_label_markers',
         priority: 45,
         apply: text => text.replace(/\\begin\{enumerate\}\s*\[([^\]]*)\]/g, (_match, label) => {
             return `\\begin{enumerate}[${encodeEnumerateLabel(label)}]`;
@@ -365,7 +357,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'inline_math',
         priority: 50,
         apply: (text, renderer: RenderContext) => {
             const processInline = (content: string) => {
@@ -382,13 +373,11 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'user_text_macros',
         priority: 55,
         apply: (text, renderer: RenderContext) => expandLatexTextMacros(text, renderer.metadata?.macros ?? {})
     },
 
     {
-        name: 'refs_and_labels',
         priority: 60,
         apply: (text, renderer: RenderContext) => {
             text = text.replace(new RegExp(R_LABEL, 'g'), (_match, labelName) => {
@@ -403,7 +392,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'citations',
         priority: 70,
         apply: (text, renderer: RenderContext) => {
             text = text.replace(R_CITATION, (_match, cmd, opt1, opt2, keys) => {
@@ -419,7 +407,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'bibliography',
         priority: 71,
         apply: (text, renderer: RenderContext) => {
             text = text.replace(R_BIBLIOGRAPHY_STYLE, '');
@@ -430,25 +417,12 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                     : '';
             });
             return text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), () => {
-                const citedKeys = renderer.getCitedKeys();
-                if (citedKeys.length === 0) {
-                    return renderer.protectHtml('bib', `<div class="latex-bibliography error">No citations found.</div>`);
-                }
-                const sortedKeys = Array.from(new Set(citedKeys)).sort((a, b) => {
-                    const entryA = renderer.bibEntries.get(a);
-                    const entryB = renderer.bibEntries.get(b);
-                    const authA = entryA ? (entryA.fields.author || '') : '';
-                    const authB = entryB ? (entryB.fields.author || '') : '';
-                    return authA.localeCompare(authB);
-                });
-
-                return renderer.protectHtml('bib', renderBibliographyItemsHtml(sortedKeys.map(key => ({ key, entry: renderer.bibEntries.get(key) })), renderer));
+                return renderer.protectHtml('bib', renderCitedBibliographyHtml(renderer.getCitedKeys(), renderer.bibEntries, renderer));
             });
         }
     },
 
     {
-        name: 'escaped_chars2',
         priority: 90,
         apply: (text, renderer: RenderContext) => {
             return text.replace(/\\([%#&])/g, (_match, char) => {
@@ -459,7 +433,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'latex_quotes',
         priority: 100,
         apply: (text, renderer: RenderContext) => {
             const quote = (html: string) => renderer.protectHtml('quote', html);
@@ -473,7 +446,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'latex_special_spaces',
         priority: 119,
         apply: (text, renderer: RenderContext) => {
             return text.replace(/~/g, () => renderer.protectHtml('space', '&nbsp;'));
@@ -481,7 +453,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'latex_links',
         priority: 115,
         apply: (text, renderer: RenderContext) => replaceLatexLinkCommands(text, renderer)
     },
@@ -491,7 +462,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     createTableRule(),
 
     {
-        name: 'theorems_and_proofs',
         priority: 150,
         apply: (text, renderer: RenderContext) => {
             const thmBeginRegex = new RegExp(`\\\\begin\\{(${REGEX_STR.THEOREM_ENVS})\\}(?:\\{.*?\\})?(?:\\[(.*?)\\])?`, 'gi');
@@ -519,7 +489,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'maketitle_and_abstract',
         priority: 160,
         apply: (text, renderer: RenderContext) => {
             if (text.includes('\\maketitle')) {
@@ -567,7 +536,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'sections',
         priority: 170,
         apply: (text, renderer: RenderContext) => {
             const sectionRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\{((?:[^{}]|{[^{}]*})*)\\}\\s*(\\\\label\\{[^}]+\\})?\\s*`, 'g');
@@ -598,13 +566,11 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        name: 'lists',
         priority: 180,
         apply: (text, renderer: RenderContext) => renderLatexLists(text, renderer)
     },
 
     {
-        name: 'text_styles',
         priority: 190,
         apply: (text, renderer: RenderContext) => {
             return resolveLatexStyles(text, createStyleHtmlProtector(renderer));
@@ -613,31 +579,25 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
 ];
 
 export const DEFAULT_BLOCK_DEPENDENCY_RULES: BlockDependencyRule[] = [
-    {
-        name: 'maketitle',
-        collect: ({ text, artifact, deps }) => {
-            const hasMaketitle = artifact
-                ? artifact.metadata.macros.includes('maketitle')
-                : text.includes('\\maketitle');
-            if (!hasMaketitle) { return []; }
-            return [
-                deps.metadata('title'),
-                deps.metadata('date'),
-                deps.metadata('authors'),
-                deps.metadata('affiliations'),
-                deps.metadata('custom.editor')
-            ];
-        }
+    ({ text, artifact, deps }) => {
+        const hasMaketitle = artifact
+            ? artifact.metadata.macros.includes('maketitle')
+            : text.includes('\\maketitle');
+        if (!hasMaketitle) { return []; }
+        return [
+            deps.metadata('title'),
+            deps.metadata('date'),
+            deps.metadata('authors'),
+            deps.metadata('affiliations'),
+            deps.metadata('custom.editor')
+        ];
     },
-    {
-        name: 'bibliography',
-        collect: ({ text, artifact, deps }) => {
-            const hasBibliography = artifact
-                ? artifact.metadata.macros.includes('bibliography')
-                : R_BIBLIOGRAPHY.test(text);
-            if (!hasBibliography) { return []; }
-            return [deps.citedKeys()];
-        }
+    ({ text, artifact, deps }) => {
+        const hasBibliography = artifact
+            ? artifact.metadata.macros.includes('bibliography')
+            : R_BIBLIOGRAPHY.test(text);
+        if (!hasBibliography) { return []; }
+        return [deps.citedKeys()];
     }
 ];
 

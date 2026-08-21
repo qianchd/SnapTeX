@@ -3,9 +3,10 @@ import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
 import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, DocumentDiagnostic, RenderDocumentView, BackendMode, UriLike } from './types';
 import { REGEX_STR, R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
-import { SNAP_TEX_RULES } from './rules';
+import { SNAP_TEX_RULES, type RuleRegistry } from './rules';
 import { LatexBlockSplitter } from './splitter';
-import { extractAstBlockArtifact, type AstBlockArtifact } from './ast/block-metadata';
+import { extractAstBlockArtifact } from './ast/block-metadata';
+import type { AstBlockArtifact } from './ast/types';
 import { splitLatexWithAstIncremental, type AstSplitSnapshot } from './ast/splitter';
 import { getBlockSpanText, lineAtOffset, normalizeUri, scanLatexBraceBalance, stableHash, stripLatexComments } from './utils';
 
@@ -13,14 +14,20 @@ export interface DocumentParseResult {
     bodyText: string;
     blockSpans: BlockTextSpan[];
     blockHashes: string[];
-    astBlockArtifacts?: Array<AstBlockArtifact | undefined>;
+    astBlockArtifacts: Array<AstBlockArtifact | undefined>;
     filePool: string[];
-    sourceFileIndices: Uint16Array;
-    sourceLines: Int32Array;
+    sourceMapSegments: SourceMapSegment[];
     metadata: PreambleData;
     bibEntries: Map<string, BibEntry>;
     diagnostics: DocumentDiagnostic[];
     contentStartLineOffset: number;
+}
+
+export interface SourceMapSegment {
+    flatStart: number;
+    fileIndex: number;
+    sourceStart: number;
+    length: number;
 }
 
 interface BibCacheEntry {
@@ -30,8 +37,20 @@ interface BibCacheEntry {
 
 interface FlattenOutput {
     textLines: string[];
-    fileIndices: number[];
-    lines: number[];
+    sourceMapSegments: SourceMapSegment[];
+}
+
+function appendFlattenedLine(output: FlattenOutput, text: string, fileIndex: number, sourceLine: number): void {
+    const flatLine = output.textLines.length;
+    const previous = output.sourceMapSegments.at(-1);
+    if (previous
+        && previous.fileIndex === fileIndex
+        && previous.sourceStart + previous.length === sourceLine) {
+        previous.length += 1;
+    } else {
+        output.sourceMapSegments.push({ flatStart: flatLine, fileIndex, sourceStart: sourceLine, length: 1 });
+    }
+    output.textLines.push(text);
 }
 
 interface ParseOptions {
@@ -48,13 +67,12 @@ interface ParseOptions {
  */
 export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocumentView {
     private bodyText: string = "";
-    public blockSpans: BlockTextSpan[] = [];
-    public blockHashes: string[] = [];
-    public astBlockArtifacts: Array<AstBlockArtifact | undefined> = [];
+    private blockSpans: BlockTextSpan[] = [];
+    private blockHashes: string[] = [];
+    private astBlockArtifacts: Array<AstBlockArtifact | undefined> = [];
 
     public filePool: string[] = [];
-    public sourceFileIndices: Uint16Array = new Uint16Array(0);
-    public sourceLines: Int32Array = new Int32Array(0);
+    private sourceMapSegments: SourceMapSegment[] = [];
 
     public contentStartLineOffset: number = 0;
     public diagnostics: DocumentDiagnostic[] = [];
@@ -74,10 +92,8 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     private bibCache: Map<string, BibCacheEntry> = new Map();
     private astSplitSnapshot: AstSplitSnapshot | undefined;
     private astSplitSnapshotKey: string | undefined;
-    private astArtifactGeneration = 0;
-    private astArtifactPromises = new Map<string, Promise<AstBlockArtifact | undefined>>();
 
-    constructor(private fileProvider: IFileProvider<TUri>, private registry = SNAP_TEX_RULES) {}
+    constructor(private readonly fileProvider: IFileProvider<TUri>, private readonly registry: RuleRegistry = SNAP_TEX_RULES) {}
 
     /**
      * Releases the transient body text after the renderer has taken a snapshot.
@@ -87,21 +103,6 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public releaseTextContent() {
         this.bodyText = "";
         this.blockSpans = [];
-    }
-
-    public cancelAstArtifactWarmup() {
-        this.astArtifactGeneration++;
-        this.astArtifactPromises.clear();
-    }
-
-    public getBlockCount(): number {
-        return this.blockSpans.length;
-    }
-
-    public getBlockText(index: number): string | undefined {
-        const span = this.blockSpans[index];
-        if (!span || this.bodyText.length === 0) { return undefined; }
-        return getBlockSpanText(this.bodyText, span);
     }
 
     public getBlockHash(index: number): string | undefined {
@@ -118,84 +119,21 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         }
     }
 
-    private ensureAstBlockArtifact(
-        index: number,
-        text: string,
-        hash: string
-    ): Promise<AstBlockArtifact | undefined> {
-        const existing = this.astBlockArtifacts[index];
-        if (existing?.hash === hash) {
-            return Promise.resolve(existing);
-        }
-
-        const generation = this.astArtifactGeneration;
-        const key = `${index}:${hash}`;
-        const pending = this.astArtifactPromises.get(key);
-        if (pending) {
-            return pending;
-        }
-
-        const promise = extractAstBlockArtifact(text, hash)
-            .then(artifact => {
-                if (generation === this.astArtifactGeneration) {
-                    this.astBlockArtifacts[index] = artifact;
-                }
-                return artifact;
-            })
-            .catch(() => undefined)
-            .finally(() => {
-                if (generation === this.astArtifactGeneration) {
-                    this.astArtifactPromises.delete(key);
-                }
-            });
-        this.astArtifactPromises.set(key, promise);
-        return promise;
-    }
-
-    public warmAstBlockArtifacts(): Promise<void> {
-        if (this.bodyText.length === 0 || this.blockSpans.length === 0 || this.blockHashes.length === 0) {
-            return Promise.resolve();
-        }
-
-        const generation = this.astArtifactGeneration;
-        const bodyText = this.bodyText;
-        const spans = [...this.blockSpans];
-        const hashes = [...this.blockHashes];
-        return this.warmAstBlockArtifactsSequential(generation, bodyText, spans, hashes);
-    }
-
-    public warmAstBlockArtifactsForIndices(indices: readonly number[]): Promise<void> {
-        if (indices.length === 0 || this.bodyText.length === 0 || this.blockSpans.length === 0 || this.blockHashes.length === 0) {
-            return Promise.resolve();
-        }
-
-        const generation = this.astArtifactGeneration;
-        const bodyText = this.bodyText;
-        const spans = [...this.blockSpans];
-        const hashes = [...this.blockHashes];
-        const sortedIndices = [...new Set(indices)]
-            .filter(index => index >= 0 && index < spans.length)
-            .sort((a, b) => a - b);
-        return this.warmAstBlockArtifactsSequential(generation, bodyText, spans, hashes, sortedIndices);
-    }
-
     public createTextSnapshot(): BlockTextSnapshot {
         return {
             bodyText: this.bodyText,
-            blockSpans: [...this.blockSpans]
+            blockSpans: this.blockSpans
         };
     }
 
     public applyResult(result: DocumentParseResult) {
-        this.cancelAstArtifactWarmup();
         this.bodyText = result.bodyText;
         this.blockSpans = result.blockSpans;
         this.blockHashes = result.blockHashes;
-        this.astBlockArtifacts = result.astBlockArtifacts ?? [];
+        this.astBlockArtifacts = result.astBlockArtifacts;
 
         this.filePool = result.filePool;
-        this.sourceFileIndices = result.sourceFileIndices;
-        this.sourceLines = result.sourceLines;
+        this.sourceMapSegments = result.sourceMapSegments;
 
         this.metadata = result.metadata;
         this.bibEntries = result.bibEntries;
@@ -214,7 +152,9 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         this.rootDir = rootDir;
 
         const diagnostics: DocumentDiagnostic[] = [];
-        const { textLines, fileIndices, lines } = await this.loadAndFlatten(entryUri, filePool, diagnostics, 0, contentOverride);
+        const flattened: FlattenOutput = { textLines: [], sourceMapSegments: [] };
+        await this.flattenInto(entryUri, filePool, flattened, diagnostics, 0, contentOverride);
+        const { textLines, sourceMapSegments } = flattened;
         options.trace?.('after flatten');
         let normalizedText = textLines.join('\n');
         textLines.length = 0;
@@ -263,31 +203,24 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             bodyText,
             blockSpans: [],
             blockHashes: [],
+            astBlockArtifacts: [],
             filePool,
-            sourceFileIndices: new Uint16Array(fileIndices),
-            sourceLines: new Int32Array(lines),
+            sourceMapSegments,
             metadata: metaRes.data,
             bibEntries,
             diagnostics,
             contentStartLineOffset
         };
-        fileIndices.length = 0;
-        lines.length = 0;
-
         const previousArtifacts = useAstBackend
             ? this.buildPreviousAstArtifactCache()
             : undefined;
-        if (useAstBackend) {
-            res.astBlockArtifacts = [];
-        }
-
         for (const b of rawBlockObjects) {
             const blockText = getBlockSpanText(bodyText, b);
             if (this.hasRenderableContent(blockText)) {
                 const hash = stableHash(blockText);
                 res.blockSpans.push(b);
                 res.blockHashes.push(hash);
-                if (res.astBlockArtifacts) {
+                if (useAstBackend) {
                     const cached = previousArtifacts?.get(hash);
                     res.astBlockArtifacts.push(cached ?? (
                         this.shouldBuildInitialAstArtifact(b)
@@ -314,39 +247,6 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         return span.lineCount > this.registry.splitterConfig.maxBlockLines;
     }
 
-    private async warmAstBlockArtifactsSequential(
-        generation: number,
-        bodyText: string,
-        spans: readonly BlockTextSpan[],
-        hashes: readonly string[],
-        indices?: readonly number[]
-    ) {
-        const warmIndex = async (index: number) => {
-            if (generation !== this.astArtifactGeneration) {
-                return false;
-            }
-            const hash = hashes[index];
-            const span = spans[index];
-            if (!hash || !span || this.astBlockArtifacts[index]?.hash === hash) {
-                return true;
-            }
-            await this.ensureAstBlockArtifact(index, getBlockSpanText(bodyText, span), hash);
-            await new Promise(resolve => setTimeout(resolve, 0));
-            return true;
-        };
-
-        if (indices) {
-            for (const index of indices) {
-                if (!await warmIndex(index)) { return; }
-            }
-            return;
-        }
-
-        for (let index = 0; index < spans.length; index++) {
-            if (!await warmIndex(index)) { return; }
-        }
-    }
-
     private buildPreviousAstArtifactCache(): Map<string, AstBlockArtifact> {
         const cache = new Map<string, AstBlockArtifact>();
         for (const artifact of this.astBlockArtifacts) {
@@ -355,18 +255,6 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             }
         }
         return cache;
-    }
-
-    private async loadAndFlatten(
-        fileUri: TUri,
-        filePool: string[],
-        diagnostics: DocumentDiagnostic[],
-        depth: number = 0,
-        contentOverride?: string
-    ): Promise<FlattenOutput> {
-        const output: FlattenOutput = { textLines: [], fileIndices: [], lines: [] };
-        await this.flattenInto(fileUri, filePool, output, diagnostics, depth, contentOverride);
-        return output;
     }
 
     private async flattenInto(
@@ -396,18 +284,14 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         } else {
             if (!(await this.fileProvider.exists(fileUri))) {
                 diagnostics.push({ message: `Missing input file: ${filePathStr}` });
-                output.textLines.push(`% [SnapTeX] File not found: ${filePathStr}`);
-                output.fileIndices.push(currentFileIndex);
-                output.lines.push(0);
+                appendFlattenedLine(output, `% [SnapTeX] File not found: ${filePathStr}`, currentFileIndex, 0);
                 return;
             }
             try {
                 content = await this.fileProvider.read(fileUri);
             } catch (e) {
                 diagnostics.push({ message: `Error reading input file: ${filePathStr}` });
-                output.textLines.push(`% [SnapTeX] Error reading: ${filePathStr}`);
-                output.fileIndices.push(currentFileIndex);
-                output.lines.push(0);
+                appendFlattenedLine(output, `% [SnapTeX] Error reading: ${filePathStr}`, currentFileIndex, 0);
                 return;
             }
         }
@@ -423,9 +307,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             const trimmed = line.trim();
 
             if (trimmed.startsWith('%')) {
-                output.textLines.push(line);
-                output.fileIndices.push(currentFileIndex);
-                output.lines.push(sourceLineNumber);
+                appendFlattenedLine(output, line, currentFileIndex, sourceLineNumber);
                 continue;
             }
 
@@ -439,9 +321,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
                 await this.flattenInto(targetUri, filePool, output, diagnostics, depth + 1);
             } else {
-                output.textLines.push(line);
-                output.fileIndices.push(currentFileIndex);
-                output.lines.push(sourceLineNumber);
+                appendFlattenedLine(output, line, currentFileIndex, sourceLineNumber);
             }
         }
     }
@@ -520,13 +400,22 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     }
 
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {
-        if (flatLine >= 0 && flatLine < this.sourceLines.length) {
-            return {
-                file: this.filePool[this.sourceFileIndices[flatLine]],
-                line: this.sourceLines[flatLine]
-            };
+        if (flatLine < 0 || this.sourceMapSegments.length === 0) { return undefined; }
+        let low = 0;
+        let high = this.sourceMapSegments.length;
+        while (low < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (this.sourceMapSegments[middle].flatStart <= flatLine) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
         }
-        return undefined;
+        const segment = this.sourceMapSegments[low - 1];
+        const offset = segment ? flatLine - segment.flatStart : -1;
+        return segment && offset >= 0 && offset < segment.length
+            ? { file: this.filePool[segment.fileIndex], line: segment.sourceStart + offset }
+            : undefined;
     }
 
     /**
@@ -551,16 +440,15 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             return bestLine;
         }
 
-        const len = this.sourceLines.length;
-        for (let i = 0; i < len; i++) {
-            if (matchingIndices.has(this.sourceFileIndices[i])) {
-                const diff = Math.abs(this.sourceLines[i] - originalLine);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    bestLine = i;
-                }
-                if (diff === 0) { return i; }
+        for (const segment of this.sourceMapSegments) {
+            if (!matchingIndices.has(segment.fileIndex)) { continue; }
+            const offset = Math.max(0, Math.min(segment.length - 1, originalLine - segment.sourceStart));
+            const diff = Math.abs(segment.sourceStart + offset - originalLine);
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestLine = segment.flatStart + offset;
             }
+            if (diff === 0) { return bestLine; }
         }
 
         return bestLine;

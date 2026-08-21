@@ -17,22 +17,17 @@ function parseErrorFromUnknown(error: unknown): AstParseError {
     return { message: String(error) };
 }
 
-/**
- * Parses LaTeX into a unified-latex AST without changing the legacy renderer.
- *
- * User documents are often incomplete while typing, so callers must be able to
- * fall back to the existing regex/block pipeline whenever parsing fails.
- */
+/** Parses LaTeX through the shared, lazily loaded unified-latex parser. */
 export async function parseLatexToAst(text: string): Promise<AstParseResult> {
-    try {
-        const { parse } = await import('@unified-latex/unified-latex-util-parse');
-        loadedParser = parse as LatexParser;
-        return parseLatexWithLoadedParser(text)!;
-    } catch (error) {
-        return {
-            errors: [parseErrorFromUnknown(error)]
-        };
+    if (!loadedParser) {
+        try {
+            const { parse } = await import('@unified-latex/unified-latex-util-parse');
+            loadedParser = parse as LatexParser;
+        } catch (error) {
+            return { errors: [parseErrorFromUnknown(error)] };
+        }
     }
+    return parseLatexWithLoadedParser(text)!;
 }
 
 /** Parses nested generated source after the lazily loaded AST parser is available. */

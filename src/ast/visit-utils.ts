@@ -1,11 +1,8 @@
 import type { TextRange } from '../types';
+import { isRecord } from '../utils';
 import type { AstSourcePosition, SnaptexAstArgument, SnaptexAstNode, SnaptexAstRoot } from './types';
 
 const VERBATIM_LIKE_ENVIRONMENTS = new Set(['verbatim', 'lstlisting', 'minted']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
-}
 
 export type SnaptexAstMacro = SnaptexAstNode & {
     type: 'macro';
@@ -147,43 +144,44 @@ function isAstArgument(node: SnaptexAstNode | SnaptexAstArgument): node is Snapt
 }
 
 export function astNodeRange(node: SnaptexAstNode | SnaptexAstArgument): TextRange | undefined {
-    const ranges: TextRange[] = [];
+    let range: TextRange | undefined;
     const position = getSourcePosition(node);
     if (position) {
-        ranges.push({ start: position.start.offset, end: position.end.offset });
-    }
-    if (!position && isAstArgument(node)) {
+        range = { start: position.start.offset, end: position.end.offset };
+    } else if ('content' in node && Array.isArray(node.content)) {
         const contentRange = astNodesRange(node.content);
         if (contentRange) {
-            ranges.push({
-                start: Math.max(0, contentRange.start - (node.openMark ? 1 : 0)),
-                end: contentRange.end + (node.closeMark ? 1 : 0)
-            });
+            range = isAstArgument(node)
+                ? {
+                    start: Math.max(0, contentRange.start - (node.openMark ? 1 : 0)),
+                    end: contentRange.end + (node.closeMark ? 1 : 0)
+                }
+                : contentRange;
         }
     }
 
     if ('args' in node && Array.isArray(node.args)) {
-        node.args.map(astNodeRange).filter(isTextRange).forEach(range => ranges.push(range));
+        for (const argument of node.args) {
+            range = mergeTextRanges(range, astNodeRange(argument));
+        }
     }
-    if ('content' in node && Array.isArray(node.content)) {
-        node.content.map(astNodeRange).filter(isTextRange).forEach(range => ranges.push(range));
-    }
-    return mergeTextRanges(ranges);
+    return range;
 }
 
 export function astNodesRange(nodes: readonly SnaptexAstNode[]): TextRange | undefined {
-    return mergeTextRanges(nodes.map(astNodeRange).filter(isTextRange));
+    let range: TextRange | undefined;
+    for (const node of nodes) {
+        range = mergeTextRanges(range, astNodeRange(node));
+    }
+    return range;
 }
 
-function isTextRange(value: TextRange | undefined): value is TextRange {
-    return value !== undefined;
-}
-
-function mergeTextRanges(ranges: readonly TextRange[]): TextRange | undefined {
-    if (ranges.length === 0) { return undefined; }
+function mergeTextRanges(left: TextRange | undefined, right: TextRange | undefined): TextRange | undefined {
+    if (!left) { return right; }
+    if (!right) { return left; }
     return {
-        start: Math.min(...ranges.map(range => range.start)),
-        end: Math.max(...ranges.map(range => range.end))
+        start: Math.min(left.start, right.start),
+        end: Math.max(left.end, right.end)
     };
 }
 
@@ -254,7 +252,7 @@ export function argumentText(argument: SnaptexAstArgument | undefined): string {
     return argument ? astNodesToText(argument.content) : '';
 }
 
-export function collectMacroArgumentTexts(nodes: readonly SnaptexAstNode[], macroName: string): string[] {
+export function collectMacroArgumentTexts(nodes: readonly SnaptexAstNode[], macroNames: string | ReadonlySet<string>): string[] {
     const values: string[] = [];
 
     for (let index = 0; index < nodes.length; index++) {
@@ -263,7 +261,7 @@ export function collectMacroArgumentTexts(nodes: readonly SnaptexAstNode[], macr
             continue;
         }
 
-        if (isMacroNode(node, macroName)) {
+        if (isMacroNode(node) && (typeof macroNames === 'string' ? node.content === macroNames : macroNames.has(node.content))) {
             const attachedArgument = argumentText(readRequiredMacroArgument(node));
             if (attachedArgument) {
                 values.push(attachedArgument);
@@ -276,12 +274,12 @@ export function collectMacroArgumentTexts(nodes: readonly SnaptexAstNode[], macr
         }
 
         if (Array.isArray(node.content)) {
-            values.push(...collectMacroArgumentTexts(node.content, macroName));
+            values.push(...collectMacroArgumentTexts(node.content, macroNames));
         }
 
         if (Array.isArray(node.args)) {
             for (const argument of node.args) {
-                values.push(...collectMacroArgumentTexts(argument.content, macroName));
+                values.push(...collectMacroArgumentTexts(argument.content, macroNames));
             }
         }
     }
@@ -293,27 +291,23 @@ export function findMacroArgumentText(nodes: readonly SnaptexAstNode[], macroNam
     return collectMacroArgumentTexts(nodes, macroName)[0];
 }
 
-function childNodes(node: SnaptexAstNode): SnaptexAstNode[] {
-    const children: SnaptexAstNode[] = [];
-    if (Array.isArray(node.content)) {
-        children.push(...node.content);
-    }
-    if (Array.isArray(node.args)) {
-        for (const argument of node.args) {
-            children.push(...argument.content);
-        }
-    }
-    return children;
-}
-
-export function visitLatexAst(root: SnaptexAstRoot, visitor: (node: SnaptexAstNode) => void): void {
-    const visitNode = (node: SnaptexAstNode) => {
+export function visitLatexAst(
+    root: SnaptexAstRoot,
+    visitor: (node: SnaptexAstNode, index: number, siblings: readonly SnaptexAstNode[]) => void
+): void {
+    const visitNodes = (nodes: readonly SnaptexAstNode[]) => nodes.forEach((node, index) => {
         if (isCommentNode(node) || isVerbatimLikeNode(node)) {
             return;
         }
-        visitor(node);
-        childNodes(node).forEach(visitNode);
-    };
+        visitor(node, index, nodes);
+        if (Array.isArray(node.content)) {
+            visitNodes(node.content);
+        }
+        if (Array.isArray(node.args)) {
+            node.args.forEach(argument => visitNodes(argument.content));
+        }
+    });
 
-    visitNode(root);
+    visitor(root, 0, [root]);
+    visitNodes(root.content);
 }

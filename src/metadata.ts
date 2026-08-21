@@ -1,6 +1,6 @@
 import { AffiliationMetadata, AuthorMetadata, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleMetadata, TextRange } from './types';
 import { REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
-import { findCommand, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
+import { escapeRegExp, findCommand, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
 
 type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providenewcommand' | 'def' | 'gdef' | 'DeclareMathOperator';
 type AuthorExtraction = { authors: AuthorMetadata[]; affiliations: AffiliationMetadata[] };
@@ -164,7 +164,7 @@ function blankOutRanges(text: string, ranges: TextRange[]): string {
         const start = Math.max(cursor, range.start);
         const end = Math.max(start, range.end);
         result += text.substring(cursor, start);
-        result += text.substring(start, end).replace(/[^\r\n]/g, '');
+        result += text.substring(start, end).replace(/[^\r\n]/g, ' ');
         cursor = end;
     }
 
@@ -219,7 +219,7 @@ const AUTHOR_METADATA_COMMANDS = [
 ];
 const AUTHOR_METADATA_COMMAND_PATTERN = [...AUTHOR_METADATA_COMMANDS]
     .sort((a, b) => b.length - a.length)
-    .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .map(escapeRegExp)
     .join('|');
 const EMAIL_PATTERN_SOURCE = '[A-Z0-9._%+-]+@[A-Z0-9.-]*[A-Z0-9]';
 
@@ -563,39 +563,36 @@ function mergeExtractionResult(target: PreambleMetadata, result: MetadataExtract
  * Author fields are routed through parseAuthorCommands() so the output always
  * uses the same AuthorMetadata/AffiliationMetadata shape regardless of template.
  */
-export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = {
-    name: 'builtin',
-    extract: (text: string): MetadataExtractionResult => {
-        const ranges: TextRange[] = [];
-        const title = readMetadataCommand(text, 'title');
-        const date = readMetadataCommand(text, 'date');
-        const keywords = readMetadataCommand(text, 'keywords') ?? readMetadataCommand(text, 'keyword');
-        const titleMark = readMetadataCommand(text, 'TitleMark');
-        const authorMark = readMetadataCommand(text, 'AuthorMark');
+export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = (text): MetadataExtractionResult => {
+    const ranges: TextRange[] = [];
+    const title = readMetadataCommand(text, 'title');
+    const date = readMetadataCommand(text, 'date');
+    const keywords = readMetadataCommand(text, 'keywords') ?? readMetadataCommand(text, 'keyword');
+    const titleMark = readMetadataCommand(text, 'TitleMark');
+    const authorMark = readMetadataCommand(text, 'AuthorMark');
 
-        if (title) { ranges.push(title.range); }
-        if (date) { ranges.push(date.range); }
-        if (keywords) { ranges.push(keywords.range); }
-        if (titleMark) { ranges.push(titleMark.range); }
-        if (authorMark) { ranges.push(authorMark.range); }
+    if (title) { ranges.push(title.range); }
+    if (date) { ranges.push(date.range); }
+    if (keywords) { ranges.push(keywords.range); }
+    if (titleMark) { ranges.push(titleMark.range); }
+    if (authorMark) { ranges.push(authorMark.range); }
 
-        const authorCalls = collectAuthorCommandCalls(text);
-        authorCalls.forEach(call => ranges.push({ start: call.start, end: call.end }));
-        const { authors, affiliations } = parseAuthorCommands(authorCalls);
+    const authorCalls = collectAuthorCommandCalls(text);
+    authorCalls.forEach(call => ranges.push({ start: call.start, end: call.end }));
+    const { authors, affiliations } = parseAuthorCommands(authorCalls);
 
-        return {
-            title: title?.content,
-            date: date?.content,
-            authors,
-            affiliations,
-            keywords: keywords ? [keywords.content] : [],
-            custom: {
-                ...(titleMark ? { titleMark: titleMark.content } : {}),
-                ...(authorMark ? { authorMark: authorMark.content } : {})
-            },
-            ranges
-        };
-    }
+    return {
+        title: title?.content,
+        date: date?.content,
+        authors,
+        affiliations,
+        keywords: keywords ? [keywords.content] : [],
+        custom: {
+            ...(titleMark ? { titleMark: titleMark.content } : {}),
+            ...(authorMark ? { authorMark: authorMark.content } : {})
+        },
+        ranges
+    };
 };
 
 /**
@@ -606,8 +603,6 @@ export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = {
  */
 export function extractMetadata(text: string, metadataExtractors: readonly MetadataExtractor[]): MetadataResult {
     let cleanedText = stripLatexComments(text, { mode: 'mask' });
-
-    cleanedText = cleanedText.replace(/\$\$\s*\$\$/g, ' ');
 
     const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     cleanedText = cleanedText.replace(/\\today\b/g, todayStr);
@@ -621,7 +616,7 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
     const metadataRanges: TextRange[] = [];
 
     for (const extractor of metadataExtractors) {
-        const result = extractor.extract(cleanedText);
+        const result = extractor(cleanedText);
         mergeExtractionResult(metadata, result);
         metadataRanges.push(...(result.ranges ?? []));
     }

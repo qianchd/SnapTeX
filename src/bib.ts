@@ -1,4 +1,4 @@
-import { cleanLatexCommands, escapeHtml, escapeHtmlAttribute, sanitizeHttpUrlForAttribute, stripLatexComments } from './utils';
+import { cleanLatexCommands, escapeHtml, escapeHtmlAttribute, readLatexGroup, sanitizeHttpUrlForAttribute, scanLatexBraceBalance, stripLatexComments } from './utils';
 import type { BibEntry, RenderContext } from './types';
 import { R_THEBIBLIOGRAPHY } from './patterns';
 
@@ -21,10 +21,18 @@ export class BibTexParser {
             const key = match[2].trim();
             const startIndex = match.index;
 
-            let block = this.extractBalancedBlock(content, startIndex);
-            if (!block) { continue; }
+            const groupStart = content.indexOf('{', startIndex);
+            if (groupStart === -1) { continue; }
+            const { closedAt } = scanLatexBraceBalance(content, {
+                start: groupStart,
+                limitChars: startIndex + 50000 - groupStart,
+                stopWhenClosed: true
+            });
+            if (closedAt === undefined) { continue; }
 
-            block = stripLatexComments(block.replace(/\r\n/g, '\n').replace(/^\s*\/\/\s+.*/gm, ''));
+            const block = stripLatexComments(
+                content.slice(startIndex, closedAt + 1).replace(/\r\n/g, '\n').replace(/^\s*\/\/\s+.*/gm, '')
+            );
             const fields = this.parseFieldsRobust(block);
             if (Object.keys(fields).length > 0) {
                 entries.set(key, { key, type, fields });
@@ -83,31 +91,6 @@ export class BibTexParser {
         return prefix.replace(/\(?\s*$/, '').replace(/[,.\s]+$/, '').trim();
     }
 
-    private static extractBalancedBlock(text: string, startIndex: number): string | null {
-        let braceCount = 0;
-        let foundStart = false;
-        const maxLen = Math.min(text.length, startIndex + 50000);
-
-        for (let i = startIndex; i < maxLen; i++) {
-            const char = text[i];
-            if (char === '\\') {
-                i++;
-                continue;
-            }
-            if (char === '{') {
-                braceCount++;
-                foundStart = true;
-            } else if (char === '}') {
-                braceCount--;
-            }
-
-            if (foundStart && braceCount === 0) {
-                return text.substring(startIndex, i + 1);
-            }
-        }
-        return null;
-    }
-
     private static parseFieldsRobust(block: string): Record<string, string> {
         const fields: Record<string, string> = {};
 
@@ -140,22 +123,9 @@ export class BibTexParser {
                 const startChar = content[cursor];
 
                 if (startChar === '{') {
-                    let braceDepth = 1;
-                    const valStart = cursor + 1;
-                    cursor++;
-
-                    while (cursor < len && braceDepth > 0) {
-                        const c = content[cursor];
-                        if (c === '\\') {
-                            cursor += 2; continue;
-                        }
-                        if (c === '{') {braceDepth++;}
-                        else if (c === '}') {braceDepth--;}
-
-                        if (braceDepth > 0) {cursor++;}
-                    }
-                    value = content.substring(valStart, cursor);
-                    cursor++;
+                    const group = readLatexGroup(content, cursor, { skipWhitespace: false });
+                    value = group?.content ?? content.substring(cursor + 1);
+                    cursor = group?.end ?? len;
 
                 } else if (startChar === '"') {
                     const valStart = cursor + 1;

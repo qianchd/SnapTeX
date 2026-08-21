@@ -1,14 +1,8 @@
 import { PreprocessRule, RenderContext } from './types';
 import { escapeHtmlAttribute, extractAndHideLabels, findCommand, resolveLatexStyles } from './utils';
-import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, renderCaptionHtml, renderSubfigureWidthStyle, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
+import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, renderCaptionHtml, renderNumberedCaptionPrefix, renderSubfigureWidthStyle, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 import { findFirstTabularEnvironment, renderLatexTabular, renderLatexTableInlineContent } from './latex-table';
 import { renderAlgorithmicList } from './latex-algorithm';
-
-interface FloatCaptionConfig {
-    className: string;
-    label: string;
-    counterType: 'fig' | 'alg' | 'tbl';
-}
 
 function replaceFloatEnvironment(text: string, envName: 'figure' | 'algorithm' | 'table', render: (content: string) => string): string {
     const pattern = new RegExp(`\\\\begin\\{${envName}(\\*?)\\}(?:\\[.*?\\])?([\\s\\S]*?)\\\\end\\{${envName}\\1\\}`, 'gi');
@@ -26,21 +20,7 @@ export function renderIncludeGraphicsHtml(imgPath: string): string {
     return `<img src="LOCAL_IMG:${safePath}" style="max-width:100%; display:block; margin:0 auto;">`;
 }
 
-function extractRenderedCaption(content: string, renderer: RenderContext, config: FloatCaptionConfig): { content: string; captionHtml: string } {
-    const captionRes = findCommand(content, 'caption');
-    if (!captionRes) {
-        return { content, captionHtml: '' };
-    }
-
-    const prefix = `<strong>${config.label} <span class="sn-cnt" data-type="${config.counterType}"></span>:</strong> `;
-    const captionHtml = renderCaptionHtml(config.className, renderCaptionContent(captionRes.content, renderer), prefix);
-    return {
-        content: content.substring(0, captionRes.start) + content.substring(captionRes.end),
-        captionHtml
-    };
-}
-
-function extractRenderedPlainCaption(content: string, renderer: RenderContext, className: string, prefixHtml = ''): { content: string; captionHtml: string } {
+function extractRenderedCaption(content: string, renderer: RenderContext, className: string, prefixHtml = ''): { content: string; captionHtml: string } {
     const captionRes = findCommand(content, 'caption');
     if (!captionRes) {
         return { content, captionHtml: '' };
@@ -60,7 +40,7 @@ function cleanFigureLayoutCommands(content: string): string {
 }
 
 function renderSubfigureEnvironment(widthSpec: string, content: string, renderer: RenderContext): string {
-    const { content: withoutCaption, captionHtml } = extractRenderedPlainCaption(content, renderer, 'subfigure-caption', '(<span class="sn-cnt" data-type="subfig"></span>) ');
+    const { content: withoutCaption, captionHtml } = extractRenderedCaption(content, renderer, 'subfigure-caption', '(<span class="sn-cnt" data-type="subfig"></span>) ');
     const { cleanContent, hiddenHtml } = extractAndHideLabels(withoutCaption);
     let body = cleanFigureLayoutCommands(cleanContent).trim();
     body = unwrapResizeboxAroundProtectedContent(body);
@@ -81,13 +61,12 @@ function renderSubfigureEnvironments(content: string, renderer: RenderContext): 
  */
 export function createFigureRule(): PreprocessRule {
     return {
-        name: 'figure',
         priority: 120,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'figure', content => {
                 const withSubfigures = renderSubfigureEnvironments(content, renderer);
                 const hasSubfigures = withSubfigures.includes('class="latex-subfigure"');
-                const { content: extractedContent, captionHtml } = extractRenderedCaption(withSubfigures, renderer, { className: 'figure-caption', label: 'Figure', counterType: 'fig' });
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(withSubfigures, renderer, 'figure-caption', renderNumberedCaptionPrefix('Figure', 'fig'));
                 let body = extractedContent;
 
                 const { cleanContent, hiddenHtml } = extractAndHideLabels(body);
@@ -114,34 +93,20 @@ export function createFigureRule(): PreprocessRule {
  */
 export function createAlgorithmRule(): PreprocessRule {
     return {
-        name: 'algorithm',
         priority: 130,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'algorithm', content => {
-                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, { className: 'alg-caption', label: 'Algorithm', counterType: 'alg' });
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, 'alg-caption', renderNumberedCaptionPrefix('Algorithm', 'alg'));
                 content = extractedContent;
 
                 const algRegex = /\\begin\{algorithmic\}(?:\[(.*?)\])?([\s\S]*?)\\end\{algorithmic\}/g;
                 let bodyHtml = '';
-                let matchAlg;
-                const processedRegions: {start: number, end: number}[] = [];
-
-                while ((matchAlg = algRegex.exec(content)) !== null) {
-                    processedRegions.push({start: matchAlg.index, end: matchAlg.index + matchAlg[0].length});
-                    const params = matchAlg[1] || '';
-                    const rawBody = matchAlg[2];
+                const ignoredContent = content.replace(algRegex, (_match, params: string = '', rawBody: string) => {
                     bodyHtml += renderAlgorithmicList(rawBody, params.includes('1'), source => {
                         return renderer.renderInline(resolveLatexStyles(source, createStyleHtmlProtector(renderer)));
                     });
-                }
-
-                let ignoredContent = "";
-                let lastIdx = 0;
-                processedRegions.forEach(reg => {
-                    ignoredContent += content.substring(lastIdx, reg.start);
-                    lastIdx = reg.end;
+                    return '';
                 });
-                ignoredContent += content.substring(lastIdx);
 
                 const hiddenLabels = recoverPreservedTokens(ignoredContent);
                 return `\n\n${renderer.protectHtml('alg', `<div class="latex-algorithm">${captionHtml}${bodyHtml}${hiddenLabels}<div class="alg-bottom-rule"></div></div>`)}\n\n`;
@@ -155,11 +120,10 @@ export function createAlgorithmRule(): PreprocessRule {
  */
 export function createTableRule(): PreprocessRule {
     return {
-        name: 'table',
         priority: 118,
         apply: (text: string, renderer: RenderContext) => {
             return replaceFloatEnvironment(text, 'table', content => {
-                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, { className: 'table-caption', label: 'Table', counterType: 'tbl' });
+                const { content: extractedContent, captionHtml } = extractRenderedCaption(content, renderer, 'table-caption', renderNumberedCaptionPrefix('Table', 'tbl'));
                 content = extractedContent;
 
                 let innerContent = content.replace(/\\begin\{threeparttable\}/g, '').replace(/\\end\{threeparttable\}/g, '');

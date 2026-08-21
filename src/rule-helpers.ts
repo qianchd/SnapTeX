@@ -136,6 +136,14 @@ export function renderMath(tex: string, displayMode: boolean, renderer: RenderCo
     return renderer.protectHtml('math', renderKatexHtml(tex, displayMode, renderer.currentMacros));
 }
 
+export function normalizeMathEnvironmentForKatex(tex: string, envName?: string): string {
+    const normalized = envName?.toLowerCase().replace(/\*$/, '');
+    if (normalized && ['align', 'flalign', 'alignat', 'multline'].includes(normalized)) {
+        return `\\begin{aligned}\n${tex}\n\\end{aligned}`;
+    }
+    return normalized === 'gather' ? `\\begin{gathered}\n${tex}\n\\end{gathered}` : tex;
+}
+
 export function renderInlineLatexHtml(
     text: string | undefined,
     renderMathHtml: (tex: string) => string
@@ -243,6 +251,19 @@ export function renderBibliographyItemsHtml(
     return `<h2 class="latex-bibliography-header">References</h2><div class="latex-bibliography-list">${body}</div>`;
 }
 
+export function renderCitedBibliographyHtml(
+    citedKeys: readonly string[],
+    bibEntries: ReadonlyMap<string, BibEntry>,
+    renderer: Pick<RenderContext, 'protectHtml'>
+): string {
+    const keys = Array.from(new Set(citedKeys)).sort((left, right) =>
+        (bibEntries.get(left)?.fields.author ?? '').localeCompare(bibEntries.get(right)?.fields.author ?? '')
+    );
+    return keys.length === 0
+        ? '<div class="latex-bibliography error">No citations found.</div>'
+        : renderBibliographyItemsHtml(keys.map(key => ({ key, entry: bibEntries.get(key) })), renderer);
+}
+
 export function renderExternalLinkHtml(rawUrl: string, contentHtml: string, className: string): string | undefined {
     const safeHref = sanitizeHttpUrlForAttribute(rawUrl);
     return safeHref
@@ -258,13 +279,7 @@ export function createStyleHtmlProtector(renderer: RenderContext): (html: string
  * Recovers protection tokens that were embedded in ignored float regions.
  */
 export function recoverPreservedTokens(text: string): string {
-    const tokenRegex = /XSNAP:[a-zA-Z0-9_-]+:\d+Y/g;
-    let found = "";
-    let match;
-    while ((match = tokenRegex.exec(text)) !== null) {
-        found += match[0];
-    }
-    return found;
+    return (text.match(/XSNAP:[a-zA-Z0-9_-]+:\d+Y/g) ?? []).join('');
 }
 
 export function renderCaptionContent(captionText: string, renderer: RenderContext): string {
@@ -276,6 +291,10 @@ export function renderCaptionContent(captionText: string, renderer: RenderContex
 
 export function renderCaptionHtml(className: string, contentHtml: string, prefixHtml = ''): string {
     return `<div class="${className}">${prefixHtml}${contentHtml}</div>`;
+}
+
+export function renderNumberedCaptionPrefix(label: string, counterType: 'fig' | 'tbl' | 'alg'): string {
+    return `<strong>${label} <span class="sn-cnt" data-type="${counterType}"></span>:</strong> `;
 }
 
 export function renderSubfigureWidthStyle(widthSpec: string): string {

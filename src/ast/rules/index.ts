@@ -27,20 +27,6 @@ const MAX_GENERATED_SOURCE_DEPTH = 8;
 export const AST_REF_MACROS = new Set(['ref', 'eqref']);
 export const AST_CITATION_MACROS = new Set<string>(CITATION_COMMANDS);
 export const AST_SECTION_MACROS = new Set(REGEX_STR.SECTION_LEVELS.split('|'));
-export const AST_TEXT_STYLE_CSS: Record<string, string> = {
-    textbf: 'font-weight: 600',
-    bf: 'font-weight: 600',
-    emph: 'font-style: italic',
-    textit: 'font-style: italic',
-    it: 'font-style: italic',
-    texttt: 'font-family: monospace',
-    tt: 'font-family: monospace',
-    textsf: 'font-family: sans-serif',
-    sf: 'font-family: sans-serif',
-    textrm: 'font-family: serif',
-    rm: 'font-family: serif',
-    underline: 'text-decoration: underline'
-};
 
 export interface AstRenderInput {
     node: SnaptexAstNode;
@@ -55,16 +41,14 @@ export interface AstRenderResult {
     consumedNodes?: number;
 }
 
-export interface AstRenderRule {
-    name: string;
-    match(input: AstRenderInput): boolean;
-    render(input: AstRenderInput, context: AstRenderContext): AstRenderResult | undefined;
-}
+export type AstRenderRule = (
+    input: AstRenderInput,
+    context: AstRenderContext
+) => AstRenderResult | undefined;
 
 export interface AstRenderContext {
-    currentMacros: Record<string, string>;
     metadata?: PreambleData;
-    bibEntries: Map<string, BibEntry>;
+    bibEntries: ReadonlyMap<string, BibEntry>;
     escapeHtml(text: string): string;
     sourceSlice(node: SnaptexAstNode): string;
     sourceContent(nodes: readonly SnaptexAstNode[]): string;
@@ -77,8 +61,9 @@ export interface AstRenderContext {
     renderImage(path: string, options?: string): string;
 }
 
-interface AstRenderContextOverrides extends Partial<AstRenderContext> {
+interface AstRenderContextOptions extends Partial<AstRenderContext> {
     sourceText?: string;
+    currentMacros?: Readonly<Record<string, string>>;
 }
 
 function sourceReaders(sourceText: string): Pick<AstRenderContext, 'sourceSlice' | 'sourceContent'> {
@@ -102,15 +87,14 @@ export interface AstCommandArguments {
     consumedNodes: number;
 }
 
-export function createDefaultAstRenderContext(overrides: AstRenderContextOverrides = {}): AstRenderContext {
-    const sourceText = overrides.sourceText ?? '';
+export function createDefaultAstRenderContext(options: AstRenderContextOptions = {}): AstRenderContext {
+    const { sourceText = '', currentMacros = {}, ...overrides } = options;
 
     return {
-        currentMacros: {},
         bibEntries: new Map(),
         escapeHtml,
         ...sourceReaders(sourceText),
-        renderMath: (tex, displayMode) => renderKatexHtml(tex, displayMode, overrides.currentMacros ?? {}),
+        renderMath: (tex, displayMode) => renderKatexHtml(tex, displayMode, currentMacros),
         renderLabel: createHiddenLabelAnchor,
         renderRef: (labels, type) => renderReferenceLinksHtml(labels, type),
         resolveCitation: () => 1,
@@ -255,10 +239,7 @@ function renderAstNodeWithRules(
     context: AstRenderContext
 ): AstRenderResult {
     for (const rule of rules) {
-        if (!rule.match(input)) {
-            continue;
-        }
-        const result = rule.render(input, context);
+        const result = rule(input, context);
         if (result) {
             return result;
         }

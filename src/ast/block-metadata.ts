@@ -1,68 +1,23 @@
 import { splitLatexCitationKeys } from '../utils';
 import { parseLatexToAst } from './parse';
 import { AST_CITATION_MACROS, AST_REF_MACROS, AST_SECTION_MACROS } from './rules';
-import type { AstParseResult, SnaptexAstNode, SnaptexAstRoot } from './types';
+import type { AstBlockArtifact, AstBlockMetadata, AstParseResult, CompactSourceHints, SnaptexAstRoot } from './types';
 import {
+    argumentText,
     astNodeRange,
-    collectMacroArgumentTexts,
+    astNodesToText,
     environmentName,
+    isGroupNode,
     isEnvironmentNode,
     isMacroNode,
+    readRequiredMacroArgument,
     visitLatexAst
 } from './visit-utils';
-
-export const AST_SOURCE_HINT_KIND = {
-    InlineMath: 1,
-    DisplayMath: 2,
-    Ref: 3,
-    Citation: 4,
-    Section: 5,
-    ListItem: 6
-} as const;
-
-type AstSourceHintKind = typeof AST_SOURCE_HINT_KIND[keyof typeof AST_SOURCE_HINT_KIND];
-
-export interface AstBlockMetadata {
-    labels: string[];
-    citations: string[];
-    environments: string[];
-    macros: string[];
-}
-
-export interface CompactSourceHints {
-    starts: Uint32Array;
-    ends: Uint32Array;
-    kinds: Uint8Array;
-}
-
-export interface AstBlockArtifact {
-    hash: string;
-    parseOk: boolean;
-    metadata: AstBlockMetadata;
-    sourceHints: CompactSourceHints;
-}
 
 function pushUnique(values: string[], value: string | undefined) {
     if (value && !values.includes(value)) {
         values.push(value);
     }
-}
-
-function emptyMetadata(): AstBlockMetadata {
-    return {
-        labels: [],
-        citations: [],
-        environments: [],
-        macros: []
-    };
-}
-
-function emptySourceHints(): CompactSourceHints {
-    return {
-        starts: new Uint32Array(0),
-        ends: new Uint32Array(0),
-        kinds: new Uint8Array(0)
-    };
 }
 
 export async function extractAstBlockArtifact(
@@ -74,34 +29,54 @@ export async function extractAstBlockArtifact(
 }
 
 export function createAstBlockArtifactFromParseResult(result: AstParseResult, hash: string): AstBlockArtifact {
-    const metadata = emptyMetadata();
+    const metadata: AstBlockMetadata = {
+        labels: [],
+        citations: [],
+        environments: [],
+        macros: []
+    };
     if (!result.ast || result.errors.length > 0) {
         return {
             hash,
             parseOk: false,
             metadata,
-            sourceHints: emptySourceHints()
+            sourceHints: {
+                starts: new Uint32Array(0),
+                ends: new Uint32Array(0)
+            }
         };
     }
 
-    collectAstBlockMetadata(result.ast, metadata);
+    const sourceHints = collectAstBlockData(result.ast, metadata);
     return {
         hash,
         parseOk: true,
         metadata,
-        sourceHints: collectSourceHints(result.ast)
+        sourceHints
     };
 }
 
-function collectAstBlockMetadata(root: SnaptexAstRoot, metadata: AstBlockMetadata): void {
-    collectMacroArgumentTexts(root.content, 'label').forEach(label => pushUnique(metadata.labels, label));
-    for (const macroName of AST_CITATION_MACROS) {
-        collectMacroArgumentTexts(root.content, macroName)
-            .flatMap(splitLatexCitationKeys)
-            .forEach(key => pushUnique(metadata.citations, key));
-    }
+function collectAstBlockData(root: SnaptexAstRoot, metadata: AstBlockMetadata): CompactSourceHints {
+    const starts: number[] = [];
+    const ends: number[] = [];
+    visitLatexAst(root, (node, index, siblings) => {
+        const isTrackedMacro = isMacroNode(node) && (
+            AST_REF_MACROS.has(node.content)
+            || AST_CITATION_MACROS.has(node.content)
+            || AST_SECTION_MACROS.has(node.content)
+            || node.content === 'item'
+        );
+        if (node.type === 'inlinemath'
+            || node.type === 'displaymath'
+            || node.type === 'mathenv'
+            || isTrackedMacro) {
+            const range = astNodeRange(node);
+            if (range && range.end > range.start) {
+                starts.push(range.start);
+                ends.push(range.end);
+            }
+        }
 
-    visitLatexAst(root, node => {
         if (isEnvironmentNode(node)) {
             pushUnique(metadata.environments, environmentName(node));
             return;
@@ -112,53 +87,21 @@ function collectAstBlockMetadata(root: SnaptexAstRoot, metadata: AstBlockMetadat
         }
 
         pushUnique(metadata.macros, node.content);
-    });
-}
-
-function collectSourceHints(root: SnaptexAstRoot): CompactSourceHints {
-    const starts: number[] = [];
-    const ends: number[] = [];
-    const kinds: number[] = [];
-    const pushHint = (kind: AstSourceHintKind, node: SnaptexAstNode) => {
-        const range = astNodeRange(node);
-        if (!range || range.end <= range.start) { return; }
-        starts.push(range.start);
-        ends.push(range.end);
-        kinds.push(kind);
-    };
-
-    visitLatexAst(root, node => {
-        if (node.type === 'inlinemath') {
-            pushHint(AST_SOURCE_HINT_KIND.InlineMath, node);
+        if (node.content !== 'label' && !AST_CITATION_MACROS.has(node.content)) {
             return;
         }
-        if (node.type === 'displaymath' || isEnvironmentNode(node, 'equation') || isEnvironmentNode(node, 'equation*')) {
-            pushHint(AST_SOURCE_HINT_KIND.DisplayMath, node);
-            return;
-        }
-        if (!isMacroNode(node)) {
-            return;
-        }
-        if (AST_REF_MACROS.has(node.content)) {
-            pushHint(AST_SOURCE_HINT_KIND.Ref, node);
-            return;
-        }
-        if (AST_CITATION_MACROS.has(node.content)) {
-            pushHint(AST_SOURCE_HINT_KIND.Citation, node);
-            return;
-        }
-        if (AST_SECTION_MACROS.has(node.content)) {
-            pushHint(AST_SOURCE_HINT_KIND.Section, node);
-            return;
-        }
-        if (node.content === 'item') {
-            pushHint(AST_SOURCE_HINT_KIND.ListItem, node);
+        const attached = argumentText(readRequiredMacroArgument(node));
+        const next = siblings[index + 1];
+        const value = attached || (isGroupNode(next) ? astNodesToText(next.content) : '');
+        if (node.content === 'label') {
+            pushUnique(metadata.labels, value);
+        } else {
+            splitLatexCitationKeys(value).forEach(key => pushUnique(metadata.citations, key));
         }
     });
 
     return {
         starts: new Uint32Array(starts),
-        ends: new Uint32Array(ends),
-        kinds: new Uint8Array(kinds)
+        ends: new Uint32Array(ends)
     };
 }

@@ -1,5 +1,4 @@
-import type { AstBlockArtifact } from './ast/block-metadata';
-import type { AstRenderRule } from './ast/rules';
+import type { AstBlockArtifact } from './ast/types';
 
 export interface BibEntry {
     key: string;
@@ -10,7 +9,12 @@ export interface BibEntry {
 export interface SourceLocation {
     file: string;
     line: number;
-    blockRange?: { startLine: number; endLine: number };
+}
+
+export interface SourceSyncOptions {
+    anchors?: readonly string[];
+    sourceStart?: number;
+    sourceEnd?: number;
 }
 
 export interface TextRange {
@@ -81,7 +85,7 @@ export interface PreviewStyleSettings {
 }
 
 export const DEFAULT_PREVIEW_STYLE_SETTINGS: PreviewStyleSettings = {
-    fontSize: 'clamp(4px, 2.3cqw, 25px)',
+    fontSize: '2.8cqw',
     lineHeight: '1.25',
     contentMaxWidth: '3000px',
     fontFamily: '"Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif'
@@ -93,7 +97,7 @@ export const DEFAULT_PREVIEW_STYLE_SETTINGS: PreviewStyleSettings = {
  */
 export interface BlockTextSnapshot {
     bodyText: string;
-    blockSpans: BlockTextSpan[];
+    blockSpans: readonly BlockTextSpan[];
 }
 
 /**
@@ -105,14 +109,11 @@ export interface BlockTextSnapshot {
  */
 export interface RenderDocumentView {
     metadata: PreambleData;
-    bibEntries: Map<string, BibEntry>;
+    bibEntries: ReadonlyMap<string, BibEntry>;
     rootDir?: UriLike;
     filePool: readonly string[];
-    blockSpans: readonly BlockTextSpan[];
     contentStartLineOffset: number;
 
-    getBlockCount(): number;
-    getBlockText(index: number): string | undefined;
     getBlockHash(index: number): string | undefined;
     getAstBlockArtifact(index: number): AstBlockArtifact | undefined;
     setAstBlockArtifact(index: number, artifact: AstBlockArtifact): void;
@@ -131,7 +132,7 @@ export interface RenderedBlockMeta {
     hash: string;
     line: number;
     lineCount: number;
-    anchors: string[];
+    anchors?: string[];
 }
 
 export interface BlockNumberingCounts {
@@ -188,9 +189,9 @@ export type RenderPayload =
     };
 
 export interface RenderContext {
-    currentMacros: Record<string, string>;
+    currentMacros: Readonly<Record<string, string>>;
     metadata?: PreambleData;
-    bibEntries: Map<string, BibEntry>;
+    bibEntries: ReadonlyMap<string, BibEntry>;
     protectHtml(namespace: string, html: string, mode?: ProtectedHtmlMode): string;
     renderInline(text: string): string;
     resolveCitation(key: string): number;
@@ -200,7 +201,6 @@ export interface RenderContext {
 export type ProtectedHtmlMode = 'block' | 'inline';
 
 export interface PreprocessRule {
-    name: string;
     priority: number;
     apply: (text: string, renderer: RenderContext) => string;
 }
@@ -227,10 +227,7 @@ export interface BlockDependencyInput {
     deps: DependencyHelpers;
 }
 
-export interface BlockDependencyRule {
-    name: string;
-    collect(input: BlockDependencyInput): RenderDependency[];
-}
+export type BlockDependencyRule = (input: BlockDependencyInput) => RenderDependency[];
 
 export interface SplitterConfig {
     maxBlockLines: number;
@@ -256,16 +253,4 @@ export type MetadataExtractionResult = Partial<PreambleMetadata> & {
     ranges?: TextRange[];
 };
 
-export interface MetadataExtractor {
-    name: string;
-    extract(text: string): MetadataExtractionResult;
-}
-
-export interface RuleRegistry {
-    readonly metadataExtractors: readonly MetadataExtractor[];
-    readonly renderRules: readonly PreprocessRule[];
-    readonly astRenderRules: readonly AstRenderRule[];
-    readonly blockDependencyRules: readonly BlockDependencyRule[];
-    readonly splitterConfig: SplitterConfig;
-    readonly splitterRules: readonly SplitterRule[];
-}
+export type MetadataExtractor = (text: string) => MetadataExtractionResult;

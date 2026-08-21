@@ -5,37 +5,43 @@
 import { R_CITATION } from './patterns';
 import type { BlockTextSpan, RenderContext, UriLike } from './types';
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+export const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const LATEX_ACCENTS: Record<string, string> = {
+    '\\"a': 'ä', '\\"o': 'ö', '\\"u': 'ü', '\\"A': 'Ä', '\\"O': 'Ö', '\\"U': 'Ü',
+    "\\'a": 'á', "\\'e": 'é', "\\'i": 'í', "\\'o": 'ó', "\\'u": 'ú', "\\'y": 'ý', "\\'c": 'ć',
+    "\\'A": 'Á', "\\'E": 'É', "\\'I": 'Í', "\\'O": 'Ó', "\\'U": 'Ú', "\\'Y": 'Ý', "\\'C": 'Ć',
+    "\\`a": 'à', "\\`e": 'è', "\\`i": 'ì', "\\`o": 'ò', "\\`u": 'ù',
+    "\\`A": 'À', "\\`E": 'È', "\\`I": 'Ì', "\\`O": 'Ò', "\\`U": 'Ù',
+    "\\^a": 'â', "\\^e": 'ê', "\\^i": 'î', "\\^o": 'ô', "\\^u": 'û',
+    "\\^A": 'Â', "\\^E": 'Ê', "\\^I": 'Î', "\\^O": 'Ô', "\\^U": 'Û',
+    "\\~a": 'ã', "\\~n": 'ñ', "\\~o": 'õ',
+    "\\~A": 'Ã', "\\~N": 'Ñ', "\\~O": 'Õ',
+    "\\v{s}": 'š', "\\v{S}": 'Š', "\\v{z}": 'ž', "\\v{Z}": 'Ž',
+    "\\c{c}": 'ç', "\\c{C}": 'Ç',
+    "\\ss": 'ß', "\\aa": 'å', "\\AA": 'Å', "\\ae": 'æ', "\\AE": 'Æ', "\\o": 'ø', "\\O": 'Ø'
+};
+
 /**
  * Decodes common LaTeX accents to Unicode for citation and bibliography text.
  */
 function decodeLatexAccents(text: string): string {
-    const accents: Record<string, string> = {
-        '\\"a': 'ä', '\\"o': 'ö', '\\"u': 'ü', '\\"A': 'Ä', '\\"O': 'Ö', '\\"U': 'Ü',
-        "\\'a": 'á', "\\'e": 'é', "\\'i": 'í', "\\'o": 'ó', "\\'u": 'ú', "\\'y": 'ý', "\\'c": 'ć',
-        "\\'A": 'Á', "\\'E": 'É', "\\'I": 'Í', "\\'O": 'Ó', "\\'U": 'Ú', "\\'Y": 'Ý', "\\'C": 'Ć',
-        "\\`a": 'à', "\\`e": 'è', "\\`i": 'ì', "\\`o": 'ò', "\\`u": 'ù',
-        "\\`A": 'À', "\\`E": 'È', "\\`I": 'Ì', "\\`O": 'Ò', "\\`U": 'Ù',
-        "\\^a": 'â', "\\^e": 'ê', "\\^i": 'î', "\\^o": 'ô', "\\^u": 'û',
-        "\\^A": 'Â', "\\^E": 'Ê', "\\^I": 'Î', "\\^O": 'Ô', "\\^U": 'Û',
-        "\\~a": 'ã', "\\~n": 'ñ', "\\~o": 'õ',
-        "\\~A": 'Ã', "\\~N": 'Ñ', "\\~O": 'Õ',
-        "\\v{s}": 'š', "\\v{S}": 'Š', "\\v{z}": 'ž', "\\v{Z}": 'Ž',
-        "\\c{c}": 'ç', "\\c{C}": 'Ç',
-        "\\ss": 'ß', "\\aa": 'å', "\\AA": 'Å', "\\ae": 'æ', "\\AE": 'Æ', "\\o": 'ø', "\\O": 'Ø'
-    };
-
     text = text.replace(/\\(["'`^~v])\s*\{([a-zA-Z])\}/g, (match, cmd, char) => {
         const key = `\\${cmd}${char}`;
-        return accents[key] || match;
+        return LATEX_ACCENTS[key] || match;
     });
 
     text = text.replace(/\\(["'`^~])([a-zA-Z])/g, (match, cmd, char) => {
         const key = `\\${cmd}${char}`;
-        return accents[key] || match;
+        return LATEX_ACCENTS[key] || match;
     });
 
-    text = text.replace(/\\c\s*\{([a-zA-Z])\}/g, (m, c) => accents[`\\c{${c}}`] || m);
-    text = text.replace(/\\(ss|aa|AA|ae|AE|o|O)\b/g, (m, c) => accents[`\\${c}`] || m);
+    text = text.replace(/\\c\s*\{([a-zA-Z])\}/g, (m, c) => LATEX_ACCENTS[`\\c{${c}}`] || m);
+    text = text.replace(/\\(ss|aa|AA|ae|AE|o|O)\b/g, (m, c) => LATEX_ACCENTS[`\\${c}`] || m);
 
     return text;
 }
@@ -149,15 +155,20 @@ export function findNearestSyncAnchorLine(
     return undefined;
 }
 
-export function lineAtOffset(text: string, offset: number): number {
-    let line = 0;
-    const limit = Math.min(Math.max(0, offset), text.length);
-    for (let index = 0; index < limit; index++) {
+export function countLineBreaks(text: string, start = 0, end = text.length): number {
+    let count = 0;
+    const from = Math.min(Math.max(0, start), text.length);
+    const limit = Math.min(Math.max(from, end), text.length);
+    for (let index = from; index < limit; index++) {
         if (text.charCodeAt(index) === 10) {
-            line++;
+            count++;
         }
     }
-    return line;
+    return count;
+}
+
+export function lineAtOffset(text: string, offset: number): number {
+    return countLineBreaks(text, 0, offset);
 }
 
 export function offsetAtLine(text: string, line: number): number {
@@ -574,7 +585,7 @@ export function replaceLatexCommandCalls(text: string, rules: LatexCommandReplac
         }
     }
     const commandPattern = Array.from(ruleByName.keys())
-        .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .map(escapeRegExp)
         .join('|');
     const commandRegex = new RegExp(`\\\\(${commandPattern})\\b`, 'g');
     let result = '';
