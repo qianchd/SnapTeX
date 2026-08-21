@@ -2,7 +2,7 @@
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
-Reads optional and required arguments for the current AST macro, including detached sibling groups. Use it from `AstRenderRule.render` when a command's arguments may not all be attached to the macro node by the parser.
+Reads optional and required arguments for the current AST macro, including detached sibling groups. Use it from an `AstRenderRule` when a command's arguments may not all be attached to the macro node by the parser.
 
 ## Signature
 
@@ -29,7 +29,7 @@ The helper returns plain argument text for convenient command rendering. Use nod
 
 ## Call relationships
 
-- **Called by:** `AstRenderRule.render` for macro commands.
+- **Called by:** `AstRenderRule` callbacks for macro commands.
 - **Calls:** [`readOptionalMacroArgument`](./read-optional-macro-argument), [`readRequiredMacroArgument`](./read-required-macro-argument), and [`argumentText`](./argument-text).
 - **Return feeds:** `AstRenderResult.consumedNodes`.
 

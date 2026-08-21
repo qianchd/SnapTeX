@@ -15,7 +15,7 @@ These are contributor APIs compiled into SnapTeX, not commands imported by a `.t
 | Read balanced LaTeX commands or groups | [`replaceLatexCommandCalls`](./api/source/replace-latex-command-calls) or [`readLatexCommandAt`](./api/source/read-latex-command-at) |
 | Produce safe inline HTML | [`renderInlineLatexHtml`](./api/rendering/render-inline-latex-html) |
 | Extract custom preamble metadata | [Metadata contract](./api/contracts/metadata-dependencies) |
-| Re-render a block when external state changes | [`BlockDependencyRule.collect`](./api/dependencies/collect) |
+| Re-render a block when external state changes | [`BlockDependencyRule`](./api/dependencies/collect) |
 | Change block splitting behavior | [Splitter contract](./api/contracts/splitter) |
 | Test a registry through the real document pipeline | [`PreviewUpdateService`](./api/testing/preview-update-service) |
 
@@ -27,12 +27,12 @@ The spelling of a signature tells you how it reaches your code:
 | --- | --- | --- |
 | `function escapeHtml(text)` | Import and call the helper | Your code supplies every argument |
 | `apply(text, renderer)` | Implement this property on a `PreprocessRule` | `SmartRenderer` calls it |
-| `render(input, context)` | Implement this property on an `AstRenderRule` | The AST walker calls it |
+| `(input, context) => result` | Pass this function to `defineAstRenderRule` | The AST walker calls it |
 | `renderer.protectHtml(...)` | Call a method on the received legacy context | `SmartRenderer` created `renderer` |
 | `input.renderChildren(...)` | Call a method on the received AST input | The AST walker created `input` |
 | `context.renderMath(...)` | Call a method on the received AST context | The AST renderer created `context` |
 
-A declaration helper such as `defineAstRenderRule(...)` provides typing but does not register or execute the rule. Execution starts only after the returned object appears in the matching `SNAP_TEX_RULES` array.
+A declaration helper such as `defineAstRenderRule(...)` provides typing but does not register or execute the rule. Execution starts only after the returned callback appears in the matching `SNAP_TEX_RULES` array.
 
 ## Follow values through the pipeline
 
@@ -65,7 +65,7 @@ Each API page identifies the caller and the next consumer under **Call relations
 | Legacy | [`apply`](./api/legacy/apply), [`protectHtml`](./api/legacy/protect-html), [`renderInline`](./api/legacy/render-inline), [`resolveCitation`](./api/legacy/resolve-citation), [`getCitedKeys`](./api/legacy/get-cited-keys) |
 | Source | [`replaceLatexCommandCalls`](./api/source/replace-latex-command-calls), [`readLatexGroup`](./api/source/read-latex-group), [`readLatexCommandAt`](./api/source/read-latex-command-at), [`skipLatexWhitespace`](./api/source/skip-latex-whitespace), [`stripLatexComments`](./api/source/strip-latex-comments) |
 | Rendering | [`escapeHtml`](./api/rendering/escape-html), [`renderMath`](./api/rendering/render-math), [`renderInlineLatexHtml`](./api/rendering/render-inline-latex-html) |
-| AST | [`match`](./api/ast/match), [`render`](./api/ast/render), [`readAstCommandArguments`](./api/ast/read-ast-command-arguments), [node readers](./api/contracts/ast-rules), [context methods](./api/ast/context-render-math) |
+| AST | [`render`](./api/ast/render), [`readAstCommandArguments`](./api/ast/read-ast-command-arguments), [node readers](./api/contracts/ast-rules), [context methods](./api/ast/context-render-math) |
 | Metadata and dependencies | [`extract`](./api/metadata/extract), [`readMetadataCommand`](./api/metadata/read-metadata-command), [`collect`](./api/dependencies/collect), [`deps.metadata`](./api/dependencies/metadata), [`deps.citedKeys`](./api/dependencies/cited-keys) |
 | Testing | [`PreviewUpdateService`](./api/testing/preview-update-service), [`render`](./api/testing/render), [`renderBlockByIndex`](./api/testing/render-block-by-index), [query methods](./api/testing/get-diagnostics) |
 

@@ -6,7 +6,7 @@ SnapTeX is designed to keep large previews usable without holding the complete r
 
 - The scrollbar represents the full document even though only nearby block HTML is mounted.
 - Jumping to a reference or source position may first mount the distant target, then reveal it.
-- PDF and TikZ work starts when the owning block approaches or enters the mounted range.
+- Visible PDF and TikZ output is retained only while its owning block is near the mounted range; paged mode may inspect it earlier in the background to obtain an accurate height.
 - A short reverse scroll can reuse recently released HTML instead of rerendering it immediately.
 - Changing virtual mode requires a complete preview reload because DOM ownership changes.
 
@@ -28,14 +28,18 @@ When a mounted block's actual height differs from its shell estimate, layout and
 
 The extension host can initially send block metadata without serializing all HTML. The webview requests HTML when a block enters the mount range, a reference or tooltip needs it, or a sync target must be revealed.
 
+For background pagination, requests are sent in small bounded batches. Hosts still render each member serially, and the webview measures one block at a time, so batching removes message overhead without accumulating a second rendered document in memory.
+
 Released HTML is cached for a bounded period so a short reverse scroll does not immediately request and render the same block again. Tooltip users are counted before cached content is released.
 
 ## Heavy resources
 
 - Images use browser-native lazy decoding where practical.
 - PDF canvases render near the viewport and are released when far away.
-- TikZJax loads only after a mounted block contains TikZ.
+- TikZJax loads only when visible output or background height measurement first needs a TikZ block.
 - Revisited TikZ source can reuse cached SVG output.
+
+During background height refinement, PDF.js reads page dimensions without rasterizing a canvas. TikZ is compiled because its cropped dimensions are not available from source alone, but the hidden SVG is discarded as soon as the measured height is cached.
 
 ## Memory diagnostics
 

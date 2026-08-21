@@ -14,11 +14,11 @@ function defineAstRenderRule(rule: AstRenderRule): AstRenderRule
 
 | Parameter | Description |
 | --- | --- |
-| `rule` | AST matcher and renderer definition |
+| `rule` | AST render callback |
 
 ## Returns
 
-The same rule object. The helper does not register, sort, clone, or wrap it.
+The same callback. The helper does not register, sort, clone, or wrap it.
 
 ## Call relationships
 
@@ -27,23 +27,22 @@ The same rule object. The helper does not register, sort, clone, or wrap it.
 - **Executed by:** the AST renderer in array order.
 
 ```text
-rule object -> defineAstRenderRule -> astRenderRules registration -> AST walker
+callback -> defineAstRenderRule -> astRenderRules registration -> AST walker
 ```
 
 ## Example
 
 ```ts
-const RULE = defineAstRenderRule({
-    name: 'ast-badge',
-    match: input => isMacroNode(input.node, 'badge'),
-    render: (input, context) => {
-        const args = readAstCommandArguments(input, 1);
-        const content = args.requiredArgs[0];
-        return content === undefined ? undefined : {
-            html: `<span>${context.escapeHtml(content)}</span>`,
-            consumedNodes: args.consumedNodes
-        };
+const RULE = defineAstRenderRule((input, context) => {
+    if (!isMacroNode(input.node, 'badge')) {
+        return undefined;
     }
+    const args = readAstCommandArguments(input, 1);
+    const content = args.requiredArgs[0];
+    return content === undefined ? undefined : {
+        html: `<span>${context.escapeHtml(content)}</span>`,
+        consumedNodes: args.consumedNodes
+    };
 });
 ```
 

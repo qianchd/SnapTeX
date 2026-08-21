@@ -2,7 +2,7 @@
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
-Checks whether an unknown value is a LaTeX AST macro node and optionally matches its name. It is the usual narrow `match` predicate for a command rule.
+Checks whether an unknown value is a LaTeX AST macro node and optionally matches its name. Use it at the start of a command rule.
 
 ## Signature
 
@@ -16,12 +16,15 @@ function isMacroNode(node: unknown, name?: string): node is SnaptexAstMacro
 
 ## Call relationships
 
-- **Called by:** AST rule `match` callbacks and AST readers.
+- **Called by:** AST rules and AST readers.
 - **Enables:** TypeScript narrowing to `SnaptexAstMacro`.
 - **Does not:** inspect or validate command arguments.
 
 ```ts
-match: input => isMacroNode(input.node, 'badge')
+const RULE = defineAstRenderRule((input, context) => {
+    if (!isMacroNode(input.node, 'badge')) { return undefined; }
+    // input.node is a SnaptexAstMacro here.
+});
 ```
 
 Command names do not include the leading backslash.

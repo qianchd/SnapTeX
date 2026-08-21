@@ -7,7 +7,9 @@ Read this page when a change affects initial-load latency, heap growth, mounted 
 SnapTeX's largest avoidable costs are full source duplication, serialized block HTML, mounted DOM, PDF canvases, and TikZ runtimes. The current model limits each one:
 
 - source text is stored once and blocks keep spans;
+- consecutive source mappings are compressed into segments instead of two per-line arrays;
 - renderer snapshots keep hashes and metadata rather than full block strings;
+- empty anchors, dependency lists, and citation metadata are omitted from block snapshots;
 - virtual mode mounts only viewport-near HTML;
 - block HTML is requested on demand and released after a retention window;
 - PDF canvases and TikZ output follow block resource lifetimes.
@@ -26,9 +28,13 @@ Shells carry estimated heights. Mounted blocks report real heights. For blocks i
 
 Viewport-near work is expressed relative to viewport height rather than fixed screen pixels, making behavior more consistent across displays.
 
+Paged previews refine shell heights and page boundaries in one forward background pass. The webview requests a small bounded batch of block HTML, while the host renders its members serially and the webview measures them one at a time. Completed pages are published immediately; edits cancel the old generation and restart from the affected page, with visible dirty blocks measured from their mounted DOM.
+
 ## AST cost control
 
-The AST backend does not retain a complete document tree indefinitely. It refines coarse blocks and stores compact artifacts. Background warm-up fills missing artifacts without blocking initial visible rendering.
+The AST backend does not retain a complete document tree indefinitely. It refines coarse blocks and stores compact artifacts. Lazy block rendering fills missing artifacts during the same background pass that measures block heights, avoiding a second full parse while leaving initial visible rendering unblocked. When an artifact already owns label and citation arrays, renderer snapshots reuse those arrays as read-only metadata rather than cloning them.
+
+Heavy resources use the same bounded pass without retaining their hidden output. Images are released after their layout size is known. PDF measurement reads the first-page viewport without painting a bitmap. TikZ must compile to obtain its final cropped SVG bounds; the hidden SVG is discarded after its height is cached.
 
 ## Measuring
 

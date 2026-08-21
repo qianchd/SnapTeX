@@ -5,11 +5,10 @@
 An `AstRenderRule` claims parsed nodes and returns HTML directly. Use it when node type, nested structure, or exact AST ownership is more reliable than source-text replacement.
 
 ```ts
-interface AstRenderRule {
-    name: string;
-    match(input: AstRenderInput): boolean;
-    render(input: AstRenderInput, context: AstRenderContext): AstRenderResult | undefined;
-}
+type AstRenderRule = (
+    input: AstRenderInput,
+    context: AstRenderContext
+) => AstRenderResult | undefined;
 
 interface AstRenderResult {
     html: string;
@@ -19,15 +18,11 @@ interface AstRenderResult {
 
 ## Ownership
 
-Rules are checked in registry array order. The first [`match`](../ast/match) that accepts a node and whose [`render`](../ast/render) method returns a result owns it. Returning `undefined` lets later rules try. Unclaimed nodes use the AST fallback renderer.
+Rules are called in registry array order. Each [rule callback](../ast/render) first checks whether it handles the current node. The first callback that returns a result owns it; returning `undefined` lets later rules try. Unclaimed nodes use the AST fallback renderer.
 
 `consumedNodes` defaults to `1`. Set it to the value returned by [`readAstCommandArguments`](../ast/read-ast-command-arguments) when detached sibling groups were consumed.
 
-Keep the two callbacks separate:
-
-- `match` is a cheap type/name filter that runs frequently;
-- `render` reads arguments, renders children, and creates output;
-- returning `undefined` from `render` declines ownership even after `match` returned `true`.
+Keep the node check at the start of the rule, before reading arguments or creating output. This gives TypeScript the correct narrowed node type without repeating a separate match predicate.
 
 ## `AstRenderInput`
 

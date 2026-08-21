@@ -63,7 +63,7 @@ const output = replaceLatexCommandCalls(source, {
 
 Use one rule with `name: ['aliasA', 'aliasB']` when aliases have identical syntax and rendering. Use separate rules when argument counts or behavior differ.
 
-The nested `render(call)` function is a replacement callback owned by this helper. It is unrelated to `AstRenderRule.render`.
+The nested `render(call)` function is a replacement callback owned by this helper. It is unrelated to the `AstRenderRule` callback.
 
 ## See also
 

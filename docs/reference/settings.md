@@ -16,7 +16,7 @@ Most settings apply while the preview is open. Settings that change document or 
 | `snaptex.virtualMode` | `true` | Mount only viewport-near block DOM. Reopen or reload the preview after changing it. |
 | `snaptex.backendMode` | `legacy` | Select `legacy` or `ast(experimental)` processing. |
 | `snaptex.previewLayout` | `paged` | Select an elastic paged preview or a continuous document. |
-| `snaptex.previewFontSize` | `clamp(4px, 2.3cqw, 25px)` | Set preview text size with any valid CSS `font-size` value. |
+| `snaptex.previewFontSize` | `2.8cqw` | Set preview text size with any valid CSS `font-size` value. |
 | `snaptex.previewLineHeight` | `1.25` | Set preview line spacing with any valid CSS `line-height` value. |
 | `snaptex.previewContentMaxWidth` | `3000px` | Limit the continuous content or paged-page width with any valid CSS `max-width` value. |
 | `snaptex.previewFontFamily` | Times-style serif stack | Set the CSS font family used by preview text. |

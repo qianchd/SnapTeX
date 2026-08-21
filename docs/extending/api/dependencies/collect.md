@@ -1,4 +1,4 @@
-# `BlockDependencyRule.collect`
+# `BlockDependencyRule`
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
@@ -7,7 +7,7 @@ Declares document-level values that affect one block's rendered output. You impl
 ## Signature
 
 ```ts
-collect(input: BlockDependencyInput): RenderDependency[]
+type BlockDependencyRule = (input: BlockDependencyInput) => RenderDependency[]
 ```
 
 ```ts
@@ -33,17 +33,17 @@ The descriptors identify state to read later; they do not copy current metadata 
 - **Unchanged blocks:** reuse the stored descriptor list instead of running `collect` again.
 
 ```text
-new/changed block -> collect(input) -> stored descriptors
+new/changed block -> rule(input) -> stored descriptors
 later update      -> read current descriptor values -> fingerprint -> dirty or unchanged
 ```
 
 ```ts
-collect: ({ text, artifact, deps }) => {
+const MAKETITLE_DEPENDENCY = defineBlockDependencyRule(({ text, artifact, deps }) => {
     const hasMaketitle = artifact
         ? artifact.metadata.macros.includes('maketitle')
         : text.includes('\\maketitle');
     return hasMaketitle ? [deps.metadata('title')] : [];
-}
+});
 ```
 
 The optional `artifact` may be absent before AST warm-up. A backend-neutral collector must preserve a source-text detection path when it needs to work immediately.

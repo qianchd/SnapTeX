@@ -2,7 +2,7 @@
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
-Escapes plain text for direct insertion into AST-rendered HTML. Call it through the `context` received by `AstRenderRule.render`; do not import or construct that context.
+Escapes plain text for direct insertion into AST-rendered HTML. Call it through the `context` received by an `AstRenderRule`; do not import or construct that context.
 
 ## Signature
 

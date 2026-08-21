@@ -35,21 +35,18 @@ The repository already includes this complete example as `EDITOR_METADATA_EXTRAC
 `readMetadataCommand` is already imported from `./metadata` in the current file. Add this declaration in `src/rules.ts`:
 
 ```ts
-export const EDITOR_METADATA_EXTRACTOR = {
-    name: 'editor-example',
-    extract: source => {
-        const editor = readMetadataCommand(source, 'editor');
-        return editor
-            ? {
-                custom: { editor: editor.content },
-                ranges: [editor.range]
-            }
-            : {};
-    }
+export const EDITOR_METADATA_EXTRACTOR = (source: string) => {
+    const editor = readMetadataCommand(source, 'editor');
+    return editor
+        ? {
+            custom: { editor: editor.content },
+            ranges: [editor.range]
+        }
+        : {};
 };
 ```
 
-SnapTeX supplies `source` to `extract`. `readMetadataCommand` searches that source for the first balanced `\editor{...}` call and returns:
+SnapTeX supplies `source` to the extractor. `readMetadataCommand` searches that source for the first balanced `\editor{...}` call and returns:
 
 ```ts
 {
@@ -61,8 +58,8 @@ SnapTeX supplies `source` to `extract`. `readMetadataCommand` searches that sour
 The offsets are illustrative. Returning `ranges` tells the document model to blank the declaration from ordinary body rendering while preserving its newline structure for source mapping.
 
 ```text
-document source -> extract(source) -> custom.editor + hidden range
-                                   -> LatexDocument metadata/body
+document source -> extractor(source) -> custom.editor + hidden range
+                                     -> LatexDocument metadata/body
 ```
 
 Custom scalar values belong under `custom`. Built-in title-page fields such as `title`, `date`, `authors`, `affiliations`, and `keywords` already have structured fields on `PreambleData`.
@@ -108,24 +105,21 @@ The renderer supplies `renderer` or `context`; your extractor does not pass valu
 The built-in `\maketitle` dependency follows this pattern:
 
 ```ts
-const MAKETITLE_DEPENDENCY = defineBlockDependencyRule({
-    name: 'maketitle',
-    collect: ({ text, artifact, deps }) => {
-        const hasMaketitle = artifact
-            ? artifact.metadata.macros.includes('maketitle')
-            : text.includes('\\maketitle');
+const MAKETITLE_DEPENDENCY = defineBlockDependencyRule(({ text, artifact, deps }) => {
+    const hasMaketitle = artifact
+        ? artifact.metadata.macros.includes('maketitle')
+        : text.includes('\\maketitle');
 
-        return hasMaketitle
-            ? [
-                deps.metadata('title'),
-                deps.metadata('custom.editor')
-            ]
-            : [];
-    }
+    return hasMaketitle
+        ? [
+            deps.metadata('title'),
+            deps.metadata('custom.editor')
+        ]
+        : [];
 });
 ```
 
-SnapTeX supplies the `collect` input:
+SnapTeX supplies the callback input:
 
 | Member | Meaning |
 | --- | --- |

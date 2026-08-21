@@ -12,13 +12,13 @@ renderer.getCitedKeys(): readonly string[]
 
 ## Returns
 
-A read-only view in first-seen order. Duplicate citation calls do not add duplicate keys.
+A new read-only array snapshot in first-seen order. Duplicate citation calls do not add duplicate keys.
 
 ## Call relationships
 
 - **Reads state written by:** [`resolveCitation`](./resolve-citation).
 - **Called by:** bibliography and citation-aware rendering rules.
-- **Does not:** clone, sort, or mutate the list.
+- **Does not:** sort or mutate renderer citation state.
 
 ```ts
 const cited = renderer.getCitedKeys();
@@ -28,6 +28,8 @@ if (cited.length === 0) {
 ```
 
 Dependency fingerprints use a separate stable deduplicated/sorted representation through [`deps.citedKeys`](../dependencies/cited-keys); this method preserves render order.
+
+Call the method again when current state is required. A previously returned array does not update after later citations are registered.
 
 ## See also
 

@@ -14,11 +14,11 @@ function defineBlockDependencyRule(rule: BlockDependencyRule): BlockDependencyRu
 
 | Parameter | Description |
 | --- | --- |
-| `rule` | Named dependency collector |
+| `rule` | Dependency callback |
 
 ## Returns
 
-The same object. Registration happens only when it is added to `blockDependencyRules`.
+The same callback. Registration happens only when it is added to `blockDependencyRules`.
 
 ## Call relationships
 
@@ -27,19 +27,17 @@ The same object. Registration happens only when it is added to `blockDependencyR
 - **Collector usually calls:** [`deps.metadata`](../dependencies/metadata) or [`deps.citedKeys`](../dependencies/cited-keys).
 
 ```text
-rule object -> defineBlockDependencyRule -> blockDependencyRules registration
-                                          -> SmartRenderer.collect
+callback -> defineBlockDependencyRule -> blockDependencyRules registration
+                                       -> SmartRenderer dependency collection
 ```
 
 ## Example
 
 ```ts
-const RULE = defineBlockDependencyRule({
-    name: 'make-cover',
-    collect: ({ text, deps }) => text.includes('\\makecover')
+const RULE = defineBlockDependencyRule(({ text, deps }) => text.includes('\\makecover')
         ? [deps.metadata('title')]
         : []
-});
+);
 ```
 
 Do not add a dependency when output depends only on the block's own source; source hashing already handles that case.
@@ -47,4 +45,4 @@ Do not add a dependency when output depends only on the block's own source; sour
 ## See also
 
 - [Metadata and dependency contract](../contracts/metadata-dependencies)
-- [`BlockDependencyRule.collect`](../dependencies/collect)
+- [`BlockDependencyRule`](../dependencies/collect)

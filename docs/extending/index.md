@@ -23,7 +23,6 @@ For example, defining `BADGE_RENDER_RULE` alone does nothing. Adding it to `rend
 
 ```ts
 const BADGE_RENDER_RULE: PreprocessRule = {
-    name: 'badge',
     priority: 200,
     apply: (text, renderer) => /* transform one block */ text
 };

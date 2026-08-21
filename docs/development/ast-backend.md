@@ -23,9 +23,9 @@ Blocks can carry compact `AstBlockArtifact` data:
 - paragraph and inline math ranges;
 - metadata used by dependency and rendering rules.
 
-The initial path parses artifacts needed for visible or structurally long blocks. Remaining coarse blocks warm in the background. Warmed hints update document state and are reused by later rendering, dependency, and synchronization work.
+The initial path parses artifacts needed for structurally long blocks. Visible blocks gain artifacts during normal rendering; remaining blocks gain them as the background height pass requests their lazy HTML. Rendering and hint extraction share that AST parse, so initial pagination does not run a second document-wide artifact parser.
 
-Dynamic source updates regenerate artifacts for affected blocks. Navigation reads stored hints; it does not run a new AST parse for every sync request.
+Dynamic source updates regenerate artifacts for affected blocks. Navigation reads stored hints; it does not run a new AST parse for every sync request. Renderer snapshots may reuse an artifact's label and citation arrays directly; artifact metadata must therefore be treated as immutable after publication.
 
 ## AST rules
 

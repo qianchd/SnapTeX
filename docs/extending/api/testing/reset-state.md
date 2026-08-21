@@ -12,7 +12,7 @@ service.resetState(): void
 
 ## Call relationships
 
-- **Calls:** `SmartRenderer.resetState` and `LatexDocument.cancelAstArtifactWarmup`.
+- **Calls:** `SmartRenderer.resetState`.
 - **Clears:** stored diagnostics.
 - **Called automatically when:** the backend mode changes during [`render`](./render).
 

@@ -14,8 +14,8 @@ SnapTeX does not load executable rules from a TeX project. Rebuild SnapTeX and f
 
 There are only two required actions:
 
-1. declare one rule object in `src/rules.ts`;
-2. add that object to `renderRules` or `astRenderRules` in `SNAP_TEX_RULES`.
+1. declare one rule in `src/rules.ts`;
+2. add it to `renderRules` or `astRenderRules` in `SNAP_TEX_RULES`.
 
 The declaration explains behavior. The registry makes that behavior active. A rule constant that is never added to the registry never runs.
 
@@ -66,7 +66,7 @@ Rendering has two independent rule arrays:
 | Backend to extend | Registry field | Matching model |
 | --- | --- | --- |
 | `legacy` | `renderRules` | Ordered source transformations followed by Markdown |
-| `ast(experimental)` | `astRenderRules` | Parsed nodes claimed by the first matching AST rule |
+| `ast(experimental)` | `astRenderRules` | Parsed nodes claimed by the first AST rule that returns a result |
 
 Implement the path selected in the preview setting. A legacy rule does not require an AST rule, and an AST rule does not require a legacy rule.
 
@@ -91,7 +91,6 @@ Add this declaration near the other legacy rule definitions:
 
 ```ts
 const BADGE_RENDER_RULE: PreprocessRule = {
-    name: 'badge',
     priority: 200,
     apply: (text, renderer) => replaceLatexCommandCalls(text, {
         name: 'badge',
@@ -180,41 +179,40 @@ There is no command-specific brace regex, separate postprocessor, renderer switc
 
 This section is an alternative implementation for `ast(experimental)`. It does not depend on the legacy rule above.
 
-### 1. Import the AST argument reader
+### 1. Import the AST readers
 
 Replace the existing direct re-export with a local import plus re-export. A re-export alone does not create a binding that code in `src/rules.ts` can call:
 
 ```ts
 import { readAstCommandArguments } from './ast/rules';
+import { isMacroNode } from './ast/visit-utils';
 export { readAstCommandArguments };
 ```
 
 `defineAstRenderRule` is declared in `src/rules.ts`, so it needs no import there. Add the rule declaration:
 
 ```ts
-const AST_BADGE_RENDER_RULE = defineAstRenderRule({
-    name: 'ast-badge',
-    match: input =>
-        input.node.type === 'macro' && input.node.content === 'badge',
-    render: (input, context) => {
-        const args = readAstCommandArguments(input, 1);
-        const content = args.requiredArgs[0];
-        if (content === undefined) {
-            return undefined;
-        }
-
-        return {
-            html: `<span style="${BADGE_STYLE}">${context.escapeHtml(content)}</span>`,
-            consumedNodes: args.consumedNodes
-        };
+const AST_BADGE_RENDER_RULE = defineAstRenderRule((input, context) => {
+    if (!isMacroNode(input.node, 'badge')) {
+        return undefined;
     }
+    const args = readAstCommandArguments(input, 1);
+    const content = args.requiredArgs[0];
+    if (content === undefined) {
+        return undefined;
+    }
+
+    return {
+        html: `<span style="${BADGE_STYLE}">${context.escapeHtml(content)}</span>`,
+        consumedNodes: args.consumedNodes
+    };
 });
 ```
 
 The callback flow is different from legacy:
 
 1. The AST walker creates `AstRenderInput` for the current parsed node.
-2. `match(input)` cheaply checks whether the node is the `badge` macro.
+2. `isMacroNode(input.node, 'badge')` returns `undefined` for unrelated nodes and narrows the matching node for TypeScript.
 3. `readAstCommandArguments(input, 1)` reads one required argument, including a detached sibling group when the parser did not attach an unknown command's argument.
 4. `context.escapeHtml(content)` safely renders this plain-text version.
 5. `consumedNodes` tells the walker to skip sibling nodes consumed as arguments.
@@ -257,9 +255,9 @@ At runtime the complete path is:
 
 ```text
 SNAP_TEX_RULES.astRenderRules
-  -> AST walker checks match callbacks in array order
+  -> AST walker calls rules in array order
   -> AST_BADGE_RENDER_RULE reads command arguments
-  -> render returns final escaped HTML
+  -> rule returns final escaped HTML
   -> walker advances by consumedNodes
 ```
 
@@ -321,12 +319,10 @@ The badge output depends only on its block source. Changing that source changes 
 Add a dependency only when unchanged source can render differently because document-level state changed. For example, a `\makecover` block can depend on title metadata:
 
 ```ts
-const MAKE_COVER_DEPENDENCY = defineBlockDependencyRule({
-    name: 'make-cover',
-    collect: ({ text, deps }) => text.includes('\\makecover')
+const MAKE_COVER_DEPENDENCY = defineBlockDependencyRule(({ text, deps }) => text.includes('\\makecover')
         ? [deps.metadata('title')]
         : []
-});
+);
 ```
 
 Register that declaration in `blockDependencyRules`. See [Metadata and Dependencies](./metadata.md) for the complete lifecycle.
@@ -360,9 +356,9 @@ For the AST version, change `backendMode` to `ast(experimental)`. Test only the 
 
 | Symptom | Check |
 | --- | --- |
-| Rule never runs | The rule object appears in the correct `SNAP_TEX_RULES` array and the preview uses that backend |
+| Rule never runs | The rule appears in the correct `SNAP_TEX_RULES` array and the preview uses that backend |
 | Legacy HTML is printed as text | Generated HTML was not passed through `renderer.protectHtml` |
-| AST rule never owns the node | A preceding rule claims it, or `match` checks the wrong bare macro/environment name |
+| AST rule never owns the node | A preceding rule claims it, or its initial node check uses the wrong bare macro/environment name |
 | Text disappears after a command | Required argument count or `consumedNodes` is wrong |
 | Nested braces break parsing | A command-specific regex replaced the shared balanced reader |
 | Metadata changes but HTML stays stale | The unchanged block needs a `blockDependencyRules` descriptor |

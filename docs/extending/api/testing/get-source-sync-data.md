@@ -10,15 +10,17 @@ Maps a preview position back to source synchronization data.
 service.getSourceSyncData(
     blockIndex: number,
     ratio: number,
-    anchors?: readonly string[],
-    sourceStart?: number,
-    sourceEnd?: number
+    options?: {
+        anchors?: readonly string[];
+        sourceStart?: number;
+        sourceEnd?: number;
+    }
 )
 ```
 
 ## Parameters
 
-`ratio` is the vertical position within the rendered block. Optional text anchors and source offsets refine the match, especially for AST-rendered inline content.
+`ratio` is the vertical position within the rendered block. `options.sourceStart` and `options.sourceEnd` provide an exact AST source span; when no span is available, `options.anchors` refines the ratio estimate with nearby text.
 
 ## Call relationships
 
@@ -30,7 +32,7 @@ Call it after [`render`](./render), using a block index from the current payload
 
 ## Returns
 
-A `SourceLocation` containing `file`, `line`, and, when available, the source `blockRange`; returns `null` when no current mapping exists.
+A `SourceLocation` containing `file` and `line`; returns `null` when no current mapping exists.
 
 ## See also
 

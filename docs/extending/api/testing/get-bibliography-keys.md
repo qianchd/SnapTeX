@@ -12,7 +12,7 @@ service.getBibliographyKeys(): string[]
 
 ## Returns
 
-A new array containing keys from `document.bibEntries`, sorted with `localeCompare`.
+A new array containing keys from `document.bibEntries`. The order is not part of the API contract; sort the result at the presentation boundary when needed.
 
 ## Call relationships
 

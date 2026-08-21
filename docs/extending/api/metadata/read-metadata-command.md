@@ -26,7 +26,7 @@ The content inside the required group and the full command's source range, or `u
 
 ## Call relationships
 
-- **Called by:** custom `MetadataExtractor.extract` callbacks.
+- **Called by:** custom `MetadataExtractor` callbacks.
 - **Uses:** the shared balanced command reader in `src/utils.ts`.
 - **Returned range feeds:** document cleanup that blanks metadata declarations from body rendering.
 

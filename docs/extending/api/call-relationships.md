@@ -12,10 +12,10 @@ These names appear repeatedly in rule examples, but they are created at differen
 | --- | --- | --- | --- |
 | `text` | Legacy block renderer | `PreprocessRule.apply` | Current transformed block source |
 | `renderer` | `SmartRenderer` | `PreprocessRule.apply` | Legacy document state and protected-output services |
-| `input` | AST walker | `AstRenderRule.match` and `render` | Current node, siblings, and recursive rendering |
-| `context` | AST renderer | `AstRenderRule.render` | AST document state and direct-HTML services |
+| `input` | AST walker | `AstRenderRule` | Current node, siblings, and recursive rendering |
+| `context` | AST renderer | `AstRenderRule` | AST document state and direct-HTML services |
 | `call` | `replaceLatexCommandCalls` | Its nested `render` callback | One balanced source command call |
-| `deps` | Dependency collector host | `BlockDependencyRule.collect` | Factories for stable dependency descriptors |
+| `deps` | Dependency collector host | `BlockDependencyRule` | Factories for stable dependency descriptors |
 
 Your rule never constructs these objects. It declares callbacks; the owning service creates the values and invokes the callbacks.
 
@@ -88,8 +88,7 @@ The nested `render(call)` callback belongs to `replaceLatexCommandCalls`; it is 
 
 ```mermaid
 flowchart LR
-    W["AST walker"] --> MATCH["AstRenderRule.match"]
-    MATCH --> RENDER["AstRenderRule.render"]
+    W["AST walker"] --> RENDER["AstRenderRule"]
     RENDER --> ARGS["readAstCommandArguments"]
     RENDER --> CHILD["input.renderChildren"]
     RENDER --> SOURCE["input.renderSource"]
@@ -99,17 +98,17 @@ flowchart LR
     RENDER --> CTX["AstRenderContext methods"]
 ```
 
-The first AST rule that matches and returns a result claims the node. `renderChildren` reuses existing child nodes. `renderSource` parses generated source and is intended for macro expansion or reconstructed LaTeX, not ordinary child traversal.
+The first AST rule that returns a result claims the node; `undefined` passes it to the next rule. `renderChildren` reuses existing child nodes. `renderSource` parses generated source and is intended for macro expansion or reconstructed LaTeX, not ordinary child traversal.
 
-`AstRenderRule.render` returns final HTML. `consumedNodes` controls how far the walker advances; it is not an HTML property and does not represent child count.
+`AstRenderRule` returns final HTML. `consumedNodes` controls how far the walker advances; it is not an HTML property and does not represent child count.
 
 ## Metadata and dependencies
 
 ```mermaid
 flowchart LR
-    DOC["LatexDocument.parse"] --> EXTRACT["MetadataExtractor.extract"]
+    DOC["LatexDocument.parse"] --> EXTRACT["MetadataExtractor"]
     EXTRACT --> META["document.metadata"]
-    BLOCK["block source"] --> COLLECT["BlockDependencyRule.collect"]
+    BLOCK["block source"] --> COLLECT["BlockDependencyRule"]
     COLLECT --> DESC["dependency descriptors"]
     META --> FP["current fingerprints"]
     DESC --> FP

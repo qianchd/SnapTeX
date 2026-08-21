@@ -48,7 +48,7 @@ Start at the entry point for the observed behavior, then follow calls toward the
 | State | Long-lived owner | Crosses a boundary as |
 | --- | --- | --- |
 | Project files and writable operations | Host file provider/project backend | URI, text, binary resource, or operation result |
-| Root source, included files, metadata, block spans, maps | `LatexDocument` | Document state read by renderer/service |
+| Root source, included files, metadata, block spans, compact source-map segments | `LatexDocument` | Document state read by renderer/service |
 | Block render snapshots, dependencies, citation state | `SmartRenderer` | `RenderPayload` and lazy block results |
 | Active editor file, selection, dirty state | VS Code or standalone host | Sync/update requests |
 | Mounted HTML and measured heights | Preview runtime | Sync/resource messages and diagnostics |
@@ -67,7 +67,9 @@ The core has no direct VS Code UI ownership. Its main responsibilities are:
 - define host/preview message contracts;
 - generate the shared preview HTML template.
 
-`LatexDocument` owns source text, spans, hashes, metadata, diagnostics, source maps, and AST artifacts. `SmartRenderer` owns render rules, protected HTML, cached block snapshots, and patch/full render payloads.
+`LatexDocument` owns source text, spans, hashes, metadata, diagnostics, compact source-map segments, and AST artifacts. `SmartRenderer` owns render rules, protected HTML, cached block snapshots, citation numbering, and patch/full render payloads.
+
+The source map is an internal compact representation rather than an extension API. Consecutive flattened lines from the same source file are stored as one segment. Public document methods translate between original and flattened lines, so callers should use those methods instead of depending on segment storage.
 
 `PreviewUpdateService` is the host-facing coordinator. Hosts should call it instead of separately driving document parsing and rendering, and tests should use it when verifying complete update behavior.
 

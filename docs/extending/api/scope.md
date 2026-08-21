@@ -26,10 +26,10 @@ Each page describes one of three kinds of callable value:
 | Kind | How it becomes available | Example |
 | --- | --- | --- |
 | Imported function | Import it from the definition module into `src/rules.ts` | `replaceLatexCommandCalls`, `escapeHtml` |
-| Rule callback | SnapTeX invokes a function you place on a registered rule object | `PreprocessRule.apply`, `AstRenderRule.render` |
+| Rule callback | SnapTeX invokes a function registered directly or stored on a rule object | `AstRenderRule`, `PreprocessRule.apply` |
 | Context method | SnapTeX creates a context and passes it into a callback | `renderer.protectHtml`, `context.renderMath` |
 
-When an example says `apply: (text, renderer) => ...`, SnapTeX supplies both parameters. When it says `render: (input, context) => ...`, the AST walker supplies those parameters.
+When an example says `apply: (text, renderer) => ...`, SnapTeX supplies both parameters. When it says `defineAstRenderRule((input, context) => ...)`, the AST walker supplies those parameters.
 
 A nested callback has a different owner. In this example:
 
@@ -42,7 +42,7 @@ your rule supplies `source` and the callback function; `renderInlineLatexHtml` l
 Examples keep every positional interface parameter visible. An intentionally
 unused parameter is prefixed with `_`, as in
 `apply: (text, _renderer) => text`. Object inputs are different: a callback
-such as `collect: ({ text, deps }) => ...` still receives the complete
+such as `defineBlockDependencyRule(({ text, deps }) => ...)` still receives the complete
 `BlockDependencyInput` object and merely extracts the members it uses.
 
 ## Declaration is not registration
@@ -50,7 +50,7 @@ such as `collect: ({ text, deps }) => ...` still receives the complete
 These two operations are intentionally separate:
 
 ```ts
-const RULE = defineAstRenderRule({ /* match and render */ });
+const RULE = defineAstRenderRule((input, context) => { /* return a result or undefined */ });
 
 export const SNAP_TEX_RULES = defineRuleRegistry({
     // RULE starts running only after it appears here.
@@ -59,7 +59,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
 });
 ```
 
-`defineAstRenderRule` and `defineBlockDependencyRule` return the object passed to them. They provide contextual typing; they do not mutate the global registry. `defineRuleRegistry` creates the lifecycle snapshot consumed by the document and renderer.
+`defineAstRenderRule` and `defineBlockDependencyRule` return their callbacks. They provide contextual typing; they do not mutate the global registry. `defineRuleRegistry` creates the lifecycle snapshot consumed by the document and renderer.
 
 ## Definition and import locations
 

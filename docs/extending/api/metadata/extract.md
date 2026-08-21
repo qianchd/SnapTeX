@@ -1,13 +1,13 @@
-# `MetadataExtractor.extract`
+# `MetadataExtractor`
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
-Extracts document-level metadata and source ranges from LaTeX source. You implement this callback on a `MetadataExtractor`; `LatexDocument` calls it during document parsing.
+Extracts document-level metadata and source ranges from LaTeX source. Register this callback in `metadataExtractors`; `LatexDocument` calls it during document parsing.
 
 ## Signature
 
 ```ts
-extract(text: string): MetadataExtractionResult
+type MetadataExtractor = (text: string) => MetadataExtractionResult
 ```
 
 ## Returns
@@ -33,12 +33,12 @@ comment-masked source -> extract(source) -> metadata + hidden ranges -> LatexDoc
 ```
 
 ```ts
-extract: source => {
+const EDITOR_METADATA_EXTRACTOR: MetadataExtractor = source => {
     const editor = readMetadataCommand(source, 'editor');
     return editor
         ? { custom: { editor: editor.content }, ranges: [editor.range] }
         : {};
-}
+};
 ```
 
 Return `ranges` only for declarations that should disappear from body output. The document model preserves line structure needed by source mapping.

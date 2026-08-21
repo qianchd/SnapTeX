@@ -2,7 +2,7 @@
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
-Checks whether an unknown value is an AST environment or math-environment node. It is the usual narrow `match` predicate for an environment rule.
+Checks whether an unknown value is an AST environment or math-environment node. Use it at the start of an environment rule's `render` callback.
 
 ## Signature
 
@@ -20,11 +20,14 @@ function isEnvironmentNode(
 ## Call relationships
 
 - **Calls:** [`environmentName`](./environment-name).
-- **Called by:** AST rule `match` callbacks and structural visitors.
+- **Called by:** AST rule `render` callbacks and structural visitors.
 - **Enables:** TypeScript narrowing to `SnaptexAstEnvironment`.
 
 ```ts
-match: input => isEnvironmentNode(input.node, 'notice')
+render: input => {
+    if (!isEnvironmentNode(input.node, 'notice')) { return undefined; }
+    return { html: input.renderChildren(input.node.content ?? []) };
+}
 ```
 
 ## See also

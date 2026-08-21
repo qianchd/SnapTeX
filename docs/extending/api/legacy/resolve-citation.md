@@ -18,12 +18,12 @@ renderer.resolveCitation(key: string): number
 
 ## Returns
 
-A one-based number. The first call for a key appends it to renderer citation state; later calls reuse the same number.
+A one-based number. The first call registers the key and assigns the next number; later calls reuse that number without adding a duplicate.
 
 ## Call relationships
 
 - **Called by:** citation rendering helpers and custom legacy citation rules.
-- **Updates:** the list returned by [`getCitedKeys`](./get-cited-keys).
+- **Updates:** renderer citation state observed by later [`getCitedKeys`](./get-cited-keys) calls.
 - **Reset by:** renderer state reset or a full backend reset.
 
 ```ts

@@ -12,7 +12,7 @@ service.getMacroNames(): string[]
 
 ## Returns
 
-A new, locale-sorted array of keys from `document.metadata.macros`.
+A new array of keys from `document.metadata.macros`. The order is not part of the API contract; sort the result at the presentation boundary when needed.
 
 ## Call relationships
 

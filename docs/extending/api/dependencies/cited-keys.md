@@ -26,9 +26,10 @@ deps.citedKeys() -> descriptor stored on bibliography block
 ```
 
 ```ts
-collect: ({ text, deps }) => text.includes('\\bibliography')
+const BIBLIOGRAPHY_DEPENDENCY = defineBlockDependencyRule(({ text, deps }) => text.includes('\\bibliography')
     ? [deps.citedKeys()]
     : []
+);
 ```
 
 The descriptor does not store a copy of every key. Sorting is appropriate for dependency comparison because SnapTeX's rendered bibliography is author-ordered, while [`getCitedKeys`](../legacy/get-cited-keys) still exposes first-seen render order.

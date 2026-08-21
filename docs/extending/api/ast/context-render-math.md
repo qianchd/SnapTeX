@@ -2,7 +2,7 @@
 
 <!--@include: ../../../.vitepress/partials/api-context.md-->
 
-Renders TeX math to direct KaTeX HTML in AST mode. The AST renderer supplies `context` to your rule's `render(input, context)` callback.
+Renders TeX math to direct KaTeX HTML in AST mode. The AST renderer supplies `context` when it calls your rule.
 
 ## Signature
 

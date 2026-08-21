@@ -13,6 +13,8 @@ document block span + optional source hint
 
 Each rendered block maps to a source span and starting line. This block-level map is shared by the VS Code and standalone hosts and remains available when the block's HTML is virtualized away.
 
+Included files are flattened for parsing, but the document does not retain two arrays with one entry per flattened line. It stores consecutive mappings as compact segments. Preview-to-source lookup finds the containing segment, while source-to-preview lookup selects the exact or nearest mapped line for the requested file. Hosts consume `getOriginalPosition` and `getFlattenedLine`; the segment layout is private to `LatexDocument`.
+
 ## Anchor context
 
 Plain-text sync extracts nearby continuous words around the cursor or click location. Search widens around the current position and ranks multiple matches by distance from the estimated source line rather than choosing the first repeated word.

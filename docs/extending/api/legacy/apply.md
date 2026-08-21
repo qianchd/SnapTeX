@@ -35,7 +35,6 @@ previous rule output -> apply(text, renderer) -> next rule input -> Markdown
 
 ```ts
 const RULE: PreprocessRule = {
-    name: 'remove-draft-marker',
     priority: 200,
     apply: (text, _renderer) =>
         text.replace(/\\draftmarker\b/g, '')
@@ -46,7 +45,7 @@ SnapTeX still supplies the second argument. The `_renderer` name makes the
 complete callback shape visible while showing that this rule intentionally
 does not use the rendering context.
 
-`name` is diagnostic; it does not match source. Always return the unmodified `text` when the rule does not apply.
+`priority` controls ordering; it does not match source. Always return the unmodified `text` when the rule does not apply.
 
 ## See also
 

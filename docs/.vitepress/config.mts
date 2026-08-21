@@ -108,8 +108,7 @@ const apiReferenceItems = [
         text: 'AST Rules and Context',
         collapsed: true,
         items: [
-            { text: 'AstRenderRule.match', link: '/extending/api/ast/match' },
-            { text: 'AstRenderRule.render', link: '/extending/api/ast/render' },
+            { text: 'AstRenderRule', link: '/extending/api/ast/render' },
             { text: 'readAstCommandArguments', link: '/extending/api/ast/read-ast-command-arguments' },
             { text: 'isMacroNode', link: '/extending/api/ast/is-macro-node' },
             { text: 'isEnvironmentNode', link: '/extending/api/ast/is-environment-node' },
@@ -135,9 +134,9 @@ const apiReferenceItems = [
         text: 'Metadata and Dependencies',
         collapsed: true,
         items: [
-            { text: 'MetadataExtractor.extract', link: '/extending/api/metadata/extract' },
+            { text: 'MetadataExtractor', link: '/extending/api/metadata/extract' },
             { text: 'readMetadataCommand', link: '/extending/api/metadata/read-metadata-command' },
-            { text: 'collect', link: '/extending/api/dependencies/collect' },
+            { text: 'BlockDependencyRule', link: '/extending/api/dependencies/collect' },
             { text: 'deps.metadata', link: '/extending/api/dependencies/metadata' },
             { text: 'deps.citedKeys', link: '/extending/api/dependencies/cited-keys' }
         ]

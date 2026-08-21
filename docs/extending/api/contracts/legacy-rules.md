@@ -6,7 +6,6 @@ A `PreprocessRule` transforms one block of LaTeX source before Markdown renderin
 
 ```ts
 interface PreprocessRule {
-    name: string;
     priority: number;
     apply(text: string, renderer: RenderContext): string;
 }
@@ -29,7 +28,6 @@ The callback's return value is therefore usually one of three forms:
 
 ```ts
 const RULE: PreprocessRule = {
-    name: 'badge',
     priority: 200,
     apply: (text, _renderer) => /* transformed text */ text
 };
@@ -54,7 +52,7 @@ example does not use the context.
 
 Legacy rules operate on source text and therefore commonly use the [balanced source readers](../source/replace-latex-command-calls). They do not receive AST nodes and do not run in AST mode.
 
-`name` is diagnostic. It does not select commands. Source matching belongs inside `apply`, normally through `replaceLatexCommandCalls` or another shared reader.
+`priority` controls ordering; it does not select commands. Source matching belongs inside `apply`, normally through `replaceLatexCommandCalls` or another shared reader.
 
 ## Related APIs
 
