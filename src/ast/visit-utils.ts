@@ -78,6 +78,28 @@ export function firstSignificantNode(nodes: readonly SnaptexAstNode[]): { node: 
     return undefined;
 }
 
+export function findAstNode<T extends SnaptexAstNode>(
+    nodes: readonly SnaptexAstNode[],
+    predicate: (node: SnaptexAstNode) => node is T
+): T | undefined;
+export function findAstNode(
+    nodes: readonly SnaptexAstNode[],
+    predicate: (node: SnaptexAstNode) => boolean
+): SnaptexAstNode | undefined;
+export function findAstNode(
+    nodes: readonly SnaptexAstNode[],
+    predicate: (node: SnaptexAstNode) => boolean
+): SnaptexAstNode | undefined {
+    for (const node of nodes) {
+        if (predicate(node)) { return node; }
+        if (Array.isArray(node.content)) {
+            const match = findAstNode(node.content, predicate);
+            if (match) { return match; }
+        }
+    }
+    return undefined;
+}
+
 export function skipWhitespaceOrComments(nodes: readonly SnaptexAstNode[], index: number): number {
     while (isWhitespaceOrCommentNode(nodes[index])) {
         index++;

@@ -2,6 +2,7 @@ import type { SnaptexAstNode } from '../types';
 import {
     astNodesToText,
     environmentName,
+    findAstNode,
     getSourcePosition,
     isGroupNode,
     isEnvironmentNode,
@@ -61,7 +62,7 @@ function captionHtml(
 }
 
 function findFirstMacro(nodes: readonly SnaptexAstNode[], name: string): SnaptexAstMacro | undefined {
-    return findFirstNode(nodes, (node): node is SnaptexAstMacro => isMacroNode(node, name));
+    return findAstNode(nodes, (node): node is SnaptexAstMacro => isMacroNode(node, name));
 }
 
 function renderNestedLabels(input: AstRenderInput, nodes: readonly SnaptexAstNode[]): string {
@@ -101,36 +102,10 @@ function stripLeadingEnvironmentOption(nodes: readonly SnaptexAstNode[]): Snapte
 }
 
 function findFirstEnvironment(nodes: readonly SnaptexAstNode[], envs: ReadonlySet<string>): SnaptexAstNode | undefined {
-    return findFirstNode(nodes, node => {
+    return findAstNode(nodes, node => {
         const envName = environmentName(node);
         return envName !== undefined && envs.has(envName);
     });
-}
-
-function findFirstNode<T extends SnaptexAstNode>(
-    nodes: readonly SnaptexAstNode[],
-    predicate: (node: SnaptexAstNode) => node is T
-): T | undefined;
-function findFirstNode(
-    nodes: readonly SnaptexAstNode[],
-    predicate: (node: SnaptexAstNode) => boolean
-): SnaptexAstNode | undefined;
-function findFirstNode(
-    nodes: readonly SnaptexAstNode[],
-    predicate: (node: SnaptexAstNode) => boolean
-): SnaptexAstNode | undefined {
-    for (const node of nodes) {
-        if (predicate(node)) {
-            return node;
-        }
-        if (Array.isArray(node.content)) {
-            const child = findFirstNode(node.content, predicate);
-            if (child) {
-                return child;
-            }
-        }
-    }
-    return undefined;
 }
 
 function splitTableNoteItems(nodes: readonly SnaptexAstNode[]): Array<{ label: readonly SnaptexAstNode[]; content: readonly SnaptexAstNode[] }> {

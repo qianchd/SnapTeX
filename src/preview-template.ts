@@ -1,6 +1,6 @@
 import { escapeHtmlAttribute } from './utils';
 
-export interface PreviewHtmlTemplateData {
+interface PreviewHtmlTemplateData {
     cspMeta: string;
     styleLinks: string[];
     bodyData: Record<string, string>;

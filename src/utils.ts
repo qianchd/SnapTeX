@@ -30,15 +30,11 @@ const LATEX_ACCENTS: Record<string, string> = {
  * Decodes common LaTeX accents to Unicode for citation and bibliography text.
  */
 function decodeLatexAccents(text: string): string {
-    text = text.replace(/\\(["'`^~v])\s*\{([a-zA-Z])\}/g, (match, cmd, char) => {
-        const key = `\\${cmd}${char}`;
-        return LATEX_ACCENTS[key] || match;
-    });
+    const replaceAccent = (match: string, command: string, char: string) =>
+        LATEX_ACCENTS[`\\${command}${char}`] || match;
 
-    text = text.replace(/\\(["'`^~])([a-zA-Z])/g, (match, cmd, char) => {
-        const key = `\\${cmd}${char}`;
-        return LATEX_ACCENTS[key] || match;
-    });
+    text = text.replace(/\\(["'`^~v])\s*\{([a-zA-Z])\}/g, replaceAccent);
+    text = text.replace(/\\(["'`^~])([a-zA-Z])/g, replaceAccent);
 
     text = text.replace(/\\c\s*\{([a-zA-Z])\}/g, (m, c) => LATEX_ACCENTS[`\\c{${c}}`] || m);
     text = text.replace(/\\(ss|aa|AA|ae|AE|o|O)\b/g, (m, c) => LATEX_ACCENTS[`\\${c}`] || m);
