@@ -38,6 +38,39 @@ The host should not separately drive document parsing and rendering. The preview
 
 The initial payload may intentionally omit far-away block HTML. That is a completed virtualized load, not a partial document parse: source spans, hashes, source maps, and shell metadata already exist. Blocks without jump targets omit the optional `anchors` array instead of serializing an empty array.
 
+```mermaid
+flowchart LR
+    META["block metadata"] --> SHELL["stable virtual shell"]
+    SHELL -->|near viewport| REQUEST["RequestBlockHtml"]
+    SHELL -->|background pass| REQUEST
+    REQUEST --> HOST["host: renderBlockByIndex"]
+    HOST --> REWRITE["host resource URL rewrite"]
+    REWRITE --> RESPONSE["BlockHtml"]
+    RESPONSE --> MOUNT["mount or hidden measure"]
+    MOUNT --> HEIGHT["hash-keyed settled height"]
+    HEIGHT --> PAGE["incremental page layout"]
+    MOUNT --> RESOURCE["visible PDF / TikZ / image activation"]
+```
+
+The resource marker syntax is shared, but resolution remains host-specific.
+VS Code maps a project path to a webview URI; standalone maps it to a browser
+resource or object URL. Both use the same decode-and-escape step before HTML is
+sent to the preview runtime.
+
+## Derived preview state
+
+The preview deliberately has three related height representations. They are
+not interchangeable caches:
+
+| Representation | Owner | Lifetime and purpose |
+| --- | --- | --- |
+| Shell height by block hash | `BlockVirtualizationController` | Survives mount/unmount and reuses geometry for unchanged blocks |
+| Current element height | `PageLayoutController` | Tracks the live DOM element used by the current page layout |
+| Pinned viewport anchor | `ViewportAnchorController` | Temporary visual compensation while a layout mutation is applied |
+
+The controller in `src/webview/main.ts` coordinates these owners. It should not
+store another authoritative height table or reimplement their invalidation.
+
 ## Incremental update
 
 ```text

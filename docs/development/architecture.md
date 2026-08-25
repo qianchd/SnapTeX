@@ -38,6 +38,7 @@ This flow is the same in VS Code and Web. Their differences are file access, edi
 | VS Code preview host | `apps/vscode/src/panel.ts` | `PreviewUpdateService` and webview messages |
 | Web application | `apps/web/src/main.ts` | Standalone app plus browser project adapters |
 | Standalone editor/preview services | `apps/standalone/src/app.ts` | Core service and project operations |
+| Optional remote-project server | `apps/web/server.mjs` | Authenticated project API and static assets |
 | Host-neutral preview lifecycle | `src/preview-update-service.ts` | `LatexDocument` and `SmartRenderer` |
 | Browser preview runtime | `src/webview/main.ts` | DOM patching, virtualization, resources, and sync |
 
@@ -120,16 +121,34 @@ New hosts should implement these boundaries instead of importing another host's 
 
 ## Dependency direction
 
-```text
-apps/vscode ─┐
-             ├──> src core ──> shared types/contracts
-apps/web ────┤       │
-     │       │       └──> src/webview template/runtime
-     v       │
-apps/standalone
+```mermaid
+flowchart TB
+    FOUNDATION["Core foundations<br/>types / utils / patterns / diff / scanner"]
+    AST["AST services<br/>splitter / artifacts / rules / renderer"]
+    LIFECYCLE["Document lifecycle<br/>LatexDocument / SmartRenderer / PreviewUpdateService"]
+    PROTOCOL["Preview contracts<br/>messages / template / bridge"]
+    RUNTIME["Browser preview runtime<br/>patch / virtualization / pagination / sync / resources"]
+    STANDALONE["Standalone host<br/>CodeMirror / BrowserProject / BrowserFileProvider"]
+    WEB["Web UI and project adapters<br/>directory / IndexedDB / remote API"]
+    VSCODE["VS Code host<br/>extension / panel / file provider"]
+    SERVER["Optional Web server<br/>static assets / auth / project API"]
 
-media <── built/served preview assets
+    FOUNDATION --> AST
+    FOUNDATION --> LIFECYCLE
+    AST --> LIFECYCLE
+    FOUNDATION --> PROTOCOL
+    PROTOCOL --> RUNTIME
+    LIFECYCLE --> STANDALONE
+    PROTOCOL --> STANDALONE
+    STANDALONE --> WEB
+    WEB -. "optional HTTP" .-> SERVER
+    LIFECYCLE --> VSCODE
+    PROTOCOL --> VSCODE
 ```
+
+Solid arrows are production import directions. The dashed Web-to-server edge
+is an optional runtime API call; the static Web build does not import the Node
+server.
 
 - `src/` must not import VS Code or Web UI modules.
 - `apps/standalone/` may use browser/editor primitives but must not assume one Web storage backend.
@@ -138,6 +157,27 @@ media <── built/served preview assets
 - `src/webview/` and `media/` are shared by both hosts and communicate only through the preview bridge/protocol.
 
 When a change would reverse one of these arrows, move the reusable behavior toward the shared boundary and keep platform calls in the adapter.
+
+## Static dependency audit
+
+The current production import graph is acyclic. AST modules depend on the
+foundation layer, while only the lifecycle composition modules import AST
+services; AST code does not import `LatexDocument`, `SmartRenderer`, or a host.
+Likewise, the shared preview runtime imports protocol contracts but never the
+document or renderer objects that created a payload.
+
+The highest fan-in modules are deliberate foundations:
+
+| Module | Why many modules depend on it | Review rule |
+| --- | --- | --- |
+| `src/utils.ts` | Shared text, URI, HTML, scheduling, and balanced LaTeX readers | Reuse an existing helper before adding another parser or host utility |
+| `src/types.ts` | Serializable document, rendering, sync, and registry contracts | Keep host objects and DOM nodes out of these types |
+| `src/ast/rules/index.ts` | AST rule contract and shared argument/render helpers | Keep concrete built-in rules in their rule modules |
+| `src/ast/visit-utils.ts` | Structural AST predicates and traversal | Add only parser-shape operations that several AST consumers share |
+
+Large fan-out composition files such as `src/renderer.ts`, `src/document.ts`,
+and `src/ast/rules/defaults.ts` are expected to know many lower-level services.
+That is not a reason to move their orchestration into those dependencies.
 
 ## Next
 

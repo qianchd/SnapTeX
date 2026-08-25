@@ -131,6 +131,23 @@ flowchart LR
 
 Use `PreviewUpdateService` when a test needs to verify the behavior a host actually receives, including parsing, block diffing, numbering, dependencies, and backend selection.
 
+## Lazy block and resource calls
+
+```mermaid
+flowchart LR
+    SHELL["virtual shell"] --> REQUEST["RequestBlockHtml"]
+    REQUEST --> HOST["VS Code or standalone host"]
+    HOST --> BLOCK["PreviewUpdateService.renderBlockByIndex"]
+    BLOCK --> PATHS["replaceLocalResourceUrls"]
+    PATHS --> RESPONSE["BlockHtml"]
+    RESPONSE --> SHELL
+```
+
+`renderBlockByIndex` returns backend-selected block HTML without knowing the
+host URL scheme. The host resolves `LOCAL_IMG:` markers after rendering and
+before sending `BlockHtml`. PDF drawing remains a separate request because the
+preview runtime controls canvas lifetime and viewport scale.
+
 ## Related contracts
 
 - [Registry contract](./contracts/registry)
