@@ -359,6 +359,7 @@ const previewBridge = getPreviewBridge();
             const clone = block.cloneNode(true);
             clone.classList.add(isTarget ? 'target-block' : 'context-block');
             this.cleanNode(clone);
+            window.snaptexPreviewController?.fillCurrentNumbering(clone);
             fragment.appendChild(clone);
         }
 
