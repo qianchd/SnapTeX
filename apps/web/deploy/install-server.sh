@@ -179,7 +179,8 @@ run_root rm -rf "$next_dir" "$backup_dir"
 run_root install -d -o "$SNAPTEX_RUN_USER" -g "$run_group" "$next_dir/apps/web"
 run_root cp -a "$repo_root/dist-web" "$next_dir/dist-web"
 run_root install -o "$SNAPTEX_RUN_USER" -g "$run_group" -m 0644 \
-    "$repo_root/apps/web/server.mjs" "$repo_root/apps/web/web-session.mjs" "$next_dir/apps/web/"
+    "$repo_root/apps/web/server.mjs" "$repo_root/apps/web/web-session.mjs" \
+    "$repo_root/apps/web/http-utils.mjs" "$next_dir/apps/web/"
 run_root chown -R "$SNAPTEX_RUN_USER:$run_group" "$next_dir"
 
 if run_root test -d "$SNAPTEX_INSTALL_DIR"; then run_root mv "$SNAPTEX_INSTALL_DIR" "$backup_dir"; fi
