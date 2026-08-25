@@ -67,6 +67,20 @@ export function decodeHtmlAttribute(value: string): string {
         .replace(/&amp;/g, '&');
 }
 
+export async function replaceLocalResourceUrls(
+    html: string,
+    resolveUrl: (path: string, attribute: 'src' | 'data-pdf-src') => string | undefined | Promise<string | undefined>
+): Promise<string> {
+    const matches = [...html.matchAll(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g)];
+    const replacements = await Promise.all(matches.map(async match => {
+        const attribute = match[1] as 'src' | 'data-pdf-src';
+        const url = await resolveUrl(decodeHtmlAttribute(match[2]), attribute);
+        return `${attribute}="${url ? escapeHtmlAttribute(url) : ''}"`;
+    }));
+    let index = 0;
+    return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, () => replacements[index++]);
+}
+
 export function escapeScriptRawText(text: string): string {
     return text.replace(/<\/script/gi, '<\\/script');
 }

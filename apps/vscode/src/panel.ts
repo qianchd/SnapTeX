@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { IFileProvider } from '../../../src/file-provider';
-import { decodeHtmlAttribute, getBasename, normalizeUri } from '../../../src/utils';
+import { getBasename, normalizeUri, replaceLocalResourceUrls } from '../../../src/utils';
 import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
 import type { PreviewUpdateService } from '../../../src/preview-update-service';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type RenderPayload, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings } from '../../../src/types';
@@ -306,18 +306,17 @@ export class TexPreviewPanel {
         }
     }
 
-    private fixHtmlPaths(html: string): string {
+    private async fixHtmlPaths(html: string): Promise<string> {
         if (!this._sourceUri) { return html; }
 
         const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
-        return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, (_match, attr, relPath) => {
-            let normalizedPath = decodeHtmlAttribute(relPath).replace(/\\/g, '/');
+        return replaceLocalResourceUrls(html, relPath => {
+            let normalizedPath = relPath.replace(/\\/g, '/');
             if (normalizedPath.startsWith('./')) { normalizedPath = normalizedPath.substring(2); }
 
             const pathSegments = normalizedPath.split('/');
             const fullUri = vscode.Uri.joinPath(docDir, ...pathSegments);
-            const webviewUri = this._panel.webview.asWebviewUri(fullUri);
-            return `${attr}="${webviewUri.toString()}"`;
+            return this._panel.webview.asWebviewUri(fullUri).toString();
         });
     }
 
@@ -347,7 +346,7 @@ export class TexPreviewPanel {
             id,
             index,
             hash: block.hash,
-            html: this.fixHtmlPaths(block.html)
+            html: await this.fixHtmlPaths(block.html)
         });
     }
 

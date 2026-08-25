@@ -7,7 +7,7 @@ import { createLatexEditorExtensions, type LatexCompletionData } from './editor-
 import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
-import { decodeHtmlAttribute, escapeHtmlAttribute, getSyncAnchorContext, offsetAtLine } from '../../../src/utils';
+import { decodeHtmlAttribute, getSyncAnchorContext, offsetAtLine, replaceLocalResourceUrls } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
 declare global {
@@ -593,17 +593,13 @@ export class StandaloneHost {
     }
 
     private async fixHtmlPaths(html: string): Promise<string> {
-        const matches = [...html.matchAll(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g)];
-        const replacements = await Promise.all(matches.map(async match => {
-            const path = decodeHtmlAttribute(match[2]);
+        return replaceLocalResourceUrls(html, async (path, attribute) => {
             const url = await this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(path));
             if (!url) {
-                this.addDiagnostic(`${match[1] === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
+                this.addDiagnostic(`${attribute === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
             }
-            return url ? `${match[1]}="${escapeHtmlAttribute(url)}"` : `${match[1]}=""`;
-        }));
-        let replacementIndex = 0;
-        return html.replace(/(src|data-pdf-src)="LOCAL_IMG:([^"]+)"/g, () => replacements[replacementIndex++]);
+            return url;
+        });
     }
 
     private resolveProjectResourceUri(relativePath: string): BrowserUri {
