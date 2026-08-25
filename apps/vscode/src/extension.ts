@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { TexPreviewPanel } from './panel';
-import { getSyncAnchorContext, normalizeUri } from '../../../src/utils';
+import { debounce, getSyncAnchorContext, normalizeUri } from '../../../src/utils';
 import { HostToPreviewCommand, type RevealLineMessage, type SyncScrollMessage } from '../../../src/preview-messages';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { VscodeFileProvider } from './vscode-file-provider';
@@ -23,25 +23,6 @@ let suppressTextToPreviewUntil = 0;
 let suppressPreviewToTextUntil = 0;
 
 const isAutoScrollSyncEnabled = () => vscode.workspace.getConfiguration('snaptex').get<boolean>('autoScrollSync', true);
-
-type Debounced<Args extends unknown[]> = ((...args: Args) => void) & { cancel(): void };
-
-const debounce = <Args extends unknown[]>(func: (...args: Args) => void, waitGetter: () => number): Debounced<Args> => {
-    let timeout: NodeJS.Timeout | undefined;
-    const cancel = () => {
-        if (timeout !== undefined) { clearTimeout(timeout); }
-        timeout = undefined;
-    };
-    const debounced = (...args: Args) => {
-        cancel();
-        timeout = setTimeout(() => {
-            timeout = undefined;
-            func(...args);
-        }, waitGetter());
-    };
-    debounced.cancel = cancel;
-    return debounced;
-};
 
 const getAutoScrollDelay = () => Math.max(0, vscode.workspace.getConfiguration('snaptex').get<number>('autoScrollDelay', 100));
 

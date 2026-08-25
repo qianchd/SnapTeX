@@ -11,6 +11,28 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+type Debounced<Args extends unknown[]> = ((...args: Args) => void) & { cancel(): void };
+
+export function debounce<Args extends unknown[]>(
+    callback: (...args: Args) => void,
+    delayMs: number | (() => number)
+): Debounced<Args> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancel = () => {
+        if (timer !== undefined) {clearTimeout(timer);}
+        timer = undefined;
+    };
+    const debounced = (...args: Args) => {
+        cancel();
+        timer = setTimeout(() => {
+            timer = undefined;
+            callback(...args);
+        }, typeof delayMs === 'function' ? delayMs() : delayMs);
+    };
+    debounced.cancel = cancel;
+    return debounced;
+}
+
 const LATEX_ACCENTS: Record<string, string> = {
     '\\"a': 'ä', '\\"o': 'ö', '\\"u': 'ü', '\\"A': 'Ä', '\\"O': 'Ö', '\\"U': 'Ü',
     "\\'a": 'á', "\\'e": 'é', "\\'i": 'í', "\\'o": 'ó', "\\'u": 'ú', "\\'y": 'ý', "\\'c": 'ć',

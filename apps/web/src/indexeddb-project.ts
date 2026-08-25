@@ -156,6 +156,14 @@ async function readContent(db: IDBPDatabase<WorkspaceDatabase>, key: string): Pr
     return record.content;
 }
 
+async function readProject(db: IDBPDatabase<WorkspaceDatabase>, id: string): Promise<StoredProjectRecord> {
+    const project = await db.get('projects', id);
+    if (!project) {
+        throw new Error(`Browser project does not exist: ${id}`);
+    }
+    return project;
+}
+
 async function createStoredRecords(projectId: string, files: readonly BrowserImportFile[]) {
     const records: StoredFileDraft[] = [];
     for (const file of files) {
@@ -235,10 +243,7 @@ export class BrowserWorkspaceStore {
             throw new Error('The imported project contains no supported files.');
         }
         const db = await this.database;
-        const project = await db.get('projects', id);
-        if (!project) {
-            throw new Error(`Browser project does not exist: ${id}`);
-        }
+        const project = await readProject(db, id);
         const oldFiles = await db.getAllFromIndex('files', 'by-project', id);
         const oldByPath = new Map(oldFiles.map(file => [file.path, file]));
         const incoming = await createStoredRecords(id, normalizedFiles);
@@ -293,10 +298,7 @@ export class BrowserWorkspaceStore {
 
     async open(id: string): Promise<BrowserProject> {
         const db = await this.database;
-        const project = await db.get('projects', id);
-        if (!project) {
-            throw new Error(`Browser project does not exist: ${id}`);
-        }
+        const project = await readProject(db, id);
         const records = await db.getAllFromIndex('files', 'by-project', id);
         const activePath = project.activePath && records.some(record => record.path === project.activePath)
             ? project.activePath
@@ -339,10 +341,7 @@ export class BrowserWorkspaceStore {
 
     private async setRootPath(id: string, rootPath: string): Promise<void> {
         const db = await this.database;
-        const project = await db.get('projects', id);
-        if (!project) {
-            throw new Error(`Browser project does not exist: ${id}`);
-        }
+        const project = await readProject(db, id);
         const normalizedPath = normalizeBrowserPath(rootPath);
         if (!isTexFile(normalizedPath) || !await db.get('files', fileKey(id, normalizedPath))) {
             throw new Error(`Browser project root does not exist: ${normalizedPath}`);
@@ -399,9 +398,7 @@ export class BrowserWorkspaceStore {
         }
         const key = fileKey(projectId, normalizedPath);
         const db = await this.database;
-        if (!await db.get('projects', projectId)) {
-            throw new Error(`Browser project does not exist: ${projectId}`);
-        }
+        await readProject(db, projectId);
         if (await db.get('files', key)) {
             throw new Error(`Browser project file already exists: ${normalizedPath}`);
         }
@@ -427,10 +424,7 @@ export class BrowserWorkspaceStore {
         const normalizedPath = normalizeBrowserPath(path);
         const key = fileKey(projectId, normalizedPath);
         const db = await this.database;
-        const project = await db.get('projects', projectId);
-        if (!project) {
-            throw new Error(`Browser project does not exist: ${projectId}`);
-        }
+        const project = await readProject(db, projectId);
         if (project.rootPath === normalizedPath) {
             throw new Error('The preview root cannot be deleted. Set another root first.');
         }

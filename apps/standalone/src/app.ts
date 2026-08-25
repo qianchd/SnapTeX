@@ -7,7 +7,7 @@ import { createLatexEditorExtensions, type LatexCompletionData } from './editor-
 import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
-import { decodeHtmlAttribute, getSyncAnchorContext, offsetAtLine, replaceLocalResourceUrls } from '../../../src/utils';
+import { debounce, decodeHtmlAttribute, getSyncAnchorContext, offsetAtLine, replaceLocalResourceUrls } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
 declare global {
@@ -70,19 +70,6 @@ const flashEditorLineField = StateField.define<DecorationSet>({
     },
     provide: field => EditorView.decorations.from(field)
 });
-
-function debounce(callback: () => void, delayMs: number | (() => number)): () => void {
-    let timer: number | undefined;
-    return () => {
-        if (timer !== undefined) {
-            window.clearTimeout(timer);
-        }
-        timer = window.setTimeout(() => {
-            timer = undefined;
-            callback();
-        }, typeof delayMs === 'function' ? delayMs() : delayMs);
-    };
-}
 
 function normalizeEditorText(text: string): string {
     return text.replace(/\r\n?/g, '\n');
