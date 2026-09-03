@@ -31,9 +31,11 @@ export class RemoteProjectAuthenticationError extends Error {
 }
 
 function requestError(response: Response, method: string, url: string | URL): Error {
-    return response.status === 401
-        ? new RemoteProjectAuthenticationError()
-        : new Error(`${method} ${response.url || url} failed: ${response.status}`);
+    if (response.status === 401) { return new RemoteProjectAuthenticationError(); }
+    if (response.status === 503) {
+        return new Error('The server cannot read this project. Ask the administrator to repair its permissions.');
+    }
+    return new Error(`${method} ${response.url || url} failed: ${response.status}`);
 }
 
 function remoteFileUrl(apiBaseUrl: string, path: string): string {

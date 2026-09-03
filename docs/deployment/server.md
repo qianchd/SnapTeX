@@ -101,6 +101,8 @@ curl http://127.0.0.1:3000/healthz
 
 To update, pull or replace the source tree and rerun `npm run web:install-server` with the same private configuration.
 
+If opening a project reports that the server cannot read it, inspect the concrete path with `journalctl -u snaptex-web` and rerun the installer to restore the configured project-tree ACLs. Do not bypass the service account by running SnapTeX as root.
+
 Before upgrades, back up `SNAPTEX_PROJECTS_ROOT` independently. The installer rolls back application runtime failures, not user project content or administrator configuration mistakes.
 
 See [Security Model](./security.md) before exposing a deployment publicly.

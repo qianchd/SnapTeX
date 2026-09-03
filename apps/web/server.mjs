@@ -103,6 +103,10 @@ function hasDeniedPathSegment(pathname) {
         part === 'node_modules' || part.startsWith('.') || /[\u0000-\u001f\u007f]/.test(part));
 }
 
+function isPermissionError(error) {
+    return error?.code === 'EACCES' || error?.code === 'EPERM';
+}
+
 function listProjectFiles(root, directory = root) {
     const files = [];
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -391,7 +395,18 @@ async function handleProjectRequest(request, response, projectsRoot) {
     }
 
     if (route === 'manifest' && request.method === 'GET') {
-        const manifest = projectManifest(projectRoot);
+        let manifest;
+        try {
+            manifest = projectManifest(projectRoot);
+        } catch (error) {
+            if (!isPermissionError(error)) { throw error; }
+            console.error('[SnapTeX Web] Project path is unreadable:', error.path);
+            sendJson(response, 503, {
+                code: 'PROJECT_UNREADABLE',
+                error: 'The server cannot read part of this project. Ask the administrator to repair its permissions.'
+            });
+            return true;
+        }
         if (!manifest.rootPath) {
             sendJson(response, 409, { error: 'No TeX root file found.' });
         } else {

@@ -105,8 +105,8 @@ while [[ "$parent" != "/" ]]; do
     run_root setfacl -m "u:$SNAPTEX_RUN_USER:--x" "$parent"
     parent="$(dirname "$parent")"
 done
-run_root setfacl -R -m "u:$SNAPTEX_RUN_USER:rwX" "$SNAPTEX_PROJECTS_ROOT"
-run_root find "$SNAPTEX_PROJECTS_ROOT" -type d -exec setfacl -m "d:u:$SNAPTEX_RUN_USER:rwX" {} +
+run_root setfacl -R -m "m::rwx,u:$SNAPTEX_RUN_USER:rwX" "$SNAPTEX_PROJECTS_ROOT"
+run_root find "$SNAPTEX_PROJECTS_ROOT" -type d -exec setfacl -m "d:m::rwx,d:u:$SNAPTEX_RUN_USER:rwX" {} +
 
 echo "[SnapTeX] Installing dependencies and building the Web app..."
 cd "$repo_root"

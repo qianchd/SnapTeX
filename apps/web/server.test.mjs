@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -108,6 +108,18 @@ test('serves a writable project through the remote project API', async () => {
         assert.equal((await fetch(`${baseUrl}/healthz`, { method: 'POST' })).status, 405);
         assert.equal((await authenticatedFetch(`${baseUrl}/linked/secret.txt`)).status, 404);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects`)).status, 200);
+        if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+            const unreadableDirectory = join(projectRoot, 'unreadable');
+            await mkdir(unreadableDirectory);
+            await chmod(unreadableDirectory, 0);
+            try {
+                const unavailable = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`);
+                assert.equal(unavailable.status, 503);
+                assert.equal((await unavailable.json()).code, 'PROJECT_UNREADABLE');
+            } finally {
+                await chmod(unreadableDirectory, 0o700);
+            }
+        }
         const manifest = await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json();
         assert.equal(manifest.rootPath, '/main.tex');
         assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);

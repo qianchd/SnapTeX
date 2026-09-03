@@ -142,7 +142,7 @@ h4 {
 .snaptex-page-host,
 #preview-pane.snaptex-page-host {
     position: relative;
-    background: var(--snaptex-shell-bg, color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-editor-foreground) 12%));
+    background: var(--vscode-editor-background);
 }
 
 .snaptex-page-host::before {
@@ -158,7 +158,7 @@ h4 {
     content: "";
     top: 0;
     bottom: 0;
-    background: var(--snaptex-preview-bg, var(--vscode-editor-background));
+    background: var(--vscode-editor-background);
     z-index: 0;
     pointer-events: none;
 }

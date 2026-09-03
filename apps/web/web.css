@@ -20,7 +20,6 @@ body {
     --snaptex-panel-bg: #f8fafc;
     --snaptex-editor-bg: #ffffff;
     --snaptex-editor-fg: #111827;
-    --snaptex-preview-bg: #fbfaf7;
     --snaptex-border: #d4d4d8;
     --snaptex-subtle-border: #e5e7eb;
     --snaptex-muted: #64748b;
@@ -59,7 +58,6 @@ body[data-theme="dark"] {
     --snaptex-panel-bg: #111827;
     --snaptex-editor-bg: #000000;
     --snaptex-editor-fg: #e5e7eb;
-    --snaptex-preview-bg: #16181f;
     --snaptex-border: #334155;
     --snaptex-subtle-border: #253247;
     --snaptex-muted: #94a3b8;
@@ -93,7 +91,6 @@ body[data-theme="blue"] {
     --snaptex-toolbar-bg: #d9ebff;
     --snaptex-panel-bg: #eef7ff;
     --snaptex-editor-bg: #ffffff;
-    --snaptex-preview-bg: #f7fbff;
     --snaptex-border: #9cc7f7;
     --snaptex-subtle-border: #c9def8;
     --snaptex-editor-active-line-bg: #f3f9ff;
@@ -109,7 +106,6 @@ body[data-theme="rose"] {
     --snaptex-toolbar-bg: #ffe4ec;
     --snaptex-panel-bg: #fff7fa;
     --snaptex-editor-bg: #ffffff;
-    --snaptex-preview-bg: #fffafb;
     --snaptex-border: #f9a8c1;
     --snaptex-subtle-border: #ffd0dd;
     --snaptex-editor-active-line-bg: #fff9fb;
@@ -120,7 +116,7 @@ body[data-theme="rose"] {
 }
 
 body {
-    --vscode-editor-background: var(--snaptex-preview-bg);
+    --vscode-editor-background: var(--snaptex-editor-bg);
     --vscode-editor-foreground: var(--snaptex-ui-fg);
 
     background: var(--snaptex-shell-bg);
@@ -169,6 +165,11 @@ body[data-explorer-collapsed="true"] {
 #preview-pane {
     min-width: 0;
     min-height: 0;
+}
+
+#editor-pane,
+#preview-pane {
+    background: var(--snaptex-editor-bg);
 }
 
 #toolbar-hover-zone {
@@ -579,7 +580,7 @@ body[data-deployment-mode="server"] .remote-project-static-notice {
     place-items: center;
     box-sizing: border-box;
     padding: 48px 24px;
-    background: var(--snaptex-preview-bg);
+    background: var(--snaptex-editor-bg);
 }
 
 #welcome-page[hidden] {
@@ -699,7 +700,6 @@ body[data-explorer-collapsed="true"] #explorer-panel {
     flex-direction: column;
     height: 100vh;
     border-right: 1px solid var(--snaptex-border);
-    background: var(--snaptex-editor-bg);
 }
 
 #project-files {
@@ -942,7 +942,6 @@ body.is-resizing-split #preview-pane {
 
 #preview-pane {
     grid-area: preview;
-    background: var(--snaptex-preview-bg);
     font-family: var(--snaptex-preview-font-family);
 }
 
