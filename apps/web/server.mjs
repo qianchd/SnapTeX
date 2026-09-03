@@ -126,6 +126,20 @@ function chooseProjectRootPath(files) {
         ?? texFiles[0];
 }
 
+function projectManifest(projectRoot) {
+    const files = listProjectFiles(projectRoot);
+    return {
+        rootPath: chooseProjectRootPath(files),
+        files,
+        revisions: Object.fromEntries(files
+            .filter(path => projectTextFilePattern.test(path))
+            .map(path => {
+                const stats = statSync(join(projectRoot, path.slice(1)), { bigint: true });
+                return [path, `${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`];
+            }))
+    };
+}
+
 function resolveProjectFile(root, pathname, requireExisting = true) {
     try {
         const relativePath = decodeURIComponent(pathname).replace(/^\/+/, '');
@@ -217,10 +231,34 @@ function acceptedEncodings(request) {
         .sort((left, right) => quality(right) - quality(left));
 }
 
-function requestHasEtag(request, etag) {
-    const value = request.headers['if-none-match'];
+function etagMatches(value, etag) {
     const normalizedEtag = etag.replace(/^W\//, '');
     return value === '*' || value?.split(',').some(candidate => candidate.trim().replace(/^W\//, '') === normalizedEtag);
+}
+
+function requestHasEtag(request, etag) {
+    return etagMatches(request.headers['if-none-match'], etag);
+}
+
+function textEtag(content) {
+    return `"${createHash('sha256').update(content).digest('base64url')}"`;
+}
+
+async function sendProjectTextFile(request, response, filePath) {
+    const content = await readFile(filePath);
+    const headers = {
+        'Content-Type': contentTypes.get(extname(filePath).toLowerCase()) ?? 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Length': String(content.length),
+        ETag: textEtag(content)
+    };
+    if (requestHasEtag(request, headers.ETag)) {
+        response.writeHead(304, headers);
+        response.end();
+        return;
+    }
+    response.writeHead(200, headers);
+    response.end(content);
 }
 
 async function sendFile(request, response, filePath, options = {}) {
@@ -340,7 +378,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
             '\\end{document}',
             ''
         ].join('\n'), 'utf8');
-        sendJson(response, 201, { rootPath: '/main.tex', files: ['/main.tex'] });
+        sendJson(response, 201, projectManifest(projectPath));
         return true;
     }
     if (!projectRoot) {
@@ -353,12 +391,11 @@ async function handleProjectRequest(request, response, projectsRoot) {
     }
 
     if (route === 'manifest' && request.method === 'GET') {
-        const files = listProjectFiles(projectRoot);
-        const rootPath = chooseProjectRootPath(files);
-        if (!rootPath) {
+        const manifest = projectManifest(projectRoot);
+        if (!manifest.rootPath) {
             sendJson(response, 409, { error: 'No TeX root file found.' });
         } else {
-            sendJson(response, 200, { rootPath, files });
+            sendJson(response, 200, manifest);
         }
         return true;
     }
@@ -385,7 +422,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
             }
             throw error;
         }
-        response.writeHead(201);
+        response.writeHead(201, { ETag: textEtag(await readFile(newFilePath)) });
         response.end();
         return true;
     }
@@ -399,12 +436,33 @@ async function handleProjectRequest(request, response, projectsRoot) {
         return true;
     }
     if (request.method === 'GET') {
-        await sendFile(request, response, filePath);
+        if (projectTextFilePattern.test(filePath)) {
+            await sendProjectTextFile(request, response, filePath);
+        } else {
+            await sendFile(request, response, filePath);
+        }
         return true;
     }
     if (request.method === 'PUT' && projectTextFilePattern.test(filePath)) {
-        await replaceTextFile(filePath, await readRequestText(request, maxWriteBytes));
-        response.writeHead(204);
+        const currentContent = await readFile(filePath);
+        const currentEtag = textEtag(currentContent);
+        if (!request.headers['if-match']) {
+            sendJson(response, 428, { error: 'If-Match is required when updating a project file.' });
+            return true;
+        }
+        if (!etagMatches(request.headers['if-match'], currentEtag)) {
+            response.writeHead(412, {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Cache-Control': 'no-store',
+                'Content-Length': String(currentContent.length),
+                ETag: currentEtag
+            });
+            response.end(currentContent);
+            return true;
+        }
+        const text = await readRequestText(request, maxWriteBytes);
+        await replaceTextFile(filePath, text);
+        response.writeHead(204, { ETag: textEtag(text) });
         response.end();
         return true;
     }

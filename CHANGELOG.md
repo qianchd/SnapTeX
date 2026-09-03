@@ -4,6 +4,8 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Kept open server projects synchronized with external file edits through lightweight revision polling, conditional ETag reads, and automatic preview refreshes.
+- **Added**: Added optimistic remote saves with three-way text merging: independent browser/server edits merge automatically, while overlapping edits produce visible conflict markers instead of silently overwriting either side.
 - **Changed**: Minified production Web bundles and added build-time Brotli plus gzip assets for the server edition, reducing the main browser bundle from about 3.3 MB of development JavaScript to about 372 KB over Brotli.
 - **Changed**: Added per-file asset hashes, versioned static URLs, ETag/304 responses, immutable caching for versioned assets, and revalidation caching for HTML and the Service Worker.
 - **Changed**: Kept the complete PWA available offline while splitting its cache into reusable core, KaTeX, PDF.js, TikZ, and demo groups, so upgrades download only resource groups whose contents changed.

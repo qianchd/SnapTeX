@@ -4,6 +4,8 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: Synchronized open server projects with external text-file edits using lightweight manifest revisions, conditional ETag reads, optimistic writes, and three-way conflict handling.
+
 ## [0.8.0] - 2026-08-16
 
 - **Highlights**: Made the elastic paged preview the shared default across VS Code and Web hosts, with atomic blocks, flexible page bottoms, extended oversized pages, compact dividers, and page numbering.

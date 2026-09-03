@@ -109,22 +109,38 @@ test('serves a writable project through the remote project API', async () => {
         assert.equal((await authenticatedFetch(`${baseUrl}/linked/secret.txt`)).status, 404);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects`)).status, 200);
         const manifest = await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json();
-        assert.deepEqual(manifest, {
-            rootPath: '/main.tex',
-            files: ['/figure.png', '/main.tex', '/sections/intro.tex']
-        });
+        assert.equal(manifest.rootPath, '/main.tex');
+        assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);
+        assert.deepEqual(Object.keys(manifest.revisions), ['/main.tex', '/sections/intro.tex']);
         const projectFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`);
         assert.equal(projectFile.headers.get('cache-control'), 'no-store');
-        assert.equal(projectFile.headers.get('etag'), null);
+        const originalEtag = projectFile.headers.get('etag');
+        assert.ok(originalEtag);
         assert.equal(projectFile.headers.get('vary'), null);
         assert.equal(await projectFile.text(), 'Original');
+        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+            headers: { 'If-None-Match': originalEtag }
+        })).status, 304);
+        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+            method: 'PUT', body: 'Unsafe update'
+        })).status, 428);
         const saved = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            headers: { 'Content-Type': 'text/plain; charset=utf-8', 'If-Match': originalEtag },
             body: 'Updated'
         });
         assert.equal(saved.status, 204);
+        assert.ok(saved.headers.get('etag'));
         assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Updated');
+        await writeFile(join(projectRoot, 'main.tex'), 'External update');
+        const conflictedSave = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+            method: 'PUT',
+            headers: { 'If-Match': saved.headers.get('etag') },
+            body: 'Overwritten update'
+        });
+        assert.equal(conflictedSave.status, 412);
+        assert.equal(await conflictedSave.text(), 'External update');
+        assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'External update');
         const createdFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/notes.md`, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain; charset=utf-8' },
@@ -161,7 +177,10 @@ test('serves a writable project through the remote project API', async () => {
         assert.equal((await missing.json()).code, 'PROJECT_NOT_FOUND');
         const createdProject = await authenticatedFetch(`${baseUrl}/api/projects/demo`, { method: 'POST' });
         assert.equal(createdProject.status, 201);
-        assert.deepEqual(await createdProject.json(), { rootPath: '/main.tex', files: ['/main.tex'] });
+        const createdManifest = await createdProject.json();
+        assert.equal(createdManifest.rootPath, '/main.tex');
+        assert.deepEqual(createdManifest.files, ['/main.tex']);
+        assert.deepEqual(Object.keys(createdManifest.revisions), ['/main.tex']);
         assert.match(await readFile(join(projectsRoot, 'demo', 'main.tex'), 'utf8'), /begin\{document\}/);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/demo`, { method: 'POST' })).status, 409);
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/%252e%252e/manifest`)).status, 404);
@@ -263,9 +282,10 @@ test('protects remote projects with an independent web session', async () => {
         });
         assert.equal(missingCsrf.status, 403);
 
+        const currentFile = await fetch(`${baseUrl}/api/projects/paper/files/main.tex`, { headers: { cookie } });
         const saved = await fetch(`${baseUrl}/api/projects/paper/files/main.tex`, {
             method: 'PUT',
-            headers: { ...sessionHeaders, 'Content-Type': 'text/plain' },
+            headers: { ...sessionHeaders, 'Content-Type': 'text/plain', 'If-Match': currentFile.headers.get('etag') },
             body: 'Accepted'
         });
         assert.equal(saved.status, 204);

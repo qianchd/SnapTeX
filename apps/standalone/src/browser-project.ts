@@ -11,6 +11,21 @@ export interface BrowserProjectFile {
     resourceUrl?: string;
 }
 
+export interface BrowserProjectTextChange {
+    path: string;
+    text: string;
+}
+
+export class ProjectWriteConflictError extends Error {
+    constructor(
+        public readonly path: string,
+        public readonly remoteText: string
+    ) {
+        super(`Remote file changed before it could be saved: ${path}`);
+        this.name = 'ProjectWriteConflictError';
+    }
+}
+
 export function normalizeBrowserPath(path: string): string {
     const parts: string[] = [];
     for (const part of path.replace(/\\/g, '/').split('/')) {
@@ -128,5 +143,9 @@ export interface BrowserProject {
     activePath?: string;
     setActivePath?: (path: string) => Promise<void>;
     setRootPath?: (path: string) => Promise<void>;
+    watchTextFiles?: (
+        onChange: (change: BrowserProjectTextChange) => Promise<void> | void,
+        onError: (error: unknown) => void
+    ) => () => void;
     operations?: BrowserProjectOperations;
 }

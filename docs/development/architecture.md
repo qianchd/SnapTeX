@@ -117,6 +117,8 @@ The main contracts are:
 - `HostToPreviewMessage` / `PreviewToHostMessage` for runtime communication;
 - `BrowserProject` for Web storage backends.
 
+`BrowserProject` owns storage capabilities rather than UI. Writable adapters provide file operations; adapters backed by an independently editable source may additionally provide `watchTextFiles`. `StandaloneHost` consumes those changes using its saved text as the three-way merge base, while the remote Web adapter maps HTTP manifest revisions and ETags onto that host-neutral contract.
+
 New hosts should implement these boundaries instead of importing another host's UI layer.
 
 ## Dependency direction

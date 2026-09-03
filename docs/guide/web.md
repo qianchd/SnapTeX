@@ -67,6 +67,14 @@ The static build installs a service worker that caches application assets. Open 
 
 Remote server projects require a network connection to their server even when the application shell is cached.
 
+## Remote changes and conflicts
+
+An open server project checks its lightweight file revisions approximately once per second. When another process changes a project text file, SnapTeX downloads only that changed file and refreshes the editor or preview.
+
+SnapTeX keeps the last synchronized text as a merge base. A server change replaces an unchanged browser copy directly, and edits made to different lines are merged automatically. If browser and server edits overlap, the editor displays `LOCAL`, `BASE`, and `REMOTE` conflict markers and the Diagnostics panel reports the affected path. Resolve and remove those markers before saving.
+
+Remote saves use the file's ETag as an optimistic lock. If the server changes after the latest check but before a save, the server rejects the stale write and the same merge process runs; the browser never silently overwrites the newer server text.
+
 ## Browser capability summary
 
 | Capability | Direct folder | Imported/demo workspace | Server project |

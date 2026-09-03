@@ -4,7 +4,15 @@ import { Decoration, type DecorationSet, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
-import { chooseRootPath, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectSnapshot } from './browser-project';
+import {
+    chooseRootPath,
+    isProjectTextFile,
+    normalizeBrowserPath,
+    ProjectWriteConflictError,
+    type BrowserProject,
+    type BrowserProjectSnapshot,
+    type BrowserProjectTextChange
+} from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
 import { debounce, decodeHtmlAttribute, getSyncAnchorContext, offsetAtLine, replaceLocalResourceUrls } from '../../../src/utils';
@@ -75,6 +83,21 @@ function normalizeEditorText(text: string): string {
     return text.replace(/\r\n?/g, '\n');
 }
 
+async function mergeProjectText(localText: string, baseText: string, remoteText: string) {
+    if (localText === baseText || localText === remoteText) {
+        return { text: remoteText, conflict: false };
+    }
+    if (remoteText === baseText) {
+        return { text: localText, conflict: false };
+    }
+    const { mergeDiff3 } = await import('node-diff3');
+    const merged = mergeDiff3(localText.split('\n'), baseText.split('\n'), remoteText.split('\n'), {
+        excludeFalseConflicts: true,
+        label: { a: 'LOCAL', o: 'BASE', b: 'REMOTE' }
+    });
+    return { text: merged.result.join('\n'), conflict: merged.conflict };
+}
+
 /**
  * Shared browser/WebView host for the standalone SnapTeX preview.
  */
@@ -86,6 +109,7 @@ export class StandaloneHost {
     private readonly savedTexts = new Map<string, string>();
     private readonly dirtyPaths = new Set<string>();
     private readonly diagnostics = new Set<string>();
+    private readonly conflictedPaths = new Set<string>();
     private projectOperations: BrowserProject['operations'];
     private setProjectActivePath: BrowserProject['setActivePath'];
     private setProjectRootPath: BrowserProject['setRootPath'];
@@ -93,6 +117,8 @@ export class StandaloneHost {
     private projectAutosave = false;
     private autosaveTimer: number | undefined;
     private autosaveQueue: Promise<void> = Promise.resolve();
+    private projectChangeQueue: Promise<void> = Promise.resolve();
+    private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
     private previewVisible = true;
@@ -124,6 +150,9 @@ export class StandaloneHost {
     }
 
     async loadProject(project: BrowserProject): Promise<string> {
+        this.stopProjectWatch?.();
+        this.stopProjectWatch = undefined;
+        await this.projectChangeQueue;
         await this.flushProjectWrites();
         const rootPath = project.rootPath ?? chooseRootPath(project.files);
         if (!rootPath) {
@@ -138,6 +167,7 @@ export class StandaloneHost {
         this.labels = [];
         this.savedTexts.clear();
         this.dirtyPaths.clear();
+        this.conflictedPaths.clear();
         this.rootUri = new BrowserUri(rootPath);
         const activePath = project.activePath && this.fileProvider.has(project.activePath)
             ? project.activePath
@@ -150,6 +180,10 @@ export class StandaloneHost {
         this.updateService.resetState();
         this.notifyStateChanged();
         await this.renderCurrentText();
+        this.stopProjectWatch = project.watchTextFiles?.(
+            change => this.queueProjectChange(change),
+            error => this.addDiagnostic(`Remote sync failed: ${error instanceof Error ? error.message : String(error)}`)
+        );
         return rootPath;
     }
 
@@ -190,7 +224,10 @@ export class StandaloneHost {
     }
 
     getDiagnostics(): readonly string[] {
-        return [...this.diagnostics];
+        return [
+            ...this.diagnostics,
+            ...[...this.conflictedPaths].map(path => `Resolve remote edit conflict markers in ${path}.`)
+        ];
     }
 
     getProjectTextPaths(): readonly string[] {
@@ -292,12 +329,73 @@ export class StandaloneHost {
         this.updateDirtyState(this.activeUri.path, text);
     }
 
-    private async writeCurrentText(): Promise<StandaloneSaveResult> {
+    private async writeCurrentText(retryAfterMerge = true): Promise<StandaloneSaveResult> {
         const text = this.editorView.state.doc.toString();
         const path = this.activeUri.path;
-        const wroteToSource = await this.fileProvider.write(this.activeUri, text);
+        if (this.conflictedPaths.has(path) && text.includes('<<<<<<< LOCAL')) {
+            throw new Error(`Resolve the remote edit conflict markers in ${path} before saving.`);
+        }
+        let wroteToSource: boolean;
+        try {
+            wroteToSource = await this.fileProvider.write(this.activeUri, text);
+        } catch (error) {
+            if (!(error instanceof ProjectWriteConflictError)) {
+                throw error;
+            }
+            const conflict = await this.applyProjectTextChange({ path, text: error.remoteText });
+            if (!conflict && retryAfterMerge) {
+                return this.writeCurrentText(false);
+            }
+            throw new Error(`Remote edits conflict with local changes in ${path}; resolve the inserted markers before saving.`);
+        }
         this.markSaved(path, text);
+        this.conflictedPaths.delete(path);
         return { path, text, wroteToSource };
+    }
+
+    private queueProjectChange(change: BrowserProjectTextChange): Promise<void> {
+        const update = this.projectChangeQueue.then(() => this.applyProjectTextChange(change).then(() => undefined));
+        this.projectChangeQueue = update.catch(() => undefined);
+        return update;
+    }
+
+    private async applyProjectTextChange(change: BrowserProjectTextChange): Promise<boolean> {
+        const path = normalizeBrowserPath(change.path);
+        if (!this.fileProvider.has(path)) {
+            return false;
+        }
+
+        const remoteText = normalizeEditorText(change.text);
+        const baseText = this.savedTexts.get(path);
+        const uri = new BrowserUri(path);
+        if (baseText === undefined && path !== this.activeUri.path) {
+            this.savedTexts.set(path, remoteText);
+            this.fileProvider.setFile(uri, remoteText);
+            await this.renderCurrentText();
+            return false;
+        }
+        const localText = path === this.activeUri.path
+            ? this.editorView.state.doc.toString()
+            : await this.fileProvider.read(uri);
+        if (remoteText === baseText) {
+            return false;
+        }
+
+        const merged = await mergeProjectText(localText, baseText ?? localText, remoteText);
+        this.savedTexts.set(path, remoteText);
+        this.fileProvider.setFile(uri, merged.text);
+        this.updateDirtyState(path, merged.text);
+        if (merged.conflict) {
+            this.conflictedPaths.add(path);
+        } else {
+            this.conflictedPaths.delete(path);
+        }
+        if (path === this.activeUri.path) {
+            this.replaceEditorText(merged.text);
+        }
+        this.notifyStateChanged();
+        await this.renderCurrentText();
+        return merged.conflict;
     }
 
     private scheduleAutosave(): void {

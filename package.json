@@ -233,6 +233,7 @@
     "jszip": "^3.10.1",
     "katex": "^0.16.27",
     "markdown-it": "^14.1.0",
+    "node-diff3": "^3.2.1",
     "pdfjs-dist": "^5.4.449"
   },
   "overrides": {

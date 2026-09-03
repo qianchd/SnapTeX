@@ -3,6 +3,7 @@
 import * as assert from 'assert';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
+import { ProjectWriteConflictError, type BrowserProjectTextChange } from '../../apps/standalone/src/browser-project';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage } from '../preview-messages';
 
 function normalizeEditorText(text: string): string {
@@ -81,6 +82,69 @@ async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMes
 }
 
 suite('StandaloneHost', () => {
+    test('merges remote edits against the saved text and reports overlapping changes', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        let receiveChange: ((change: BrowserProjectTextChange) => Promise<void> | void) | undefined;
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject({
+                files: [{ path: '/main.tex', text: 'First\nMiddle\nLast' }],
+                rootPath: '/main.tex',
+                watchTextFiles: onChange => {
+                    receiveChange = onChange;
+                    return () => undefined;
+                }
+            });
+            editor.replaceText('Local first\nMiddle\nLast');
+            host.handleEditorUpdate();
+
+            await receiveChange?.({ path: '/main.tex', text: 'First\nMiddle\nRemote last' });
+            assert.equal(editor.state.doc.toString(), 'Local first\nMiddle\nRemote last');
+            assert.equal(host.isDirty('/main.tex'), true);
+            assert.deepEqual(host.getDiagnostics(), []);
+
+            await receiveChange?.({ path: '/main.tex', text: 'Remote first\nMiddle\nRemote last' });
+            assert.match(editor.state.doc.toString(), /<<<<<<< LOCAL[\s\S]*Remote first[\s\S]*>>>>>>> REMOTE/);
+            assert.match(host.getDiagnostics().join('\n'), /conflict markers/i);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('merges and retries a save rejected after a concurrent remote edit', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const writes: string[] = [];
+        let firstWrite = true;
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject({ files: [{
+                path: '/main.tex',
+                text: 'First\nMiddle\nLast',
+                writeText: async text => {
+                    if (firstWrite) {
+                        firstWrite = false;
+                        throw new ProjectWriteConflictError('/main.tex', 'First\nMiddle\nRemote last');
+                    }
+                    writes.push(text);
+                }
+            }], rootPath: '/main.tex' });
+            editor.replaceText('Local first\nMiddle\nLast');
+            host.handleEditorUpdate();
+
+            await host.saveCurrentText();
+            assert.deepEqual(writes, ['Local first\nMiddle\nRemote last']);
+            assert.equal(host.isDirty('/main.tex'), false);
+        } finally {
+            restoreWindow();
+        }
+    });
+
     test('creates and deletes project text files through injected project operations', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];

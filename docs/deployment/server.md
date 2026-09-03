@@ -89,7 +89,7 @@ Visit the public origin after Certbot completes. The welcome page, demo, local f
 
 If `SNAPTEX_PROJECTS_ROOT=/srv/snaptex/projects`, entering project name `paper-one` opens `/srv/snaptex/projects/paper-one`. Missing projects can be created after confirmation.
 
-The API exposes only allowlisted project files and rejects hidden paths, traversal, symbolic-link escapes, unsupported writes, and files outside the selected project.
+The API exposes only allowlisted project files and rejects hidden paths, traversal, symbolic-link escapes, unsupported writes, and files outside the selected project. Text-file responses include ETags, the manifest includes lightweight file revisions, and updates require `If-Match` so concurrent external edits cannot be overwritten by a stale browser save.
 
 ## Operate
 
@@ -110,5 +110,6 @@ See [Security Model](./security.md) before exposing a deployment publicly.
 1. Open the public origin and confirm local-only actions work without login.
 2. Choose **Open Server**, sign in, and open one allowlisted project by name.
 3. Save a synthetic text change, reload, and verify the server file changed.
-4. Confirm an invalid project name, hidden path, unsupported extension, and unauthenticated write are rejected.
-5. Review service logs and back up the project root before making the deployment available to other users.
+4. While the project is open, edit the same file on the server and verify the browser updates; then edit the same line on both sides and verify conflict markers appear.
+5. Confirm an invalid project name, hidden path, unsupported extension, and unauthenticated write are rejected.
+6. Review service logs and back up the project root before making the deployment available to other users.
