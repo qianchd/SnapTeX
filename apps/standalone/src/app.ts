@@ -190,15 +190,15 @@ export class StandaloneHost {
     async openEditorFile(path: string) {
         await this.flushProjectWrites();
         this.persistActiveEditorText();
-        this.activeUri = new BrowserUri(path);
-        const text = await this.fileProvider.read(this.activeUri);
-        await this.setProjectActivePath?.(this.activeUri.path);
-        if (!this.savedTexts.has(this.activeUri.path)) {
-            this.markSaved(this.activeUri.path, text);
+        const targetUri = new BrowserUri(path);
+        const text = await this.fileProvider.read(targetUri);
+        await this.setProjectActivePath?.(targetUri.path);
+        this.activeUri = targetUri;
+        if (!this.savedTexts.has(targetUri.path)) {
+            this.markSaved(targetUri.path, text);
         }
         this.replaceEditorText(text);
         this.notifyStateChanged();
-        await this.renderCurrentText();
     }
 
     async setPreviewRoot(path: string) {
@@ -253,6 +253,7 @@ export class StandaloneHost {
         const file = await this.projectOperations.createTextFile(normalizedPath, '');
         this.fileProvider.setProjectFile({ ...file, path: normalizedPath });
         await this.openEditorFile(normalizedPath);
+        await this.renderCurrentText();
     }
 
     async deleteTextFile(path: string): Promise<void> {
@@ -411,7 +412,7 @@ export class StandaloneHost {
 
     private queueAutosave(): Promise<void> {
         const write = this.autosaveQueue.then(async () => {
-            if (this.projectAutosave && !this.fileProvider.isEmpty()) {
+            if (this.projectAutosave && this.isDirty(this.activeUri.path)) {
                 await this.writeCurrentText();
             }
         });
@@ -605,7 +606,7 @@ export class StandaloneHost {
             case PreviewToHostCommand.PreviewLoaded:
                 this.previewReady = true;
                 this.postPreviewConfig();
-                void this.renderCurrentText();
+                await this.renderCurrentText();
                 break;
             case PreviewToHostCommand.RequestBlockHtml:
                 for (const request of message.requests) {

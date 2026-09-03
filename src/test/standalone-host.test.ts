@@ -155,7 +155,7 @@ suite('StandaloneHost', () => {
 
         try {
             await host.loadProject({ files: [
-                { path: '/main.tex', text: '\\begin{document}Root\\end{document}' }
+                { path: '/main.tex', text: '\\begin{document}\n\\input{sections/notes}\n\\end{document}' }
             ], rootPath: '/main.tex', operations: {
                 createTextFile: async path => {
                     created.push(path);
@@ -164,15 +164,18 @@ suite('StandaloneHost', () => {
                 deleteFile: async path => { deleted.push(path); }
             }});
 
-            await host.createTextFile('/sections/notes.md');
-            assert.deepEqual(created, ['/sections/notes.md']);
-            assert.equal(host.getActivePath(), '/sections/notes.md');
-            assert.ok(host.getProjectTextPaths().includes('/sections/notes.md'));
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            assert.match(host.getDiagnostics().join('\n'), /Missing input file/);
+            await host.createTextFile('/sections/notes.tex');
+            assert.deepEqual(created, ['/sections/notes.tex']);
+            assert.equal(host.getActivePath(), '/sections/notes.tex');
+            assert.ok(host.getProjectTextPaths().includes('/sections/notes.tex'));
+            assert.deepEqual(host.getDiagnostics(), []);
 
-            await host.deleteTextFile('/sections/notes.md');
-            assert.deepEqual(deleted, ['/sections/notes.md']);
+            await host.deleteTextFile('/sections/notes.tex');
+            assert.deepEqual(deleted, ['/sections/notes.tex']);
             assert.equal(host.getActivePath(), '/main.tex');
-            assert.ok(!host.getProjectTextPaths().includes('/sections/notes.md'));
+            assert.ok(!host.getProjectTextPaths().includes('/sections/notes.tex'));
             await assert.rejects(() => host.deleteTextFile('/main.tex'), /preview root/i);
             await assert.rejects(() => host.createTextFile('/figure.png'), /text file/i);
         } finally {
@@ -203,11 +206,17 @@ suite('StandaloneHost', () => {
                     path: '/chapter.tex',
                     text: 'Original included paragraph.',
                     writeText: text => { written.set('/chapter.tex', text); }
+                },
+                {
+                    path: '/unreadable.tex',
+                    readText: async () => { throw new Error('Permission denied'); }
                 }
             ]});
             assert.equal(host.getRootPath(), '/main.tex');
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            await assert.rejects(() => host.openEditorFile('/unreadable.tex'), /Permission denied/);
+            assert.equal(host.getActivePath(), '/main.tex');
             await host.openEditorFile('/chapter.tex');
             host.handleEditorUpdate();
             editor.replaceText('Updated included paragraph.');
@@ -606,6 +615,7 @@ suite('StandaloneHost', () => {
         const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         let cancelledEditorSyncs = 0;
+        let writes = 0;
         const host = new StandaloneHost(
             editor as unknown as EditorView,
             '/main.tex',
@@ -624,7 +634,8 @@ suite('StandaloneHost', () => {
                         'Root paragraph.',
                         '\\input{chapter}',
                         '\\end{document}'
-                    ].join('\n')
+                    ].join('\n'),
+                    writeText: () => { writes += 1; }
                 },
                 {
                     path: '/chapter.tex',
@@ -632,9 +643,10 @@ suite('StandaloneHost', () => {
                         'Included first paragraph.',
                         '',
                         'Included second paragraph with \\textbf{sync anchor}.'
-                    ].join('\n')
+                    ].join('\n'),
+                    writeText: () => { writes += 1; }
                 }
-            ], rootPath: '/main.tex' });
+            ], rootPath: '/main.tex', autosave: true });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');
@@ -643,11 +655,14 @@ suite('StandaloneHost', () => {
             assert.ok(scroll && scroll.command === HostToPreviewCommand.ScrollToBlock);
 
             await host.openEditorFile('/main.tex');
+            const updateCount = messages.filter(message => message.command === HostToPreviewCommand.Update).length;
             await host.syncPreviewScroll(scroll.index, scroll.ratio);
 
             assert.equal(host.getActivePath(), '/chapter.tex');
+            assert.equal(messages.filter(message => message.command === HostToPreviewCommand.Update).length, updateCount);
             assert.ok(editor.scrollDOM.scrollTop > 0);
             assert.equal(cancelledEditorSyncs, 1);
+            assert.equal(writes, 0);
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
             editor.scrollDOM.scrollTop = 0;
