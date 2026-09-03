@@ -92,7 +92,7 @@ export function renderCitationHtml(
         text: escapeHtml,
         option: escapeHtml,
         author: renderHtmlAuthor,
-        link: (value, key) => `<a href="#ref-${escapeHtmlAttribute(key)}" class="latex-cite-link" style="color:#2e7d32; text-decoration:none;">${value}</a>`
+        link: (value, key) => `<a href="#ref-${escapeHtmlAttribute(key)}" class="latex-cite-link">${value}</a>`
     });
 }
 

@@ -1,5 +1,5 @@
 import { hasBlockLevelHtml } from '../../rule-helpers';
-import { countLatexMacroArguments, escapeHtmlAttribute, expandLatexTextMacros } from '../../utils';
+import { countLatexMacroArguments, escapeHtmlAttribute, expandLatexTextMacros, latexColorStyle } from '../../utils';
 import type { SnaptexAstNode } from '../types';
 import { argumentText, firstSignificantNode, isGroupNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
 import { readAstCommandArguments, renderInlineLatexSource, type AstRenderRule } from './index';
@@ -38,7 +38,7 @@ function styleFromColorMacro(node: SnaptexAstNode): string | undefined {
         return undefined;
     }
     const color = argumentText(readRequiredMacroArgument(node)).trim();
-    return color ? `color: ${color}` : undefined;
+    return color ? latexColorStyle(color) : undefined;
 }
 
 export const AST_TEXT_STYLE_RULE: AstRenderRule = (input, context) => {
@@ -62,7 +62,7 @@ export const AST_TEXT_STYLE_RULE: AstRenderRule = (input, context) => {
     if (node.content === 'textcolor') {
         const color = argumentText(readRequiredMacroArgument(node, 0)).trim();
         const content = readRequiredMacroArgument(node, 1)?.content ?? [];
-        return color ? { html: wrapStyledHtml(input.renderChildren(content), `color: ${color}`) } : undefined;
+        return color ? { html: wrapStyledHtml(input.renderChildren(content), latexColorStyle(color)) } : undefined;
     }
 
     if (node.content === 'uppercase') {

@@ -390,7 +390,7 @@ suite('SmartRenderer', () => {
 
         assert.match(html, /class="latex-table"/);
         assert.match(html, /id="tab:notation_loss"/);
-        assert.match(html, /<span style="color: red">Summary of loss notation/);
+        assert.match(html, /<span style="color: red; --snaptex-latex-color: red">Summary of loss notation/);
         assert.match(html, /<table class="latex-tabular-preview latex-tabular-booktabs">/);
         assert.match(html, /<thead><tr><th scope="col"><strong>Notation<\/strong><\/th>/);
         assert.match(html, /<tbody><tr><td>.*Expected individual loss of <em>fixed<\/em> model/s);
@@ -536,7 +536,7 @@ suite('SmartRenderer', () => {
         ]);
 
         assert.doesNotMatch(blockHtml, /class="latex-block"[^>]*style="color: blue;"/);
-        assert.match(blockHtml, /<div class="latex-style-scope" style="color: blue">[\s\S]*<h2>/);
+        assert.match(blockHtml, /<div class="latex-style-scope" style="color: blue; --snaptex-latex-color: blue">[\s\S]*<h2>/);
         assert.match(blockHtml, /Styled Section/);
         assert.match(blockHtml, /<p>[\s\S]*First synthetic paragraph\.<\/p>/);
         assert.match(blockHtml, /<p>Second synthetic paragraph\.<\/p>/);
@@ -559,8 +559,8 @@ suite('SmartRenderer', () => {
             ].join('\n')
         ]);
 
-        assert.match(inlineHtml, /<p>Lead sentence before color\. <span style="color: blue">Inline continuation with \(\[alpha2026\?\]\)\.<\/span><\/p>/);
-        assert.match(inlineHtml, /<\/p>\s*<p><span style="color: blue">Second colored paragraph\.<\/span><\/p>/);
+        assert.match(inlineHtml, /<p>Lead sentence before color\. <span style="color: blue; --snaptex-latex-color: blue">Inline continuation with \(\[alpha2026\?\]\)\.<\/span><\/p>/);
+        assert.match(inlineHtml, /<\/p>\s*<p><span style="color: blue; --snaptex-latex-color: blue">Second colored paragraph\.<\/span><\/p>/);
         assert.doesNotMatch(inlineHtml, /\\color\{blue\}/);
     });
 

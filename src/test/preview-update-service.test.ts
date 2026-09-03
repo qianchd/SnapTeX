@@ -630,9 +630,9 @@ suite('PreviewUpdateService', () => {
         const html = payload.htmls?.join('\n') ?? '';
 
         assert.doesNotMatch(html, /\{\\color/);
-        assert.match(html, /<span style="color: blue">Intro before display math/);
-        assert.match(html, /<div class="latex-style-scope" style="color: blue">[\s\S]*Remark body/);
-        assert.match(html, /<span style="color: blue">final colored paragraph\s*<\/span>/);
+        assert.match(html, /<span style="color: blue; --snaptex-latex-color: blue">Intro before display math/);
+        assert.match(html, /<div class="latex-style-scope" style="color: blue; --snaptex-latex-color: blue">[\s\S]*Remark body/);
+        assert.match(html, /<span style="color: blue; --snaptex-latex-color: blue">final colored paragraph\s*<\/span>/);
     });
 
     test('renders nested color groups inside AST-split theorem blocks', async () => {
@@ -658,7 +658,7 @@ suite('PreviewUpdateService', () => {
         const visibleHtml = html.replace(/<annotation\b[\s\S]*?<\/annotation>/g, '');
 
         assert.doesNotMatch(visibleHtml, /\{\\color/);
-        assert.match(visibleHtml, /<div class="latex-style-scope" style="color: blue">[\s\S]*latex-theorem/);
+        assert.match(visibleHtml, /<div class="latex-style-scope" style="color: blue; --snaptex-latex-color: blue">[\s\S]*latex-theorem/);
         assert.match(visibleHtml, /This sentence is still buffered/);
         assert.match(visibleHtml, /for the buffered fits/);
         assert.match(visibleHtml, /After theorem/);
@@ -680,8 +680,8 @@ suite('PreviewUpdateService', () => {
         });
         const html = payload.htmls?.join('\n') ?? '';
 
-        assert.doesNotMatch(html, /<p><span style="color: blue">##/);
-        assert.match(html, /<div class="latex-style-scope" style="color: blue">[\s\S]*<h2>/);
+        assert.doesNotMatch(html, /<p><span style="color: blue; --snaptex-latex-color: blue">##/);
+        assert.match(html, /<div class="latex-style-scope" style="color: blue; --snaptex-latex-color: blue">[\s\S]*<h2>/);
         assert.match(html, /<h2>[\s\S]*Numerical studies[\s\S]*<\/h2>/);
         assert.match(html, /<h3>[\s\S]*Common experimental setup[\s\S]*<\/h3>/);
     });

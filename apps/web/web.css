@@ -57,7 +57,7 @@ body[data-theme="dark"] {
     --snaptex-ui-fg: #e5e7eb;
     --snaptex-toolbar-bg: #172033;
     --snaptex-panel-bg: #111827;
-    --snaptex-editor-bg: #0f172a;
+    --snaptex-editor-bg: #000000;
     --snaptex-editor-fg: #e5e7eb;
     --snaptex-preview-bg: #16181f;
     --snaptex-border: #334155;
@@ -83,6 +83,8 @@ body[data-theme="dark"] {
     --snaptex-cm-comment: #94a3b8;
     --snaptex-cm-meta: #a78bfa;
     --snaptex-cm-invalid: #f87171;
+    --vscode-textLink-foreground: #60a5fa;
+    --vscode-textLink-activeForeground: #93c5fd;
 }
 
 body[data-theme="blue"] {
@@ -906,7 +908,7 @@ body.is-resizing-split #preview-pane {
 }
 
 #editor .cm-gutters {
-    background: var(--snaptex-panel-bg);
+    background: var(--snaptex-editor-bg);
     color: var(--snaptex-muted);
     border-right: 1px solid var(--snaptex-subtle-border);
 }

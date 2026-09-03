@@ -187,11 +187,11 @@ export class BibTexParser {
         if (f.doi) {
             const doi = f.doi.trim();
             const href = escapeHtmlAttribute(`https://doi.org/${encodeURI(doi)}`);
-            html += ` <a href="${href}" style="color:#007acc;">doi:${escapeHtml(doi)}</a>`;
+            html += ` <a href="${href}" class="latex-bib-link">doi:${escapeHtml(doi)}</a>`;
         } else if (f.url) {
             const href = sanitizeHttpUrlForAttribute(f.url);
             if (href) {
-                html += ` <a href="${href}" style="color:#007acc;">[Link]</a>`;
+                html += ` <a href="${href}" class="latex-bib-link">[Link]</a>`;
             }
         }
 

@@ -4,6 +4,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Changed**: Added shared dark-theme color adaptation for Web editor and preview content without command-specific color overrides.
 - **Added**: Synchronized open server projects with external text-file edits using lightweight manifest revisions, conditional ETag reads, optimistic writes, and three-way conflict handling.
 
 ## [0.8.0] - 2026-08-16

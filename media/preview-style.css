@@ -27,6 +27,10 @@ body {
     overflow-wrap: break-word;
 }
 
+body:is(.vscode-dark, [data-theme="dark"]) [style*="--snaptex-latex-color"] {
+    color: color-mix(in srgb, var(--snaptex-latex-color) 65%, white) !important;
+}
+
 #content-root {
     box-sizing: border-box;
     font-size: var(--snaptex-preview-text-size, var(--base-font-size));
@@ -630,10 +634,19 @@ ol ol ol { list-style-type: lower-roman; }
 
 
 /* General Basic Styles for Citation Links */
+.latex-cite-link,
+.latex-bib-link,
 .latex-link {
-    color: #007acc;
+    color: var(--vscode-textLink-foreground, #007acc);
+}
+
+.latex-link {
     padding: 0 0.1em;
     transition: background-color 0.2s;
+}
+
+.latex-cite-link {
+    text-decoration: none;
 }
 
 /* Hover Effect */

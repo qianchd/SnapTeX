@@ -258,8 +258,13 @@ function renderLatexStyle(style: LatexStyleSpec, content: string, protectHtml: S
     return applyLatexStyle(style, resolveLatexStyles(content, protectHtml), protectHtml, startsAfterTextOnLine(source, offset));
 }
 
+export function latexColorStyle(color: string): string {
+    return `color: ${color}; --snaptex-latex-color: ${color}`;
+}
+
 function colorStyleSpec(color: string): LatexStyleSpec {
-    return [`<span style="color: ${color}">`, '</span>', `color: ${color}`];
+    const style = latexColorStyle(color);
+    return [`<span style="${escapeHtmlAttribute(style)}">`, '</span>', style];
 }
 
 function replaceStyleCommandGroups(text: string, protectHtml?: StyleHtmlProtector): string {
@@ -789,7 +794,7 @@ function applyLatexStyle(style: LatexStyleSpec, content: string, protectHtml: St
     };
     if (protectHtml && !startsAfterText && (/^\r?\n/.test(content) || /\r?\n[ \t]*\r?\n/.test(content))) {
         return [
-            protectHtml(`<div class="latex-style-scope" style="${blockStyle}">`, 'block'),
+            protectHtml(`<div class="latex-style-scope" style="${escapeHtmlAttribute(blockStyle)}">`, 'block'),
             content.trim(),
             protectHtml('</div>', 'block')
         ].join('\n\n');

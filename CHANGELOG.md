@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Changed**: Made the Web editor fully black in dark mode and adapted LaTeX colors, citations, and bibliography links to brighter theme-aware preview colors.
 - **Added**: Kept open server projects synchronized with external file edits through lightweight revision polling, conditional ETag reads, and automatic preview refreshes.
 - **Added**: Added optimistic remote saves with three-way text merging: independent browser/server edits merge automatically, while overlapping edits produce visible conflict markers instead of silently overwriting either side.
 - **Changed**: Minified production Web bundles and added build-time Brotli plus gzip assets for the server edition, reducing the main browser bundle from about 3.3 MB of development JavaScript to about 372 KB over Brotli.
