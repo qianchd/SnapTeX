@@ -11,7 +11,8 @@ This is an imported helper defined in `src/rule-helpers.ts`. A rule normally imp
 ```ts
 function renderInlineLatexHtml(
     text: string | undefined,
-    renderMathHtml: (tex: string) => string
+    renderMathHtml: (tex: string) => string,
+    colors?: Readonly<Record<string, string>>
 ): string
 ```
 
@@ -21,6 +22,7 @@ function renderInlineLatexHtml(
 | --- | --- |
 | `text` | Inline LaTeX fragment; `undefined` returns an empty string |
 | `renderMathHtml` | Callback that receives the body of each `$...$` expression and returns HTML |
+| `colors` | Optional preamble color map, normally `renderer.metadata?.colors` or `context.metadata?.colors` |
 
 The caller supplies the callback function, but this helper supplies the callback's `tex` parameter. The helper needs that callback because legacy and AST modes obtain math HTML from different owners.
 
@@ -57,7 +59,8 @@ inline source -> renderInlineLatexHtml
 ```ts
 const html = renderInlineLatexHtml(
     call.requiredArgs[0].content,
-    tex => renderMath(tex, false, renderer)
+    tex => renderMath(tex, false, renderer),
+    renderer.metadata?.colors
 );
 ```
 
@@ -70,13 +73,15 @@ The three values in this example come from different owners:
 | `call.requiredArgs[0].content` | `replaceLatexCommandCalls`, after reading the command argument |
 | `tex` | `renderInlineLatexHtml`, once for each inline formula it finds |
 | `renderer` | `SmartRenderer`, when it calls the enclosing legacy rule's `apply` method |
+| `renderer.metadata?.colors` | Preamble scanner, after resolving supported `\definecolor` declarations |
 
 ## AST example
 
 ```ts
 const html = renderInlineLatexHtml(
     source,
-    tex => context.renderMath(tex, false)
+    tex => context.renderMath(tex, false),
+    context.metadata?.colors
 );
 ```
 

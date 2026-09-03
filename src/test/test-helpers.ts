@@ -40,6 +40,7 @@ export function createDocument(
     blockTexts: string[],
     options: {
         macros?: Record<string, string>;
+        colors?: Record<string, string>;
         tikzGlobal?: string;
         title?: string;
         date?: string;
@@ -81,6 +82,7 @@ export function createDocument(
         sourceMapSegments: [],
         metadata: {
             macros: options.macros ?? {},
+            colors: options.colors ?? {},
             tikzGlobal: options.tikzGlobal ?? '',
             tikzMacroMap: new Map(),
             title: options.title,

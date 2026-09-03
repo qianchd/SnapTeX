@@ -1,7 +1,7 @@
 import { hasBlockLevelHtml } from '../../rule-helpers';
 import { countLatexMacroArguments, escapeHtmlAttribute, expandLatexTextMacros, latexColorStyle } from '../../utils';
 import type { SnaptexAstNode } from '../types';
-import { argumentText, firstSignificantNode, isGroupNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
+import { argumentText, firstSignificantNode, isGroupNode, isMacroNode, readOptionalMacroArgument, readRequiredMacroArgument } from '../visit-utils';
 import { readAstCommandArguments, renderInlineLatexSource, type AstRenderRule } from './index';
 
 const TEXT_STYLE_CSS = new Map([
@@ -33,12 +33,13 @@ function nodesAfterLeadingStyle(nodes: readonly SnaptexAstNode[], macroIndex: nu
     return nodes.slice(start);
 }
 
-function styleFromColorMacro(node: SnaptexAstNode): string | undefined {
+function styleFromColorMacro(node: SnaptexAstNode, colors?: Readonly<Record<string, string>>): string | undefined {
     if (!isMacroNode(node, 'color')) {
         return undefined;
     }
     const color = argumentText(readRequiredMacroArgument(node)).trim();
-    return color ? latexColorStyle(color) : undefined;
+    const model = argumentText(readOptionalMacroArgument(node)).trim();
+    return color ? latexColorStyle(color, colors, model) : undefined;
 }
 
 export const AST_TEXT_STYLE_RULE: AstRenderRule = (input, context) => {
@@ -49,7 +50,7 @@ export const AST_TEXT_STYLE_RULE: AstRenderRule = (input, context) => {
         if (!first || !isMacroNode(first.node)) {
             return undefined;
         }
-        const style = styleFromColorMacro(first.node) ?? TEXT_STYLE_CSS.get(first.node.content);
+        const style = styleFromColorMacro(first.node, context.metadata?.colors) ?? TEXT_STYLE_CSS.get(first.node.content);
         return style
             ? { html: wrapStyledHtml(input.renderChildren(nodesAfterLeadingStyle(node.content, first.index)), style) }
             : undefined;
@@ -62,7 +63,10 @@ export const AST_TEXT_STYLE_RULE: AstRenderRule = (input, context) => {
     if (node.content === 'textcolor') {
         const color = argumentText(readRequiredMacroArgument(node, 0)).trim();
         const content = readRequiredMacroArgument(node, 1)?.content ?? [];
-        return color ? { html: wrapStyledHtml(input.renderChildren(content), latexColorStyle(color)) } : undefined;
+        const model = argumentText(readOptionalMacroArgument(node)).trim();
+        return color
+            ? { html: wrapStyledHtml(input.renderChildren(content), latexColorStyle(color, context.metadata?.colors, model)) }
+            : undefined;
     }
 
     if (node.content === 'uppercase') {

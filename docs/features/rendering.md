@@ -35,6 +35,8 @@ The preamble scanner recognizes common macro declarations, including:
 - `\DeclareMathOperator`;
 - text macros whose replacements contain supported styles.
 
+It also resolves custom colors declared with `\definecolor{name}{model}{value}`. Supported models are `HTML`, `RGB`, `rgb`, `gray`, `cmy`, `cmyk`, and `named`. The resolved colors work in `\color`, `\textcolor`, user-defined text macros, and xcolor-style mixes such as `brand!30!white` in both preview backends. Direct model syntax such as `\textcolor[RGB]{120,40,200}{...}` is supported as well.
+
 Macro support is intentionally bounded. Arbitrary TeX execution, package hooks, counter redefinitions, and complete TeX expansion are outside the previewer's scope.
 
 ## References and citations

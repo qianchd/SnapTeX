@@ -16,6 +16,12 @@ suite('Metadata extraction', () => {
             '\\renewcommand{\\oldmacro}{\\mathrm{o}}',
             '\\gdef\\globalmacro#1{\\mathcal{#1}}',
             '\\DeclareMathOperator{\\rank}{rank}',
+            '\\definecolor{brandHtml}{HTML}{7A3DF0}',
+            '\\definecolor{brandRgb}{RGB}{12,34,56}',
+            '\\definecolor{brandUnit}{rgb}{0.1,0.2,0.3}',
+            '\\definecolor{brandNamed}{named}{purple}',
+            '\\definecolor{brandGray}{gray}{0.5}',
+            '\\definecolor{brandCmyk}{cmyk}{0,1,1,0}',
             '\\usetikzlibrary{arrows.meta}',
             '\\tikzset{box/.style={draw}}',
             '\\pgfkeys{/pgf/custom offset/.initial=2mm}',
@@ -35,6 +41,14 @@ suite('Metadata extraction', () => {
         assert.equal(result.data.macros['\\oldmacro'], '\\mathrm{o}');
         assert.equal(result.data.macros['\\globalmacro'], '\\mathcal{#1}');
         assert.equal(result.data.macros['\\rank'], '\\operatorname{rank}');
+        assert.deepStrictEqual(result.data.colors, {
+            brandHtml: '#7A3DF0',
+            brandRgb: 'rgb(12 34 56)',
+            brandUnit: 'rgb(26 51 77)',
+            brandNamed: 'purple',
+            brandGray: 'rgb(128 128 128)',
+            brandCmyk: 'rgb(255 0 0)'
+        });
         assert.match(result.data.tikzGlobal, /\\usetikzlibrary\{arrows\.meta\}/);
         assert.match(result.data.tikzGlobal, /\\tikzset\{box\/.style=\{draw\}\}/);
         assert.match(result.data.tikzGlobal, /\\pgfkeys\{\/pgf\/custom offset/);
@@ -46,6 +60,7 @@ suite('Metadata extraction', () => {
         assert.doesNotMatch(result.cleanedText, /\\title/);
         assert.doesNotMatch(result.cleanedText, /\\author/);
         assert.doesNotMatch(result.cleanedText, /\\newcommand\{\\vect\}/);
+        assert.doesNotMatch(result.cleanedText, /\\definecolor/);
         assert.doesNotMatch(result.cleanedText, /\\usetikzlibrary/);
     });
 

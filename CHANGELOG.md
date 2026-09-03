@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Resolved custom preamble colors declared with common `\definecolor` models across legacy and AST rendering, including direct model syntax and xcolor-style color mixes.
 - **Changed**: Made the Web editor fully black in dark mode and adapted LaTeX colors, citations, and bibliography links to brighter theme-aware preview colors.
 - **Added**: Kept open server projects synchronized with external file edits through lightweight revision polling, conditional ETag reads, and automatic preview refreshes.
 - **Added**: Added optimistic remote saves with three-way text merging: independent browser/server edits merge automatically, while overlapping edits produce visible conflict markers instead of silently overwriting either side.

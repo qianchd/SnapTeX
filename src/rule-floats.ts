@@ -103,7 +103,7 @@ export function createAlgorithmRule(): PreprocessRule {
                 let bodyHtml = '';
                 const ignoredContent = content.replace(algRegex, (_match, params: string = '', rawBody: string) => {
                     bodyHtml += renderAlgorithmicList(rawBody, params.includes('1'), source => {
-                        return renderer.renderInline(resolveLatexStyles(source, createStyleHtmlProtector(renderer)));
+                        return renderer.renderInline(resolveLatexStyles(source, createStyleHtmlProtector(renderer), renderer.metadata?.colors));
                     });
                     return '';
                 });

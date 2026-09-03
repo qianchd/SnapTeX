@@ -79,6 +79,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
     public metadata: PreambleData = {
         macros: {},
+        colors: {},
         tikzGlobal: "",
         tikzMacroMap: new Map(),
         authors: [],

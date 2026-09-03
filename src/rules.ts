@@ -49,7 +49,7 @@ function replaceLatexLinkCommands(text: string, renderer: RenderContext): string
             name: 'href',
             requiredArgs: 2,
             render: call => {
-                const styledContent = resolveLatexStyles(call.requiredArgs[1].content, createStyleHtmlProtector(renderer));
+                const styledContent = resolveLatexStyles(call.requiredArgs[1].content, createStyleHtmlProtector(renderer), renderer.metadata?.colors);
                 const safeContent = escapeHtml(styledContent);
                 const linkHtml = renderExternalLinkHtml(call.requiredArgs[0].content, safeContent, 'latex-href');
                 return renderer.protectHtml(linkHtml ? 'link' : 'link-text', linkHtml ?? safeContent);
@@ -160,12 +160,12 @@ function decodeEnumerateLabel(label: string): string {
 
 function renderListLabel(label: string, renderer: RenderContext): string {
     const withMath = label.replace(/\$((?:\\.|[^\\$])*)\$/g, (_match, content) => renderMath(content, false, renderer));
-    return escapeHtml(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
+    return escapeHtml(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer), renderer.metadata?.colors));
 }
 
 function renderLatexListContent(content: string, renderer: RenderContext): string {
     const nestedLists = renderLatexLists(content, renderer);
-    const styled = resolveLatexStyles(nestedLists, createStyleHtmlProtector(renderer));
+    const styled = resolveLatexStyles(nestedLists, createStyleHtmlProtector(renderer), renderer.metadata?.colors);
     return renderer.renderInline(styled.trim());
 }
 
@@ -494,7 +494,11 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
                 const metadata = renderer.metadata;
-                const processMeta = (value: string | undefined) => renderInlineLatexHtml(value, tex => renderMath(tex, false, renderer));
+                const processMeta = (value: string | undefined) => renderInlineLatexHtml(
+                    value,
+                    tex => renderMath(tex, false, renderer),
+                    renderer.metadata?.colors
+                );
 
                 const safeTitle = processMeta(metadata?.title);
                 const safeAuthors = renderMaketitleAuthorsHtml(
@@ -573,7 +577,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
         priority: 190,
         apply: (text, renderer: RenderContext) => {
-            return resolveLatexStyles(text, createStyleHtmlProtector(renderer));
+            return resolveLatexStyles(text, createStyleHtmlProtector(renderer), renderer.metadata?.colors);
         }
     }
 ];

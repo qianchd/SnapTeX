@@ -34,7 +34,7 @@ interface RenderPreparationBase {
     blockAccess: RenderBlockAccess;
     diff: DiffResult;
     isFullUpdate: boolean;
-    macrosChanged: boolean;
+    renderDefinitionsChanged: boolean;
     nextTextSnapshot: BlockTextSnapshot;
 }
 
@@ -49,7 +49,7 @@ interface RenderPreparationBase {
 export class SmartRenderer {
     private lastBlocks: BlockSnapshot[] = [];
     private lastTextSnapshot: BlockTextSnapshot = EMPTY_TEXT_SNAPSHOT;
-    private lastMacrosJson: string = "";
+    private lastRenderDefinitionsJson: string = "";
     private dependencySummaries: Array<RenderDependency[] | undefined> = [];
 
     private md!: MarkdownIt;
@@ -112,7 +112,7 @@ export class SmartRenderer {
     public resetState() {
         this.lastBlocks = [];
         this.lastTextSnapshot = EMPTY_TEXT_SNAPSHOT;
-        this.lastMacrosJson = "";
+        this.lastRenderDefinitionsJson = "";
         this.dependencySummaries = [];
         this.citedKeyNumbers.clear();
         this.documentView = undefined;
@@ -404,14 +404,14 @@ export class SmartRenderer {
 
         this.protector.reset();
 
-        const currentMacrosJson = JSON.stringify(doc.metadata.macros);
-        const macrosChanged = currentMacrosJson !== this.lastMacrosJson;
-        if (macrosChanged) {
+        const renderDefinitionsJson = JSON.stringify([doc.metadata.macros, doc.metadata.colors]);
+        const renderDefinitionsChanged = renderDefinitionsJson !== this.lastRenderDefinitionsJson;
+        if (renderDefinitionsChanged) {
             this.rebuildMarkdownEngine(doc.metadata.macros);
             this.lastBlocks = [];
             this.lastTextSnapshot = EMPTY_TEXT_SNAPSHOT;
             this.dependencySummaries = [];
-            this.lastMacrosJson = currentMacrosJson;
+            this.lastRenderDefinitionsJson = renderDefinitionsJson;
         }
 
         const nextTextSnapshot = doc.createTextSnapshot();
@@ -428,7 +428,7 @@ export class SmartRenderer {
             blockAccess,
             diff,
             isFullUpdate,
-            macrosChanged,
+            renderDefinitionsChanged,
             nextTextSnapshot
         };
     }
@@ -497,7 +497,7 @@ export class SmartRenderer {
             : {
                 type: 'full',
                 htmls: htmls ?? [],
-                preserveUnchangedBlocks: !prepared.macrosChanged && !options.resetPreviewState,
+                preserveUnchangedBlocks: !prepared.renderDefinitionsChanged && !options.resetPreviewState,
                 resetPreviewState: options.resetPreviewState,
                 numbering: prepared.numberingData
             };

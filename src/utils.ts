@@ -254,20 +254,103 @@ function skipLatexInlineWhitespace(text: string, index: number): number {
     return index;
 }
 
-function renderLatexStyle(style: LatexStyleSpec, content: string, protectHtml: StyleHtmlProtector | undefined, source: string, offset: number): string {
-    return applyLatexStyle(style, resolveLatexStyles(content, protectHtml), protectHtml, startsAfterTextOnLine(source, offset));
+function renderLatexStyle(
+    style: LatexStyleSpec,
+    content: string,
+    protectHtml: StyleHtmlProtector | undefined,
+    colors: Readonly<Record<string, string>> | undefined,
+    source: string,
+    offset: number
+): string {
+    return applyLatexStyle(style, resolveLatexStyles(content, protectHtml, colors), protectHtml, startsAfterTextOnLine(source, offset));
 }
 
-export function latexColorStyle(color: string): string {
-    return `color: ${color}; --snaptex-latex-color: ${color}`;
+const CSS_COLOR_NAME = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+function readColorChannels(spec: string, count: number, max: number): number[] | undefined {
+    const parts = spec.split(',').map(part => part.trim());
+    if (parts.length !== count || parts.some(part => part.length === 0)) { return undefined; }
+    const values = parts.map(Number);
+    return values.every(value => Number.isFinite(value) && value >= 0 && value <= max) ? values : undefined;
 }
 
-function colorStyleSpec(color: string): LatexStyleSpec {
-    const style = latexColorStyle(color);
+function cssRgb(values: readonly number[], scale = 1): string {
+    return `rgb(${values.map(value => Math.round(value * 255 / scale)).join(' ')})`;
+}
+
+/** Converts common xcolor models to browser-native CSS colors. */
+export function latexColorModelToCss(model: string, spec: string): string | undefined {
+    const trimmedModel = model.trim();
+    const trimmedSpec = spec.trim();
+    if (trimmedModel === 'HTML') {
+        return /^[0-9a-fA-F]{6}$/.test(trimmedSpec) ? `#${trimmedSpec}` : undefined;
+    }
+    if (trimmedModel === 'named') {
+        return CSS_COLOR_NAME.test(trimmedSpec) ? trimmedSpec : undefined;
+    }
+
+    const max = trimmedModel === 'RGB' ? 255 : 1;
+    const count = trimmedModel === 'gray' ? 1 : trimmedModel === 'cmyk' ? 4 : 3;
+    const channels = readColorChannels(trimmedSpec, count, max);
+    if (!channels) { return undefined; }
+
+    if (trimmedModel === 'RGB' || trimmedModel === 'rgb') {
+        return cssRgb(channels, max);
+    }
+    if (trimmedModel === 'gray') {
+        return cssRgb([channels[0], channels[0], channels[0]]);
+    }
+    if (trimmedModel === 'cmy') {
+        return cssRgb(channels.map(value => 1 - value));
+    }
+    if (trimmedModel === 'cmyk') {
+        const [cyan, magenta, yellow, black] = channels;
+        return cssRgb([(1 - cyan) * (1 - black), (1 - magenta) * (1 - black), (1 - yellow) * (1 - black)]);
+    }
+    return undefined;
+}
+
+function resolveColorName(name: string, colors: Readonly<Record<string, string>>, seen = new Set<string>()): string | undefined {
+    const definition = colors[name];
+    if (definition === undefined || seen.has(name)) {
+        return CSS_COLOR_NAME.test(name) ? name : undefined;
+    }
+    if (!CSS_COLOR_NAME.test(definition) || colors[definition] === undefined) { return definition; }
+    seen.add(name);
+    return resolveColorName(definition, colors, seen);
+}
+
+export function resolveLatexColor(
+    color: string,
+    colors: Readonly<Record<string, string>> = {},
+    model?: string
+): string | undefined {
+    if (model) { return latexColorModelToCss(model, color); }
+
+    const parts = color.split('!').map(part => part.trim());
+    let resolved = resolveColorName(parts[0], colors);
+    if (!resolved) { return undefined; }
+
+    for (let index = 1; index < parts.length; index += 2) {
+        const percentage = Number(parts[index]);
+        const mixColor = resolveColorName(parts[index + 1] || 'white', colors);
+        if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100 || !mixColor) { return undefined; }
+        resolved = `color-mix(in srgb, ${resolved} ${percentage}%, ${mixColor})`;
+    }
+    return resolved;
+}
+
+export function latexColorStyle(color: string, colors?: Readonly<Record<string, string>>, model?: string): string {
+    const cssColor = resolveLatexColor(color, colors, model);
+    return cssColor ? `color: ${cssColor}; --snaptex-latex-color: ${cssColor}` : 'color: inherit';
+}
+
+function colorStyleSpec(color: string, colors?: Readonly<Record<string, string>>, model?: string): LatexStyleSpec {
+    const style = latexColorStyle(color, colors, model);
     return [`<span style="${escapeHtmlAttribute(style)}">`, '</span>', style];
 }
 
-function replaceStyleCommandGroups(text: string, protectHtml?: StyleHtmlProtector): string {
+function replaceStyleCommandGroups(text: string, protectHtml?: StyleHtmlProtector, colors?: Readonly<Record<string, string>>): string {
     let result = '';
     let cursor = 0;
     let index = 0;
@@ -279,7 +362,7 @@ function replaceStyleCommandGroups(text: string, protectHtml?: StyleHtmlProtecto
         }
 
         const group = readLatexGroup(text, index, { skipWhitespace: false });
-        const replacement = group ? renderStyleCommandGroup(text, group, protectHtml) : undefined;
+        const replacement = group ? renderStyleCommandGroup(text, group, protectHtml, colors) : undefined;
         if (!group || replacement === undefined) {
             index++;
             continue;
@@ -293,19 +376,26 @@ function replaceStyleCommandGroups(text: string, protectHtml?: StyleHtmlProtecto
     return result + text.slice(cursor);
 }
 
-function renderStyleCommandGroup(source: string, group: LatexGroup, protectHtml?: StyleHtmlProtector): string | undefined {
+function renderStyleCommandGroup(
+    source: string,
+    group: LatexGroup,
+    protectHtml?: StyleHtmlProtector,
+    colors?: Readonly<Record<string, string>>
+): string | undefined {
     const innerStart = skipLatexWhitespace(group.content, 0);
     const colorCall = readLatexCommandAt(group.content, innerStart, {
         name: 'color',
+        optionalArgs: 1,
         requiredArgs: 1,
         skipWhitespace: false
     });
     if (colorCall) {
         const contentStart = skipLatexInlineWhitespace(group.content, colorCall.end);
         return renderLatexStyle(
-            colorStyleSpec(colorCall.requiredArgs[0].content.trim()),
+            colorStyleSpec(colorCall.requiredArgs[0].content.trim(), colors, colorCall.optionalArgs[0]?.content),
             group.content.slice(contentStart),
             protectHtml,
+            colors,
             source,
             group.start
         );
@@ -318,7 +408,7 @@ function renderStyleCommandGroup(source: string, group: LatexGroup, protectHtml?
         });
         if (!call) { continue; }
         const contentStart = skipLatexInlineWhitespace(group.content, call.end);
-        return renderLatexStyle(LATEX_STYLE_TAGS[cmd], group.content.slice(contentStart), protectHtml, source, group.start);
+        return renderLatexStyle(LATEX_STYLE_TAGS[cmd], group.content.slice(contentStart), protectHtml, colors, source, group.start);
     }
 
     return undefined;
@@ -360,11 +450,16 @@ export function expandLatexTextMacros(text: string, macros: Record<string, strin
 /**
  * Applies a small subset of LaTeX text styling commands to protected HTML.
  */
-export function resolveLatexStyles(text: string, protectHtml?: StyleHtmlProtector): string {
+export function resolveLatexStyles(
+    text: string,
+    protectHtml?: StyleHtmlProtector,
+    colors?: Readonly<Record<string, string>>
+): string {
     const renderColorCommand = (call: LatexCommandCall) => renderLatexStyle(
-        colorStyleSpec(call.requiredArgs[0].content.trim()),
+        colorStyleSpec(call.requiredArgs[0].content.trim(), colors, call.optionalArgs[0]?.content),
         call.requiredArgs[1].content,
         protectHtml,
+        colors,
         text,
         call.start
     );
@@ -378,23 +473,26 @@ export function resolveLatexStyles(text: string, protectHtml?: StyleHtmlProtecto
                     LATEX_STYLE_TAGS[name],
                     call.requiredArgs[0].content,
                     protectHtml,
+                    colors,
                     text,
                     call.start
                 )
             })),
         {
             name: 'textcolor',
+            optionalArgs: 1,
             requiredArgs: 2,
             render: renderColorCommand
         },
         {
             name: 'color',
+            optionalArgs: 1,
             requiredArgs: 2,
             render: renderColorCommand
         }
     ]);
 
-    return replaceStyleCommandGroups(text, protectHtml);
+    return replaceStyleCommandGroups(text, protectHtml, colors);
 }
 
 /**

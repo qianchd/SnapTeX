@@ -352,7 +352,7 @@ export function renderLatexTableInlineContent(content: string, renderer: RenderC
         return renderMath(tex.trim(), false, renderer);
     });
     const withSpaces = withMath.replace(/~/g, () => renderer.protectHtml('space', '&nbsp;'));
-    const styledContent = resolveLatexStyles(withSpaces, createStyleHtmlProtector(renderer));
+    const styledContent = resolveLatexStyles(withSpaces, createStyleHtmlProtector(renderer), renderer.metadata?.colors);
     return renderer.renderInline(stripLatexGroupingBraces(styledContent));
 }
 

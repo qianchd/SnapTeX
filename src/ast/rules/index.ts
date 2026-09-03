@@ -181,7 +181,7 @@ function skipAstWhitespace(nodes: readonly SnaptexAstNode[], index: number): num
 }
 
 export function renderInlineLatexSource(text: string, context: AstRenderContext): string {
-    return renderInlineLatexHtml(text, tex => context.renderMath(tex, false));
+    return renderInlineLatexHtml(text, tex => context.renderMath(tex, false), context.metadata?.colors);
 }
 
 export function renderAstNodesWithRules(

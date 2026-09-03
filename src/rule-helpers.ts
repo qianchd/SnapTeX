@@ -146,7 +146,8 @@ export function normalizeMathEnvironmentForKatex(tex: string, envName?: string):
 
 export function renderInlineLatexHtml(
     text: string | undefined,
-    renderMathHtml: (tex: string) => string
+    renderMathHtml: (tex: string) => string,
+    colors?: Readonly<Record<string, string>>
 ): string {
     if (!text) { return ''; }
 
@@ -168,7 +169,7 @@ export function renderInlineLatexHtml(
         .replace(/\\(?:and|And)\b/g, lineBreak)
         .replace(/\\\\/g, lineBreak)
         .replace(/\$((?:\\.|[^\\$])*)\$/g, (_match, content: string) => protectHtml(renderMathHtml(content.trim())));
-    rendered = resolveLatexStyles(rendered, html => protectHtml(html));
+    rendered = resolveLatexStyles(rendered, html => protectHtml(html), colors);
 
     return escapeHtml(rendered)
         .replace(/\uE000SNAP_INLINE_HTML_(\d+)\uE001/g, (_match, index: string) => htmlFragments[Number(index)] ?? '')
@@ -286,7 +287,7 @@ export function renderCaptionContent(captionText: string, renderer: RenderContex
     const withMath = captionText.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, content: string) => {
         return renderMath(content.trim(), false, renderer);
     });
-    return renderer.renderInline(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer)));
+    return renderer.renderInline(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer), renderer.metadata?.colors));
 }
 
 export function renderCaptionHtml(className: string, contentHtml: string, prefixHtml = ''): string {

@@ -193,9 +193,11 @@ suite('PreviewUpdateService', () => {
 
     test('renders text macros in both backend modes', async () => {
         const source = [
-            '\\newcommand{\\blue}[1]{{\\color{blue}#1}}',
+            '\\definecolor{brand}{HTML}{663399}',
+            '\\definecolor{accent}{rgb}{0.2,0.4,0.8}',
+            '\\newcommand{\\brandtext}[1]{{\\color{brand}#1}}',
             '\\begin{document}',
-            'Plain \\blue{colored \\textbf{text}} end.',
+            'Plain \\brandtext{colored \\textbf{text}}, \\textcolor{accent}{accent}, \\textcolor{brand!25!accent}{mixed}, and \\textcolor[RGB]{255,0,0}{direct}.',
             '\\end{document}'
         ].join('\n');
 
@@ -204,9 +206,15 @@ suite('PreviewUpdateService', () => {
             const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
             const html = payload.htmls?.join('\n') ?? '';
 
-            assert.match(html, /color: blue/);
-            assert.match(html, /colored [\s\S]*<(?:strong|span style="font-weight: 600")>text<\/(?:strong|span)>[\s\S]* end\./);
-            assert.doesNotMatch(html, /\\blue|\\color|\\textbf/);
+            assert.match(html, /--snaptex-latex-color: #663399/);
+            assert.match(html, /--snaptex-latex-color: rgb\(51 102 204\)/);
+            assert.match(html, /--snaptex-latex-color: color-mix\(in srgb, #663399 25%, rgb\(51 102 204\)\)/);
+            assert.match(html, /--snaptex-latex-color: rgb\(255 0 0\)/);
+            assert.match(html, /colored [\s\S]*<(?:strong|span style="font-weight: 600")>text<\/(?:strong|span)>/);
+            assert.doesNotMatch(html, /\\brandtext|\\color|\\textcolor|\\textbf/);
+
+            const updated = await service.render(uri, source.replace('663399', '8844AA'), { deferFullHtml: false, backendMode });
+            assert.match(updated.htmls?.join('\n') ?? '', /--snaptex-latex-color: #8844AA/);
         }
     });
 

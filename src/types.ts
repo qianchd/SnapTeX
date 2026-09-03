@@ -35,6 +35,7 @@ export interface AffiliationMetadata {
 
 export interface PreambleData {
     macros: Record<string, string>;
+    colors: Record<string, string>;
     tikzGlobal: string;
     tikzMacroMap: Map<string, string>;
     title?: string;
@@ -45,7 +46,7 @@ export interface PreambleData {
     custom: Record<string, string>;
 }
 
-export type PreambleMetadata = Omit<PreambleData, 'macros' | 'tikzGlobal' | 'tikzMacroMap'>;
+export type PreambleMetadata = Omit<PreambleData, 'macros' | 'colors' | 'tikzGlobal' | 'tikzMacroMap'>;
 
 export interface MetadataResult {
     data: PreambleData;

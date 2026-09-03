@@ -1,6 +1,6 @@
 import { AffiliationMetadata, AuthorMetadata, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleMetadata, TextRange } from './types';
 import { REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
-import { escapeRegExp, findCommand, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
+import { escapeRegExp, findCommand, latexColorModelToCss, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
 
 type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providenewcommand' | 'def' | 'gdef' | 'DeclareMathOperator';
 type AuthorExtraction = { authors: AuthorMetadata[]; affiliations: AffiliationMetadata[] };
@@ -198,6 +198,19 @@ function extractKatexMacro(header: MacroDefinitionHeader): { name: string; defin
         : rawDefinition;
 
     return { name: header.name, definition };
+}
+
+function extractColorDefinition(fullDefinition: string): { name: string; color: string } | undefined {
+    const call = readLatexCommandAt(fullDefinition, 0, {
+        name: 'definecolor',
+        requiredArgs: 3,
+        skipWhitespace: false
+    });
+    if (!call) { return undefined; }
+
+    const name = call.requiredArgs[0].content.trim();
+    const color = latexColorModelToCss(call.requiredArgs[1].content, call.requiredArgs[2].content);
+    return name && color ? { name, color } : undefined;
 }
 
 interface MetadataCommandCall extends TextRange {
@@ -625,10 +638,18 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
     const tikzGlobalParts: string[] = [];
     const tikzMacroMap = new Map<string, string>();
     const macros: Record<string, string> = {};
+    const colors: Record<string, string> = {};
 
     const definitionRecords = collectDefinitions(cleanedText);
     for (const record of definitionRecords) {
         const { command, fullDef } = record;
+
+        if (command === 'definecolor') {
+            const colorDefinition = extractColorDefinition(fullDef);
+            if (colorDefinition) {
+                colors[colorDefinition.name] = colorDefinition.color;
+            }
+        }
 
         if (TIKZ_GLOBAL_COMMANDS.includes(command)) {
             if (!tikzGlobalParts.includes(fullDef)) {
@@ -656,6 +677,7 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
     cleanedText = blankOutRanges(cleanedText, definitionRecords);
     const data: PreambleData = {
         macros,
+        colors,
         tikzGlobal,
         tikzMacroMap,
         ...metadata

@@ -62,7 +62,7 @@ document source -> extractor(source) -> custom.editor + hidden range
                                      -> LatexDocument metadata/body
 ```
 
-Custom scalar values belong under `custom`. Built-in title-page fields such as `title`, `date`, `authors`, `affiliations`, and `keywords` already have structured fields on `PreambleData`.
+Custom scalar values belong under `custom`. Built-in title-page fields such as `title`, `date`, `authors`, `affiliations`, and `keywords` already have structured fields on `PreambleData`. The preamble scanner also owns `macros` and `colors`; render rules read these maps but metadata extractors do not need to recreate them.
 
 ## 2. Register the extractor
 
