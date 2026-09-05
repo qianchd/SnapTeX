@@ -14,6 +14,8 @@ body {
     --snaptex-web-topbar-height: 30px;
     --snaptex-web-topbar-peek: 6px;
     --snaptex-web-topbar-hover-height: 20px;
+    --snaptex-editor-font-size: 14px;
+    --snaptex-editor-font-family: Consolas, "Cascadia Code", "Courier New", monospace;
     --snaptex-shell-bg: #f3f4f6;
     --snaptex-ui-fg: #1f2328;
     --snaptex-toolbar-bg: #f8fafc;
@@ -914,8 +916,8 @@ body.is-resizing-split #preview-pane {
     height: 100%;
     background: var(--snaptex-editor-bg);
     color: var(--snaptex-editor-fg);
-    font-size: 14px;
-    font-family: Consolas, "Cascadia Code", "Courier New", monospace;
+    font-size: var(--snaptex-editor-font-size);
+    font-family: var(--snaptex-editor-font-family);
 }
 
 #editor .cm-gutters {

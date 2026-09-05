@@ -44,6 +44,13 @@ type TextPreviewSetting = keyof PreviewStyleSettings;
 type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
 type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput';
 type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'previewContentWidthInput' | 'previewFontFamilyInput';
+type EditorStyleSetting = keyof EditorStyleSettings;
+type EditorStyleControl = 'editorFontSizeInput' | 'editorFontFamilyInput';
+
+interface EditorStyleSettings {
+    fontSize: string;
+    fontFamily: string;
+}
 
 const DEFAULT_WEB_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     ...DEFAULT_STANDALONE_PREVIEW_SETTINGS,
@@ -69,10 +76,25 @@ const TEXT_SETTING_CONTROLS: ReadonlyArray<[TextSettingControl, TextPreviewSetti
     ['previewContentWidthInput', 'contentMaxWidth'],
     ['previewFontFamilyInput', 'fontFamily']
 ];
+const EDITOR_STYLE_CONTROLS: ReadonlyArray<[EditorStyleControl, EditorStyleSetting]> = [
+    ['editorFontSizeInput', 'fontSize'],
+    ['editorFontFamilyInput', 'fontFamily']
+];
 const WEB_PREFERENCES_STORAGE_KEY = 'snaptex.previewStyle';
+
+function readEditorStyle(): EditorStyleSettings {
+    const style = getComputedStyle(document.documentElement);
+    return {
+        fontSize: style.getPropertyValue('--snaptex-editor-font-size').trim(),
+        fontFamily: style.getPropertyValue('--snaptex-editor-font-family').trim()
+    };
+}
+
+const DEFAULT_WEB_EDITOR_STYLE = readEditorStyle();
 
 function loadWebPreferences() {
     const settings = { ...DEFAULT_WEB_PREVIEW_SETTINGS };
+    const editorStyle = { ...DEFAULT_WEB_EDITOR_STYLE };
     try {
         const stored = JSON.parse(localStorage.getItem(WEB_PREFERENCES_STORAGE_KEY) || '{}') as Record<string, unknown>;
         for (const [, setting] of BOOLEAN_SETTING_CONTROLS) {
@@ -97,17 +119,27 @@ function loadWebPreferences() {
         if (stored.previewLayout === 'continuous' || stored.previewLayout === 'paged') {
             settings.previewLayout = stored.previewLayout;
         }
+        if (stored.editorStyle && typeof stored.editorStyle === 'object') {
+            const storedEditorStyle = stored.editorStyle as Record<string, unknown>;
+            for (const [, setting] of EDITOR_STYLE_CONTROLS) {
+                const value = storedEditorStyle[setting];
+                if (typeof value === 'string' && value.trim()) {
+                    editorStyle[setting] = value.trim();
+                }
+            }
+        }
         const theme: WebTheme = stored.theme === 'dark' || stored.theme === 'blue' || stored.theme === 'rose'
             ? stored.theme
             : 'light';
         return {
             settings,
+            editorStyle,
             theme,
             explorerCollapsed: stored.explorerCollapsed !== false,
             diagnosticsVisible: stored.diagnosticsVisible !== false
         };
     } catch {
-        return { settings, theme: 'light' as WebTheme, explorerCollapsed: true, diagnosticsVisible: true };
+        return { settings, editorStyle, theme: 'light' as WebTheme, explorerCollapsed: true, diagnosticsVisible: true };
     }
 }
 
@@ -115,6 +147,7 @@ function storeWebPreferences(host: StandaloneHost): void {
     try {
         localStorage.setItem(WEB_PREFERENCES_STORAGE_KEY, JSON.stringify({
             ...host.getSettings(),
+            editorStyle: webPreferences.editorStyle,
             theme: document.body.dataset.theme,
             explorerCollapsed,
             diagnosticsVisible: document.body.dataset.diagnosticsVisible === 'true'
@@ -170,6 +203,8 @@ function readControls() {
         previewLineHeightInput: requireElement<HTMLInputElement>('preview-line-height-input'),
         previewContentWidthInput: requireElement<HTMLInputElement>('preview-content-width-input'),
         previewFontFamilyInput: requireElement<HTMLInputElement>('preview-font-family-input'),
+        editorFontSizeInput: requireElement<HTMLInputElement>('editor-font-size-input'),
+        editorFontFamilyInput: requireElement<HTMLInputElement>('editor-font-family-input'),
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),
         welcomePage: requireElement('welcome-page'),
         welcomeOpenFolderButton: requireElement('welcome-open-folder-button'),
@@ -875,6 +910,12 @@ function setTheme(theme: WebTheme): void {
     webControls.themeSelect.value = theme;
 }
 
+function applyEditorStyle(): void {
+    const style = document.documentElement.style;
+    style.setProperty('--snaptex-editor-font-size', webPreferences.editorStyle.fontSize);
+    style.setProperty('--snaptex-editor-font-family', webPreferences.editorStyle.fontFamily);
+}
+
 function syncSettingsControls(host: StandaloneHost): void {
     const settings = host.getSettings();
     const controls = webControls;
@@ -888,6 +929,9 @@ function syncSettingsControls(host: StandaloneHost): void {
     }
     for (const [controlName, setting] of TEXT_SETTING_CONTROLS) {
         setInputValue(controls[controlName], settings[setting]);
+    }
+    for (const [controlName, setting] of EDITOR_STYLE_CONTROLS) {
+        setInputValue(controls[controlName], webPreferences.editorStyle[setting]);
     }
 }
 
@@ -1001,6 +1045,15 @@ function bindProjectControls(host: StandaloneHost): void {
     for (const [controlName, setting] of TEXT_SETTING_CONTROLS) {
         bindTextSetting(controls[controlName], setting);
     }
+    for (const [controlName, setting] of EDITOR_STYLE_CONTROLS) {
+        controls[controlName].addEventListener('change', () => {
+            const value = controls[controlName].value.trim() || DEFAULT_WEB_EDITOR_STYLE[setting];
+            controls[controlName].value = value;
+            webPreferences.editorStyle[setting] = value;
+            applyEditorStyle();
+            storeWebPreferences(host);
+        });
+    }
     controls.themeSelect.addEventListener('change', () => {
         setTheme(controls.themeSelect.value as WebTheme);
         storeWebPreferences(host);
@@ -1093,6 +1146,7 @@ const editorParent = requireElement('editor');
 setExplorerCollapsed(webPreferences.explorerCollapsed);
 setDiagnosticsVisible(webPreferences.diagnosticsVisible);
 setTheme(webPreferences.theme);
+applyEditorStyle();
 
 let host: StandaloneHost;
 host = createStandaloneSnapTeXApp({
