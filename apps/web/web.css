@@ -813,8 +813,15 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     z-index: 2;
     height: 100vh;
     cursor: col-resize;
+    touch-action: none;
     background: var(--snaptex-border);
     transition: background 120ms ease;
+}
+
+#splitter::before {
+    content: "";
+    position: absolute;
+    inset: 0 -10px;
 }
 
 #restore-pane-button {

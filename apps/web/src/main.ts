@@ -281,7 +281,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         if (state?.animationFrame !== undefined) {
             window.cancelAnimationFrame(state.animationFrame);
         }
-        if (state) {
+        if (state && event.type !== 'pointercancel') {
             const rawEditorWidth = event.clientX - state.editorLeft;
             state.nextWidth = clampedEditorWidth(event.clientX, state);
             const rawPreviewWidth = state.availableWidth - rawEditorWidth - state.splitterWidth;

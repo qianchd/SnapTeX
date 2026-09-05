@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Fixed**: Made the Web editor/preview divider draggable with touch input without an interrupted gesture collapsing either pane.
 - **Fixed**: Kept the Web preview stable while scroll synchronization crosses `\\input` file boundaries, and avoided redundant browser-workspace writes when the synchronized editor file is unchanged.
 - **Fixed**: Repaired remote-project ACL masks during Server deployment and reported unreadable project paths explicitly instead of returning an unexplained manifest error.
 - **Added**: Resolved custom preamble colors declared with common `\definecolor` models across legacy and AST rendering, including direct model syntax and xcolor-style color mixes.
