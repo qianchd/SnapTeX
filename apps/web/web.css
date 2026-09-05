@@ -15,7 +15,7 @@ body {
     --snaptex-web-topbar-peek: 6px;
     --snaptex-web-topbar-hover-height: 20px;
     --snaptex-editor-font-size: 14px;
-    --snaptex-editor-font-family: Consolas, "Cascadia Code", "Courier New", monospace;
+    --snaptex-editor-font-family: "Source Code Pro", "Operator Mono", "Hack", "SimHei", "黑体", monospace;
     --snaptex-shell-bg: #f3f4f6;
     --snaptex-ui-fg: #1f2328;
     --snaptex-toolbar-bg: #f8fafc;
