@@ -1,10 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { isIP } from 'node:net';
+import { dirname } from 'node:path';
 import { readRequestText, sendJson } from './http-utils.mjs';
 
 const COOKIE_NAME = '__Host-snaptex-session';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
+const REMEMBERED_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const MAX_SESSIONS = 128;
 const MAX_LOGIN_BYTES = 16 * 1024;
 const MAX_FAILURES = 10;
@@ -38,7 +41,7 @@ export function createWebSessionAuth(options) {
     }
     const publicOrigin = publicUrl.origin;
     const publicPath = normalizePublicPath(options.publicPath);
-    const sessions = new Map();
+    const sessions = loadSessions(options.sessionFile);
     const loginFailures = new Map();
 
     function findSession(request) {
@@ -47,6 +50,7 @@ export function createWebSessionAuth(options) {
         if (!value) return undefined;
         if (value.expiresAt <= Date.now()) {
             sessions.delete(id);
+            saveSessions(options.sessionFile, sessions);
             return undefined;
         }
         return { id, value };
@@ -92,11 +96,15 @@ export function createWebSessionAuth(options) {
             pruneSessions(sessions);
             while (sessions.size >= MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
             const id = randomBytes(32).toString('base64url');
+            const ttlSeconds = form.get('remember') === '1'
+                ? REMEMBERED_SESSION_TTL_SECONDS
+                : SESSION_TTL_SECONDS;
             sessions.set(id, {
                 csrfToken: randomBytes(32).toString('base64url'),
-                expiresAt: now + SESSION_TTL_SECONDS * 1000
+                expiresAt: now + ttlSeconds * 1000
             });
-            response.setHeader('Set-Cookie', sessionCookie(id, SESSION_TTL_SECONDS));
+            saveSessions(options.sessionFile, sessions);
+            response.setHeader('Set-Cookie', sessionCookie(id, ttlSeconds));
             response.writeHead(303, { Location: returnTo });
             response.end();
             return true;
@@ -133,6 +141,7 @@ export function createWebSessionAuth(options) {
                 return true;
             }
             sessions.delete(session.id);
+            saveSessions(options.sessionFile, sessions);
             response.setHeader('Set-Cookie', sessionCookie('', 0));
             response.writeHead(204);
             response.end();
@@ -168,6 +177,35 @@ export function createWebSessionAuth(options) {
             loginFailures.clear();
         }
     };
+}
+
+function loadSessions(path) {
+    if (!path) return new Map();
+    let stored;
+    try {
+        stored = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+        if (error?.code === 'ENOENT') return new Map();
+        throw new Error(`Cannot read Web Session store: ${error.message}`);
+    }
+    if (!Array.isArray(stored) || stored.length > MAX_SESSIONS) throw new Error('Invalid Web Session store.');
+    const sessions = new Map();
+    for (const entry of stored) {
+        if (!Array.isArray(entry) || entry.length !== 2 || !/^[A-Za-z0-9_-]{32,}$/.test(entry[0]) ||
+            !entry[1] || !/^[A-Za-z0-9_-]{32,}$/.test(entry[1].csrfToken) || !Number.isFinite(entry[1].expiresAt)) {
+            throw new Error('Invalid Web Session store.');
+        }
+        if (entry[1].expiresAt > Date.now()) sessions.set(entry[0], entry[1]);
+    }
+    return sessions;
+}
+
+function saveSessions(path, sessions) {
+    if (!path) return;
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const tempPath = `${path}.${process.pid}.tmp`;
+    writeFileSync(tempPath, JSON.stringify([...sessions]), { mode: 0o600 });
+    renameSync(tempPath, path);
 }
 
 function normalizePublicPath(value = '/') {
@@ -256,5 +294,5 @@ function escapeHtml(value) {
 }
 
 function loginPage(returnTo, error = '') {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SnapTeX Login</title><style>body{font:16px system-ui;max-width:420px;margin:12vh auto;padding:24px}input{box-sizing:border-box;width:100%;padding:10px;margin:6px 0 16px}button{padding:10px 18px}.e{color:#b00}</style></head><body><h1>SnapTeX Server</h1><p>Sign in to access remote projects.</p>${error ? `<p class="e">${escapeHtml(error)}</p>` : ''}<form method="post"><input type="hidden" name="return_to" value="${escapeHtml(returnTo)}"><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button type="submit">Sign in</button></form></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SnapTeX Login</title><style>body{font:16px system-ui;max-width:420px;margin:12vh auto;padding:24px}input:not([type=checkbox]){box-sizing:border-box;width:100%;padding:10px;margin:6px 0 16px}.remember{display:block;margin-bottom:18px}button{padding:10px 18px}.e{color:#b00}</style></head><body><h1>SnapTeX Server</h1><p>Sign in to access remote projects.</p>${error ? `<p class="e">${escapeHtml(error)}</p>` : ''}<form method="post"><input type="hidden" name="return_to" value="${escapeHtml(returnTo)}"><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><label class="remember"><input name="remember" type="checkbox" value="1"> Keep me signed in for 30 days</label><button type="submit">Sign in</button></form></body></html>`;
 }

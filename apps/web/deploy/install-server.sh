@@ -152,6 +152,7 @@ trap rollback ERR
 sed \
     -e "s|@RUN_USER@|$(escape_sed "$SNAPTEX_RUN_USER")|g" \
     -e "s|@RUN_GROUP@|$(escape_sed "$run_group")|g" \
+    -e "s|@STATE_DIRECTORY@|$(escape_sed "$SNAPTEX_SERVICE_NAME")|g" \
     -e "s|@INSTALL_DIR@|$(escape_sed "$SNAPTEX_INSTALL_DIR")|g" \
     -e "s|@ENV_FILE@|$(escape_sed "$environment_target")|g" \
     -e "s|@NODE_BIN@|$(escape_sed "$node_bin")|g" \

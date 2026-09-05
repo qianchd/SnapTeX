@@ -219,10 +219,17 @@ test('protects remote projects with an independent web session', async () => {
     await writeFile(join(projectRoot, '.private', 'hidden.tex'), 'Secret');
     await writeFile(join(projectRoot, 'active.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
     const publicOrigin = 'https://snaptex.example.com';
+    const auth = {
+        username: 'owner',
+        password: 'a-secure-test-password',
+        publicOrigin,
+        publicPath: '/',
+        sessionFile: join(tempRoot, 'sessions.json')
+    };
     const server = createSnapTeXWebServer({
         root: staticRoot,
         projectsRoot,
-        auth: { username: 'owner', password: 'a-secure-test-password', publicOrigin, publicPath: '/' }
+        auth
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -250,7 +257,7 @@ test('protects remote projects with an independent web session', async () => {
         const login = await fetch(`${baseUrl}/web-auth/login`, {
             method: 'POST',
             headers: { Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ username: 'owner', password: 'a-secure-test-password', return_to: '//evil.example' }),
+            body: new URLSearchParams({ username: 'owner', password: 'a-secure-test-password', remember: '1', return_to: '//evil.example' }),
             redirect: 'manual'
         });
         assert.equal(login.status, 303);
@@ -260,9 +267,16 @@ test('protects remote projects with an independent web session', async () => {
         assert.match(setCookie, /HttpOnly/);
         assert.match(setCookie, /Secure/);
         assert.match(setCookie, /SameSite=Strict/);
+        assert.match(setCookie, /Max-Age=2592000/);
         const cookie = setCookie.split(';', 1)[0];
         const session = await fetch(`${baseUrl}/web-auth/session`, { headers: { cookie } });
         assert.equal(session.status, 200);
+        const resumedServer = createSnapTeXWebServer({ root: staticRoot, projectsRoot, auth });
+        await new Promise(resolve => resumedServer.listen(0, '127.0.0.1', resolve));
+        const resumedAddress = resumedServer.address();
+        assert.ok(resumedAddress && typeof resumedAddress === 'object');
+        assert.equal((await fetch(`http://127.0.0.1:${resumedAddress.port}/web-auth/session`, { headers: { cookie } })).status, 200);
+        await new Promise(resolve => resumedServer.close(resolve));
         const { csrfToken } = await session.json();
         assert.match(csrfToken, /^[A-Za-z0-9_-]{32,}$/);
         const sessionHeaders = { cookie, Origin: publicOrigin, 'X-CSRF-Token': csrfToken };

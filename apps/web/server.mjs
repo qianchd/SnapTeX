@@ -609,7 +609,10 @@ if (isDirectRun) {
         username,
         password,
         publicOrigin,
-        publicPath: process.env.SNAPTEX_PUBLIC_PATH
+        publicPath: process.env.SNAPTEX_PUBLIC_PATH,
+        sessionFile: process.env.SNAPTEX_AUTH_SESSION_FILE || (process.env.STATE_DIRECTORY
+            ? join(process.env.STATE_DIRECTORY, 'sessions.json')
+            : undefined)
     } : undefined;
     const server = createSnapTeXWebServer({ projectsRoot, auth });
     server.listen(defaultPort, defaultHost, () => {

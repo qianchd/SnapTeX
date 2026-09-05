@@ -12,6 +12,7 @@ ExecStart="@NODE_BIN@" "@INSTALL_DIR@/apps/web/server.mjs" "@INSTALL_DIR@/dist-w
 Restart=on-failure
 RestartSec=2
 UMask=0077
+StateDirectory=@STATE_DIRECTORY@
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
