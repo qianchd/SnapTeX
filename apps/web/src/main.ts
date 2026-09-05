@@ -184,7 +184,11 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     }
     const getPreviewController = (): InteractivePreviewController | undefined =>
         (window as Window & { snaptexPreviewController?: InteractivePreviewController }).snaptexPreviewController;
+    const portraitLayout = window.matchMedia('(max-width: 820px) and (orientation: portrait)');
+    const mobilePaneButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-mobile-pane]'));
     let paneLayout: PaneLayout = 'split';
+    let mobilePaneLayout: Exclude<PaneLayout, 'split'> = 'editor';
+    let previewScrollTop = 0;
     let lastSplitEditorWidth: number | undefined;
     let dragState: {
         editorLeft: number;
@@ -209,17 +213,33 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         ));
 
     const setPaneLayout = (layout: PaneLayout, notify = true): void => {
+        if (portraitLayout.matches && paneLayout === 'preview' && layout !== 'preview') {
+            previewScrollTop = window.scrollY;
+        }
         paneLayout = layout;
+        if (layout !== 'split') {
+            mobilePaneLayout = layout;
+        }
         document.body.dataset.paneLayout = layout;
         window.snaptexStandaloneHost?.setPreviewVisible(layout !== 'editor');
         restoreButton.hidden = layout === 'split';
+        for (const button of mobilePaneButtons) {
+            button.setAttribute('aria-pressed', String(button.dataset.mobilePane === layout));
+        }
         if (layout !== 'split') {
             const showingEditor = layout === 'editor';
             restoreButton.dataset.direction = showingEditor ? 'left' : 'right';
             restoreButton.title = showingEditor ? 'Show preview panel' : 'Show editor panel';
             restoreButton.setAttribute('aria-label', restoreButton.title);
         }
-        if (notify) {window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));}
+        if (notify) {
+            window.requestAnimationFrame(() => {
+                if (portraitLayout.matches && layout === 'preview') {
+                    window.scrollTo(0, previewScrollTop);
+                }
+                window.dispatchEvent(new Event('resize'));
+            });
+        }
     };
 
     const scheduleEditorWidth = (clientX: number): void => {
@@ -333,6 +353,19 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         }
         setPaneLayout('split');
     });
+    for (const button of mobilePaneButtons) {
+        button.addEventListener('click', () => {
+            const layout = button.dataset.mobilePane;
+            if (layout === 'editor' || layout === 'preview') {
+                setPaneLayout(layout);
+            }
+        });
+    }
+    const applyResponsiveLayout = (): void => {
+        setPaneLayout(portraitLayout.matches ? mobilePaneLayout : 'split');
+    };
+    portraitLayout.addEventListener('change', applyResponsiveLayout);
+    applyResponsiveLayout();
 }
 
 function setStatus(message: string): void {
@@ -965,11 +998,6 @@ async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
 
 const editorParent = requireElement('editor');
 
-const splitter = getElement('splitter');
-if (splitter) {
-    enableSplitPaneResize(splitter);
-}
-
 setExplorerCollapsed(true);
 setDiagnosticsVisible(true);
 setTheme('light');
@@ -981,6 +1009,10 @@ host = createStandaloneSnapTeXApp({
     settings: loadPreviewStyleSettings(),
     onStateChange: renderProjectState
 });
+const splitter = getElement('splitter');
+if (splitter) {
+    enableSplitPaneResize(splitter);
+}
 bindProjectControls(host);
 if (supportsRemoteProjects()) {
     void bindLogoutControl();

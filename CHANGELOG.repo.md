@@ -4,6 +4,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: Added responsive standalone Web layouts that reuse the existing pane state for portrait switching while preserving the resizable dual-pane workspace in landscape.
 - **Fixed**: Kept touch-driven Web pane resizing on the shared pointer-event path and made cancelled gestures leave the current layout unchanged.
 - **Fixed**: Switched the standalone editor across included source files without rebuilding the root preview, preserving cross-file scroll position and skipping clean autosave writes.
 - **Fixed**: Hardened Server project permission handling with explicit ACL masks and actionable unreadable-project responses.
