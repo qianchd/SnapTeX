@@ -181,6 +181,12 @@ suite('BrowserFileProvider', () => {
             assert.ok(resource?.readBlob);
             assert.equal(resource?.blob, undefined);
             assert.equal(await (await resource.readBlob()).text(), 'image');
+
+            const remoteId = await firstStore.rememberRemote('server-paper');
+            const history = await firstStore.listHistory();
+            assert.deepEqual(history.map(entry => entry.kind).sort(), ['remote', 'workspace', 'workspace']);
+            assert.equal(await firstStore.remoteProjectName(remoteId), 'server-paper');
+            await firstStore.forgetHistory(remoteId);
             } finally {
                 await firstStore.deleteDatabase();
             }

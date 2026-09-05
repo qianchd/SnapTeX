@@ -8,9 +8,10 @@ import {
     type BrowserProject,
     type BrowserProjectFile
 } from '../../standalone/src/browser-project';
+import type { BrowserDirectoryHandle } from './local-project';
 
 const DEFAULT_DATABASE_NAME = 'snaptex-browser-workspaces';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 const idb = import('idb');
 
@@ -37,6 +38,15 @@ interface StoredContentRecord {
     content: Blob;
 }
 
+interface StoredHistoryRecord {
+    id: string;
+    kind: 'directory' | 'remote';
+    name: string;
+    lastOpenedAt: number;
+    directory?: BrowserDirectoryHandle;
+    projectName?: string;
+}
+
 interface WorkspaceDatabase extends DBSchema {
     projects: {
         key: string;
@@ -51,6 +61,10 @@ interface WorkspaceDatabase extends DBSchema {
         key: string;
         value: StoredContentRecord;
     };
+    history: {
+        key: string;
+        value: StoredHistoryRecord;
+    };
 }
 
 export interface BrowserImportFile {
@@ -63,6 +77,14 @@ interface BrowserWorkspaceSummary {
     name: string;
     rootPath: string;
     templateId?: string;
+}
+
+export interface ProjectHistoryEntry {
+    id: string;
+    kind: 'workspace' | 'directory' | 'remote';
+    name: string;
+    detail: string;
+    lastOpenedAt: number;
 }
 
 function createProjectId(): string {
@@ -217,11 +239,16 @@ export class BrowserWorkspaceStore {
 
     constructor(private readonly databaseName = DEFAULT_DATABASE_NAME) {
         this.database = idb.then(({ openDB }) => openDB<WorkspaceDatabase>(databaseName, DATABASE_VERSION, {
-            upgrade(db) {
-                db.createObjectStore('projects', { keyPath: 'id' });
-                const files = db.createObjectStore('files', { keyPath: 'key' });
-                files.createIndex('by-project', 'projectId');
-                db.createObjectStore('contents', { keyPath: 'key' });
+            upgrade(db, oldVersion) {
+                if (oldVersion < 1) {
+                    db.createObjectStore('projects', { keyPath: 'id' });
+                    const files = db.createObjectStore('files', { keyPath: 'key' });
+                    files.createIndex('by-project', 'projectId');
+                    db.createObjectStore('contents', { keyPath: 'key' });
+                }
+                if (oldVersion < 2) {
+                    db.createObjectStore('history', { keyPath: 'id' });
+                }
             }
         }));
     }
@@ -231,6 +258,82 @@ export class BrowserWorkspaceStore {
         return projects
             .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
             .map(projectSummary);
+    }
+
+    async listHistory(): Promise<ProjectHistoryEntry[]> {
+        const db = await this.database;
+        const [projects, history] = await Promise.all([db.getAll('projects'), db.getAll('history')]);
+        return [
+            ...projects.map(project => ({
+                id: project.id,
+                kind: 'workspace' as const,
+                name: project.name,
+                detail: project.rootPath,
+                lastOpenedAt: project.lastOpenedAt
+            })),
+            ...history.map(entry => ({
+                id: entry.id,
+                kind: entry.kind,
+                name: entry.name,
+                detail: entry.kind === 'remote' ? 'Server project' : 'Local folder',
+                lastOpenedAt: entry.lastOpenedAt
+            }))
+        ].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+    }
+
+    async rememberDirectory(directory: BrowserDirectoryHandle): Promise<string> {
+        const db = await this.database;
+        const history = await db.getAll('history');
+        let existing: StoredHistoryRecord | undefined;
+        if (directory.isSameEntry) {
+            for (const entry of history) {
+                if (entry.kind === 'directory' && entry.directory && await directory.isSameEntry(entry.directory)) {
+                    existing = entry;
+                    break;
+                }
+            }
+        }
+        const id = existing?.id ?? `directory:${createProjectId()}`;
+        await db.put('history', { id, kind: 'directory', name: directory.name, directory, lastOpenedAt: Date.now() });
+        return id;
+    }
+
+    async rememberRemote(projectName: string): Promise<string> {
+        const id = `remote:${projectName}`;
+        await (await this.database).put('history', {
+            id,
+            kind: 'remote',
+            name: projectName,
+            projectName,
+            lastOpenedAt: Date.now()
+        });
+        return id;
+    }
+
+    async directory(id: string): Promise<BrowserDirectoryHandle> {
+        const db = await this.database;
+        const entry = await db.get('history', id);
+        if (entry?.kind !== 'directory' || !entry.directory) {
+            throw new Error('Local folder history is no longer available.');
+        }
+        entry.lastOpenedAt = Date.now();
+        await db.put('history', entry);
+        return entry.directory;
+    }
+
+    async remoteProjectName(id: string): Promise<string> {
+        const db = await this.database;
+        const entry = await db.get('history', id);
+        if (entry?.kind !== 'remote' || !entry.projectName) {
+            throw new Error('Server project history is no longer available.');
+        }
+        entry.lastOpenedAt = Date.now();
+        await db.put('history', entry);
+        return entry.projectName;
+    }
+
+    async forgetHistory(id: string): Promise<void> {
+        await (await this.database).delete('history', id);
     }
 
     async importFiles(name: string, files: readonly BrowserImportFile[], templateId?: string): Promise<BrowserWorkspaceSummary> {

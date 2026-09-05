@@ -13,10 +13,23 @@ export interface BrowserFileHandle {
 export interface BrowserDirectoryHandle {
     kind: 'directory';
     name: string;
+    isSameEntry?(other: BrowserDirectoryHandle): Promise<boolean>;
+    queryPermission?(options: { mode: 'readwrite' }): Promise<PermissionState>;
+    requestPermission?(options: { mode: 'readwrite' }): Promise<PermissionState>;
     values(): AsyncIterable<BrowserFileHandle | BrowserDirectoryHandle>;
     getFileHandle(name: string, options?: { create?: boolean }): Promise<BrowserFileHandle>;
     getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<BrowserDirectoryHandle>;
     removeEntry(name: string): Promise<void>;
+}
+
+async function ensureDirectoryPermission(directory: BrowserDirectoryHandle): Promise<void> {
+    const options = { mode: 'readwrite' } as const;
+    if (!directory.queryPermission || await directory.queryPermission(options) === 'granted') {
+        return;
+    }
+    if (!directory.requestPermission || await directory.requestPermission(options) !== 'granted') {
+        throw new Error('Permission to open this local folder was not granted.');
+    }
 }
 
 async function writeText(handle: BrowserFileHandle, text: string): Promise<void> {
@@ -67,6 +80,7 @@ async function projectFileParent(directory: BrowserDirectoryHandle, path: string
 
 /** Opens a writable browser directory as a shared SnapTeX project. */
 export async function createDirectoryProject(directory: BrowserDirectoryHandle): Promise<BrowserProject> {
+    await ensureDirectoryPermission(directory);
     return {
         name: directory.name,
         files: await readDirectoryHandle(directory),

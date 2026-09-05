@@ -10,7 +10,7 @@ import {
     type ProjectTreeNode
 } from '../../standalone/src/browser-project';
 import { DEMO_PROJECT_ID, DEMO_PROJECT_NAME, loadDemoFiles } from './demo-project';
-import { BrowserWorkspaceStore, type BrowserImportFile } from './indexeddb-project';
+import { BrowserWorkspaceStore, type BrowserImportFile, type ProjectHistoryEntry } from './indexeddb-project';
 import {
     createDirectoryProject,
     fileInputPath,
@@ -36,7 +36,7 @@ interface BrowserFilePickerWindow extends Window {
 let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
 const browserWorkspaces = new BrowserWorkspaceStore();
-let activeBrowserWorkspaceId: string | undefined;
+let activeHistoryId: string | undefined;
 type WebTheme = 'light' | 'dark' | 'blue' | 'rose';
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
 type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
@@ -69,33 +69,62 @@ const TEXT_SETTING_CONTROLS: ReadonlyArray<[TextSettingControl, TextPreviewSetti
     ['previewContentWidthInput', 'contentMaxWidth'],
     ['previewFontFamilyInput', 'fontFamily']
 ];
-const PREVIEW_STYLE_STORAGE_KEY = 'snaptex.previewStyle';
+const WEB_PREFERENCES_STORAGE_KEY = 'snaptex.previewStyle';
 
-function loadPreviewStyleSettings(): StandalonePreviewSettings {
+function loadWebPreferences() {
+    const settings = { ...DEFAULT_WEB_PREVIEW_SETTINGS };
     try {
-        const stored = JSON.parse(localStorage.getItem(PREVIEW_STYLE_STORAGE_KEY) || '{}') as Record<string, unknown>;
-        const settings = { ...DEFAULT_WEB_PREVIEW_SETTINGS };
+        const stored = JSON.parse(localStorage.getItem(WEB_PREFERENCES_STORAGE_KEY) || '{}') as Record<string, unknown>;
+        for (const [, setting] of BOOLEAN_SETTING_CONTROLS) {
+            if (typeof stored[setting] === 'boolean') {
+                settings[setting] = stored[setting];
+            }
+        }
+        for (const [, setting] of NUMBER_SETTING_CONTROLS) {
+            if (typeof stored[setting] === 'number' && Number.isFinite(stored[setting])) {
+                settings[setting] = stored[setting];
+            }
+        }
         for (const [, setting] of TEXT_SETTING_CONTROLS) {
             const value = stored[setting];
             if (typeof value === 'string' && value.trim()) {
                 settings[setting] = value.trim();
             }
         }
-        return settings;
+        if (stored.backendMode === 'legacy' || stored.backendMode === 'ast(experimental)') {
+            settings.backendMode = stored.backendMode;
+        }
+        if (stored.previewLayout === 'continuous' || stored.previewLayout === 'paged') {
+            settings.previewLayout = stored.previewLayout;
+        }
+        const theme: WebTheme = stored.theme === 'dark' || stored.theme === 'blue' || stored.theme === 'rose'
+            ? stored.theme
+            : 'light';
+        return {
+            settings,
+            theme,
+            explorerCollapsed: stored.explorerCollapsed !== false,
+            diagnosticsVisible: stored.diagnosticsVisible !== false
+        };
     } catch {
-        return { ...DEFAULT_WEB_PREVIEW_SETTINGS };
+        return { settings, theme: 'light' as WebTheme, explorerCollapsed: true, diagnosticsVisible: true };
     }
 }
 
-function storePreviewStyleSettings(settings: StandalonePreviewSettings): void {
+function storeWebPreferences(host: StandaloneHost): void {
     try {
-        localStorage.setItem(PREVIEW_STYLE_STORAGE_KEY, JSON.stringify(Object.fromEntries(
-            TEXT_SETTING_CONTROLS.map(([, setting]) => [setting, settings[setting]])
-        )));
+        localStorage.setItem(WEB_PREFERENCES_STORAGE_KEY, JSON.stringify({
+            ...host.getSettings(),
+            theme: document.body.dataset.theme,
+            explorerCollapsed,
+            diagnosticsVisible: document.body.dataset.diagnosticsVisible === 'true'
+        }));
     } catch {
         // Preview settings remain available for this page when storage is unavailable.
     }
 }
+
+const webPreferences = loadWebPreferences();
 
 function getElement<T extends HTMLElement>(id: string): T | null {
     return document.getElementById(id) as T | null;
@@ -394,9 +423,9 @@ function reportFailure(action: string, error: unknown): void {
     setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-async function loadProject(host: StandaloneHost, project: BrowserProject): Promise<void> {
+async function loadProject(host: StandaloneHost, project: BrowserProject, historyId = project.id): Promise<void> {
     const rootPath = await host.loadProject(project);
-    activeBrowserWorkspaceId = project.id;
+    activeHistoryId = historyId;
 
     expandedFolders.clear();
     projectFolderPaths(host.getProjectTextPaths()).forEach(path => expandedFolders.add(path));
@@ -537,7 +566,8 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
     if (pickerWindow.showDirectoryPicker) {
         const directory = await pickerWindow.showDirectoryPicker();
         const project = await createDirectoryProject(directory);
-        await loadProject(host, project);
+        const historyId = await browserWorkspaces.rememberDirectory(directory).catch(() => undefined);
+        await loadProject(host, project, historyId);
         return;
     }
 
@@ -616,7 +646,8 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
         const project = remoteProjectToCreate === projectName
             ? await createRemoteProject(projectName, apiUrl)
             : await loadRemoteProject(projectName, apiUrl);
-        await loadProject(host, project);
+        const historyId = await browserWorkspaces.rememberRemote(projectName).catch(() => undefined);
+        await loadProject(host, project, historyId);
         controls.remoteProjectDialog.close();
     } catch (error) {
         if (error instanceof RemoteProjectAuthenticationError) {
@@ -687,13 +718,31 @@ function browserImportName(files: readonly File[], fallback: string): string {
     return relativePath?.split('/')[0] || fallback;
 }
 
-async function openBrowserWorkspaceDialog(host: StandaloneHost): Promise<void> {
+async function openHistoryProject(host: StandaloneHost, entry: ProjectHistoryEntry): Promise<void> {
+    if (entry.kind === 'workspace') {
+        await loadProject(host, await browserWorkspaces.open(entry.id), entry.id);
+        return;
+    }
+    if (entry.kind === 'directory') {
+        const directory = await browserWorkspaces.directory(entry.id);
+        await loadProject(host, await createDirectoryProject(directory), entry.id);
+        return;
+    }
+    if (!supportsRemoteProjects()) {
+        throw new Error('Server project history is only available from a SnapTeX Server deployment.');
+    }
+    const projectName = await browserWorkspaces.remoteProjectName(entry.id);
+    const apiUrl = new URL('api/projects/', document.baseURI).toString();
+    await loadProject(host, await loadRemoteProject(projectName, apiUrl), entry.id);
+}
+
+async function openProjectHistoryDialog(host: StandaloneHost): Promise<void> {
     const controls = webControls;
-    const summaries = await browserWorkspaces.list();
+    const summaries = await browserWorkspaces.listHistory();
     if (summaries.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'workspace-list-empty';
-        empty.textContent = 'No browser workspaces yet.';
+        empty.textContent = 'No project history yet.';
         controls.workspaceList.replaceChildren(empty);
     } else {
         controls.workspaceList.replaceChildren(...summaries.map(summary => {
@@ -702,40 +751,53 @@ async function openBrowserWorkspaceDialog(host: StandaloneHost): Promise<void> {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'workspace-list-item';
-            button.textContent = summary.name;
-            button.title = summary.rootPath;
+            button.textContent = `${summary.name} (${summary.detail})`;
+            button.title = summary.detail;
             button.addEventListener('click', () => {
-                void browserWorkspaces.open(summary.id)
-                    .then(project => loadProject(host, project))
+                void openHistoryProject(host, summary)
                     .then(() => controls.workspaceDialog.close())
-                    .catch(error => reportFailure('Open workspace', error));
+                    .catch(error => {
+                        if (error instanceof RemoteProjectAuthenticationError) {
+                            redirectToServerLogin();
+                        } else {
+                            reportFailure('Open project', error);
+                        }
+                    });
             });
             const deleteButton = document.createElement('button');
             deleteButton.type = 'button';
             deleteButton.className = 'workspace-delete-button';
-            deleteButton.textContent = 'Delete';
-            deleteButton.disabled = summary.id === activeBrowserWorkspaceId;
+            deleteButton.textContent = summary.kind === 'workspace' ? 'Delete' : 'Forget';
+            deleteButton.disabled = summary.kind === 'workspace' && summary.id === activeHistoryId;
             if (deleteButton.disabled) {
                 deleteButton.title = 'Open another project before deleting this workspace.';
             }
             deleteButton.addEventListener('click', () => {
-                if (!window.confirm(`Delete browser workspace "${summary.name}"?`)) {
+                const action = summary.kind === 'workspace' ? 'Delete browser workspace' : 'Forget project';
+                if (!window.confirm(`${action} "${summary.name}"?`)) {
                     return;
                 }
-                void browserWorkspaces.delete(summary.id)
+                const remove = summary.kind === 'workspace'
+                    ? browserWorkspaces.delete(summary.id)
+                    : browserWorkspaces.forgetHistory(summary.id);
+                void remove
                     .then(() => row.remove())
-                    .catch(error => reportFailure('Delete workspace', error));
+                    .catch(error => reportFailure(action, error));
             });
-            const reimportButton = document.createElement('button');
-            reimportButton.type = 'button';
-            reimportButton.className = 'workspace-reimport-button';
-            reimportButton.textContent = 'Re-import';
-            reimportButton.addEventListener('click', () => {
-                reimportWorkspaceId = summary.id;
-                controls.workspaceDialog.close();
-                controls.openFolderInput.click();
-            });
-            row.append(button, reimportButton, deleteButton);
+            row.append(button);
+            if (summary.kind === 'workspace') {
+                const reimportButton = document.createElement('button');
+                reimportButton.type = 'button';
+                reimportButton.className = 'workspace-reimport-button';
+                reimportButton.textContent = 'Re-import';
+                reimportButton.addEventListener('click', () => {
+                    reimportWorkspaceId = summary.id;
+                    controls.workspaceDialog.close();
+                    controls.openFolderInput.click();
+                });
+                row.append(reimportButton);
+            }
+            row.append(deleteButton);
             return row;
         }));
     }
@@ -843,25 +905,32 @@ function bindProjectControls(host: StandaloneHost): void {
         }
     };
     const bindToggleSetting = (input: HTMLInputElement, setting: BooleanPreviewSetting): void => {
-        input.addEventListener('change', () => host.updateSettings({ [setting]: input.checked } as Partial<StandalonePreviewSettings>));
+        input.addEventListener('change', () => {
+            host.updateSettings({ [setting]: input.checked } as Partial<StandalonePreviewSettings>);
+            storeWebPreferences(host);
+        });
     };
     const bindNumberSetting = (input: HTMLInputElement, setting: NumberPreviewSetting, fallback: number): void => {
-        input.addEventListener('change', () => host.updateSettings({ [setting]: readClampedNumber(input, fallback) } as Partial<StandalonePreviewSettings>));
+        input.addEventListener('change', () => {
+            host.updateSettings({ [setting]: readClampedNumber(input, fallback) } as Partial<StandalonePreviewSettings>);
+            storeWebPreferences(host);
+        });
     };
     const bindTextSetting = (input: HTMLInputElement, setting: TextPreviewSetting): void => {
         input.addEventListener('change', () => {
             const value = input.value.trim() || DEFAULT_WEB_PREVIEW_SETTINGS[setting];
             input.value = value;
             host.updateSettings({ [setting]: value } as Partial<StandalonePreviewSettings>);
-            storePreviewStyleSettings(host.getSettings());
+            storeWebPreferences(host);
         });
     };
     const openFolderProject = () => openFolder(host, controls.openFolderInput).catch(error => reportFailure('Open', error));
-    const openWorkspace = () => openBrowserWorkspaceDialog(host).catch(error => reportFailure('Open workspace', error));
+    const openWorkspace = () => openProjectHistoryDialog(host).catch(error => reportFailure('Open history', error));
     const openRemoteProject = () => { void openRemoteProjectDialog(); };
 
     controls.toggleExplorerButton.addEventListener('click', () => {
         setExplorerCollapsed(!explorerCollapsed);
+        storeWebPreferences(host);
     });
     controls.openFileButton.addEventListener('click', () => {
         openSingleFile(host, controls.openFileInput).catch(error => reportFailure('Open', error));
@@ -909,18 +978,22 @@ function bindProjectControls(host: StandaloneHost): void {
     });
     controls.showExplorerToggle.addEventListener('change', () => {
         setExplorerCollapsed(!controls.showExplorerToggle.checked);
+        storeWebPreferences(host);
     });
     controls.showDiagnosticsToggle.addEventListener('change', () => {
         setDiagnosticsVisible(controls.showDiagnosticsToggle.checked);
+        storeWebPreferences(host);
     });
     for (const [controlName, setting] of BOOLEAN_SETTING_CONTROLS) {
         bindToggleSetting(controls[controlName], setting);
     }
     controls.backendModeSelect.addEventListener('change', () => {
         host.updateSettings({ backendMode: controls.backendModeSelect.value as BackendMode });
+        storeWebPreferences(host);
     });
     controls.previewLayoutSelect.addEventListener('change', () => {
         host.updateSettings({ previewLayout: controls.previewLayoutSelect.value as PreviewLayoutMode });
+        storeWebPreferences(host);
     });
     for (const [controlName, setting, fallback] of NUMBER_SETTING_CONTROLS) {
         bindNumberSetting(controls[controlName], setting, fallback);
@@ -930,6 +1003,7 @@ function bindProjectControls(host: StandaloneHost): void {
     }
     controls.themeSelect.addEventListener('change', () => {
         setTheme(controls.themeSelect.value as WebTheme);
+        storeWebPreferences(host);
     });
     for (const menu of toolbarMenus) {
         menu.addEventListener('toggle', () => {
@@ -1016,15 +1090,15 @@ async function loadDefaultDemoProject(host: StandaloneHost): Promise<void> {
 
 const editorParent = requireElement('editor');
 
-setExplorerCollapsed(true);
-setDiagnosticsVisible(true);
-setTheme('light');
+setExplorerCollapsed(webPreferences.explorerCollapsed);
+setDiagnosticsVisible(webPreferences.diagnosticsVisible);
+setTheme(webPreferences.theme);
 
 let host: StandaloneHost;
 host = createStandaloneSnapTeXApp({
     editorParent,
     initialText: '',
-    settings: loadPreviewStyleSettings(),
+    settings: webPreferences.settings,
     onStateChange: renderProjectState
 });
 const splitter = getElement('splitter');
