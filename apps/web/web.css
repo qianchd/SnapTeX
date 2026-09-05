@@ -917,6 +917,10 @@ body.is-resizing-split #preview-pane {
     background: var(--snaptex-editor-bg);
     color: var(--snaptex-editor-fg);
     font-size: var(--snaptex-editor-font-size);
+}
+
+#editor .cm-editor,
+#editor .cm-scroller {
     font-family: var(--snaptex-editor-font-family);
 }
 
