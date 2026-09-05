@@ -493,10 +493,13 @@ suite('StandaloneHost', () => {
             const manualResponse = [...messages].reverse().find(message => message.command === HostToPreviewCommand.ScrollToBlock && message.auto === false);
             assert.ok(manualResponse && manualResponse.command === HostToPreviewCommand.ScrollToBlock);
 
-            host.setPreviewVisible(false);
+            host.setPaneVisibility(true, false);
             const messageCount = messages.length;
-            host.syncEditorSelection(2, 28);
+            host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
             assert.equal(messages.length, messageCount);
+            host.setPaneVisibility(true, true);
+            assert.equal(messages.length, messageCount + 1);
+            assert.equal(messages.at(-1)?.command, HostToPreviewCommand.ScrollToBlock);
         } finally {
             restoreWindow();
         }
@@ -557,7 +560,9 @@ suite('StandaloneHost', () => {
             assert.equal(scheduledRenders, 1);
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
-            assert.equal(host.shouldSuppressEditorToPreview(), true);
+            const messageCount = messages.length;
+            host.syncEditorSelection(0, 0, 'Changed paragraph.');
+            assert.equal(messages.length, messageCount);
         } finally {
             restoreWindow();
         }
@@ -656,10 +661,13 @@ suite('StandaloneHost', () => {
 
             await host.openEditorFile('/main.tex');
             const updateCount = messages.filter(message => message.command === HostToPreviewCommand.Update).length;
+            host.setPaneVisibility(false, true);
             await host.syncPreviewScroll(scroll.index, scroll.ratio);
 
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.equal(messages.filter(message => message.command === HostToPreviewCommand.Update).length, updateCount);
+            assert.equal(editor.scrollDOM.scrollTop, 0);
+            host.setPaneVisibility(true, true);
             assert.ok(editor.scrollDOM.scrollTop > 0);
             assert.equal(cancelledEditorSyncs, 1);
             assert.equal(writes, 0);

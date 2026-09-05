@@ -4,7 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
-- **Added**: Added responsive Web layouts with contained welcome actions, an overlay file explorer, a portrait Editor/Preview switch that preserves manual bidirectional synchronization, and the existing resizable dual-pane workspace in landscape.
+- **Added**: Added responsive Web layouts with contained welcome actions, an overlay file explorer, a portrait Editor/Preview switch with deferred bidirectional synchronization that never measures hidden panes, and the existing resizable dual-pane workspace in landscape.
 - **Fixed**: Made the Web editor/preview divider draggable with touch input without an interrupted gesture collapsing either pane.
 - **Fixed**: Kept the Web preview stable while scroll synchronization crosses `\\input` file boundaries, and avoided redundant browser-workspace writes when the synchronized editor file is unchanged.
 - **Fixed**: Repaired remote-project ACL masks during Server deployment and reported unreadable project paths explicitly instead of returning an unexplained manifest error.

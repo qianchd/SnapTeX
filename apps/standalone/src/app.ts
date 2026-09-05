@@ -121,7 +121,10 @@ export class StandaloneHost {
     private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
+    private editorVisible = true;
     private previewVisible = true;
+    private pendingEditorScroll: { position: number; viewRatio: number } | undefined;
+    private pendingPreviewSync: { line: number; character: number; lineText?: string; viewRatio: number; auto: boolean } | undefined;
     private programmaticEditorUpdate = false;
     private suppressNextSelectionSync = false;
     private suppressEditorToPreviewUntil = 0;
@@ -165,6 +168,8 @@ export class StandaloneHost {
         this.setProjectRootPath = project.setRootPath;
         this.projectName = project.name ?? rootPath;
         this.labels = [];
+        this.pendingEditorScroll = undefined;
+        this.pendingPreviewSync = undefined;
         this.savedTexts.clear();
         this.dirtyPaths.clear();
         this.conflictedPaths.clear();
@@ -473,12 +478,17 @@ export class StandaloneHost {
     }
 
     syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5, auto = true) {
-        if (this.shouldSuppressEditorToPreview() || (auto && !this.settings.autoScrollSync)) {
+        if ((auto && !this.settings.autoScrollSync) || !this.previewReady) {
             return;
         }
-        if (!this.previewReady) {
+        if (!this.previewVisible) {
+            this.pendingPreviewSync = { line, character, lineText, viewRatio, auto };
             return;
         }
+        if (Date.now() < this.suppressEditorToPreviewUntil) {
+            return;
+        }
+        this.pendingPreviewSync = undefined;
 
         const syncData = this.updateService.getPreviewSyncData(this.activeUri.toString(), line, character);
         if (!syncData) {
@@ -499,14 +509,18 @@ export class StandaloneHost {
         });
     }
 
-    shouldSuppressEditorToPreview(): boolean {
-        return !this.previewVisible || Date.now() < this.suppressEditorToPreviewUntil;
-    }
-
-    setPreviewVisible(visible: boolean): void {
-        this.previewVisible = visible;
-        if (!visible) {
-            this.cancelPendingEditorSync();
+    setPaneVisibility(editorVisible: boolean, previewVisible: boolean): void {
+        this.editorVisible = editorVisible;
+        this.previewVisible = previewVisible;
+        if (previewVisible && this.pendingPreviewSync) {
+            const pending = this.pendingPreviewSync;
+            this.pendingPreviewSync = undefined;
+            this.syncEditorSelection(pending.line, pending.character, pending.lineText, pending.viewRatio, pending.auto);
+        }
+        if (editorVisible && this.pendingEditorScroll) {
+            const { position, viewRatio } = this.pendingEditorScroll;
+            this.pendingEditorScroll = undefined;
+            this.scrollEditorPositionToViewRatio(position, viewRatio);
         }
     }
 
@@ -528,10 +542,23 @@ export class StandaloneHost {
         });
     }
 
+    private syncEditorPosition(position: number, viewRatio: number) {
+        if (!this.editorVisible) {
+            this.pendingEditorScroll = { position, viewRatio };
+            return;
+        }
+        this.scrollEditorPositionToViewRatio(position, viewRatio);
+    }
+
     consumeSelectionSyncSuppression(): boolean {
         const suppressed = this.suppressNextSelectionSync;
         this.suppressNextSelectionSync = false;
         return suppressed;
+    }
+
+    private cancelEditorToPreviewSync() {
+        this.pendingPreviewSync = undefined;
+        this.cancelPendingEditorSync();
     }
 
     private async openSourceForPreview(index: number, ratio: number, options: SourceSyncOptions = {}) {
@@ -552,7 +579,7 @@ export class StandaloneHost {
     }
 
     async revealPreviewLocation(index: number, ratio: number, options: PreviewRevealOptions = {}) {
-        this.cancelPendingEditorSync();
+        this.cancelEditorToPreviewSync();
         const target = await this.openSourceForPreview(index, ratio, options);
         if (!target) {
             return;
@@ -566,7 +593,7 @@ export class StandaloneHost {
             selection: { anchor: position },
             effects: flashEditorLineEffect.of(position)
         });
-        this.scrollEditorPositionToViewRatio(position, options.viewRatio ?? 0.5);
+        this.syncEditorPosition(position, options.viewRatio ?? 0.5);
         const token = ++this.editorFlashToken;
         globalThis.setTimeout(() => {
             if (token === this.editorFlashToken) {
@@ -580,7 +607,7 @@ export class StandaloneHost {
             return;
         }
 
-        this.cancelPendingEditorSync();
+        this.cancelEditorToPreviewSync();
         const target = await this.openSourceForPreview(index, ratio, options);
         if (!target || Date.now() < this.suppressPreviewToEditorUntil) {
             return;
@@ -588,7 +615,7 @@ export class StandaloneHost {
 
         const position = Math.min(this.editorView.state.doc.length, offsetAtLine(target.text, Math.max(0, target.source.line)));
         this.suppressEditorToPreview();
-        this.scrollEditorPositionToViewRatio(position, 0.5);
+        this.syncEditorPosition(position, 0.5);
     }
 
     handleEditorUpdate() {
@@ -742,7 +769,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     const scheduleSelectionSync = debounce(() => {
         const selection = pendingSelection;
         pendingSelection = undefined;
-        if (selection && !host?.shouldSuppressEditorToPreview()) {
+        if (selection) {
             host?.syncEditorSelection(
                 selection.line,
                 selection.character,
@@ -754,10 +781,6 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     }, () => host?.getSettings().autoScrollDelayMs ?? DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoScrollDelayMs);
 
     const scheduleEditorSelectionSync = (view: EditorView, auto: boolean) => {
-        if (host?.shouldSuppressEditorToPreview()) {
-            pendingSelection = undefined;
-            return;
-        }
         const selection = view.state.selection.main;
         const line = view.state.doc.lineAt(selection.head);
         pendingSelection = {
@@ -780,10 +803,6 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     };
 
     const scheduleEditorScrollSync = (view: EditorView) => {
-        if (host?.shouldSuppressEditorToPreview()) {
-            pendingSelection = undefined;
-            return;
-        }
         const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop + view.scrollDOM.clientHeight * activeCursorScreenRatio);
         const line = view.state.doc.lineAt(block.from);
         pendingSelection = {
@@ -849,6 +868,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
         }
     }, options.settings, () => {
         pendingSelection = undefined;
+        scheduleSelectionSync.cancel();
     });
     host.start();
     return host;

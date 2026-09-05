@@ -221,7 +221,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             mobilePaneLayout = layout;
         }
         document.body.dataset.paneLayout = layout;
-        window.snaptexStandaloneHost?.setPreviewVisible(layout !== 'editor');
+        window.snaptexStandaloneHost?.setPaneVisibility(layout !== 'preview', layout !== 'editor');
         restoreButton.hidden = layout === 'split';
         for (const button of mobilePaneButtons) {
             button.setAttribute('aria-pressed', String(button.dataset.mobilePane === layout));
@@ -368,7 +368,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             && event.altKey
             && !event.shiftKey
             && event.key.toLowerCase() === 'm') {
-            window.snaptexStandaloneHost?.setPreviewVisible(true);
             window.requestAnimationFrame(() => setPaneLayout('preview'));
         }
     }, { capture: true });
