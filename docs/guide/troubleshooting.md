@@ -44,7 +44,7 @@ The browser does not expose the required File System Access API. Use **Import Fo
 
 ## Browser work disappeared
 
-IndexedDB is browser-managed storage. It may be cleared manually, by private-browsing policy, or under storage pressure. Reopen an existing workspace from **Workspaces** when it still exists, and export important projects regularly.
+IndexedDB is browser-managed storage. It may be cleared manually, by private-browsing policy, or under storage pressure. Reopen an existing workspace from **History** when it still exists, and export important projects regularly.
 
 ## The PWA does not start offline
 

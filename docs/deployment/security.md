@@ -21,9 +21,12 @@ Remote projects use the built-in Web Session flow:
 
 - credentials are read from the private server environment;
 - successful login creates an `HttpOnly`, `Secure`, `SameSite=Strict` host cookie;
-- sessions are server-side and bounded;
+- sessions are opaque, server-side, revocable, and bounded to eight hours by default or 30 days when the user explicitly selects the trusted-device option;
+- session state is stored with owner-only permissions in the service state directory so deployment swaps and service restarts do not force a new login;
 - state-changing requests require a matching origin and CSRF token;
 - the welcome page and local-only features do not require login.
+
+Project history stores only a remote project name, never a username, password, session ID, or CSRF token. Session cookies remain unavailable to browser JavaScript. Signing out revokes the current server-side session, including a remembered session.
 
 Failed logins are tracked by source IP. Ten failures within 30 minutes block that IP for 30 days. The bounded in-memory block list resets with the Node service; use firewall or fail2ban controls when persistent bans are required.
 

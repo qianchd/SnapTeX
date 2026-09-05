@@ -85,6 +85,8 @@ Nginx terminates TLS and proxies the complete origin to the loopback Node servic
 
 Visit the public origin after Certbot completes. The welcome page, demo, local folder, and imported workspace remain public; **Open Server** asks for the configured credentials before exposing remote project names or files.
 
+The default login lasts eight hours. Select **Keep me signed in for 30 days** only on a trusted device when a longer session is appropriate. Both modes use opaque, revocable server-side sessions; signing out invalidates the current session. Session state is kept in the systemd-managed state directory, so valid logins survive service restarts and atomic application updates without being stored in the release directory.
+
 ## Project layout
 
 If `SNAPTEX_PROJECTS_ROOT=/srv/snaptex/projects`, entering project name `paper-one` opens `/srv/snaptex/projects/paper-one`. Missing projects can be created after confirmation.

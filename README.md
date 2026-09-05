@@ -48,7 +48,7 @@ Use `Ctrl+Alt+M` (`Cmd+Alt+M`) to reveal the editor cursor in the preview. Doubl
 
 ### Web
 
-Open [SnapTeX Web](https://qianchd.github.io/SnapTeX/) and choose **Open Folder**, **Import Folder**, or **Open Demo**. Imported projects and the demo persist in browser storage and can be exported as ZIP.
+Open [SnapTeX Web](https://qianchd.github.io/SnapTeX/) and choose **Open Folder**, **Import Folder**, or **Open Demo**. **History** reopens recent browser workspaces and supported local folders; imported projects and the demo persist in browser storage and can be exported as ZIP.
 
 ## Highlights
 

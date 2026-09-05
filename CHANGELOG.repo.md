@@ -4,6 +4,9 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: Added unified recent-project history for browser workspaces, local directory handles, and remote project names without duplicating local or remote project contents.
+- **Added**: Added optional 30-day server sessions with server-side persistence across service restarts and deployment swaps while retaining logout revocation and the default eight-hour lifetime.
+- **Fixed**: Persisted all standalone Web settings across projects and browser restarts instead of retaining only preview typography.
 - **Added**: Added responsive standalone Web layouts that reuse the existing pane state and defer synchronization while either portrait pane is hidden, while preserving the resizable dual-pane workspace in landscape.
 - **Fixed**: Kept touch-driven Web pane resizing on the shared pointer-event path and made cancelled gestures leave the current layout unchanged.
 - **Fixed**: Switched the standalone editor across included source files without rebuilding the root preview, preserving cross-file scroll position and skipping clean autosave writes.

@@ -30,6 +30,8 @@ In browsers that implement the File System Access API, **Open Folder** keeps han
 
 This option is hidden when the browser does not expose directory handles.
 
+Opened folders appear in **History** when the browser permits directory handles to be stored. SnapTeX stores the handle, not a copy of the directory; the browser may ask for file permission again when a historical entry is reopened.
+
 ## Import Folder
 
 **Import Folder** copies supported project files into an IndexedDB workspace. It works independently of direct folder-write support and avoids turning every save into a download.
@@ -38,7 +40,7 @@ Imported workspaces:
 
 - persist after closing the tab;
 - keep a distinct generated project ID, so folders with the same name do not overwrite each other;
-- can be reopened from **Workspaces**;
+- can be reopened from **History**;
 - can be re-imported with conflict detection;
 - can be exported as ZIP.
 
@@ -52,11 +54,21 @@ The bundled demo is imported into the same browser workspace store. It is not a 
 
 Changes are saved to the demo's IndexedDB workspace, so `Ctrl+S` does not download a file. Use **Export ZIP** when you want a portable copy.
 
+## Project history
+
+**History** is one list of recently opened projects, regardless of how they were opened:
+
+- imported projects and the demo reopen their IndexedDB workspaces;
+- local folders reopen a browser-stored directory handle and may require renewed permission;
+- server projects reopen by project name and still require a valid server login.
+
+Local and server history entries contain no project-file copies or login credentials. **Forget** removes only the history entry. **Delete** on an imported workspace removes its browser-managed project data, so export important work first.
+
 ## Static and server editions
 
 The same UI supports two build modes:
 
-- `static` enables local folders, imports, workspaces, demo, ZIP export, and offline PWA use;
+- `static` enables local folders, imports, project history, demo, ZIP export, and offline PWA use;
 - `server` adds authenticated named projects through the same-origin project API.
 
 The server process corrects the deployment marker in served HTML from its actual project API configuration, so the UI cannot accidentally present a static-only state when remote projects are enabled.

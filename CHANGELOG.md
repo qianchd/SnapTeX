@@ -4,6 +4,9 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Added a unified Web project history for imported/demo workspaces, browser-granted local folders, and server project names, with permission and authentication checks when entries are reopened.
+- **Added**: Added an optional 30-day server login backed by revocable server-side sessions that survive service restarts and atomic deployments; the default session remains eight hours.
+- **Fixed**: Persisted the complete Web settings state across projects and browser restarts, including behavior, backend, layout, theme, panel visibility, diagnostics, delays, and preview typography.
 - **Added**: Added responsive Web layouts with contained welcome actions, an overlay file explorer, a portrait Editor/Preview switch with deferred bidirectional synchronization that never measures hidden panes, and the existing resizable dual-pane workspace in landscape.
 - **Fixed**: Made the Web editor/preview divider draggable with touch input without an interrupted gesture collapsing either pane.
 - **Fixed**: Kept the Web preview stable while scroll synchronization crosses `\\input` file boundaries, and avoided redundant browser-workspace writes when the synchronized editor file is unchanged.

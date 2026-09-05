@@ -49,7 +49,9 @@ The Web settings menu exposes the host-independent subset:
 - preview font size, line height, content width, and font family;
 - light, dark, blue, and rose themes.
 
-Preview font size, line height, content width, and font family are stored for the current Web origin and reused across projects and browser restarts. Project contents remain stored by the selected project backend, independently of these display settings.
+All Web settings listed above are stored for the current Web origin and reused across projects and browser restarts. This includes behavior switches, delays, backend and layout mode, theme, panel and diagnostics visibility, and preview typography. The same saved values therefore apply on mobile and desktop when they use the same browser profile and origin.
+
+Private browsing, clearing site data, or opening a different origin/browser profile starts from the defaults. Project contents remain stored by the selected project backend, independently of these preferences. VS Code settings use VS Code configuration and are not shared with the Web app.
 
 ## Backend mode
 
