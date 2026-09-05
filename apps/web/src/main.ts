@@ -566,8 +566,8 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
     if (pickerWindow.showDirectoryPicker) {
         const directory = await pickerWindow.showDirectoryPicker();
         const project = await createDirectoryProject(directory);
-        const historyId = await browserWorkspaces.rememberDirectory(directory).catch(() => undefined);
-        await loadProject(host, project, historyId);
+        await loadProject(host, project);
+        void browserWorkspaces.rememberDirectory(directory).catch(() => undefined);
         return;
     }
 
@@ -646,8 +646,8 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
         const project = remoteProjectToCreate === projectName
             ? await createRemoteProject(projectName, apiUrl)
             : await loadRemoteProject(projectName, apiUrl);
-        const historyId = await browserWorkspaces.rememberRemote(projectName).catch(() => undefined);
-        await loadProject(host, project, historyId);
+        await loadProject(host, project);
+        void browserWorkspaces.rememberRemote(projectName).catch(() => undefined);
         controls.remoteProjectDialog.close();
     } catch (error) {
         if (error instanceof RemoteProjectAuthenticationError) {
