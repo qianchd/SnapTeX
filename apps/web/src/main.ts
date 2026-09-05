@@ -361,6 +361,25 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             }
         });
     }
+    document.addEventListener('keydown', event => {
+        if (portraitLayout.matches
+            && paneLayout === 'editor'
+            && (event.ctrlKey || event.metaKey)
+            && event.altKey
+            && !event.shiftKey
+            && event.key.toLowerCase() === 'm') {
+            window.snaptexStandaloneHost?.setPreviewVisible(true);
+            window.requestAnimationFrame(() => setPaneLayout('preview'));
+        }
+    }, { capture: true });
+    document.addEventListener('dblclick', event => {
+        if (portraitLayout.matches
+            && paneLayout === 'preview'
+            && event.target instanceof Element
+            && event.target.closest('#preview-pane .latex-block')) {
+            setPaneLayout('editor');
+        }
+    });
     const applyResponsiveLayout = (): void => {
         setPaneLayout(portraitLayout.matches ? mobilePaneLayout : 'split');
     };
