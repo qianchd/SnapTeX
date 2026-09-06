@@ -908,6 +908,8 @@ function readClampedNumber(input: HTMLInputElement, fallback: number): number {
 function setTheme(theme: WebTheme): void {
     document.body.dataset.theme = theme;
     webControls.themeSelect.value = theme;
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+        ?.setAttribute('content', theme === 'dark' ? '#000000' : '#2563eb');
 }
 
 function applyEditorStyle(): void {

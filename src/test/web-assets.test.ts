@@ -103,6 +103,7 @@ suite('Standalone web assets', () => {
             await fetchText(baseUrl, '/demo/sample.bib');
             await fetchBytes(baseUrl, '/demo/frog.jpg');
             const manifest = JSON.parse(await fetchText(baseUrl, '/manifest.webmanifest'));
+            assert.equal(manifest.theme_color, '#000000');
             assert.deepEqual(
                 manifest.icons.map((icon: { sizes: string; purpose: string }) => [icon.sizes, icon.purpose]),
                 [
