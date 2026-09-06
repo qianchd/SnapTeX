@@ -20,7 +20,8 @@ Most settings apply while the preview is open. Settings that change document or 
 | `snaptex.previewLineHeight` | `1.25` | Set preview line spacing with any valid CSS `line-height` value. |
 | `snaptex.previewContentMaxWidth` | `3000px` | Limit the continuous content or paged-page width with any valid CSS `max-width` value. |
 | `snaptex.previewFontFamily` | Times-style serif stack | Set the CSS font family used by preview text. |
-| `snaptex.previewMargin` | `11.4286% 8.5714% 7.619% 8.5714%` | Set top, right, bottom, and left margins with CSS padding shorthand. It applies to every page in paged mode and to the complete content area in continuous mode. |
+| `snaptex.previewPageMargin` | `12% 9% 8%` | Set each page's margins with CSS padding shorthand in paged mode. |
+| `snaptex.previewContinuousMargin` | `1em` | Set the complete document's outer margins with CSS padding shorthand in continuous mode. |
 
 Margin shorthand follows ordinary CSS order. For example, `10% 8% 12% 8%` means top, right, bottom, and left; one value applies to all four sides.
 
@@ -49,7 +50,7 @@ The Web settings menu exposes the host-independent subset:
 - backend mode;
 - continuous or paged preview layout;
 - render and sync delays;
-- preview font size, line height, content width, and font family;
+- preview font size, line height, content width, font family, page margins, and continuous margins;
 - editor font size and font family;
 - light, dark, blue, and rose themes.
 

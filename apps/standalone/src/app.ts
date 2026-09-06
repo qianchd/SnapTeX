@@ -736,7 +736,8 @@ export class StandaloneHost {
                     lineHeight: this.settings.lineHeight,
                     contentMaxWidth: this.settings.contentMaxWidth,
                     fontFamily: this.settings.fontFamily,
-                    margin: this.settings.margin
+                    pageMargin: this.settings.pageMargin,
+                    continuousMargin: this.settings.continuousMargin
                 }
             }
         });

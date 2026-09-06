@@ -83,7 +83,8 @@ export interface PreviewStyleSettings {
     lineHeight: string;
     contentMaxWidth: string;
     fontFamily: string;
-    margin: string;
+    pageMargin: string;
+    continuousMargin: string;
 }
 
 export const DEFAULT_PREVIEW_STYLE_SETTINGS: PreviewStyleSettings = {
@@ -91,7 +92,8 @@ export const DEFAULT_PREVIEW_STYLE_SETTINGS: PreviewStyleSettings = {
     lineHeight: '1.25',
     contentMaxWidth: '3000px',
     fontFamily: '"Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif',
-    margin: '11.4286% 8.5714% 7.619% 8.5714%'
+    pageMargin: '12% 9% 8%',
+    continuousMargin: '1em'
 };
 
 /**

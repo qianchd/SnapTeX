@@ -43,7 +43,7 @@ type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
 type TextPreviewSetting = keyof PreviewStyleSettings;
 type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
 type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput';
-type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'previewContentWidthInput' | 'previewFontFamilyInput' | 'previewMarginInput';
+type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'previewContentWidthInput' | 'previewFontFamilyInput' | 'previewPageMarginInput' | 'previewContinuousMarginInput';
 type EditorStyleSetting = keyof EditorStyleSettings;
 type EditorStyleControl = 'editorFontSizeInput' | 'editorFontFamilyInput';
 
@@ -75,7 +75,8 @@ const TEXT_SETTING_CONTROLS: ReadonlyArray<[TextSettingControl, TextPreviewSetti
     ['previewLineHeightInput', 'lineHeight'],
     ['previewContentWidthInput', 'contentMaxWidth'],
     ['previewFontFamilyInput', 'fontFamily'],
-    ['previewMarginInput', 'margin']
+    ['previewPageMarginInput', 'pageMargin'],
+    ['previewContinuousMarginInput', 'continuousMargin']
 ];
 const EDITOR_STYLE_CONTROLS: ReadonlyArray<[EditorStyleControl, EditorStyleSetting]> = [
     ['editorFontSizeInput', 'fontSize'],
@@ -204,7 +205,8 @@ function readControls() {
         previewLineHeightInput: requireElement<HTMLInputElement>('preview-line-height-input'),
         previewContentWidthInput: requireElement<HTMLInputElement>('preview-content-width-input'),
         previewFontFamilyInput: requireElement<HTMLInputElement>('preview-font-family-input'),
-        previewMarginInput: requireElement<HTMLInputElement>('preview-margin-input'),
+        previewPageMarginInput: requireElement<HTMLInputElement>('preview-page-margin-input'),
+        previewContinuousMarginInput: requireElement<HTMLInputElement>('preview-continuous-margin-input'),
         editorFontSizeInput: requireElement<HTMLInputElement>('editor-font-size-input'),
         editorFontFamilyInput: requireElement<HTMLInputElement>('editor-font-family-input'),
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),

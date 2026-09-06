@@ -4,12 +4,11 @@
     --base-line-height: var(--snaptex-preview-line-height, 1.25);
     --content-max-width: var(--snaptex-preview-content-max-width, 3000px);
     --snaptex-preview-font-family: var(--snaptex-preview-font-family-setting, "Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif);
-    --snaptex-preview-margin: var(--snaptex-preview-margin-setting, 11.4286% 8.5714% 7.619% 8.5714%);
+    --snaptex-preview-continuous-margin: var(--snaptex-preview-continuous-margin-setting, 1em);
 }
 
 body {
     font-family: var(--snaptex-preview-font-family);
-    padding: var(--snaptex-preview-margin);
     margin: 0 auto;
     max-width: var(--content-max-width);
     font-size: var(--base-font-size);
@@ -26,6 +25,10 @@ body {
 
     word-wrap: break-word;
     overflow-wrap: break-word;
+}
+
+body:not(.snaptex-paged-preview) {
+    padding: var(--snaptex-preview-continuous-margin);
 }
 
 body:is(.vscode-dark, [data-theme="dark"]) [style*="--snaptex-latex-color"] {

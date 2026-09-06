@@ -1,11 +1,11 @@
 import { PREVIEW_RESIZE_ACTIVE_CLASS, type ViewportAnchorController } from './viewport';
 
 const PAGE_ASPECT_RATIO = 297 / 210;
-const PAGE_TOP_MARGIN_RATIO = 24 / 210;
-const PAGE_BOTTOM_MARGIN_RATIO = 16 / 210;
-const PAGE_MIN_BOTTOM_MARGIN_RATIO = 6 / 210;
-const PAGE_MAX_BOTTOM_MARGIN_RATIO = 30 / 210;
-const PAGE_SIDE_MARGIN_RATIO = 18 / 210;
+const PAGE_TOP_MARGIN_RATIO = 0.12;
+const PAGE_BOTTOM_MARGIN_RATIO = 0.08;
+const PAGE_MIN_BOTTOM_MARGIN_RATIO = 0.03;
+const PAGE_MAX_BOTTOM_MARGIN_RATIO = 0.15;
+const PAGE_SIDE_MARGIN_RATIO = 0.09;
 
 interface PageMargins {
     top: number;
@@ -410,7 +410,7 @@ export class PageLayoutController {
             bottom: pageWidth * PAGE_BOTTOM_MARGIN_RATIO,
             left: pageWidth * PAGE_SIDE_MARGIN_RATIO
         };
-        const value = getComputedStyle(document.documentElement).getPropertyValue('--snaptex-preview-margin-setting').trim();
+        const value = getComputedStyle(document.documentElement).getPropertyValue('--snaptex-preview-page-margin-setting').trim();
         if (!value) {return fallback;}
 
         const fontSize = getComputedStyle(this.contentRoot).fontSize;
