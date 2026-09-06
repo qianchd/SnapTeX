@@ -6,7 +6,13 @@ const PAGE_BOTTOM_MARGIN_RATIO = 16 / 210;
 const PAGE_MIN_BOTTOM_MARGIN_RATIO = 6 / 210;
 const PAGE_MAX_BOTTOM_MARGIN_RATIO = 30 / 210;
 const PAGE_SIDE_MARGIN_RATIO = 18 / 210;
-const PAGE_CONTENT_WIDTH_RATIO = 1 - 2 * PAGE_SIDE_MARGIN_RATIO;
+
+interface PageMargins {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+}
 
 export interface PageMetrics {
     pageHeight: number;
@@ -31,7 +37,7 @@ interface IncrementalLayout {
     pendingHeights: number[];
     pages: PageRange[];
     metrics: PageMetrics;
-    pageWidth: number;
+    contentWidth: number;
 }
 
 function setStyleProperty(element: HTMLElement, property: string, value: string): void {
@@ -124,6 +130,8 @@ export class PageLayoutController {
     private readonly observedItems = new Set<HTMLElement>();
     private readonly resizedItems = new Set<HTMLElement>();
     private incrementalLayout?: IncrementalLayout;
+    private marginMeasurementHost?: HTMLDivElement;
+    private marginMeasurement?: { key: string; margins: PageMargins };
 
     constructor(
         private readonly contentRoot: HTMLElement,
@@ -172,8 +180,8 @@ export class PageLayoutController {
         if (!this.enabled) {return undefined;}
         const pageWidth = this.contentRoot.getBoundingClientRect().width;
         if (pageWidth <= 0) {return undefined;}
-        this.updatePageSideMargin(this.getItems(), pageWidth);
-        return pageWidth * PAGE_CONTENT_WIDTH_RATIO;
+        const margins = this.updatePageMargins(this.getItems(), pageWidth);
+        return Math.max(1, pageWidth - margins.left - margins.right);
     }
 
     rescaleHeights(scale: number): void {
@@ -247,7 +255,7 @@ export class PageLayoutController {
             this.incrementalLayout = undefined;
             return start;
         }
-        this.updatePageSideMargin(items, pageWidth);
+        const margins = this.updatePageMargins(items, pageWidth);
         this.incrementalLayout = {
             items,
             lastChanged: Math.max(start, lastChangedIndex),
@@ -255,8 +263,8 @@ export class PageLayoutController {
             pendingStart: start,
             pendingHeights: [],
             pages: [],
-            metrics: this.getMetrics(pageWidth),
-            pageWidth
+            metrics: this.getMetrics(pageWidth, margins),
+            contentWidth: Math.max(1, pageWidth - margins.left - margins.right)
         };
         return start;
     }
@@ -385,22 +393,72 @@ export class PageLayoutController {
         this.finishIncremental();
     }
 
-    private getMetrics(pageWidth: number): PageMetrics {
+    private getMetrics(pageWidth: number, margins: PageMargins): PageMetrics {
         return {
             pageHeight: pageWidth * PAGE_ASPECT_RATIO,
-            topMargin: pageWidth * PAGE_TOP_MARGIN_RATIO,
-            idealBottomMargin: pageWidth * PAGE_BOTTOM_MARGIN_RATIO,
-            minBottomMargin: pageWidth * PAGE_MIN_BOTTOM_MARGIN_RATIO,
-            maxBottomMargin: pageWidth * PAGE_MAX_BOTTOM_MARGIN_RATIO
+            topMargin: margins.top,
+            idealBottomMargin: margins.bottom,
+            minBottomMargin: Math.max(0, margins.bottom - pageWidth * (PAGE_BOTTOM_MARGIN_RATIO - PAGE_MIN_BOTTOM_MARGIN_RATIO)),
+            maxBottomMargin: margins.bottom + pageWidth * (PAGE_MAX_BOTTOM_MARGIN_RATIO - PAGE_BOTTOM_MARGIN_RATIO)
         };
     }
 
-    private updatePageSideMargin(items: readonly HTMLElement[], pageWidth: number): void {
-        const host = this.contentRoot.parentElement ?? document.body;
-        const sideMargin = `${pageWidth * PAGE_SIDE_MARGIN_RATIO}px`;
-        if (host.style.getPropertyValue('--snaptex-page-side-margin') !== sideMargin) {
-            this.viewportAnchor.preserve(items, () => setStyleProperty(host, '--snaptex-page-side-margin', sideMargin));
+    private getPageMargins(pageWidth: number): PageMargins {
+        const fallback = {
+            top: pageWidth * PAGE_TOP_MARGIN_RATIO,
+            right: pageWidth * PAGE_SIDE_MARGIN_RATIO,
+            bottom: pageWidth * PAGE_BOTTOM_MARGIN_RATIO,
+            left: pageWidth * PAGE_SIDE_MARGIN_RATIO
+        };
+        const value = getComputedStyle(document.documentElement).getPropertyValue('--snaptex-preview-margin-setting').trim();
+        if (!value) {return fallback;}
+
+        const fontSize = getComputedStyle(this.contentRoot).fontSize;
+        const key = `${pageWidth}\0${fontSize}\0${value}`;
+        if (this.marginMeasurement?.key === key) {return this.marginMeasurement.margins;}
+        if (!this.marginMeasurementHost) {
+            const host = document.createElement('div');
+            const probe = document.createElement('div');
+            Object.assign(host.style, {
+                position: 'fixed', left: '-10000px', top: '0', visibility: 'hidden', pointerEvents: 'none'
+            });
+            probe.style.width = '100%';
+            probe.style.boxSizing = 'border-box';
+            host.appendChild(probe);
+            document.body.appendChild(host);
+            this.marginMeasurementHost = host;
         }
+        const host = this.marginMeasurementHost;
+        const probe = host.firstElementChild as HTMLElement;
+        host.style.width = `${pageWidth}px`;
+        host.style.fontSize = fontSize;
+        probe.style.padding = value;
+        const style = getComputedStyle(probe);
+        const margins = {
+            top: parseFloat(style.paddingTop),
+            right: parseFloat(style.paddingRight),
+            bottom: parseFloat(style.paddingBottom),
+            left: parseFloat(style.paddingLeft)
+        };
+        if (Object.values(margins).some(margin => !Number.isFinite(margin))) {return fallback;}
+        this.marginMeasurement = { key, margins };
+        return margins;
+    }
+
+    private updatePageMargins(items: readonly HTMLElement[], pageWidth: number): PageMargins {
+        const host = this.contentRoot.parentElement ?? document.body;
+        const margins = this.getPageMargins(pageWidth);
+        const properties = [
+            ['--snaptex-page-top-margin', margins.top],
+            ['--snaptex-page-right-margin', margins.right],
+            ['--snaptex-page-left-margin', margins.left]
+        ] as const;
+        if (properties.some(([property, value]) => host.style.getPropertyValue(property) !== `${value}px`)) {
+            this.viewportAnchor.preserve(items, () => {
+                for (const [property, value] of properties) {setStyleProperty(host, property, `${value}px`);}
+            });
+        }
+        return margins;
     }
 
     private moveItemLayout(
@@ -433,13 +491,15 @@ export class PageLayoutController {
 
         const pageWidth = this.contentRoot.getBoundingClientRect().width;
         if (pageWidth <= 0) {return;}
-        this.updatePageSideMargin(items, pageWidth);
-        const metrics = this.getMetrics(pageWidth);
+        const margins = this.updatePageMargins(items, pageWidth);
+        const metrics = this.getMetrics(pageWidth, margins);
         const preferredStarts = items
             .map((item, index) => item.classList.contains('snaptex-page-start') ? index : -1)
             .filter(index => index >= 0);
         const pages = paginateBlockHeights(this.measure(items), metrics, preferredStarts);
-        this.viewportAnchor.preserve(items, () => this.applyPages(items, pages, metrics, pageWidth, 0, false));
+        this.viewportAnchor.preserve(items, () => this.applyPages(
+            items, pages, metrics, Math.max(1, pageWidth - margins.left - margins.right), 0, false
+        ));
     }
 
     private completeIncremental(reuseSuffix: boolean): void {
@@ -458,7 +518,7 @@ export class PageLayoutController {
             layout.items,
             pages,
             layout.metrics,
-            layout.pageWidth,
+            layout.contentWidth,
             pages[0].start,
             reuseSuffix
         ));
@@ -468,12 +528,11 @@ export class PageLayoutController {
         items: readonly HTMLElement[],
         pages: readonly PageRange[],
         metrics: PageMetrics,
-        pageWidth: number,
+        contentWidth: number,
         start: number,
         reuseSuffix: boolean
     ): void {
         const end = pages[pages.length - 1]?.end ?? start;
-        const contentWidth = pageWidth * PAGE_CONTENT_WIDTH_RATIO;
         const toContentWidthPercent = (height: number) => `${height / contentWidth * 100}%`;
         const topMargin = toContentWidthPercent(metrics.topMargin);
         for (let index = start; index < end; index++) {
@@ -522,6 +581,8 @@ export class PageLayoutController {
             item.style.removeProperty('--snaptex-page-after');
         });
         const host = this.contentRoot.parentElement ?? document.body;
-        host.style.removeProperty('--snaptex-page-side-margin');
+        host.style.removeProperty('--snaptex-page-top-margin');
+        host.style.removeProperty('--snaptex-page-right-margin');
+        host.style.removeProperty('--snaptex-page-left-margin');
     }
 }

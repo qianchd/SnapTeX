@@ -166,7 +166,8 @@ export function activate(context: vscode.ExtensionContext) {
             'previewFontSize',
             'previewLineHeight',
             'previewContentMaxWidth',
-            'previewFontFamily'
+            'previewFontFamily',
+            'previewMargin'
         ].some(setting => event.affectsConfiguration(`snaptex.${setting}`))) {
             TexPreviewPanel.currentPanel?.postWebviewConfig();
         }

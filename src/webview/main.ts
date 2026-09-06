@@ -15,7 +15,8 @@ const previewBridge = getPreviewBridge();
         ['fontSize', '--snaptex-preview-base-font-size', 'font-size'],
         ['lineHeight', '--snaptex-preview-line-height', 'line-height'],
         ['contentMaxWidth', '--snaptex-preview-content-max-width', 'max-width'],
-        ['fontFamily', '--snaptex-preview-font-family-setting', 'font-family']
+        ['fontFamily', '--snaptex-preview-font-family-setting', 'font-family'],
+        ['margin', '--snaptex-preview-margin-setting', 'padding']
     ];
     const PDF_RENDER_MARGIN_VH = 130;
     const PDF_RELEASE_MARGIN_VH = 380;

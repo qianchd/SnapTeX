@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Added shared top, right, bottom, and left preview margins for VS Code and Web, applied per page in paged mode and around the complete document in continuous mode.
 - **Added**: Added persistent Web editor font size and font family settings, and clarified the corresponding preview typography labels.
 - **Added**: Added a unified Web project history for imported/demo workspaces, browser-granted local folders, and server project names, with permission and authentication checks when entries are reopened.
 - **Added**: Added an optional 30-day server login backed by revocable server-side sessions that survive service restarts and atomic deployments; the default session remains eight hours.

@@ -20,6 +20,9 @@ Most settings apply while the preview is open. Settings that change document or 
 | `snaptex.previewLineHeight` | `1.25` | Set preview line spacing with any valid CSS `line-height` value. |
 | `snaptex.previewContentMaxWidth` | `3000px` | Limit the continuous content or paged-page width with any valid CSS `max-width` value. |
 | `snaptex.previewFontFamily` | Times-style serif stack | Set the CSS font family used by preview text. |
+| `snaptex.previewMargin` | `11.4286% 8.5714% 7.619% 8.5714%` | Set top, right, bottom, and left margins with CSS padding shorthand. It applies to every page in paged mode and to the complete content area in continuous mode. |
+
+Margin shorthand follows ordinary CSS order. For example, `10% 8% 12% 8%` means top, right, bottom, and left; one value applies to all four sides.
 
 Container-relative font units such as `cqw` use the rendered content width in continuous mode and the centered paper width in paged mode, rather than the full preview-panel width.
 

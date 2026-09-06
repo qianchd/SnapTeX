@@ -82,7 +82,8 @@ function getPreviewStyle(config = vscode.workspace.getConfiguration('snaptex')):
         fontSize: read('previewFontSize', DEFAULT_PREVIEW_STYLE_SETTINGS.fontSize),
         lineHeight: read('previewLineHeight', DEFAULT_PREVIEW_STYLE_SETTINGS.lineHeight),
         contentMaxWidth: read('previewContentMaxWidth', DEFAULT_PREVIEW_STYLE_SETTINGS.contentMaxWidth),
-        fontFamily: read('previewFontFamily', DEFAULT_PREVIEW_STYLE_SETTINGS.fontFamily)
+        fontFamily: read('previewFontFamily', DEFAULT_PREVIEW_STYLE_SETTINGS.fontFamily),
+        margin: read('previewMargin', DEFAULT_PREVIEW_STYLE_SETTINGS.margin)
     };
 }
 

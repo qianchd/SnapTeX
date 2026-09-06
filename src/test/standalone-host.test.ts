@@ -521,7 +521,8 @@ suite('StandaloneHost', () => {
             fontSize: '18px',
             lineHeight: '1.5',
             contentMaxWidth: '800px',
-            fontFamily: 'Arial, sans-serif'
+            fontFamily: 'Arial, sans-serif',
+            margin: '10% 8%'
         });
 
         try {
@@ -545,7 +546,8 @@ suite('StandaloneHost', () => {
                 fontSize: '18px',
                 lineHeight: '1.5',
                 contentMaxWidth: '800px',
-                fontFamily: 'Arial, sans-serif'
+                fontFamily: 'Arial, sans-serif',
+                margin: '10% 8%'
             });
 
             editor.replaceText('Changed paragraph.');

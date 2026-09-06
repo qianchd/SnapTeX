@@ -171,6 +171,11 @@
           "type": "string",
           "default": "\"Times New Roman\", \"Cambria\", \"Latin Modern Roman\", \"Georgia\", serif",
           "description": "CSS font-family value used by preview text."
+        },
+        "snaptex.previewMargin": {
+          "type": "string",
+          "default": "11.4286% 8.5714% 7.619% 8.5714%",
+          "description": "CSS padding shorthand used for each page in paged mode or the preview content in continuous mode."
         }
       }
     }

@@ -4,11 +4,12 @@
     --base-line-height: var(--snaptex-preview-line-height, 1.25);
     --content-max-width: var(--snaptex-preview-content-max-width, 3000px);
     --snaptex-preview-font-family: var(--snaptex-preview-font-family-setting, "Times New Roman", "Cambria", "Latin Modern Roman", "Georgia", serif);
+    --snaptex-preview-margin: var(--snaptex-preview-margin-setting, 11.4286% 8.5714% 7.619% 8.5714%);
 }
 
 body {
     font-family: var(--snaptex-preview-font-family);
-    padding: 1em 1em;
+    padding: var(--snaptex-preview-margin);
     margin: 0 auto;
     max-width: var(--content-max-width);
     font-size: var(--base-font-size);
@@ -177,7 +178,7 @@ body.snaptex-paged-preview #content-root {
     width: 100%;
     max-width: var(--content-max-width);
     margin: 0 auto;
-    padding: 0 var(--snaptex-page-side-margin);
+    padding: 0 var(--snaptex-page-right-margin) 0 var(--snaptex-page-left-margin);
     background: transparent;
 }
 
@@ -200,12 +201,11 @@ body.snaptex-paged-preview #content-root > .snaptex-page-end {
 
 body.snaptex-paged-preview #content-root > .snaptex-page-start::before,
 body.snaptex-paged-preview #content-root > .snaptex-page-start::after {
-    /* Expand the 174 mm content box back to the full 210 mm A4 sheet. */
     position: absolute;
     bottom: 100%;
-    left: -10.3448276%;
-    width: 120.6896552%;
-    aspect-ratio: 210 / 24;
+    left: calc(-1 * var(--snaptex-page-left-margin));
+    width: calc(100% + var(--snaptex-page-left-margin) + var(--snaptex-page-right-margin));
+    height: var(--snaptex-page-top-margin);
     box-sizing: border-box;
     pointer-events: none;
     z-index: 2;
@@ -222,7 +222,7 @@ body.snaptex-paged-preview #content-root > .snaptex-page-start:first-child::befo
 
 body.snaptex-paged-preview #content-root > .snaptex-page-start::after {
     content: counter(snaptex-page);
-    padding: 8px 8.5714286% 0;
+    padding: 8px var(--snaptex-page-right-margin) 0 var(--snaptex-page-left-margin);
     color: color-mix(in srgb, var(--vscode-editor-foreground) 55%, transparent);
     font-family: var(--snaptex-preview-font-family);
     font-size: 0.68em;
