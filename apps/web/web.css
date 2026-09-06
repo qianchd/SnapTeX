@@ -967,7 +967,6 @@ body.is-resizing-split #preview-pane {
 
     max-width: var(--snaptex-preview-content-max-width, 920px);
     margin: 0 auto;
-    padding: 28px 34px 72px;
     line-height: var(--base-line-height);
     text-align: justify;
 }

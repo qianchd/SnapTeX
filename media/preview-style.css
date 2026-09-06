@@ -27,7 +27,7 @@ body {
     overflow-wrap: break-word;
 }
 
-body:not(.snaptex-paged-preview) {
+body:not(.snaptex-paged-preview) #content-root {
     padding: var(--snaptex-preview-continuous-margin);
 }
 
