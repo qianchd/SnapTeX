@@ -111,9 +111,6 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         }
         if (!file.objectUrl) {
             file.objectUrl = createObjectUrl(blob);
-            if (file.readBlob) {
-                file.blob = undefined;
-            }
         }
         return file.objectUrl;
     }
@@ -144,10 +141,6 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
                     return response.blob();
                 })
                 : Promise.resolve(undefined))
-            .then(blob => {
-                file.blob = blob;
-                return blob;
-            })
             .finally(() => {
                 file.blobPromise = undefined;
             });

@@ -24,14 +24,17 @@ export interface AstSplitOptions extends SplitterOptions {
 }
 
 export interface AstSplitResult {
+    documentHash: string;
     spans: BlockTextSpan[];
     coarseSpans: BlockTextSpan[];
+    coarseHashes: string[];
 }
 
 export interface AstSplitSnapshot {
-    text: string;
+    documentHash: string;
     spans: readonly BlockTextSpan[];
-    coarseSpans?: readonly BlockTextSpan[];
+    coarseSpans: readonly BlockTextSpan[];
+    coarseHashes: readonly string[];
 }
 
 interface ContextWrapper {
@@ -61,7 +64,12 @@ interface CoarseBlockMeta {
  */
 export async function splitLatexWithAst(text: string, options: AstSplitOptions): Promise<AstSplitResult> {
     const coarseSpans = createAstCoarseSpans(text, options);
-    return { spans: await refineCoarseSpans(text, options, coarseSpans), coarseSpans };
+    return {
+        documentHash: stableHash(text),
+        spans: await refineCoarseSpans(text, options, coarseSpans),
+        coarseSpans,
+        coarseHashes: buildCoarseMeta(text, coarseSpans).map(block => block.hash)
+    };
 }
 
 export async function splitLatexWithAstIncremental(
@@ -69,18 +77,22 @@ export async function splitLatexWithAstIncremental(
     options: AstSplitOptions,
     previous?: AstSplitSnapshot
 ): Promise<AstSplitResult> {
-    if (!previous || previous.spans.length === 0 || !previous.coarseSpans || previous.coarseSpans.length === 0) {
+    if (!previous || previous.spans.length === 0 || previous.coarseSpans.length === 0
+        || previous.coarseSpans.length !== previous.coarseHashes.length) {
         return splitLatexWithAst(text, options);
     }
-    if (previous.text === text) {
+    const documentHash = stableHash(text);
+    if (previous.documentHash === documentHash) {
         return {
+            documentHash,
             spans: [...previous.spans],
-            coarseSpans: [...previous.coarseSpans]
+            coarseSpans: [...previous.coarseSpans],
+            coarseHashes: [...previous.coarseHashes]
         };
     }
 
     const coarseSpans = createAstCoarseSpans(text, options);
-    const oldCoarse = buildCoarseMeta(previous.text, previous.coarseSpans);
+    const oldCoarse = previous.coarseSpans.map((span, index) => ({ span, hash: previous.coarseHashes[index] }));
     const newCoarse = buildCoarseMeta(text, coarseSpans);
     const diff = DiffEngine.compute(oldCoarse, newCoarse);
     const spans: BlockTextSpan[] = [];
@@ -108,7 +120,7 @@ export async function splitLatexWithAstIncremental(
         appendReused(index + suffixOffset, index);
     }
 
-    return { spans, coarseSpans };
+    return { documentHash, spans, coarseSpans, coarseHashes: newCoarse.map(block => block.hash) };
 }
 
 function createAstCoarseSpans(text: string, options: SplitterOptions): BlockTextSpan[] {

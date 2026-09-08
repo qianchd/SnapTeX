@@ -467,7 +467,6 @@ const previewBridge = getPreviewBridge();
             this.heightWarmupCursor = null;
             this.heightWarmupEndIndex = null;
             this.heightWarmupMeasurementWidth = null;
-            this.heightWarmupFailedKeys = new Set();
             this.heightWarmupHtml = new Map();
             this.interactiveResizeActive = false;
             this.interactiveResizeTimer = null;
@@ -665,11 +664,9 @@ const previewBridge = getPreviewBridge();
             const shells = this.virtualization.getShells();
             if (typography && shells.length > 0
                 && shells.every(shell => this.virtualization.hasMeasuredHeight(shell, typography.measurementWidth))) {
-                this.heightWarmupFailedKeys.clear();
                 this.pagination.rescaleHeights(typography.fontScale);
                 return;
             }
-            this.heightWarmupFailedKeys.clear();
             this.scheduleHeightWarmup(250);
             if (!this.virtualization.isEnabled()) {this.pagination.refresh(true);}
         }
@@ -734,7 +731,6 @@ const previewBridge = getPreviewBridge();
                     if (styleChanged) {
                         this.syncPreviewTypography();
                         this.virtualization.resetHeightCache();
-                        this.heightWarmupFailedKeys.clear();
                         if (!virtualMode) {this.pagination.refresh(true);}
                     }
                     if (virtualMode && (virtualModeChanged || styleChanged)) {
@@ -749,9 +745,7 @@ const previewBridge = getPreviewBridge();
 
         handleUpdate(payload) {
             this.logPayloadStats(payload);
-            const resetHeightState = payload.resetPreviewState
-                || (payload.type === 'full' && payload.preserveUnchangedBlocks === false);
-            this.cancelHeightWarmup(resetHeightState);
+            this.cancelHeightWarmup();
             this.clearPendingBlockHtmlRequests();
             if (payload.resetPreviewState) {
                 this.resetPreviewRuntimeState();
@@ -948,7 +942,6 @@ const previewBridge = getPreviewBridge();
             this.debugStats.blockMounts += 1;
 
             const shell = block.closest('.latex-block-shell');
-            this.heightWarmupFailedKeys.delete(this.virtualization.getBlockKey(shell || block));
             this.attachStaleTikzPreviews(block, this.consumeStaleTikzPreviewsFromShell(shell));
 
             this.fillCurrentNumbering(block);
@@ -1245,13 +1238,12 @@ const previewBridge = getPreviewBridge();
             this.virtualization.cancelHeightMeasurement();
         }
 
-        cancelHeightWarmup(clearFailures = false) {
+        cancelHeightWarmup() {
             this.invalidateHeightWarmup();
             this.heightWarmupCursor = null;
             this.heightWarmupEndIndex = null;
             this.heightWarmupMeasurementWidth = null;
             this.pagination.cancelIncremental();
-            if (clearFailures) { this.heightWarmupFailedKeys.clear(); }
         }
 
         scheduleHeightWarmup(delay = 400, range = {}) {
@@ -1269,12 +1261,6 @@ const previewBridge = getPreviewBridge();
             this.heightWarmupCursor = this.pagination.beginIncremental(startIndex, lastChangedIndex);
             this.heightWarmupEndIndex = this.pagination.isEnabled() ? lastIndex : lastChangedIndex;
             this.heightWarmupMeasurementWidth = this.virtualization.getMeasurementWidth();
-            if (this.heightWarmupFailedKeys.size > 0) {
-                const activeKeys = new Set(this.virtualization.getShells().map(shell => this.virtualization.getBlockKey(shell)));
-                for (const key of this.heightWarmupFailedKeys) {
-                    if (!activeKeys.has(key)) { this.heightWarmupFailedKeys.delete(key); }
-                }
-            }
             this.scheduleHeightWarmupStep(generation, delay);
         }
 
@@ -1313,12 +1299,11 @@ const previewBridge = getPreviewBridge();
                     && requests.length < MAX_BLOCK_HTML_BATCH_SIZE;
                 index++) {
                 const shell = this.contentRoot.children[index];
-                const blockKey = this.virtualization.getBlockKey(shell);
+                const blockKey = this.virtualization.getBlockSourceKey(shell);
                 if (!blockKey
                     || requestedBlockKeys.has(blockKey)
                     || this.virtualization.getShellBlock(shell)
-                    || this.virtualization.hasMeasuredHeight(shell, this.heightWarmupMeasurementWidth)
-                    || this.heightWarmupFailedKeys.has(blockKey)) {
+                    || this.virtualization.hasMeasuredHeight(shell, this.heightWarmupMeasurementWidth)) {
                     continue;
                 }
                 requestedBlockKeys.add(blockKey);
@@ -1369,7 +1354,7 @@ const previewBridge = getPreviewBridge();
             while (this.heightWarmupCursor <= this.heightWarmupEndIndex
                 && this.heightWarmupCursor < this.contentRoot.children.length) {
                 const candidate = this.contentRoot.children[this.heightWarmupCursor];
-                const key = this.virtualization.getBlockKey(candidate);
+                const key = this.virtualization.getBlockSourceKey(candidate);
                 let height;
                 if (key && this.virtualization.hasMeasuredHeight(candidate, measurementWidth)) {
                     height = this.virtualization.getCachedBlockHeight(key);
@@ -1381,11 +1366,8 @@ const previewBridge = getPreviewBridge();
                             shell = candidate;
                             break;
                         }
-                        if (key) {this.heightWarmupFailedKeys.add(key);}
                         height = this.virtualization.getShellHeightBaseline(candidate);
                     }
-                } else if (key && this.heightWarmupFailedKeys.has(key)) {
-                    height = this.virtualization.getShellHeightBaseline(candidate);
                 } else if (key) {
                     shell = candidate;
                     break;
@@ -1398,7 +1380,6 @@ const previewBridge = getPreviewBridge();
             }
             if (this.heightWarmupBusy) return;
 
-            const key = this.virtualization.getBlockKey(shell);
             const requestKey = this.getHeightWarmupRequestKey(shell);
             const measure = async html => {
                 if (generation !== this.heightWarmupGeneration) return undefined;
@@ -1425,7 +1406,6 @@ const previewBridge = getPreviewBridge();
             };
             const continueWarmup = measured => {
                 if (generation !== this.heightWarmupGeneration) return;
-                if (measured === undefined) { this.heightWarmupFailedKeys.add(key); }
                 const height = measured ?? this.virtualization.getShellHeightBaseline(shell);
                 if (!this.acceptWarmupHeight(height)) {
                     if (this.heightWarmupCursor % HEIGHT_WARMUP_BATCH_SIZE === 0) {
@@ -1890,7 +1870,7 @@ const previewBridge = getPreviewBridge();
                     this.replaceBlockPreservingTikz(oldEl, newEl);
                 }
             }
-            this.virtualization.pruneCachesFromContent();
+            this.virtualization.pruneContentHeightCacheFromDom();
         }
 
         applyPatch(payload) {
@@ -1933,7 +1913,7 @@ const previewBridge = getPreviewBridge();
                 const replacement = targetBlock ? parseFirstElementFromHtml(html) : null;
                 if (replacement) this.replaceBlockPreservingTikz(targetBlock, replacement);
             });
-            this.virtualization.pruneCachesFromContent();
+            this.virtualization.pruneContentHeightCacheFromDom();
         }
 
         applyVirtualPatch(payload) {
@@ -1976,7 +1956,6 @@ const previewBridge = getPreviewBridge();
                 if (!replacement) return;
 
                 const previews = this.collectTikzPreviews(shell);
-                this.heightWarmupFailedKeys.delete(this.virtualization.getBlockKey(shell));
                 this.virtualization.forgetBlockHeight(shell);
                 const newShell = this.virtualization.createShellForBlock(replacement);
                 this.stashStaleTikzPreviewsOnShell(newShell, previews);
@@ -1986,7 +1965,7 @@ const previewBridge = getPreviewBridge();
             });
 
             this.updateVirtualizedBlocks();
-            this.virtualization.pruneCachesFromContent();
+            this.virtualization.pruneContentHeightCacheFromDom();
         }
 
         applyNumbering(data) {

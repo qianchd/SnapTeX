@@ -31,6 +31,7 @@ export interface SourceMapSegment {
 }
 
 interface BibCacheEntry {
+    uri: string;
     mtime: number;
     entries: Map<string, BibEntry>;
 }
@@ -90,7 +91,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: TUri | undefined;
 
-    private bibCache: Map<string, BibCacheEntry> = new Map();
+    private bibCache: BibCacheEntry | undefined;
     private astSplitSnapshot: AstSplitSnapshot | undefined;
     private astSplitSnapshotKey: string | undefined;
 
@@ -191,8 +192,13 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             )
             : undefined;
         const rawBlockObjects = astSplitResult?.spans ?? LatexBlockSplitter.split(bodyText, splitterOptions);
-        if (useAstBackend) {
-            this.astSplitSnapshot = { text: bodyText, spans: rawBlockObjects, coarseSpans: astSplitResult?.coarseSpans };
+        if (astSplitResult) {
+            this.astSplitSnapshot = {
+                documentHash: astSplitResult.documentHash,
+                spans: rawBlockObjects,
+                coarseSpans: astSplitResult.coarseSpans,
+                coarseHashes: astSplitResult.coarseHashes
+            };
             this.astSplitSnapshotKey = astSplitKey;
         } else {
             this.astSplitSnapshot = undefined;
@@ -388,10 +394,11 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
                 diagnostics.push({ message: `Missing bibliography file: ${bibUriStr}` });
                 return new Map();
             }
-            const cached = this.bibCache.get(bibUriStr);
-            if (cached && cached.mtime === mtime) { return cached.entries; }
+            if (this.bibCache?.uri === bibUriStr && this.bibCache.mtime === mtime) {
+                return this.bibCache.entries;
+            }
             const entries = BibTexParser.parse(await this.fileProvider.read(bibUri));
-            this.bibCache.set(bibUriStr, { mtime, entries });
+            this.bibCache = { uri: bibUriStr, mtime, entries };
             return entries;
         } catch (e) {
             console.error('Failed to load bib file:', e);

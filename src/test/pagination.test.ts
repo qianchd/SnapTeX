@@ -106,6 +106,25 @@ suite('Paged preview layout', () => {
         assert.equal(virtualization.getCachedBlockHeight('block-a'), 125);
     });
 
+    test('keeps identical block HTML scoped to each virtual shell', () => {
+        const shells = new Map<string, HTMLElement>();
+        const contentRoot = {
+            querySelector: (selector: string) => shells.get(selector.match(/data-index="(\d+)"/)?.[1] ?? '')
+        } as HTMLElement;
+        const virtualization = new BlockVirtualizationController(contentRoot, new ViewportAnchorController());
+        const shell = (index: string) => ({
+            getAttribute: (name: string) => name === 'data-index' ? index : name === 'data-block-hash' ? 'same-hash' : null
+        }) as HTMLElement;
+        shells.set('1', shell('1'));
+        shells.set('2', shell('2'));
+
+        virtualization.storeBlockHtml(1, 'same-hash', '<div data-index="1">first</div>');
+        virtualization.storeBlockHtml(2, 'same-hash', '<div data-index="2">second</div>');
+
+        assert.match(virtualization.getBlockHtml(shells.get('1')), /first/);
+        assert.match(virtualization.getBlockHtml(shells.get('2')), /second/);
+    });
+
     test('preserves a mid-document anchor without scanning the offscreen prefix', () => {
         const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
         let layoutShift = 0;

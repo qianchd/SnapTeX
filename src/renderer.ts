@@ -1,7 +1,7 @@
 import MarkdownIt from 'markdown-it';
 
 import { DiffEngine, DiffResult } from './diff';
-import { BlockNumberingCounts, BlockTextSnapshot, BlockTextSpan, DependencyHelpers, DependencyState, NumberingPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RenderPayload, SourceLocation, SourceSyncOptions } from './types';
+import { BibEntry, BlockNumberingCounts, BlockTextSnapshot, BlockTextSpan, DependencyHelpers, DependencyState, NumberingPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RenderPayload, SourceLocation, SourceSyncOptions } from './types';
 import type { AstBlockArtifact } from './ast/types';
 import { renderLatexBlockWithAst } from './ast/renderer';
 import { createDefaultAstRenderContext } from './ast/rules';
@@ -14,6 +14,7 @@ import { ProtectionManager } from './protection';
 import { renderIncludeGraphicsHtml } from './rule-floats';
 
 const EMPTY_TEXT_SNAPSHOT: BlockTextSnapshot = { bodyText: "", blockSpans: [] };
+const EMPTY_BIB_ENTRIES: ReadonlyMap<string, BibEntry> = new Map();
 interface BlockSnapshot extends RenderedBlockMeta {
     hasBibliography: boolean;
     citationKeys?: string[];
@@ -78,7 +79,7 @@ export class SmartRenderer {
         this.renderContext = {
             get currentMacros() { return renderer.currentMacros; },
             get metadata() { return renderer.documentView?.metadata; },
-            get bibEntries() { return renderer.documentView ? renderer.documentView.bibEntries : new Map(); },
+            get bibEntries() { return renderer.documentView?.bibEntries ?? EMPTY_BIB_ENTRIES; },
             protectHtml: (namespace, html, mode) => this.protector.protect(namespace, html, mode),
             renderInline: text => this.md.renderInline(text),
             resolveCitation: key => this.resolveCitation(key),
@@ -159,7 +160,7 @@ export class SmartRenderer {
             sourceText,
             currentMacros: this.currentMacros,
             metadata: this.documentView?.metadata,
-            bibEntries: this.documentView ? this.documentView.bibEntries : new Map(),
+            bibEntries: this.documentView?.bibEntries ?? EMPTY_BIB_ENTRIES,
             resolveCitation: key => this.resolveCitation(key),
             getCitedKeys: () => Array.from(this.citedKeyNumbers.keys()),
             renderCitation: (command, keys, options) => renderCitationHtml(command, keys, options, this.renderContext),

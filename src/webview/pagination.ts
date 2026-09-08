@@ -125,7 +125,9 @@ export class PageLayoutController {
     private enabled = false;
     private forceMeasure = true;
     private scheduledFrame: number | undefined;
-    private readonly heights = new WeakMap<Element, number>();
+    // Page layout heights include the current item box and therefore stay
+    // separate from virtualization's normalized content-height cache.
+    private readonly layoutHeights = new WeakMap<Element, number>();
     private readonly resizeObserver?: ResizeObserver;
     private readonly observedItems = new Set<HTMLElement>();
     private readonly resizedItems = new Set<HTMLElement>();
@@ -143,9 +145,9 @@ export class PageLayoutController {
                     || this.contentRoot.getBoundingClientRect().width <= 0) {return;}
                 entries.forEach(entry => {
                     const height = Math.ceil(entry.contentRect.height);
-                    const expectedHeight = this.heights.get(entry.target);
+                    const expectedHeight = this.layoutHeights.get(entry.target);
                     if (expectedHeight !== undefined && Math.abs(expectedHeight - height) <= 1) {return;}
-                    this.heights.set(entry.target, height);
+                    this.layoutHeights.set(entry.target, height);
                     this.resizedItems.add(entry.target as HTMLElement);
                 });
                 this.repaginateResizedItems();
@@ -187,8 +189,8 @@ export class PageLayoutController {
     rescaleHeights(scale: number): void {
         if (!this.enabled || !Number.isFinite(scale) || scale <= 0) {return;}
         this.getItems().forEach(item => {
-            const height = this.heights.get(item);
-            if (height !== undefined) {this.heights.set(item, height * scale);}
+            const height = this.layoutHeights.get(item);
+            if (height !== undefined) {this.layoutHeights.set(item, height * scale);}
         });
         this.resizedItems.clear();
         this.forceMeasure = false;
@@ -340,7 +342,7 @@ export class PageLayoutController {
         this.forceMeasure = false;
         this.pruneObservedItems(items);
         return items.map(item => {
-            const cached = forceMeasure ? undefined : this.heights.get(item);
+            const cached = forceMeasure ? undefined : this.layoutHeights.get(item);
             const height = cached ?? Math.ceil(Math.max(item.getBoundingClientRect().height, item.scrollHeight));
             this.rememberHeight(item, height);
             return height;
@@ -358,7 +360,7 @@ export class PageLayoutController {
     }
 
     private rememberHeight(item: HTMLElement, height: number): void {
-        this.heights.set(item, height);
+        this.layoutHeights.set(item, height);
         if (this.resizeObserver && !this.observedItems.has(item)) {
             this.resizeObserver.observe(item);
             this.observedItems.add(item);
@@ -381,7 +383,7 @@ export class PageLayoutController {
         while (first > 0 && !items[first].classList.contains('snaptex-page-start')) {first -= 1;}
         let index = this.beginIncremental(first, last);
         for (; index < items.length; index++) {
-            const height = this.heights.get(items[index]);
+            const height = this.layoutHeights.get(items[index]);
             if (height === undefined) {
                 this.cancelIncremental();
                 this.forceMeasure = true;
