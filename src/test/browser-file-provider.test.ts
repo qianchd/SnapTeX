@@ -152,6 +152,23 @@ suite('BrowserFileProvider', () => {
         assert.equal(urls, 1);
     });
 
+    test('does not retain lazily loaded binary files after project snapshots', async () => {
+        const provider = new BrowserFileProvider();
+        let reads = 0;
+        provider.setProjectFiles([{
+            path: '/figure.png',
+            readBlob: async () => {
+                reads++;
+                return new Blob(['image']);
+            }
+        }]);
+
+        await provider.snapshot();
+        await provider.snapshot();
+
+        assert.equal(reads, 2);
+    });
+
     test('keeps same-named browser projects independent and restores edited text', async () => {
         await withFakeIndexedDb(async () => {
             const databaseName = `snaptex-test-${Date.now()}-${Math.random()}`;
@@ -183,6 +200,20 @@ suite('BrowserFileProvider', () => {
             assert.equal(await (await resource.readBlob()).text(), 'image');
 
             const remoteId = await firstStore.rememberRemote('server-paper');
+            const remoteProject = {
+                rootPath: '/main.tex',
+                files: [
+                    { path: '/main.tex', text: 'Main' },
+                    { path: '/appendix.tex', text: 'Appendix' }
+                ]
+            };
+            const rememberedRemote = await firstStore.restoreProjectState(remoteId, remoteProject);
+            await rememberedRemote.setRootPath?.('/appendix.tex');
+            await rememberedRemote.setActivePath?.('/main.tex');
+            await firstStore.rememberRemote('server-paper');
+            const restoredRemote = await firstStore.restoreProjectState(remoteId, remoteProject);
+            assert.equal(restoredRemote.rootPath, '/appendix.tex');
+            assert.equal(restoredRemote.activePath, '/main.tex');
             const history = await firstStore.listHistory();
             assert.deepEqual(history.map(entry => entry.kind).sort(), ['remote', 'workspace', 'workspace']);
             assert.equal(await firstStore.remoteProjectName(remoteId), 'server-paper');
@@ -202,6 +233,44 @@ suite('BrowserFileProvider', () => {
                     { path: '/main.tex', file: new Blob(['Single file']) }
                 ]);
                 assert.equal((await store.open(project.id)).rootPath, '/main.tex');
+            } finally {
+                await store.deleteDatabase();
+            }
+        });
+    });
+
+    test('migrates existing workspace navigation into shared project state', async () => {
+        await withFakeIndexedDb(async () => {
+            const databaseName = `snaptex-test-${Date.now()}-${Math.random()}`;
+            const { openDB } = await import('idb');
+            const legacy = await openDB(databaseName, 2, {
+                upgrade(db) {
+                    db.createObjectStore('projects', { keyPath: 'id' });
+                    const files = db.createObjectStore('files', { keyPath: 'key' });
+                    files.createIndex('by-project', 'projectId');
+                    db.createObjectStore('contents', { keyPath: 'key' });
+                    db.createObjectStore('history', { keyPath: 'id' });
+                }
+            });
+            await legacy.put('projects', {
+                id: 'legacy', name: 'Legacy', rootPath: '/paper.tex', activePath: '/appendix.tex', lastOpenedAt: 1
+            });
+            await legacy.put('files', {
+                key: 'legacy\0/paper.tex', projectId: 'legacy', path: '/paper.tex', baseHash: '', currentHash: ''
+            });
+            await legacy.put('files', {
+                key: 'legacy\0/appendix.tex', projectId: 'legacy', path: '/appendix.tex', baseHash: '', currentHash: ''
+            });
+            await legacy.put('contents', { key: 'legacy\0/paper.tex', content: new Blob(['Paper']) });
+            await legacy.put('contents', { key: 'legacy\0/appendix.tex', content: new Blob(['Appendix']) });
+            legacy.close();
+
+            const store = new BrowserWorkspaceStore(databaseName);
+            try {
+                assert.equal((await store.listHistory())[0].detail, '/paper.tex');
+                const project = await store.open('legacy');
+                assert.equal(project.rootPath, '/paper.tex');
+                assert.equal(project.activePath, '/appendix.tex');
             } finally {
                 await store.deleteDatabase();
             }
@@ -251,6 +320,7 @@ suite('BrowserFileProvider', () => {
                 assert.equal(merged.length, 0);
                 const reopened = await store.open(project.id);
                 assert.equal(reopened.rootPath, '/alt.tex');
+                assert.equal(reopened.activePath, '/main.tex');
                 assert.equal(await reopened.files.find(file => file.path === '/main.tex')?.readText?.(), 'Local');
 
                 await opened.operations?.createTextFile('/notes.tex', 'New local file');

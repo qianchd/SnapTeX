@@ -356,6 +356,7 @@ suite('StandaloneHost', () => {
 
             await host.setPreviewRoot('/main.tex');
             assert.match(await requestBlockHtml(host, messages), /Unsaved included paragraph/);
+            await assert.rejects(() => host.setPreviewRoot('/missing.tex'), /does not exist/);
         } finally {
             restoreWindow();
         }

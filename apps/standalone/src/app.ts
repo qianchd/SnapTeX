@@ -6,6 +6,7 @@ import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import {
     chooseRootPath,
+    isTexFile,
     isProjectTextFile,
     normalizeBrowserPath,
     ProjectWriteConflictError,
@@ -209,8 +210,12 @@ export class StandaloneHost {
     async setPreviewRoot(path: string) {
         await this.flushProjectWrites();
         this.persistActiveEditorText();
-        this.rootUri = new BrowserUri(path);
-        await this.setProjectRootPath?.(this.rootUri.path);
+        const rootUri = new BrowserUri(path);
+        if (!isTexFile(rootUri.path) || !this.fileProvider.has(rootUri.path)) {
+            throw new Error(`Project TeX file does not exist: ${rootUri.path}`);
+        }
+        await this.setProjectRootPath?.(rootUri.path);
+        this.rootUri = rootUri;
         this.updateService.resetState();
         this.notifyStateChanged();
         await this.renderCurrentText();
@@ -280,6 +285,7 @@ export class StandaloneHost {
         this.updateService.resetState();
         if (this.activeUri.path === normalizedPath) {
             this.activeUri = this.rootUri;
+            await this.setProjectActivePath?.(this.rootUri.path);
             this.replaceEditorText(await this.fileProvider.read(this.rootUri));
         }
         this.notifyStateChanged();

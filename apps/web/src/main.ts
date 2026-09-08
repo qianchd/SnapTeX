@@ -472,6 +472,10 @@ async function loadProject(host: StandaloneHost, project: BrowserProject, histor
     setStatus(`Opened ${rootPath} (${project.files.length} files)`);
 }
 
+async function loadHistoryProject(host: StandaloneHost, project: BrowserProject, historyId: string): Promise<void> {
+    await loadProject(host, await browserWorkspaces.restoreProjectState(historyId, project), historyId);
+}
+
 function renderProjectState(host: StandaloneHost): void {
     const projectOpen = host.getProjectTextPaths().length > 0;
     document.body.dataset.projectOpen = String(projectOpen);
@@ -605,8 +609,8 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
     if (pickerWindow.showDirectoryPicker) {
         const directory = await pickerWindow.showDirectoryPicker();
         const project = await createDirectoryProject(directory);
-        await loadProject(host, project);
-        void browserWorkspaces.rememberDirectory(directory).catch(() => undefined);
+        const historyId = await browserWorkspaces.rememberDirectory(directory);
+        await loadHistoryProject(host, project, historyId);
         return;
     }
 
@@ -685,8 +689,8 @@ async function connectRemoteProject(host: StandaloneHost): Promise<void> {
         const project = remoteProjectToCreate === projectName
             ? await createRemoteProject(projectName, apiUrl)
             : await loadRemoteProject(projectName, apiUrl);
-        await loadProject(host, project);
-        void browserWorkspaces.rememberRemote(projectName).catch(() => undefined);
+        const historyId = await browserWorkspaces.rememberRemote(projectName);
+        await loadHistoryProject(host, project, historyId);
         controls.remoteProjectDialog.close();
     } catch (error) {
         if (error instanceof RemoteProjectAuthenticationError) {
@@ -764,7 +768,7 @@ async function openHistoryProject(host: StandaloneHost, entry: ProjectHistoryEnt
     }
     if (entry.kind === 'directory') {
         const directory = await browserWorkspaces.directory(entry.id);
-        await loadProject(host, await createDirectoryProject(directory), entry.id);
+        await loadHistoryProject(host, await createDirectoryProject(directory), entry.id);
         return;
     }
     if (!supportsRemoteProjects()) {
@@ -772,7 +776,7 @@ async function openHistoryProject(host: StandaloneHost, entry: ProjectHistoryEnt
     }
     const projectName = await browserWorkspaces.remoteProjectName(entry.id);
     const apiUrl = new URL('api/projects/', document.baseURI).toString();
-    await loadProject(host, await loadRemoteProject(projectName, apiUrl), entry.id);
+    await loadHistoryProject(host, await loadRemoteProject(projectName, apiUrl), entry.id);
 }
 
 async function openProjectHistoryDialog(host: StandaloneHost): Promise<void> {

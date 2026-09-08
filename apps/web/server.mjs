@@ -63,6 +63,7 @@ const contentTypes = new Map([
     ['.txt', 'text/plain; charset=utf-8']
 ]);
 const compressibleAssetPattern = /\.(?:css|html|js|json|mjs|svg|tex|bib|md|txt|wasm|webmanifest)$/i;
+const PROJECT_MANIFEST_CACHE_MS = 1500;
 
 function defaultIndexPath(root) {
     return root === repoRoot ? '/apps/web/index.html' : '/index.html';
@@ -142,6 +143,18 @@ function projectManifest(projectRoot) {
                 return [path, `${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`];
             }))
     };
+}
+
+function cachedProjectManifest(cache, projectRoot) {
+    const now = Date.now();
+    const cached = cache.get(projectRoot);
+    if (cached?.expiresAt > now) return cached.manifest;
+    for (const [root, entry] of cache) {
+        if (entry.expiresAt <= now) cache.delete(root);
+    }
+    const manifest = projectManifest(projectRoot);
+    cache.set(projectRoot, { expiresAt: now + PROJECT_MANIFEST_CACHE_MS, manifest });
+    return manifest;
 }
 
 function resolveProjectFile(root, pathname, requireExisting = true) {
@@ -326,7 +339,7 @@ async function sendFile(request, response, filePath, options = {}) {
     await pipeline(createReadStream(responsePath), response);
 }
 
-async function handleProjectRequest(request, response, projectsRoot) {
+async function handleProjectRequest(request, response, projectsRoot, manifestCache) {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
     if (pathname !== projectApiPrefix && !pathname.startsWith(`${projectApiPrefix}/`)) {
         return false;
@@ -382,7 +395,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
             '\\end{document}',
             ''
         ].join('\n'), 'utf8');
-        sendJson(response, 201, projectManifest(projectPath));
+        sendJson(response, 201, cachedProjectManifest(manifestCache, projectPath));
         return true;
     }
     if (!projectRoot) {
@@ -397,7 +410,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
     if (route === 'manifest' && request.method === 'GET') {
         let manifest;
         try {
-            manifest = projectManifest(projectRoot);
+            manifest = cachedProjectManifest(manifestCache, projectRoot);
         } catch (error) {
             if (!isPermissionError(error)) { throw error; }
             console.error('[SnapTeX Web] Project path is unreadable:', error.path);
@@ -437,6 +450,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
             }
             throw error;
         }
+        manifestCache.delete(projectRoot);
         response.writeHead(201, { ETag: textEtag(await readFile(newFilePath)) });
         response.end();
         return true;
@@ -477,6 +491,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
         }
         const text = await readRequestText(request, maxWriteBytes);
         await replaceTextFile(filePath, text);
+        manifestCache.delete(projectRoot);
         response.writeHead(204, { ETag: textEtag(text) });
         response.end();
         return true;
@@ -497,6 +512,7 @@ async function handleProjectRequest(request, response, projectsRoot) {
             return true;
         }
         await unlink(filePath);
+        manifestCache.delete(projectRoot);
         response.writeHead(204);
         response.end();
         return true;
@@ -513,6 +529,7 @@ export function createSnapTeXWebServer(options = {}) {
     const indexFilePath = resolveRequestPath(root, indexPath, indexPath);
     const assetHashes = loadAssetHashes(root);
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
+    const manifestCache = new Map();
     if (projectsRoot && !options.auth) {
         throw new Error('Remote projects require authentication.');
     }
@@ -544,7 +561,7 @@ export function createSnapTeXWebServer(options = {}) {
         if (await auth.handle(request, response, pathname)) return;
         const isProjectRequest = pathname === projectApiPrefix || pathname.startsWith(`${projectApiPrefix}/`);
         if (isProjectRequest && !auth.authorize(request, response)) return;
-        if (await handleProjectRequest(request, response, projectsRoot)) {
+        if (await handleProjectRequest(request, response, projectsRoot, manifestCache)) {
             return;
         }
         if (request.method !== 'GET' && request.method !== 'HEAD') {

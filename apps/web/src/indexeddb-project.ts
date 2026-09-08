@@ -11,16 +11,20 @@ import {
 import type { BrowserDirectoryHandle } from './local-project';
 
 const DEFAULT_DATABASE_NAME = 'snaptex-browser-workspaces';
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 4;
 
 const idb = import('idb');
 
 interface StoredProjectRecord {
     id: string;
     name: string;
-    rootPath: string;
     templateId?: string;
-    activePath?: string;
+}
+
+interface StoredProjectState {
+    id: string;
+    rootPath: string;
+    activePath: string;
     lastOpenedAt: number;
 }
 
@@ -42,7 +46,6 @@ interface StoredHistoryRecord {
     id: string;
     kind: 'directory' | 'remote';
     name: string;
-    lastOpenedAt: number;
     directory?: BrowserDirectoryHandle;
     projectName?: string;
 }
@@ -51,6 +54,10 @@ interface WorkspaceDatabase extends DBSchema {
     projects: {
         key: string;
         value: StoredProjectRecord;
+    };
+    projectStates: {
+        key: string;
+        value: StoredProjectState;
     };
     files: {
         key: string;
@@ -75,7 +82,6 @@ export interface BrowserImportFile {
 interface BrowserWorkspaceSummary {
     id: string;
     name: string;
-    rootPath: string;
     templateId?: string;
 }
 
@@ -102,8 +108,8 @@ async function contentHash(content: Blob): Promise<string> {
 }
 
 function projectSummary(record: StoredProjectRecord): BrowserWorkspaceSummary {
-    const { id, name, rootPath, templateId } = record;
-    return { id, name, rootPath, templateId };
+    const { id, name, templateId } = record;
+    return { id, name, templateId };
 }
 
 function commonImportRoot(paths: readonly string[]): string | undefined {
@@ -148,26 +154,9 @@ function normalizeImportFiles(files: readonly BrowserImportFile[]): BrowserImpor
 function rootPathFor(files: readonly { path: string }[]): string {
     const candidate = chooseRootPath(files.map(file => ({ path: file.path })));
     if (!candidate) {
-        throw new Error('No TeX root file found in the imported project.');
+        throw new Error('No TeX root file found in the project.');
     }
     return candidate;
-}
-
-async function touchProject(
-    projects: { get(key: string): Promise<StoredProjectRecord | undefined>; put(value: StoredProjectRecord): Promise<string> },
-    projectId: string,
-    activePath?: string
-): Promise<void> {
-    const project = await projects.get(projectId);
-    if (!project) {
-        return;
-    }
-    const timestamp = Date.now();
-    await projects.put({
-        ...project,
-        activePath: activePath ?? project.activePath,
-        lastOpenedAt: timestamp
-    });
 }
 
 async function readContent(db: IDBPDatabase<WorkspaceDatabase>, key: string): Promise<Blob> {
@@ -223,10 +212,9 @@ function createProjectFile(
             ? async text => {
                 const content = new Blob([text], { type: 'text/plain;charset=utf-8' });
                 const currentHash = await contentHash(content);
-                const transaction = db.transaction(['files', 'contents', 'projects'], 'readwrite');
+                const transaction = db.transaction(['files', 'contents'], 'readwrite');
                 transaction.objectStore('contents').put({ key: record.key, content });
                 transaction.objectStore('files').put({ ...record, currentHash });
-                await touchProject(transaction.objectStore('projects'), record.projectId);
                 await transaction.done;
                 record.currentHash = currentHash;
             }
@@ -239,7 +227,7 @@ export class BrowserWorkspaceStore {
 
     constructor(private readonly databaseName = DEFAULT_DATABASE_NAME) {
         this.database = idb.then(({ openDB }) => openDB<WorkspaceDatabase>(databaseName, DATABASE_VERSION, {
-            upgrade(db, oldVersion) {
+            upgrade(db, oldVersion, _newVersion, transaction) {
                 if (oldVersion < 1) {
                     db.createObjectStore('projects', { keyPath: 'id' });
                     const files = db.createObjectStore('files', { keyPath: 'key' });
@@ -249,34 +237,96 @@ export class BrowserWorkspaceStore {
                 if (oldVersion < 2) {
                     db.createObjectStore('history', { keyPath: 'id' });
                 }
+                if (oldVersion < 3) {
+                    db.createObjectStore('projectStates', { keyPath: 'id' });
+                }
+                if (oldVersion < 4) {
+                    const states = transaction.objectStore('projectStates');
+                    const projects = transaction.objectStore('projects');
+                    void projects.openCursor().then(function migrateProjects(cursor): Promise<void> | void {
+                        if (!cursor) {
+                            return;
+                        }
+                        const {
+                            rootPath,
+                            activePath,
+                            lastOpenedAt,
+                            ...project
+                        } = cursor.value as StoredProjectRecord & Partial<Omit<StoredProjectState, 'id'>>;
+                        cursor.update(project);
+                        return states.get(project.id).then(current => {
+                            const existing = current as Partial<StoredProjectState> | undefined;
+                            const root = existing?.rootPath ?? rootPath;
+                            if (root) {
+                                states.put({
+                                    id: project.id,
+                                    rootPath: root,
+                                    activePath: existing?.activePath ?? activePath ?? root,
+                                    lastOpenedAt: existing?.lastOpenedAt ?? lastOpenedAt ?? 0
+                                });
+                            }
+                            return cursor.continue().then(migrateProjects);
+                        });
+                    });
+
+                    const history = transaction.objectStore('history');
+                    void history.openCursor().then(function migrateHistory(cursor): Promise<void> | void {
+                        if (!cursor) {
+                            return;
+                        }
+                        const { lastOpenedAt, ...entry } = cursor.value as StoredHistoryRecord & { lastOpenedAt?: number };
+                        if (lastOpenedAt !== undefined) {
+                            cursor.update(entry);
+                        }
+                        return states.get(entry.id).then(current => {
+                            const existing = current as Partial<StoredProjectState> | undefined;
+                            if (existing?.rootPath) {
+                                states.put({
+                                    id: entry.id,
+                                    rootPath: existing.rootPath,
+                                    activePath: existing.activePath ?? existing.rootPath,
+                                    lastOpenedAt: existing.lastOpenedAt ?? lastOpenedAt ?? 0
+                                });
+                            }
+                            return cursor.continue().then(migrateHistory);
+                        });
+                    });
+                }
             }
         }));
     }
 
     async list(): Promise<BrowserWorkspaceSummary[]> {
-        const projects = await (await this.database).getAll('projects');
+        const db = await this.database;
+        const [projects, states] = await Promise.all([db.getAll('projects'), db.getAll('projectStates')]);
+        const lastOpened = new Map(states.map(state => [state.id, state.lastOpenedAt]));
         return projects
-            .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+            .sort((a, b) => (lastOpened.get(b.id) ?? 0) - (lastOpened.get(a.id) ?? 0))
             .map(projectSummary);
     }
 
     async listHistory(): Promise<ProjectHistoryEntry[]> {
         const db = await this.database;
-        const [projects, history] = await Promise.all([db.getAll('projects'), db.getAll('history')]);
+        const [projects, states, history] = await Promise.all([
+            db.getAll('projects'),
+            db.getAll('projectStates'),
+            db.getAll('history')
+        ]);
+        const stateById = new Map(states.map(state => [state.id, state]));
         return [
             ...projects.map(project => ({
                 id: project.id,
                 kind: 'workspace' as const,
                 name: project.name,
-                detail: project.rootPath,
-                lastOpenedAt: project.lastOpenedAt
+                detail: stateById.get(project.id)?.rootPath ?? 'Browser workspace',
+                lastOpenedAt: stateById.get(project.id)?.lastOpenedAt ?? 0
             })),
             ...history.map(entry => ({
                 id: entry.id,
                 kind: entry.kind,
                 name: entry.name,
                 detail: entry.kind === 'remote' ? 'Server project' : 'Local folder',
-                lastOpenedAt: entry.lastOpenedAt
+                lastOpenedAt: stateById.get(entry.id)?.lastOpenedAt ?? 0
             }))
         ].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
     }
@@ -294,18 +344,18 @@ export class BrowserWorkspaceStore {
             }
         }
         const id = existing?.id ?? `directory:${createProjectId()}`;
-        await db.put('history', { id, kind: 'directory', name: directory.name, directory, lastOpenedAt: Date.now() });
+        await db.put('history', { id, kind: 'directory', name: directory.name, directory });
         return id;
     }
 
     async rememberRemote(projectName: string): Promise<string> {
         const id = `remote:${projectName}`;
-        await (await this.database).put('history', {
+        const db = await this.database;
+        await db.put('history', {
             id,
             kind: 'remote',
             name: projectName,
-            projectName,
-            lastOpenedAt: Date.now()
+            projectName
         });
         return id;
     }
@@ -316,8 +366,6 @@ export class BrowserWorkspaceStore {
         if (entry?.kind !== 'directory' || !entry.directory) {
             throw new Error('Local folder history is no longer available.');
         }
-        entry.lastOpenedAt = Date.now();
-        await db.put('history', entry);
         return entry.directory;
     }
 
@@ -327,13 +375,47 @@ export class BrowserWorkspaceStore {
         if (entry?.kind !== 'remote' || !entry.projectName) {
             throw new Error('Server project history is no longer available.');
         }
-        entry.lastOpenedAt = Date.now();
-        await db.put('history', entry);
         return entry.projectName;
     }
 
+    async restoreProjectState(id: string, project: BrowserProject): Promise<BrowserProject> {
+        const db = await this.database;
+        const state = await db.get('projectStates', id);
+        const paths = new Set(project.files.map(file => normalizeBrowserPath(file.path)));
+        const rootPath = state && isTexFile(state.rootPath) && paths.has(state.rootPath)
+            ? state.rootPath
+            : project.rootPath ?? rootPathFor(project.files);
+        const requestedActivePath = state?.activePath ?? project.activePath;
+        const activePath = requestedActivePath && paths.has(requestedActivePath) ? requestedActivePath : rootPath;
+        let currentState: StoredProjectState = { id, rootPath, activePath, lastOpenedAt: Date.now() };
+        await db.put('projectStates', currentState);
+        const saveState = async (updates: Partial<Pick<StoredProjectState, 'rootPath' | 'activePath'>>) => {
+            currentState = { ...currentState, ...updates, lastOpenedAt: Date.now() };
+            await db.put('projectStates', currentState);
+        };
+        return {
+            ...project,
+            rootPath,
+            activePath,
+            setRootPath: async path => {
+                const normalizedPath = normalizeBrowserPath(path);
+                await project.setRootPath?.(normalizedPath);
+                await saveState({ rootPath: normalizedPath });
+            },
+            setActivePath: async path => {
+                const normalizedPath = normalizeBrowserPath(path);
+                await project.setActivePath?.(normalizedPath);
+                await saveState({ activePath: normalizedPath });
+            }
+        };
+    }
+
     async forgetHistory(id: string): Promise<void> {
-        await (await this.database).delete('history', id);
+        const db = await this.database;
+        const transaction = db.transaction(['history', 'projectStates'], 'readwrite');
+        transaction.objectStore('history').delete(id);
+        transaction.objectStore('projectStates').delete(id);
+        await transaction.done;
     }
 
     async importFiles(name: string, files: readonly BrowserImportFile[], templateId?: string): Promise<BrowserWorkspaceSummary> {
@@ -346,7 +428,7 @@ export class BrowserWorkspaceStore {
             throw new Error('The imported project contains no supported files.');
         }
         const db = await this.database;
-        const project = await readProject(db, id);
+        await readProject(db, id);
         const oldFiles = await db.getAllFromIndex('files', 'by-project', id);
         const oldByPath = new Map(oldFiles.map(file => [file.path, file]));
         const incoming = await createStoredRecords(id, normalizedFiles);
@@ -368,15 +450,11 @@ export class BrowserWorkspaceStore {
             return conflicts;
         }
 
-        const timestamp = Date.now();
-        const updatedProject: StoredProjectRecord = {
-            ...project,
-            rootPath: incomingByPath.has(project.rootPath) ? project.rootPath : rootPathFor(normalizedFiles),
-            activePath: project.activePath && incomingByPath.has(project.activePath) ? project.activePath : undefined,
-            lastOpenedAt: timestamp
-        };
-        const transaction = db.transaction(['projects', 'files', 'contents'], 'readwrite');
-        transaction.objectStore('projects').put(updatedProject);
+        const state = await db.get('projectStates', id);
+        const rootPath = state && incomingByPath.has(state.rootPath) ? state.rootPath : rootPathFor(normalizedFiles);
+        const activePath = state && incomingByPath.has(state.activePath) ? state.activePath : rootPath;
+        const transaction = db.transaction(['projectStates', 'files', 'contents'], 'readwrite');
+        transaction.objectStore('projectStates').put({ id, rootPath, activePath, lastOpenedAt: Date.now() });
         for (const existing of oldFiles) {
             if (!incomingByPath.has(existing.path)) {
                 transaction.objectStore('files').delete(existing.key);
@@ -403,31 +481,25 @@ export class BrowserWorkspaceStore {
         const db = await this.database;
         const project = await readProject(db, id);
         const records = await db.getAllFromIndex('files', 'by-project', id);
-        const activePath = project.activePath && records.some(record => record.path === project.activePath)
-            ? project.activePath
-            : project.rootPath;
-        await this.touch(id, activePath);
-        return {
+        return this.restoreProjectState(id, {
             id: project.id,
             name: project.name,
             autosave: true,
-            rootPath: project.rootPath,
-            activePath,
-            setActivePath: activePath => this.touch(id, activePath),
-            setRootPath: rootPath => this.setRootPath(id, rootPath),
+            setRootPath: rootPath => this.validateWorkspaceRoot(id, rootPath),
             files: records.map(record => createProjectFile(db, record)),
             operations: {
                 createTextFile: (path, text) => this.createTextFile(id, path, text),
                 deleteFile: path => this.deleteFile(id, path)
             }
-        };
+        });
     }
 
     async delete(id: string): Promise<void> {
         const db = await this.database;
         const records = await db.getAllFromIndex('files', 'by-project', id);
-        const transaction = db.transaction(['projects', 'files', 'contents'], 'readwrite');
+        const transaction = db.transaction(['projects', 'projectStates', 'files', 'contents'], 'readwrite');
         transaction.objectStore('projects').delete(id);
+        transaction.objectStore('projectStates').delete(id);
         for (const record of records) {
             transaction.objectStore('files').delete(record.key);
             transaction.objectStore('contents').delete(record.key);
@@ -435,23 +507,12 @@ export class BrowserWorkspaceStore {
         await transaction.done;
     }
 
-    async touch(id: string, activePath?: string): Promise<void> {
+    private async validateWorkspaceRoot(id: string, rootPath: string): Promise<void> {
         const db = await this.database;
-        const transaction = db.transaction('projects', 'readwrite');
-        await touchProject(transaction.objectStore('projects'), id, activePath);
-        await transaction.done;
-    }
-
-    private async setRootPath(id: string, rootPath: string): Promise<void> {
-        const db = await this.database;
-        const project = await readProject(db, id);
         const normalizedPath = normalizeBrowserPath(rootPath);
         if (!isTexFile(normalizedPath) || !await db.get('files', fileKey(id, normalizedPath))) {
             throw new Error(`Browser project root does not exist: ${normalizedPath}`);
         }
-        project.rootPath = normalizedPath;
-        project.lastOpenedAt = Date.now();
-        await db.put('projects', project);
     }
 
     async close(): Promise<void> {
@@ -474,18 +535,21 @@ export class BrowserWorkspaceStore {
         }
         const rootPath = rootPathFor(files);
         const projectId = createProjectId();
-        const timestamp = Date.now();
         const project: StoredProjectRecord = {
             id: projectId,
             name: name.trim() || 'Browser Project',
-            rootPath,
-            templateId,
-            lastOpenedAt: timestamp
+            templateId
         };
         const records = await createStoredRecords(projectId, files);
         const db = await this.database;
-        const transaction = db.transaction(['projects', 'files', 'contents'], 'readwrite');
+        const transaction = db.transaction(['projects', 'projectStates', 'files', 'contents'], 'readwrite');
         transaction.objectStore('projects').put(project);
+        transaction.objectStore('projectStates').put({
+            id: projectId,
+            rootPath,
+            activePath: rootPath,
+            lastOpenedAt: Date.now()
+        });
         for (const record of records) {
             transaction.objectStore('files').put(fileMetadata(record));
             transaction.objectStore('contents').put(record.content);
@@ -515,10 +579,9 @@ export class BrowserWorkspaceStore {
             currentHash: hash,
             localOnly: true
         };
-        const transaction = db.transaction(['files', 'contents', 'projects'], 'readwrite');
+        const transaction = db.transaction(['files', 'contents'], 'readwrite');
         transaction.objectStore('files').put(record);
         transaction.objectStore('contents').put({ key, content });
-        await touchProject(transaction.objectStore('projects'), projectId);
         await transaction.done;
         return createProjectFile(db, record);
     }
@@ -527,17 +590,16 @@ export class BrowserWorkspaceStore {
         const normalizedPath = normalizeBrowserPath(path);
         const key = fileKey(projectId, normalizedPath);
         const db = await this.database;
-        const project = await readProject(db, projectId);
-        if (project.rootPath === normalizedPath) {
+        await readProject(db, projectId);
+        if ((await db.get('projectStates', projectId))?.rootPath === normalizedPath) {
             throw new Error('The preview root cannot be deleted. Set another root first.');
         }
         if (!await db.get('files', key)) {
             throw new Error(`Browser project file does not exist: ${normalizedPath}`);
         }
-        const transaction = db.transaction(['files', 'contents', 'projects'], 'readwrite');
+        const transaction = db.transaction(['files', 'contents'], 'readwrite');
         transaction.objectStore('files').delete(key);
         transaction.objectStore('contents').delete(key);
-        await touchProject(transaction.objectStore('projects'), projectId);
         await transaction.done;
     }
 }

@@ -160,8 +160,10 @@ test('serves a writable project through the remote project API', async () => {
         });
         assert.equal(createdFile.status, 201);
         assert.equal(await readFile(join(projectRoot, 'notes.md'), 'utf8'), 'Notes');
+        assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/notes.md'));
         assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/notes.md`, { method: 'DELETE' })).status, 204);
         await assert.rejects(() => access(join(projectRoot, 'notes.md')));
+        assert.ok(!(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/notes.md'));
         const deleteRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'DELETE' });
         assert.equal(deleteRoot.status, 204);
         await assert.rejects(() => access(join(projectRoot, 'main.tex')));
