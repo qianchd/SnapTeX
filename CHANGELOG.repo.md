@@ -4,6 +4,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: Persisted the selected preview root for every Web project through one shared project-state store.
 - **Added**: Added separate CSS-shorthand page and continuous-preview margin settings across VS Code and Web.
 - **Added**: Added persistent standalone Web editor font size and font family controls alongside explicitly named preview typography settings.
 - **Added**: Added unified recent-project history for browser workspaces, local directory handles, and remote project names without duplicating local or remote project contents.

@@ -26,7 +26,7 @@ Remote projects use the built-in Web Session flow:
 - state-changing requests require a matching origin and CSRF token;
 - the welcome page and local-only features do not require login.
 
-Project history stores only a remote project name, never a username, password, session ID, or CSRF token. Session cookies remain unavailable to browser JavaScript. Signing out revokes the current server-side session, including a remembered session.
+Project history stores only a remote project name plus its project-relative root and active-file paths, never a username, password, session ID, CSRF token, or file content. Session cookies remain unavailable to browser JavaScript. Signing out revokes the current server-side session, including a remembered session.
 
 Failed logins are tracked by source IP. Ten failures within 30 minutes block that IP for 30 days. The bounded in-memory block list resets with the Node service; use firewall or fail2ban controls when persistent bans are required.
 

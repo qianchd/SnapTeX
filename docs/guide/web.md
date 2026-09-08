@@ -62,7 +62,7 @@ Changes are saved to the demo's IndexedDB workspace, so `Ctrl+S` does not downlo
 - local folders reopen a browser-stored directory handle and may require renewed permission;
 - server projects reopen by project name and still require a valid server login.
 
-Local and server history entries contain no project-file copies or login credentials. **Forget** removes only the history entry. **Delete** on an imported workspace removes its browser-managed project data, so export important work first.
+The preview root and active editor file are remembered separately for each project and restored the next time it opens. Local and server history entries contain only their source reference and these project-relative paths, never project-file copies or login credentials. **Forget** removes only the history entry. **Delete** on an imported workspace removes its browser-managed project data, so export important work first.
 
 ## Static and server editions
 

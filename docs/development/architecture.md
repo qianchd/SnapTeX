@@ -92,7 +92,7 @@ The Web app owns browser UI and browser/server storage adapters:
 
 - split panes, Explorer, menus, settings, welcome page, and dialogs;
 - local directory handles;
-- IndexedDB workspaces and demo import;
+- IndexedDB workspace contents and shared per-project root, active-file, and history state;
 - remote project API client;
 - static/PWA build;
 - authenticated Node project server and deployment scripts.

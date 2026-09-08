@@ -26,6 +26,12 @@ The scanner caches block-local tokens by source hash, so unchanged blocks do not
 
 Shells carry estimated heights. Mounted blocks report real heights. For blocks inserted above the viewport, the runtime applies height changes and scroll compensation in the same frame so the visible content does not make a two-step jump.
 
+Rendered HTML is stored per shell instance rather than by source hash because
+two identical source blocks still have different indices and runtime state.
+Offscreen cleanup removes that HTML while retaining the much smaller normalized
+content height. Page layout keeps its own element height because page spacing is
+not part of the reusable content height.
+
 Viewport-near work is expressed relative to viewport height rather than fixed screen pixels, making behavior more consistent across displays.
 
 Paged previews refine shell heights and page boundaries in one forward background pass. The webview requests a small bounded batch of block HTML, while the host renders its members serially and the webview measures them one at a time. Completed pages are published immediately; edits cancel the old generation and restart from the affected page, with visible dirty blocks measured from their mounted DOM.
@@ -33,6 +39,11 @@ Paged previews refine shell heights and page boundaries in one forward backgroun
 ## AST cost control
 
 The AST backend does not retain a complete document tree indefinitely. It refines coarse blocks and stores compact artifacts. Lazy block rendering fills missing artifacts during the same background pass that measures block heights, avoiding a second full parse while leaving initial visible rendering unblocked. When an artifact already owns label and citation arrays, renderer snapshots reuse those arrays as read-only metadata rather than cloning them.
+
+Incremental AST splitting retains source spans plus document and coarse-block
+hashes, not a second old-document text snapshot. Browser resources loaded on
+demand retain only concurrent read promises; ZIP export does not turn every
+visited binary file into a permanent in-memory Blob.
 
 Heavy resources use the same bounded pass without retaining their hidden output. Images are released after their layout size is known. PDF measurement reads the first-page viewport without painting a bitmap. TikZ must compile to obtain its final cropped SVG bounds; the hidden SVG is discarded after its height is cached.
 

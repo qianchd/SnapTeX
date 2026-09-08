@@ -64,12 +64,17 @@ not interchangeable caches:
 
 | Representation | Owner | Lifetime and purpose |
 | --- | --- | --- |
-| Shell height by block hash | `BlockVirtualizationController` | Survives mount/unmount and reuses geometry for unchanged blocks |
+| Shell HTML by shell instance | `BlockVirtualizationController` | Supports remounting one block and is released outside the retain range |
+| Content height by block hash | `BlockVirtualizationController` | Excludes page spacing, survives mount/unmount, and reuses geometry for unchanged blocks |
 | Current element height | `PageLayoutController` | Tracks the live DOM element used by the current page layout |
 | Pinned viewport anchor | `ViewportAnchorController` | Temporary visual compensation while a layout mutation is applied |
 
 The controller in `src/webview/main.ts` coordinates these owners. It should not
 store another authoritative height table or reimplement their invalidation.
+New derived state should likewise have one owner, one explicit key, a bounded
+lifetime, and a defined invalidation event. Project text, saved merge baselines,
+IndexedDB records, and ETags are authoritative state rather than disposable
+preview caches.
 
 ## Incremental update
 

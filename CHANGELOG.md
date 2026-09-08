@@ -4,6 +4,7 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Added**: Remembered each Web project's selected preview root across browser sessions for imported workspaces, local folders, and server projects.
 - **Added**: Added separate configurable margins for each paged sheet and for the complete continuous preview across VS Code and Web.
 - **Added**: Added persistent Web editor font size and font family settings, and clarified the corresponding preview typography labels.
 - **Added**: Added a unified Web project history for imported/demo workspaces, browser-granted local folders, and server project names, with permission and authentication checks when entries are reopened.
