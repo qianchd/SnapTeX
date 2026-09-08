@@ -4,6 +4,9 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+## [0.8.1] - 2026-09-08
+
+- **Added**: Modernized the Web editor search panel with current/total match counts, compact match options, and Lucide icons shared by search, Explorer folders, and collapsed-pane controls.
 - **Added**: Remembered each Web project's selected preview root across browser sessions for imported workspaces, local folders, and server projects.
 - **Added**: Added separate configurable margins for each paged sheet and for the complete continuous preview across VS Code and Web.
 - **Added**: Added persistent Web editor font size and font family settings, and clarified the corresponding preview typography labels.

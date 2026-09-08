@@ -4,6 +4,9 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+## [0.8.1] - 2026-09-08
+
+- **Added**: Modernized standalone editor search with match counts, compact match controls, and shared Lucide icons for search and pane navigation.
 - **Added**: Persisted the selected preview root for every Web project through one shared project-state store.
 - **Added**: Added separate CSS-shorthand page and continuous-preview margin settings across VS Code and Web.
 - **Added**: Added persistent standalone Web editor font size and font family controls alongside explicitly named preview typography settings.

@@ -783,9 +783,16 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     background: rgba(148, 163, 184, 0.22);
 }
 
-.project-folder-toggle {
+.project-tree-row .project-folder-toggle {
+    display: grid;
+    place-items: center;
     width: 18px;
-    text-align: center;
+    padding: 0;
+}
+
+.project-folder-toggle svg {
+    width: 14px;
+    height: 14px;
 }
 
 .project-file-open,
@@ -847,22 +854,9 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     cursor: pointer;
 }
 
-#restore-pane-button::before {
-    content: "";
-    display: block;
-    width: 7px;
-    height: 7px;
-    margin: auto;
-    border-right: 2px solid currentColor;
-    border-bottom: 2px solid currentColor;
-}
-
-#restore-pane-button[data-direction="left"]::before {
-    transform: rotate(135deg);
-}
-
-#restore-pane-button[data-direction="right"]::before {
-    transform: rotate(-45deg);
+#restore-pane-button svg {
+    width: 17px;
+    height: 17px;
 }
 
 #restore-pane-button:hover {
@@ -955,6 +949,147 @@ body.is-resizing-split #preview-pane {
 
 #editor .cm-cursor {
     border-left-color: var(--snaptex-editor-fg);
+}
+
+#editor .cm-panels {
+    border-color: var(--snaptex-border);
+    background: color-mix(in srgb, var(--snaptex-panel-bg) 94%, transparent);
+    color: var(--snaptex-ui-fg);
+}
+
+#editor .cm-panel.cm-search {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 38px 8px 10px;
+    border-top: 1px solid var(--snaptex-border);
+    box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.10);
+    font: 14px/1.25 "Segoe UI", Arial, sans-serif;
+}
+
+#editor .cm-panel.cm-search :is(input, button, label) {
+    box-sizing: border-box;
+    margin: 0;
+    font: inherit;
+}
+
+#editor .cm-panel.cm-search :is(.cm-textfield, .snaptex-search-field) {
+    height: 32px;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    outline: none;
+    background: var(--snaptex-editor-bg);
+    color: var(--snaptex-editor-fg);
+}
+
+#editor .cm-panel.cm-search :is(.cm-textfield:focus, .snaptex-search-field:focus-within) {
+    border-color: var(--snaptex-active-fg);
+    box-shadow: 0 0 0 1px var(--snaptex-active-fg);
+}
+
+#editor .cm-panel.cm-search .cm-textfield {
+    width: min(270px, 32%);
+    min-width: 140px;
+    padding: 4px 9px;
+}
+
+#editor .snaptex-search-field {
+    display: flex;
+    flex: 1 1 480px;
+    align-items: center;
+    max-width: 620px;
+    overflow: hidden;
+}
+
+#editor .cm-panel.cm-search .snaptex-search-field .cm-textfield {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+#editor .cm-panel.cm-search .snaptex-search-field .cm-textfield:focus {
+    box-shadow: none;
+}
+
+#editor .snaptex-replace-row {
+    display: flex;
+    flex: 0 0 100%;
+    align-items: center;
+    gap: 6px;
+}
+
+#editor .cm-panel.cm-search .snaptex-replace-row .cm-textfield {
+    flex: 1 1 270px;
+    width: auto;
+    max-width: 620px;
+}
+
+#editor .cm-panel.cm-search button {
+    min-height: 30px;
+    padding: 4px 9px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--snaptex-button-fg);
+}
+
+#editor .cm-panel.cm-search :is(button[name="prev"], button[name="next"], button[name="close"], label:has(input[type="checkbox"])) {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--snaptex-muted);
+}
+
+#editor .cm-panel.cm-search :is(button, label) svg {
+    width: 16px;
+    height: 16px;
+    pointer-events: none;
+}
+
+#editor .cm-panel.cm-search :is(button:hover, label:has(input[type="checkbox"]):hover) {
+    border-color: var(--snaptex-border);
+    background: var(--snaptex-hover-bg);
+}
+
+#editor .cm-panel.cm-search input[type="checkbox"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+#editor .cm-panel.cm-search label:has(input[type="checkbox"]:checked) {
+    border-color: color-mix(in srgb, var(--snaptex-active-fg) 55%, transparent);
+    background: var(--snaptex-active-bg);
+    color: var(--snaptex-active-fg);
+}
+
+#editor .cm-panel.cm-search label:has(input[type="checkbox"]:focus-visible) {
+    outline: 2px solid var(--snaptex-active-fg);
+    outline-offset: 1px;
+}
+
+#editor .cm-panel.cm-search [name="close"] {
+    top: 8px;
+    right: 8px;
+}
+
+#editor .snaptex-search-count {
+    min-width: 50px;
+    color: var(--snaptex-muted);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    white-space: nowrap;
 }
 
 #preview-pane {

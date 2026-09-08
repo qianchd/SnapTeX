@@ -1,6 +1,7 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
 import { createProjectZip } from '../../standalone/src/project-archive';
 import type { BackendMode, PreviewLayoutMode, PreviewStyleSettings } from '../../../src/types';
+import { ChevronDown, ChevronLeft, ChevronRight, createElement } from 'lucide';
 import {
     createProjectTree,
     isProjectFile,
@@ -296,9 +297,9 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         }
         if (layout !== 'split') {
             const showingEditor = layout === 'editor';
-            restoreButton.dataset.direction = showingEditor ? 'left' : 'right';
             restoreButton.title = showingEditor ? 'Show preview panel' : 'Show editor panel';
             restoreButton.setAttribute('aria-label', restoreButton.title);
+            restoreButton.replaceChildren(createElement(showingEditor ? ChevronLeft : ChevronRight, { 'aria-hidden': 'true' }));
         }
         if (notify) {
             window.requestAnimationFrame(() => {
@@ -520,7 +521,9 @@ function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, dept
         const toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'project-folder-toggle';
-        toggle.textContent = expanded ? 'v' : '>';
+        toggle.replaceChildren(createElement(expanded ? ChevronDown : ChevronRight, { 'aria-hidden': 'true' }));
+        toggle.title = `${expanded ? 'Collapse' : 'Expand'} ${node.name}`;
+        toggle.setAttribute('aria-label', toggle.title);
         toggle.setAttribute('aria-expanded', String(expanded));
         toggle.addEventListener('click', () => {
             if (expanded) {

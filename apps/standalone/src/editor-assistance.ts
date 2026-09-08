@@ -1,9 +1,11 @@
-import { Prec, type Extension, type StateCommand } from '@codemirror/state';
+import { Prec, type Extension, type StateCommand, type Text } from '@codemirror/state';
 import { autocompletion, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from '@codemirror/autocomplete';
 import { insertNewlineAndIndent, insertNewlineKeepIndent } from '@codemirror/commands';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { keymap } from '@codemirror/view';
+import { getSearchQuery, search, searchPanelOpen, type SearchQuery } from '@codemirror/search';
+import { keymap, ViewPlugin, type EditorView, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
+import { CaseSensitive, ChevronDown, ChevronUp, Regex, WholeWord, X, createElement, type IconNode } from 'lucide';
 import { escapeRegExp } from '../../../src/utils';
 
 // Keep the third-party LaTeX package behind a narrow boundary so its ESM-oriented declarations
@@ -47,6 +49,112 @@ const INDENT_ON_ENTER_ENVIRONMENTS = new Set([
     'proof', 'theorem', 'lemma', 'proposition', 'corollary', 'definition', 'remark',
     'align', 'align*', 'equation', 'equation*', 'gather', 'gather*'
 ]);
+
+const SEARCH_CONTROL_ICONS: ReadonlyArray<[string, IconNode, boolean?]> = [
+    ['label:has(input[name="case"])', CaseSensitive, true],
+    ['label:has(input[name="word"])', WholeWord, true],
+    ['label:has(input[name="re"])', Regex, true],
+    ['button[name="prev"]', ChevronUp, true],
+    ['button[name="next"]', ChevronDown, true],
+    ['button[name="close"]', X]
+];
+
+class SearchPanelEnhancer {
+    private frame = 0;
+    private query: SearchQuery | undefined;
+    private document: Text;
+    private total = 0;
+
+    constructor(private readonly view: EditorView) {
+        this.document = view.state.doc;
+        this.schedule();
+    }
+
+    update(update: ViewUpdate) {
+        if (update.docChanged || update.selectionSet
+            || searchPanelOpen(update.startState) !== searchPanelOpen(update.state)
+            || !getSearchQuery(update.startState).eq(getSearchQuery(update.state))) {
+            this.schedule();
+        }
+    }
+
+    destroy() {
+        cancelAnimationFrame(this.frame);
+    }
+
+    private schedule() {
+        cancelAnimationFrame(this.frame);
+        this.frame = requestAnimationFrame(() => this.refresh());
+    }
+
+    private refresh() {
+        const panel = this.view.dom.querySelector<HTMLElement>('.cm-panel.cm-search');
+        if (!panel) { return; }
+
+        let counter = panel.querySelector<HTMLOutputElement>('.snaptex-search-count');
+        if (!counter) {
+            const fieldControls: HTMLElement[] = [];
+            for (const [selector, icon, inField] of SEARCH_CONTROL_ICONS) {
+                const control = panel.querySelector<HTMLElement>(selector);
+                if (!control) { continue; }
+                control.title ||= control.getAttribute('aria-label') || control.textContent?.trim() || '';
+                const input = control.querySelector('input');
+                if (input) { input.setAttribute('aria-label', control.title); }
+                control.replaceChildren(...(input ? [input] : []), createElement(icon, { 'aria-hidden': 'true' }));
+                if (inField) { fieldControls.push(control); }
+            }
+            counter = document.createElement('output');
+            counter.className = 'snaptex-search-count';
+            counter.setAttribute('aria-live', 'polite');
+            const searchInput = panel.querySelector<HTMLInputElement>('[name="search"]');
+            if (searchInput) {
+                const field = document.createElement('div');
+                field.className = 'snaptex-search-field';
+                searchInput.before(field);
+                field.append(searchInput, counter, ...fieldControls);
+            }
+            const replaceInput = panel.querySelector<HTMLInputElement>('[name="replace"]');
+            if (replaceInput) {
+                const replaceRow = document.createElement('div');
+                replaceRow.className = 'snaptex-replace-row';
+                replaceInput.before(replaceRow);
+                replaceRow.append(replaceInput);
+                panel.querySelectorAll<HTMLElement>('button[name="replace"], button[name="replaceAll"]')
+                    .forEach(button => replaceRow.append(button));
+                panel.querySelector('br')?.remove();
+            }
+        }
+
+        const state = this.view.state;
+        const query = getSearchQuery(state);
+        const queryChanged = this.document !== state.doc || !this.query?.eq(query);
+        let current = 0;
+        if (query.valid) {
+            const selection = state.selection.main;
+            let index = 0;
+            const cursor = query.getCursor(state);
+            for (let next = cursor.next(); !next.done; next = cursor.next()) {
+                const match = next.value;
+                index++;
+                if (match.from === selection.from && match.to === selection.to) {
+                    current = index;
+                }
+                if (!queryChanged && match.from > selection.to) { break; }
+            }
+            if (queryChanged) { this.total = index; }
+        } else if (queryChanged) {
+            this.total = 0;
+        }
+        this.query = query;
+        this.document = state.doc;
+        counter.value = `${current || '-'} / ${this.total}`;
+    }
+}
+
+const SEARCH_EXTENSIONS = [
+    search(),
+    ViewPlugin.fromClass(SearchPanelEnhancer)
+];
 
 const snaptexLatexHighlightStyle = HighlightStyle.define([
     { tag: tags.keyword, color: 'var(--snaptex-cm-keyword)', fontWeight: '700' },
@@ -180,6 +288,7 @@ export function createLatexEditorExtensions(provider: LatexCompletionDataProvide
             { key: 'Enter', run: snaptexInsertNewline, shift: snaptexInsertNewline }
         ])),
         LATEX_LANGUAGE_SUPPORT,
+        SEARCH_EXTENSIONS,
         syntaxHighlighting(snaptexLatexHighlightStyle),
         autocompletion({
             override: snaptexLatexCompletionSources(provider)
