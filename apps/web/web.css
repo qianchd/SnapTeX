@@ -250,6 +250,10 @@ body[data-explorer-collapsed="true"] {
     object-fit: contain;
 }
 
+body[data-theme="dark"] :is(#snaptex-brand img, .welcome-content > img) {
+    filter: brightness(0) invert(1);
+}
+
 .toolbar-actions {
     justify-content: flex-end;
 }
