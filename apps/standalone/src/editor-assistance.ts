@@ -93,6 +93,7 @@ class SearchPanelEnhancer {
 
         let counter = panel.querySelector<HTMLOutputElement>('.snaptex-search-count');
         if (!counter) {
+            panel.querySelector('button[name="select"]')?.remove();
             const fieldControls: HTMLElement[] = [];
             for (const [selector, icon, inField] of SEARCH_CONTROL_ICONS) {
                 const control = panel.querySelector<HTMLElement>(selector);
@@ -119,8 +120,14 @@ class SearchPanelEnhancer {
                 replaceRow.className = 'snaptex-replace-row';
                 replaceInput.before(replaceRow);
                 replaceRow.append(replaceInput);
-                panel.querySelectorAll<HTMLElement>('button[name="replace"], button[name="replaceAll"]')
-                    .forEach(button => replaceRow.append(button));
+                panel.querySelectorAll<HTMLButtonElement>('button[name="replace"], button[name="replaceAll"]')
+                    .forEach(button => {
+                        if (button.name === 'replaceAll') {
+                            button.title = button.textContent || '';
+                            button.textContent = 'All';
+                        }
+                        replaceRow.append(button);
+                    });
                 panel.querySelector('br')?.remove();
             }
         }

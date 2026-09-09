@@ -965,8 +965,8 @@ body.is-resizing-split #preview-pane {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
-    padding: 8px 38px 8px 10px;
+    gap: 4px;
+    padding: 5px 34px 5px 8px;
     border-top: 1px solid var(--snaptex-border);
     box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.10);
     font: 14px/1.25 "Segoe UI", Arial, sans-serif;
@@ -979,7 +979,7 @@ body.is-resizing-split #preview-pane {
 }
 
 #editor .cm-panel.cm-search :is(.cm-textfield, .snaptex-search-field) {
-    height: 32px;
+    height: 28px;
     border: 1px solid var(--snaptex-border);
     border-radius: 4px;
     outline: none;
@@ -995,13 +995,14 @@ body.is-resizing-split #preview-pane {
 #editor .cm-panel.cm-search .cm-textfield {
     width: min(270px, 32%);
     min-width: 140px;
-    padding: 4px 9px;
+    padding: 3px 7px;
 }
 
 #editor .snaptex-search-field {
     display: flex;
     flex: 1 1 480px;
     align-items: center;
+    min-width: 0;
     max-width: 620px;
     overflow: hidden;
 }
@@ -1024,7 +1025,7 @@ body.is-resizing-split #preview-pane {
     display: flex;
     flex: 0 0 100%;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
 }
 
 #editor .cm-panel.cm-search .snaptex-replace-row .cm-textfield {
@@ -1034,8 +1035,8 @@ body.is-resizing-split #preview-pane {
 }
 
 #editor .cm-panel.cm-search button {
-    min-height: 30px;
-    padding: 4px 9px;
+    min-height: 26px;
+    padding: 3px 7px;
     border: 1px solid transparent;
     border-radius: 4px;
     background: transparent;
@@ -1045,8 +1046,8 @@ body.is-resizing-split #preview-pane {
 #editor .cm-panel.cm-search :is(button[name="prev"], button[name="next"], button[name="close"], label:has(input[type="checkbox"])) {
     display: inline-grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     padding: 0;
     border: 1px solid transparent;
     border-radius: 4px;
@@ -1084,12 +1085,12 @@ body.is-resizing-split #preview-pane {
 }
 
 #editor .cm-panel.cm-search [name="close"] {
-    top: 8px;
-    right: 8px;
+    top: 5px;
+    right: 5px;
 }
 
 #editor .snaptex-search-count {
-    min-width: 50px;
+    min-width: 44px;
     color: var(--snaptex-muted);
     font-variant-numeric: tabular-nums;
     text-align: center;
