@@ -838,7 +838,7 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
 #splitter::before {
     content: "";
     position: absolute;
-    inset: 0 -10px;
+    inset: 0 -6px 0 0;
 }
 
 #restore-pane-button {
