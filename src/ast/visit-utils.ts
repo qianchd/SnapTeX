@@ -242,34 +242,6 @@ export function astNodesToText(nodes: readonly SnaptexAstNode[]): string {
     }).join('');
 }
 
-export function astNodesToLatex(nodes: readonly SnaptexAstNode[]): string {
-    return nodes.map(node => {
-        if (node.type === 'whitespace') {
-            return ' ';
-        }
-        if (node.type === 'parbreak') {
-            return '\n\n';
-        }
-        if (isMacroNode(node)) {
-            const command = node.escapeToken === '' ? node.content : `\\${node.content}`;
-            const args = nodeArguments(node)
-                .map(argument => `${argument.openMark}${astNodesToLatex(argument.content)}${argument.closeMark}`)
-                .join('');
-            return command + args;
-        }
-        if (isGroupNode(node)) {
-            return `{${astNodesToLatex(node.content)}}`;
-        }
-        if ('content' in node && typeof node.content === 'string') {
-            return node.content;
-        }
-        if ('content' in node && Array.isArray(node.content)) {
-            return astNodesToLatex(node.content);
-        }
-        return '';
-    }).join('');
-}
-
 export function argumentText(argument: SnaptexAstArgument | undefined): string {
     return argument ? astNodesToText(argument.content) : '';
 }

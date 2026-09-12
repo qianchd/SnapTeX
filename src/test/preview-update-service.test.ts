@@ -174,12 +174,20 @@ suite('PreviewUpdateService', () => {
         }
     });
 
-    test('renders math with preamble macros in AST splitter mode', async () => {
+    test('preserves nested math, TeX shorthand, and preamble macros in AST mode', async () => {
         const service = new PreviewUpdateService(new MemoryFileProvider());
         const payload = await service.render(uri, [
             '\\newcommand{\\vect}[1]{\\mathbf{#1}}',
+            '\\newcommand{\\rbf}{\\mathbf{r}}',
             '\\begin{document}',
-            '$\\vect{x}$',
+            'Let $\\mathbb P$ and $\\mathbf v$ be given.',
+            '\\[\\mathcal L(\\vect{x}) = \\mathbb P\\]',
+            '\\begin{equation}',
+            '\\begin{aligned}',
+            '\\frac12\\|\\rbf-\\vect{x}_1\\|_2^2 &= \\frac12\\left\\{1 + 1\\right\\},\\\\',
+            '\\vect{x}_2 &= 2.',
+            '\\end{aligned}',
+            '\\end{equation}',
             '\\end{document}'
         ].join('\n'), {
             deferFullHtml: false,
@@ -189,6 +197,8 @@ suite('PreviewUpdateService', () => {
 
         assert.match(html, /katex/);
         assert.match(html, /mathvariant="bold"|mord mathbf/);
+        assert.doesNotMatch(html, /katex-error/);
+        assert.doesNotMatch(html, /\\mathbb P\$/);
     });
 
     test('renders text macros in both backend modes', async () => {

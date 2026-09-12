@@ -1,6 +1,6 @@
 import { extractAndHideLabels } from '../../utils';
 import { normalizeMathEnvironmentForKatex, renderNumberedEquationHtml } from '../../rule-helpers';
-import { astNodesToLatex, environmentName, getSourcePosition } from '../visit-utils';
+import { environmentName, getSourcePosition } from '../visit-utils';
 import type { AstRenderContext, AstRenderRule } from './index';
 
 function isMathNodeType(type: string): boolean {
@@ -22,6 +22,18 @@ interface MathRefPlaceholder {
     token: string;
     html: string;
     text: string;
+}
+
+function mathNodeContent(source: string, type: string, envName?: string): string {
+    const delimiters = type === 'inlinemath'
+        ? [['$', '$'], ['\\(', '\\)']]
+        : type === 'displaymath'
+            ? [['$$', '$$'], ['\\[', '\\]']]
+            : envName
+                ? [[`\\begin{${envName}}`, `\\end{${envName}}`]]
+                : [];
+    const match = delimiters.find(([open, close]) => source.startsWith(open) && source.endsWith(close));
+    return match ? source.slice(match[0].length, -match[1].length) : source;
 }
 
 function replaceMathRefs(tex: string, context: AstRenderContext): { tex: string; refs: MathRefPlaceholder[] } {
@@ -74,9 +86,7 @@ export const AST_MATH_RULE: AstRenderRule = (input, context) => {
     if (!isMathNodeType(node.type)) { return undefined; }
     const displayMode = node.type === 'displaymath' || node.type === 'mathenv';
     const envName = environmentName(node);
-    const rawContent = Array.isArray(node.content)
-        ? astNodesToLatex(node.content)
-        : (typeof node.content === 'string' ? node.content : '');
+    const rawContent = mathNodeContent(context.sourceSlice(node), node.type, envName);
     const { cleanContent, hiddenHtml } = extractAndHideLabels(rawContent);
     let tex = cleanContent.trim();
 

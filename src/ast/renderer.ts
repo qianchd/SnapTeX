@@ -30,7 +30,7 @@ export async function renderLatexBlockWithAst(
     text: string,
     options: AstBlockRenderOptions = {}
 ): Promise<AstBlockRenderResult> {
-    const context = options.context ?? createDefaultAstRenderContext();
+    const context = options.context ?? createDefaultAstRenderContext({ sourceText: text });
     const parseResult = await (options.parse ?? parseLatexToAst)(text);
     const hash = options.wrapper?.hash ?? stableHash(text);
     const artifact = createAstBlockArtifactFromParseResult(parseResult, hash);
