@@ -4,8 +4,9 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
-## [0.8.1] - 2026-09-08
+## [0.8.1] - 2026-09-13
 
+- **Highlights**: Modernized the Web workspace with persistent project history and settings, responsive mobile panes, richer search controls, remote synchronization, and optional remembered server sessions.
 - **Added**: Modernized standalone editor search with match counts, compact match controls, and shared Lucide icons for search and pane navigation.
 - **Added**: Persisted the selected preview root for every Web project through one shared project-state store.
 - **Added**: Added separate CSS-shorthand page and continuous-preview margin settings across VS Code and Web.
@@ -20,6 +21,14 @@ This file records changes across the SnapTeX repository, including the VS Code e
 - **Added**: Added shared preamble color extraction and CSS normalization for custom `\definecolor` values used by legacy and AST preview rules.
 - **Changed**: Added shared dark-theme color adaptation for Web editor and preview content without command-specific color overrides.
 - **Added**: Synchronized open server projects with external text-file edits using lightweight manifest revisions, conditional ETag reads, optimistic writes, and three-way conflict handling.
+- **Changed**: Reduced AST splitter, renderer, artifact, and shared host-state complexity while preserving public extension APIs and background warm-up behavior.
+- **Changed**: Accelerated shared AST incremental splitting and rendering by eliminating repeated scans, duplicate algorithm math rendering, and redundant artifact rebuilding; avoided unchanged pagination style writes and unnecessary viewport-anchor scans.
+- **Fixed**: Made AST and legacy rendering more robust for nested theorem titles and command arguments, source-complete math, `alignat`, `\mbox`, starred `\includegraphics`, and optional section titles.
+- **Fixed**: Unified AST citation metadata and rendering argument reads, including spaced optional arguments, and retained minimal AST parsing when full post-processing fails.
+- **Added**: Added a reusable arXiv source audit for a target of 100 mathematics and statistics projects. It renders each root document through both backends and reports rendering failures, leaked commands, math errors, and backend differences; downloaded sources stay out of Git and release packages.
+- **Added**: Broadened shared rendering support for declared theorem and list wrappers, long tables and math environments, `algorithm2e`, subfigures, standalone graphics, `tikz-cd`, common reference and `siunitx` commands, and biblatex bibliographies.
+- **Fixed**: Preserved simple `\let` definition snapshots and unbraced macro arguments across text and math rendering, and suppressed nonvisual template commands instead of leaking them into previews.
+- **Fixed**: Kept preview scrolling authoritative until the next editor interaction, preventing reverse-sync rebound in VS Code and the standalone Web app, including hidden-pane layouts.
 
 ## [0.8.0] - 2026-08-16
 

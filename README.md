@@ -4,7 +4,7 @@ Fast, local-first LaTeX editing and structural preview for VS Code and the brows
 
 **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)** · **[Read the documentation](https://qianchd.github.io/SnapTeX/docs/)** · **[Install the VS Code extension](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex)**
 
-> **What's new in 0.8.0:** SnapTeX now opens in an elastic paged preview by default, with stable virtualized scrolling, flexible page bottoms, and extended pages for oversized content. Continuous preview remains available in settings.
+> **What's new in 0.8.1:** Faster, steadier elastic paged preview with configurable margins, broader LaTeX rendering across both backends, and more reliable bidirectional scrolling. Continuous preview remains available in settings. Contributors can use the new [arXiv source audit](tools/arxiv-audit/README.md) to check real papers against both backends.
 
 <p align="center">
   <img src="media/icon.png" alt="SnapTeX logo" width="150">
@@ -78,6 +78,8 @@ npm run web:serve-static   # static Web app + docs
 npm run docs:dev           # documentation development server
 npm run web:build-server   # server-enabled Web assets
 ```
+
+For corpus-based rendering checks, see the [arXiv source audit](tools/arxiv-audit/README.md). Downloaded paper sources are kept locally and are not packaged.
 
 The maintained guides cover:
 
