@@ -159,6 +159,7 @@ export class SmartRenderer {
         return createDefaultAstRenderContext({
             sourceText,
             currentMacros: this.currentMacros,
+            astMathRules: this.registry.astMathRules,
             metadata: this.documentView?.metadata,
             bibEntries: this.documentView?.bibEntries ?? EMPTY_BIB_ENTRIES,
             resolveCitation: key => this.resolveCitation(key),

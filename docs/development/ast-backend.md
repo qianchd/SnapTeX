@@ -33,6 +33,8 @@ AST rules match node structure rather than competing regular-expression priority
 
 Content not claimed by an AST rule uses the AST fallback renderer for comments, whitespace, paragraphs, ordinary text, unsupported macros, and child arrays. Built-in AST rules deliberately reuse host-neutral helpers such as KaTeX, citations, tables, and TikZ preparation where those services are shared; the block is not rerun through the legacy `renderRules` pipeline.
 
+Math nodes keep their original source for KaTeX. The existing block AST first checks the flat `astMathRules` command declarations; only formulas containing a registered command such as `ref`, `label`, `mbox`, or `Rmnum` receive a temporary minimal parse for exact local edits. That tree is discarded after rendering, and rules added to the registry automatically participate in both the precheck and transformation pass.
+
 ## Scanner status
 
 An AST scanner implementation exists and has been compared with the legacy scanner, but the production pipeline continues to use the lighter block-summary scanner. Numbering is inherently ordered, while AST warm-up can be non-linear; reparsing all blocks only to replace a working scanner would increase startup cost without a matching user benefit.

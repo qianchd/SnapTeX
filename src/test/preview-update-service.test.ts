@@ -186,7 +186,7 @@ suite('PreviewUpdateService', () => {
             '\\[\\mathcal L(\\vect{x}) = \\mathbb P\\]',
             '\\begin{equation}',
             '\\begin{aligned}',
-            '\\frac12\\|\\rbf-\\vect{x}_1\\|_2^2 &= \\frac12\\left\\{1 + 1\\right\\},\\\\',
+            '\\frac{\\Rmnum{1}}{2}\\|\\rbf-\\vect{x}_1\\|_2^2 &= \\frac12\\left\\{1 + 1\\right\\}+\\mbox{bold \\textbf{note}}+C_{\\ref*{eq:model}},\\\\',
             '\\vect{x}_2 &= 2.',
             '\\end{aligned}',
             '\\end{equation}',
@@ -199,7 +199,9 @@ suite('PreviewUpdateService', () => {
 
         assert.match(html, /katex/);
         assert.match(html, /mathvariant="bold"|mord mathbf/);
+        assert.match(html, /data-key="eq:model"/);
         assert.doesNotMatch(html, /katex-error/);
+        assert.doesNotMatch(html, /\\(?:Rmnum|mbox)/);
         assert.doesNotMatch(html, /\\mathbb P\$/);
     });
 
@@ -259,7 +261,7 @@ suite('PreviewUpdateService', () => {
     test('renders a representative document through legacy and AST splitter modes', async () => {
         const source = [
             '\\begin{document}',
-            '\\section[Brief]{Intro \\textit{topic}}\\label{sec:intro}',
+            '\\section[Brief]{Intro \\textit{topic} after \\ref*{sec:prior}}\\label{sec:intro}',
             'See \\ref{sec:intro}, \\eqref{eq:model}, \\citep{smith2024}, and \\href{https://example.com}{a \\textbf{link}}.',
             '\\begin{equation}\\label{eq:model}x=1\\end{equation}',
             '\\begin{alignat}{2}a&=b & c&=d\\end{alignat}',
@@ -279,6 +281,7 @@ suite('PreviewUpdateService', () => {
             const html = payload.htmls?.join('\n') ?? '';
 
             assert.match(html, /Intro[\s\S]*topic/);
+            assert.match(html, /<h2>[\s\S]*?data-key="sec:prior"[\s\S]*?<\/h2>/);
             assert.match(html, /data-key="sec:intro"/);
             assert.match(html, /data-key="eq:model"/);
             assert.match(html, /href="#ref-smith2024"/);

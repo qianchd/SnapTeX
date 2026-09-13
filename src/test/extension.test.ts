@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
 import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../../apps/vscode/src/panel';
 import { SmartRenderer } from '../renderer';
-import { defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
+import { defineAstMathRule, defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
 import type { RuleRegistry } from '../rules';
 import { isMacroNode } from '../ast/visit-utils';
 import { normalizeUri, stripLatexComments } from '../utils';
@@ -183,7 +183,7 @@ suite('LatexDocument source mapping', () => {
         assert.doesNotMatch(bibliography.anchors?.join('\n') ?? '', /ref-(?:real|old|new)/);
     });
 
-    test('uses AST render rules from the shared registry in production render', async () => {
+    test('uses AST rules from the shared registry in production render', async () => {
         const registry = defineRuleRegistry({
             ...SNAP_TEX_RULES,
             astRenderRules: [
@@ -193,6 +193,13 @@ suite('LatexDocument source mapping', () => {
                     return { html: `<div class="advisor">${context.escapeHtml(args.requiredArgs[0] ?? '')}</div>`, consumedNodes: args.consumedNodes };
                 }),
                 ...SNAP_TEX_RULES.astRenderRules
+            ],
+            astMathRules: [
+                defineAstMathRule({
+                    commands: ['answer'],
+                    apply: input => ({ replacement: '42', consumedNodes: input.arguments.consumedNodes })
+                }),
+                ...SNAP_TEX_RULES.astMathRules
             ]
         });
         const mainUri = vscode.Uri.file('/project/main.tex');
@@ -200,6 +207,7 @@ suite('LatexDocument source mapping', () => {
             [normalizeUri(mainUri), [
                 '\\begin{document}',
                 '\\advisor{Alice <Advisor>}',
+                '$\\answer{\\ref{hidden}}$',
                 '\\end{document}'
             ].join('\n')]
         ]));
@@ -211,6 +219,8 @@ suite('LatexDocument source mapping', () => {
         const html = payload.htmls?.join('') ?? '';
 
         assert.match(html, /<div class="advisor">Alice &lt;Advisor&gt;<\/div>/);
+        assert.match(html, /katex[\s\S]*42/);
+        assert.doesNotMatch(html, /\\answer|data-key="hidden"/);
     });
 
     test('drops comment-only blocks without leaving preview gaps', async () => {

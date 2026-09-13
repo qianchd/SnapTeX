@@ -15,7 +15,7 @@ SnapTeX does not load executable rules from a TeX project. Rebuild SnapTeX and f
 There are only two required actions:
 
 1. declare one rule in `src/rules.ts`;
-2. add it to `renderRules` or `astRenderRules` in `SNAP_TEX_RULES`.
+2. add it to the matching `renderRules`, `astRenderRules`, or `astMathRules` array in `SNAP_TEX_RULES`.
 
 The declaration explains behavior. The registry makes that behavior active. A rule constant that is never added to the registry never runs.
 
@@ -67,6 +67,7 @@ Rendering has two independent rule arrays:
 | --- | --- | --- |
 | `legacy` | `renderRules` | Ordered source transformations followed by Markdown |
 | `ast(experimental)` | `astRenderRules` | Parsed nodes claimed by the first AST rule that returns a result |
+| `ast(experimental)`, command inside math | `astMathRules` | Original formula source with selected commands transformed structurally |
 
 Implement the path selected in the preview setting. A legacy rule does not require an AST rule, and an AST rule does not require a legacy rule.
 
@@ -141,6 +142,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
         BADGE_RENDER_RULE
     ],
     astRenderRules: DEFAULT_AST_RENDER_RULES,
+    astMathRules: DEFAULT_AST_MATH_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: DEFAULT_SPLITTER_RULES
@@ -243,6 +245,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
         AST_BADGE_RENDER_RULE,
         ...DEFAULT_AST_RENDER_RULES
     ],
+    astMathRules: DEFAULT_AST_MATH_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: DEFAULT_SPLITTER_RULES
@@ -260,6 +263,35 @@ SNAP_TEX_RULES.astRenderRules
   -> rule returns final escaped HTML
   -> walker advances by consumedNodes
 ```
+
+## Commands inside math
+
+`astRenderRules` owns complete AST nodes. A math node is intentionally rendered from its original TeX source so the parser cannot rewrite shorthand such as `\frac12` or nested braces before KaTeX sees it. Use `astMathRules` when one command inside that source still needs structural handling.
+
+For example, this rule makes `\answer{...}` render as `42` only inside math:
+
+```ts
+const AST_ANSWER_MATH_RULE = defineAstMathRule({
+    commands: ['answer'],
+    apply: (input, _context) => ({
+        replacement: '42',
+        consumedNodes: input.arguments.consumedNodes
+    })
+});
+```
+
+Register it before the defaults:
+
+```ts
+astMathRules: [
+    AST_ANSWER_MATH_RULE,
+    ...DEFAULT_AST_MATH_RULES
+]
+```
+
+The math renderer first inspects the existing block AST. If none of the registered `commands` occur, the original formula goes directly to KaTeX. On a match, it performs one temporary minimal parse of that formula, applies the first matching math rule to each command, and discards the temporary tree. The same rule array therefore controls both the fast precheck and the transformation; there is no second command list or numeric priority.
+
+`input.arguments` contains plain argument text, parsed argument nodes, and `consumedNodes`. For a rule that must preserve nested TeX exactly, call `input.sourceContent(input.arguments.requiredArgNodes[0])`. This slices the original formula by AST offsets instead of reconstructing TeX from the tree.
 
 ## Plain text versus nested LaTeX
 

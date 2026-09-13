@@ -879,6 +879,21 @@ export function toRoman(num: number, uppercase: boolean = false): string {
     return uppercase ? roman : roman.toLowerCase();
 }
 
+const LATEX_ROMAN_NUMERAL_COMMANDS = new Set(['Rmnum', 'rmnum', 'romannumeral']);
+
+export function formatLatexRomanNumeral(command: string, value: string): string | undefined {
+    const number = value.trim();
+    if (!LATEX_ROMAN_NUMERAL_COMMANDS.has(command) || !/^\d+$/.test(number)) { return undefined; }
+    const parsed = Number(number);
+    return Number.isSafeInteger(parsed) ? toRoman(parsed, command === 'Rmnum') : undefined;
+}
+
+export function replaceLegacyRomanNumerals(text: string): string {
+    return text.replace(/\\(Rmnum|rmnum|romannumeral)\s*(?:\{(\d+)\}|(\d+))/g, (match, command, braced, bare) => {
+        return formatLatexRomanNumeral(command, braced ?? bare) ?? match;
+    });
+}
+
 /**
  * Applies HTML styling without hiding Markdown block syntax from Markdown-it.
  */

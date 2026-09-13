@@ -42,8 +42,31 @@ AST output does not pass through Markdown. Return valid, escaped HTML and use co
 
 Use `input.renderChildren` for nodes that already exist. Use `input.renderSource` only for generated LaTeX that must be parsed again.
 
+## Math command rules
+
+`AstMathRule` is the narrower extension point for a command nested inside a math node. It keeps the surrounding formula as original source for KaTeX, while using a temporary minimal AST to locate only registered commands precisely.
+
+```ts
+interface AstMathRule {
+    readonly commands: readonly string[];
+    apply(input: AstMathRuleInput, context: AstRenderContext): AstMathRuleResult | undefined;
+}
+
+interface AstMathRuleResult {
+    replacement: string;
+    consumedNodes?: number;
+    placeholder?: { html: string; text: string };
+    afterHtml?: string;
+}
+```
+
+`replacement` is TeX passed to KaTeX. `placeholder` is for a command such as `\ref` whose interactive HTML must replace a harmless KaTeX text token afterward. `afterHtml` attaches non-math output such as a hidden label anchor. Most custom rules need only `replacement` and `consumedNodes`.
+
+The existing block AST checks the same registered `commands` array before the temporary parse, so extending the rule requires no separate trigger list. See [`defineAstMathRule`](../registry/define-ast-math-rule).
+
 ## Related APIs
 
 - [`defineAstRenderRule`](../registry/define-ast-render-rule)
+- [`defineAstMathRule`](../registry/define-ast-math-rule)
 - [`readAstCommandArguments`](../ast/read-ast-command-arguments)
 - [Call Relationships](../call-relationships)

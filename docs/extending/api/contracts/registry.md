@@ -9,6 +9,7 @@ interface RuleRegistry {
     readonly metadataExtractors: readonly MetadataExtractor[];
     readonly renderRules: readonly PreprocessRule[];
     readonly astRenderRules: readonly AstRenderRule[];
+    readonly astMathRules: readonly AstMathRule[];
     readonly blockDependencyRules: readonly BlockDependencyRule[];
     readonly splitterConfig: SplitterConfig;
     readonly splitterRules: readonly SplitterRule[];
@@ -22,13 +23,14 @@ interface RuleRegistry {
 | `metadataExtractors` | `LatexDocument` | Array order |
 | `renderRules` | Legacy `SmartRenderer` | Ascending `priority` |
 | `astRenderRules` | AST renderer | Array order; first returned result wins |
+| `astMathRules` | AST math renderer | Array order; first command rule returning a result wins |
 | `blockDependencyRules` | `SmartRenderer` | All collectors contribute descriptors |
 | `splitterConfig` | Legacy coarse splitter and AST refinement | Numeric limits |
 | `splitterRules` | Legacy coarse splitter and AST refinement | Declarative structural hints selected by `kind` |
 
 Build a registry with [`defineRuleRegistry`](../registry/define-rule-registry). The default instance is `SNAP_TEX_RULES` in `src/rules.ts`.
 
-The two rendering arrays are independent. Add a rule only to the backend it targets.
+The legacy and AST rendering arrays are independent. `astMathRules` is a nested AST extension point used only after `astRenderRules` assigns a complete math node to the math renderer.
 
 ## From field to callback
 
@@ -37,6 +39,7 @@ The two rendering arrays are independent. Add a rule only to the backend it targ
 | `metadataExtractors` | `extract(source)` | Merged document metadata and hidden source ranges |
 | `renderRules` | `apply(text, renderer)` | Input text for the next legacy rule |
 | `astRenderRules` | `(input, context) => result` | Final HTML for one claimed AST node |
+| `astMathRules` | `apply(input, context)` | A source-preserving replacement for one command inside math |
 | `blockDependencyRules` | `(input) => dependencies` | Stored descriptors used to dirty unchanged blocks |
 | `splitterRules` | No user callback; the splitter reads declarations | Source block spans |
 

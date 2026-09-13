@@ -14,6 +14,7 @@ These names appear repeatedly in rule examples, but they are created at differen
 | `renderer` | `SmartRenderer` | `PreprocessRule.apply` | Legacy document state and protected-output services |
 | `input` | AST walker | `AstRenderRule` | Current node, siblings, and recursive rendering |
 | `context` | AST renderer | `AstRenderRule` | AST document state and direct-HTML services |
+| `input.arguments` | AST math dispatcher | `AstMathRule.apply` | Parsed text/node arguments and consumed sibling count |
 | `call` | `replaceLatexCommandCalls` | Its nested `render` callback | One balanced source command call |
 | `deps` | Dependency collector host | `BlockDependencyRule` | Factories for stable dependency descriptors |
 
@@ -30,6 +31,7 @@ flowchart LR
     L --> B["splitterConfig + splitterRules"]
     S --> P["renderRules (legacy)"]
     S --> A["astRenderRules (AST)"]
+    A --> AM["astMathRules (selected math commands)"]
     S --> X["blockDependencyRules"]
 ```
 
@@ -39,6 +41,7 @@ A declaration helper and the registry have different jobs:
 
 ```text
 defineAstRenderRule(rule)       -> type-check and return one declaration
+defineAstMathRule(rule)         -> type-check and return one math-command declaration
 defineBlockDependencyRule(rule) -> type-check and return one declaration
 defineRuleRegistry({...})        -> assemble the declarations used by a preview lifecycle
 ```

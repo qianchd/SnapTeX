@@ -5,6 +5,7 @@ import {
     escapeHtml,
     escapeHtmlAttribute,
     readLatexGroup,
+    replaceLegacyRomanNumerals,
     replaceLatexCommandCalls,
     resolveLatexStyles,
     resolveLatexTextTransforms,
@@ -115,9 +116,10 @@ export function hasBlockLevelHtml(html: string): boolean {
     return BLOCK_LEVEL_HTML_PATTERN.test(html);
 }
 
+/** Calls KaTeX without rewriting source; each render backend owns its compatibility transforms. */
 export function renderKatexHtml(tex: string, displayMode: boolean, macros: Record<string, string>): string {
     try {
-        return katex.renderToString(tex.replace(/\\mbox\b/g, '\\text'), {
+        return katex.renderToString(tex, {
             displayMode,
             macros,
             throwOnError: false,
@@ -134,7 +136,8 @@ export function renderKatexHtml(tex: string, displayMode: boolean, macros: Recor
  * Renders TeX math through KaTeX and protects the generated HTML from Markdown.
  */
 export function renderMath(tex: string, displayMode: boolean, renderer: RenderContext): string {
-    return renderer.protectHtml('math', renderKatexHtml(tex, displayMode, renderer.currentMacros));
+    const compatibleTex = replaceLegacyRomanNumerals(tex).replace(/\\mbox\b/g, '\\text');
+    return renderer.protectHtml('math', renderKatexHtml(compatibleTex, displayMode, renderer.currentMacros));
 }
 
 export function normalizeMathEnvironmentForKatex(tex: string, envName?: string): string {

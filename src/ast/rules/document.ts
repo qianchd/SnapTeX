@@ -1,6 +1,6 @@
 import { BibTexParser } from '../../bib';
 import { renderBibliographyItemsHtml, renderCitedBibliographyHtml, renderExternalLinkHtml, renderMaketitleAuthorsHtml } from '../../rule-helpers';
-import { toRoman } from '../../utils';
+import { formatLatexRomanNumeral } from '../../utils';
 import { astNodesToText, isEnvironmentNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
 import { readAstCommandArguments, readAstCommandNodeArguments, renderInlineLatexSource, type AstRenderRule } from './index';
 
@@ -104,9 +104,9 @@ export const AST_COMMON_MACRO_RULE: AstRenderRule = (input, context) => {
     }
     if (['Rmnum', 'rmnum', 'romannumeral'].includes(input.node.content)) {
         const args = readAstCommandArguments(input);
-        const value = Number.parseInt(args.requiredArgs[0] ?? '', 10);
-        return Number.isFinite(value)
-            ? { html: context.escapeHtml(toRoman(value, input.node.content === 'Rmnum')), consumedNodes: args.consumedNodes }
+        const value = formatLatexRomanNumeral(input.node.content, args.requiredArgs[0] ?? '');
+        return value !== undefined
+            ? { html: context.escapeHtml(value), consumedNodes: args.consumedNodes }
             : undefined;
     }
     if (input.node.content === '\\') {

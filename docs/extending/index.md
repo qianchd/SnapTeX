@@ -34,6 +34,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
     ],
     renderRules: [...DEFAULT_RENDER_RULES, BADGE_RENDER_RULE],
     astRenderRules: DEFAULT_AST_RENDER_RULES,
+    astMathRules: DEFAULT_AST_MATH_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: DEFAULT_SPLITTER_RULES
@@ -51,6 +52,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
     metadataExtractors: [/* metadata readers */],
     renderRules: [/* legacy render rules */],
     astRenderRules: [/* AST render rules */],
+    astMathRules: [/* AST rules for commands nested inside math */],
     blockDependencyRules: [/* external invalidation rules */],
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: [/* block-boundary rules */]
@@ -67,6 +69,7 @@ Built-in implementations are split into focused modules when they are large, suc
 | --- | --- |
 | Transform source blocks in the legacy renderer | `renderRules` |
 | Render parsed nodes in the AST renderer | `astRenderRules` |
+| Transform selected commands inside AST math without rewriting the surrounding formula | `astMathRules` |
 | Extract preamble or document metadata | `metadataExtractors` |
 | Rerender unchanged source when metadata/citations change | `blockDependencyRules` |
 | Change environment/block boundaries | `splitterRules` |
@@ -76,7 +79,7 @@ Legacy and AST rendering rules are alternatives for the selected backend. Adding
 
 Use this decision path:
 
-1. If the change turns LaTeX content into preview HTML, choose `renderRules` or `astRenderRules` according to the backend you are extending.
+1. If the change turns LaTeX content into preview HTML, choose `renderRules` or `astRenderRules` according to the backend you are extending. Use `astMathRules` only for a command nested inside an AST math node.
 2. If it reads document declarations such as `\title` or `\editor`, choose `metadataExtractors`.
 3. If an unchanged block must rerender after metadata or citation state changes, add `blockDependencyRules` alongside the rendering feature.
 4. If rendering receives the wrong block boundary, use `splitterRules`; splitter rules never generate HTML.

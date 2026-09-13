@@ -8,7 +8,7 @@ Reads optional and required arguments for the current AST macro, including detac
 
 ```ts
 function readAstCommandArguments(
-    input: AstRenderInput,
+    input: AstNodeLocation,
     requiredArgCount = 1
 ): AstCommandArguments
 ```
@@ -17,6 +17,8 @@ function readAstCommandArguments(
 interface AstCommandArguments {
     requiredArgs: string[];
     optionalArgs: string[];
+    requiredArgNodes: SnaptexAstNode[][];
+    optionalArgNodes: SnaptexAstNode[][];
     consumedNodes: number;
 }
 ```
@@ -25,13 +27,13 @@ interface AstCommandArguments {
 
 The function first reads arguments attached to `input.node`. If fewer required arguments are available, it skips sibling whitespace, reads detached bracket groups, then reads detached brace-group nodes until `requiredArgCount` is met.
 
-The helper returns plain argument text for convenient command rendering. Use node-level readers and `input.renderChildren` instead when preserving nested AST formatting is essential.
+The helper returns both plain argument text and the corresponding node arrays. In a normal `AstRenderRule`, pass an entry such as `requiredArgNodes[0]` to `input.renderChildren` when preserving parsed nested formatting is essential. In an `AstMathRule`, pass it to `input.sourceContent` to preserve the exact original TeX.
 
 ## Call relationships
 
-- **Called by:** `AstRenderRule` callbacks for macro commands.
-- **Calls:** [`readOptionalMacroArgument`](./read-optional-macro-argument), [`readRequiredMacroArgument`](./read-required-macro-argument), and [`argumentText`](./argument-text).
-- **Return feeds:** `AstRenderResult.consumedNodes`.
+- **Called by:** `AstRenderRule` callbacks and the math-rule dispatcher.
+- **Reads:** arguments attached to the macro plus detached sibling groups.
+- **Return feeds:** rendered argument content and `consumedNodes` in either AST rule type.
 
 ```text
 AstRenderInput -> attached arguments + following sibling groups

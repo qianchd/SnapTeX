@@ -3,7 +3,6 @@ import {
     readMetadataCommand
 } from './metadata';
 import {
-    toRoman,
     createHiddenLabelAnchor,
     expandLatexTextMacros,
     escapeHtml,
@@ -11,6 +10,7 @@ import {
     formatEnumerateLabel,
     splitLatexCitationKeys,
     replaceLatexCommandCalls,
+    replaceLegacyRomanNumerals,
     resolveLatexStyles,
     stripLatexComments
 } from './utils';
@@ -30,14 +30,16 @@ import { createRefLink, createStyleHtmlProtector, normalizeMathEnvironmentForKat
 import { createTikzPictureRule } from './rule-tikz';
 import { createAlgorithmRule, createFigureRule, createTableRule } from './rule-floats';
 import { DEFAULT_AST_RENDER_RULES } from './ast/rules/defaults';
-import type { AstRenderRule } from './ast/rules';
+import { DEFAULT_AST_MATH_RULES } from './ast/rules/math';
+import type { AstMathRule, AstRenderRule } from './ast/rules';
 export { readAstCommandArguments } from './ast/rules';
-export type { AstRenderContext, AstRenderInput, AstRenderResult, AstRenderRule } from './ast/rules';
+export type { AstMathRule, AstMathRuleInput, AstMathRuleResult, AstNodeLocation, AstRenderContext, AstRenderInput, AstRenderResult, AstRenderRule } from './ast/rules';
 
 export interface RuleRegistry {
     readonly metadataExtractors: readonly MetadataExtractor[];
     readonly renderRules: readonly PreprocessRule[];
     readonly astRenderRules: readonly AstRenderRule[];
+    readonly astMathRules: readonly AstMathRule[];
     readonly blockDependencyRules: readonly BlockDependencyRule[];
     readonly splitterConfig: SplitterConfig;
     readonly splitterRules: readonly SplitterRule[];
@@ -86,11 +88,16 @@ export function defineAstRenderRule(rule: AstRenderRule): AstRenderRule {
     return rule;
 }
 
+export function defineAstMathRule(rule: AstMathRule): AstMathRule {
+    return rule;
+}
+
 export function defineRuleRegistry(registry: RuleRegistry): RuleRegistry {
     return {
         metadataExtractors: [...registry.metadataExtractors],
         renderRules: [...registry.renderRules].sort((a, b) => a.priority - b.priority),
         astRenderRules: [...registry.astRenderRules],
+        astMathRules: [...registry.astMathRules],
         blockDependencyRules: [...registry.blockDependencyRules],
         splitterConfig: { ...registry.splitterConfig },
         splitterRules: [...registry.splitterRules]
@@ -303,11 +310,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
 
     {
         priority: 30,
-        apply: (text) => {
-            return text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (_match, cmd, numStr) => {
-                return toRoman(parseInt(numStr), cmd === 'Rmnum');
-            });
-        }
+        apply: replaceLegacyRomanNumerals
     },
 
     {
@@ -619,6 +622,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
     ],
     renderRules: DEFAULT_RENDER_RULES,
     astRenderRules: DEFAULT_AST_RENDER_RULES,
+    astMathRules: DEFAULT_AST_MATH_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: DEFAULT_SPLITTER_RULES

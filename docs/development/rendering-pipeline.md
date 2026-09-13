@@ -104,9 +104,9 @@ Use these distinctions while debugging:
 
 ## Rendering rules
 
-Legacy preprocessing rules run in ascending priority, protecting generated HTML before Markdown-it. In AST mode, the AST walker tests `astRenderRules` in array order and gives the first rule returning a result ownership of the current node. Unclaimed AST nodes use the AST fallback renderer; built-in AST rules reuse shared math, citation, table, TikZ, and inline helpers where the output contract is common.
+Legacy preprocessing rules run in ascending priority, protecting generated HTML before Markdown-it. In AST mode, the AST walker tests `astRenderRules` in array order and gives the first rule returning a result ownership of the current node. Math nodes preserve their original TeX for KaTeX; registered `astMathRules` trigger a temporary minimal parse only for selected nested commands. Both AST rule arrays use first-match array order, without numeric priorities. Unclaimed AST nodes use the AST fallback renderer; built-in AST rules reuse shared math, citation, table, TikZ, and inline helpers where the output contract is common.
 
-The selected backend runs one rendering-rule array. A source-level extension targets `renderRules` or `astRenderRules`; it is not automatically passed through both.
+The selected backend runs `renderRules` or `astRenderRules`; it is not automatically passed through both. Within an AST math node, the math renderer may additionally invoke `astMathRules` for registered nested commands.
 
 ## Full versus patch update
 

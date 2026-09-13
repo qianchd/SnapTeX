@@ -74,6 +74,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
     ],
     renderRules: DEFAULT_RENDER_RULES,
     astRenderRules: DEFAULT_AST_RENDER_RULES,
+    astMathRules: DEFAULT_AST_MATH_RULES,
     blockDependencyRules: DEFAULT_BLOCK_DEPENDENCY_RULES,
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: DEFAULT_SPLITTER_RULES

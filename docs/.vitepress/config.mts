@@ -70,6 +70,7 @@ const apiReferenceItems = [
         items: [
             { text: 'defineRuleRegistry', link: '/extending/api/registry/define-rule-registry' },
             { text: 'defineAstRenderRule', link: '/extending/api/registry/define-ast-render-rule' },
+            { text: 'defineAstMathRule', link: '/extending/api/registry/define-ast-math-rule' },
             { text: 'defineBlockDependencyRule', link: '/extending/api/registry/define-block-dependency-rule' }
         ]
     },

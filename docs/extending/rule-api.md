@@ -12,6 +12,7 @@ These are contributor APIs compiled into SnapTeX, not commands imported by a `.t
 | Assemble a complete custom registry | [`defineRuleRegistry`](./api/registry/define-rule-registry) |
 | Add a source-text rendering rule | [Legacy rule contract](./api/contracts/legacy-rules) |
 | Add a structural AST rendering rule | [AST rule contract](./api/contracts/ast-rules) |
+| Handle a selected command nested inside AST math | [`defineAstMathRule`](./api/registry/define-ast-math-rule) |
 | Read balanced LaTeX commands or groups | [`replaceLatexCommandCalls`](./api/source/replace-latex-command-calls) or [`readLatexCommandAt`](./api/source/read-latex-command-at) |
 | Produce safe inline HTML | [`renderInlineLatexHtml`](./api/rendering/render-inline-latex-html) |
 | Extract custom preamble metadata | [Metadata contract](./api/contracts/metadata-dependencies) |
@@ -28,6 +29,7 @@ The spelling of a signature tells you how it reaches your code:
 | `function escapeHtml(text)` | Import and call the helper | Your code supplies every argument |
 | `apply(text, renderer)` | Implement this property on a `PreprocessRule` | `SmartRenderer` calls it |
 | `(input, context) => result` | Pass this function to `defineAstRenderRule` | The AST walker calls it |
+| `apply(input, context)` on `AstMathRule` | Pass the object to `defineAstMathRule` | The AST math renderer calls it for matching commands |
 | `renderer.protectHtml(...)` | Call a method on the received legacy context | `SmartRenderer` created `renderer` |
 | `input.renderChildren(...)` | Call a method on the received AST input | The AST walker created `input` |
 | `context.renderMath(...)` | Call a method on the received AST context | The AST renderer created `context` |
@@ -61,7 +63,7 @@ Each API page identifies the caller and the next consumer under **Call relations
 
 | Category | Functions and methods |
 | --- | --- |
-| Registry | [`defineRuleRegistry`](./api/registry/define-rule-registry), [`defineAstRenderRule`](./api/registry/define-ast-render-rule), [`defineBlockDependencyRule`](./api/registry/define-block-dependency-rule) |
+| Registry | [`defineRuleRegistry`](./api/registry/define-rule-registry), [`defineAstRenderRule`](./api/registry/define-ast-render-rule), [`defineAstMathRule`](./api/registry/define-ast-math-rule), [`defineBlockDependencyRule`](./api/registry/define-block-dependency-rule) |
 | Legacy | [`apply`](./api/legacy/apply), [`protectHtml`](./api/legacy/protect-html), [`renderInline`](./api/legacy/render-inline), [`resolveCitation`](./api/legacy/resolve-citation), [`getCitedKeys`](./api/legacy/get-cited-keys) |
 | Source | [`replaceLatexCommandCalls`](./api/source/replace-latex-command-calls), [`readLatexGroup`](./api/source/read-latex-group), [`readLatexCommandAt`](./api/source/read-latex-command-at), [`skipLatexWhitespace`](./api/source/skip-latex-whitespace), [`stripLatexComments`](./api/source/strip-latex-comments) |
 | Rendering | [`escapeHtml`](./api/rendering/escape-html), [`renderMath`](./api/rendering/render-math), [`renderInlineLatexHtml`](./api/rendering/render-inline-latex-html) |

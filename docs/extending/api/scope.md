@@ -11,6 +11,7 @@ export const SNAP_TEX_RULES = defineRuleRegistry({
     metadataExtractors: [/* document metadata readers */],
     renderRules: [/* legacy source rules */],
     astRenderRules: [/* AST node rules */],
+    astMathRules: [/* selected commands nested inside AST math */],
     blockDependencyRules: [/* external invalidation */],
     splitterConfig: DEFAULT_SPLITTER_CONFIG,
     splitterRules: [/* block boundaries */]
@@ -55,6 +56,7 @@ const RULE = defineAstRenderRule((input, context) => { /* return a result or und
 export const SNAP_TEX_RULES = defineRuleRegistry({
     // RULE starts running only after it appears here.
     astRenderRules: [RULE, ...DEFAULT_AST_RENDER_RULES],
+    astMathRules: DEFAULT_AST_MATH_RULES,
     // ...the other required fields
 });
 ```
