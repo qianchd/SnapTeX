@@ -4,27 +4,15 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
-## [0.8.1] - 2026-09-08
+## [0.8.1] - 2026-09-13
 
-- **Added**: Modernized the Web editor search panel with current/total match counts, compact match options, and Lucide icons shared by search, Explorer folders, and collapsed-pane controls.
-- **Added**: Remembered each Web project's selected preview root across browser sessions for imported workspaces, local folders, and server projects.
-- **Added**: Added separate configurable margins for each paged sheet and for the complete continuous preview across VS Code and Web.
-- **Added**: Added persistent Web editor font size and font family settings, and clarified the corresponding preview typography labels.
-- **Added**: Added a unified Web project history for imported/demo workspaces, browser-granted local folders, and server project names, with permission and authentication checks when entries are reopened.
-- **Added**: Added an optional 30-day server login backed by revocable server-side sessions that survive service restarts and atomic deployments; the default session remains eight hours.
-- **Fixed**: Persisted the complete Web settings state across projects and browser restarts, including behavior, backend, layout, theme, panel visibility, diagnostics, delays, and preview typography.
-- **Added**: Added responsive Web layouts with contained welcome actions, an overlay file explorer, a portrait Editor/Preview switch with deferred bidirectional synchronization that never measures hidden panes, and the existing resizable dual-pane workspace in landscape.
-- **Fixed**: Made the Web editor/preview divider draggable with touch input without an interrupted gesture collapsing either pane.
-- **Fixed**: Kept the Web preview stable while scroll synchronization crosses `\\input` file boundaries, and avoided redundant browser-workspace writes when the synchronized editor file is unchanged.
-- **Fixed**: Repaired remote-project ACL masks during Server deployment and reported unreadable project paths explicitly instead of returning an unexplained manifest error.
-- **Added**: Resolved custom preamble colors declared with common `\definecolor` models across legacy and AST rendering, including direct model syntax and xcolor-style color mixes.
-- **Changed**: Made the Web editor fully black in dark mode and adapted LaTeX colors, citations, and bibliography links to brighter theme-aware preview colors.
-- **Added**: Kept open server projects synchronized with external file edits through lightweight revision polling, conditional ETag reads, and automatic preview refreshes.
-- **Added**: Added optimistic remote saves with three-way text merging: independent browser/server edits merge automatically, while overlapping edits produce visible conflict markers instead of silently overwriting either side.
-- **Changed**: Minified production Web bundles and added build-time Brotli plus gzip assets for the server edition, reducing the main browser bundle from about 3.3 MB of development JavaScript to about 372 KB over Brotli.
-- **Changed**: Added per-file asset hashes, versioned static URLs, ETag/304 responses, immutable caching for versioned assets, and revalidation caching for HTML and the Service Worker.
-- **Changed**: Kept the complete PWA available offline while splitting its cache into reusable core, KaTeX, PDF.js, TikZ, and demo groups, so upgrades download only resource groups whose contents changed.
-- **Changed**: Deferred PWA preparation until the initial page is usable, removed the duplicate Service Worker probe request, and exposed offline preparation/readiness in the Web toolbar.
+- **Highlights**: Made the elastic paged preview faster and more stable for long documents while retaining continuous preview as an option.
+- **Added**: Added separate configurable margins for paged sheets and the continuous preview.
+- **Added**: Resolved custom preamble colors declared with common `\definecolor` models, including direct model syntax and xcolor-style color mixes.
+- **Changed**: Streamlined virtual pagination, background height measurement, AST splitting, rendering, and artifact caches while preserving lazy warm-up and incremental updates.
+- **Changed**: Adapted LaTeX colors, citations, and bibliography links to remain readable in dark preview themes.
+- **Fixed**: Preserved section numbering in reference tooltips.
+- **Fixed**: Improved AST and legacy rendering of nested theorem titles and command arguments, source-complete math, `alignat`, text inside `\mbox`, starred `\includegraphics`, and optional short section titles.
 
 ## [0.8.0] - 2026-08-16
 

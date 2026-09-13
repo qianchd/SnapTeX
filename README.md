@@ -4,7 +4,7 @@ Fast, local-first LaTeX editing and structural preview for VS Code and the brows
 
 **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)** · **[Read the documentation](https://qianchd.github.io/SnapTeX/docs/)** · **[Install the VS Code extension](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex)**
 
-> **What's new in 0.8.0:** SnapTeX now opens in an elastic paged preview by default, with stable virtualized scrolling, flexible page bottoms, and extended pages for oversized content. Continuous preview remains available in settings.
+> **What's new in 0.8.1:** The elastic paged preview is now faster and more stable for long documents, with configurable page margins. Continuous preview remains available in settings.
 
 <p align="center">
   <img src="media/icon.png" alt="SnapTeX logo" width="150">
