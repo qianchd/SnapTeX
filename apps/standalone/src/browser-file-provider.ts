@@ -46,10 +46,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
     setProjectFile(file: BrowserProjectFile) {
         const { path, ...entry } = file;
         const normalizedPath = normalizeBrowserPath(path);
-        const existing = this.files.get(normalizedPath);
-        if (existing?.objectUrl) {
-            this.revokeObjectUrl(existing.objectUrl);
-        }
+        this.revokeEntryObjectUrl(this.files.get(normalizedPath));
         this.files.set(normalizedPath, {
             ...entry,
             mtime: this.version++
@@ -58,10 +55,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
 
     deleteProjectFile(path: string) {
         const normalizedPath = normalizeBrowserPath(path);
-        const existing = this.files.get(normalizedPath);
-        if (existing?.objectUrl) {
-            this.revokeObjectUrl(existing.objectUrl);
-        }
+        this.revokeEntryObjectUrl(this.files.get(normalizedPath));
         this.files.delete(normalizedPath);
     }
 
@@ -83,9 +77,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         if (existing?.text === text) {
             return;
         }
-        if (existing?.objectUrl) {
-            this.revokeObjectUrl(existing.objectUrl);
-        }
+        this.revokeEntryObjectUrl(existing);
         this.files.set(normalizedPath, {
             ...existing,
             text,
@@ -209,15 +201,13 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
 
     private revokeObjectUrls() {
         for (const file of this.files.values()) {
-            if (file.objectUrl) {
-                this.revokeObjectUrl(file.objectUrl);
-            }
+            this.revokeEntryObjectUrl(file);
         }
     }
 
-    private revokeObjectUrl(url: string) {
-        if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
-            URL.revokeObjectURL(url);
+    private revokeEntryObjectUrl(file: BrowserFileEntry | undefined) {
+        if (file?.objectUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+            URL.revokeObjectURL(file.objectUrl);
         }
     }
 }

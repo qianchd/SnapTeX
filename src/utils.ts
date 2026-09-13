@@ -320,7 +320,7 @@ function resolveColorName(name: string, colors: Readonly<Record<string, string>>
     return resolveColorName(definition, colors, seen);
 }
 
-export function resolveLatexColor(
+function resolveLatexColor(
     color: string,
     colors: Readonly<Record<string, string>> = {},
     model?: string

@@ -8,8 +8,9 @@ import {
 import type { BlockTextSpan, SplitterOptions, SplitterRule } from '../types';
 import { countLineBreaks, escapeRegExp, getBlockSpanText, lineAtOffset, stableHash } from '../utils';
 import { parseLatexToAst } from './parse';
-import type { AstParseResult, AstSourcePosition, SnaptexAstArgument, SnaptexAstNode } from './types';
+import type { AstParseResult, AstSourcePosition, SnaptexAstNode } from './types';
 import {
+    astNodeRange,
     astNodesRange,
     environmentName,
     firstSignificantNode,
@@ -24,14 +25,7 @@ export interface AstSplitOptions extends SplitterOptions {
 }
 
 export interface AstSplitResult {
-    documentHash: string;
-    spans: BlockTextSpan[];
-    coarseSpans: BlockTextSpan[];
-    coarseHashes: string[];
-}
-
-export interface AstSplitSnapshot {
-    documentHash: string;
+    readonly documentHash: string;
     spans: readonly BlockTextSpan[];
     coarseSpans: readonly BlockTextSpan[];
     coarseHashes: readonly string[];
@@ -43,11 +37,6 @@ interface ContextWrapper {
     prefix: string;
     suffix: string;
     nodes: readonly SnaptexAstNode[];
-}
-
-interface RefineResult {
-    spans: BlockTextSpan[];
-    accepted: boolean;
 }
 
 interface CoarseBlockMeta {
@@ -75,7 +64,7 @@ export async function splitLatexWithAst(text: string, options: AstSplitOptions):
 export async function splitLatexWithAstIncremental(
     text: string,
     options: AstSplitOptions,
-    previous?: AstSplitSnapshot
+    previous?: AstSplitResult
 ): Promise<AstSplitResult> {
     if (!previous || previous.spans.length === 0 || previous.coarseSpans.length === 0
         || previous.coarseSpans.length !== previous.coarseHashes.length) {
@@ -85,9 +74,9 @@ export async function splitLatexWithAstIncremental(
     if (previous.documentHash === documentHash) {
         return {
             documentHash,
-            spans: [...previous.spans],
-            coarseSpans: [...previous.coarseSpans],
-            coarseHashes: [...previous.coarseHashes]
+            spans: previous.spans,
+            coarseSpans: previous.coarseSpans,
+            coarseHashes: previous.coarseHashes
         };
     }
 
@@ -158,12 +147,12 @@ async function refineCoarseSpan(text: string, options: AstSplitOptions, coarseSp
         return [coarseSpan];
     }
 
-    const local = await refineTextWithAst(source, options);
-    if (local.spans.length === 0 || !local.accepted) {
+    const localSpans = await refineTextWithAst(source, options);
+    if (!localSpans || localSpans.length === 0) {
         return [coarseSpan];
     }
 
-    return local.spans.map(span => offsetSpan(span, coarseSpan.start, coarseSpan.line));
+    return localSpans.map(span => offsetSpan(span, coarseSpan.start, coarseSpan.line));
 }
 
 function shouldRefineCoarseSpan(text: string, span: BlockTextSpan, options: SplitterOptions): boolean {
@@ -179,10 +168,10 @@ function shouldRefineCoarseSpan(text: string, span: BlockTextSpan, options: Spli
     return span.lineCount > options.config.maxBlockLines && !containsEnvRule(text, options.rules, 'no-emergency-split-env');
 }
 
-async function refineTextWithAst(text: string, options: AstSplitOptions): Promise<RefineResult> {
+async function refineTextWithAst(text: string, options: AstSplitOptions): Promise<BlockTextSpan[] | undefined> {
     const parseResult = await (options.parse ?? parseLatexToAst)(text);
     if (!parseResult.ast) {
-        return { spans: [], accepted: false };
+        return undefined;
     }
 
     const spans: BlockTextSpan[] = [];
@@ -309,10 +298,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
 
     processNodes(parseResult.ast.content);
     pushAstSpan(blockStart, text.length);
-    return {
-        spans,
-        accepted
-    };
+    return accepted ? spans : undefined;
 }
 
 function refinedSpansInsideCoarse(spans: readonly BlockTextSpan[], coarse: BlockTextSpan): BlockTextSpan[] {
@@ -473,7 +459,7 @@ function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonl
         if (rule?.content !== 'group-remainder') {
             return undefined;
         }
-        const macroEnd = nodeEnd(leading.node);
+        const macroEnd = astNodeRange(leading.node)?.end;
         if (macroEnd === undefined) {
             return undefined;
         }
@@ -497,7 +483,7 @@ function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonl
     }
     const argument = readRequiredMacroArgument(node, rule.content.requiredArgument);
     const contentRange = argument && astNodesRange(argument.content);
-    const wrapperEnd = nodeEnd(node);
+    const wrapperEnd = astNodeRange(node)?.end;
     if (!argument || !contentRange || wrapperEnd === undefined) {
         return undefined;
     }
@@ -509,25 +495,6 @@ function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonl
         suffix: text.slice(contentRange.end, wrapperEnd),
         nodes: argument.content
     };
-}
-
-function nodeEnd(node: SnaptexAstNode | SnaptexAstArgument): number | undefined {
-    let end = getSourcePosition(node)?.end.offset ?? -1;
-    if ('args' in node && Array.isArray(node.args)) {
-        for (const argument of node.args) {
-            end = Math.max(end, nodeEnd(argument) ?? -1);
-        }
-    }
-    if ('content' in node && Array.isArray(node.content)) {
-        let contentEnd = -1;
-        for (const child of node.content) {
-            contentEnd = Math.max(contentEnd, nodeEnd(child) ?? -1);
-        }
-        if (contentEnd >= 0) {
-            end = Math.max(end, 'closeMark' in node && node.closeMark ? contentEnd + node.closeMark.length : contentEnd);
-        }
-    }
-    return end < 0 ? undefined : end;
 }
 
 function skipWhitespaceNodes(nodes: readonly SnaptexAstNode[], offset: number): number {

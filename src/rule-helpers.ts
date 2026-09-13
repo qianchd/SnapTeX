@@ -4,6 +4,7 @@ import type { AffiliationMetadata, AuthorMetadata, BibEntry, RenderContext } fro
 import {
     escapeHtml,
     escapeHtmlAttribute,
+    readLatexGroup,
     replaceLatexCommandCalls,
     resolveLatexStyles,
     resolveLatexTextTransforms,
@@ -116,7 +117,7 @@ export function hasBlockLevelHtml(html: string): boolean {
 
 export function renderKatexHtml(tex: string, displayMode: boolean, macros: Record<string, string>): string {
     try {
-        return katex.renderToString(tex, {
+        return katex.renderToString(tex.replace(/\\mbox\b/g, '\\text'), {
             displayMode,
             macros,
             throwOnError: false,
@@ -138,6 +139,12 @@ export function renderMath(tex: string, displayMode: boolean, renderer: RenderCo
 
 export function normalizeMathEnvironmentForKatex(tex: string, envName?: string): string {
     const normalized = envName?.toLowerCase().replace(/\*$/, '');
+    if (normalized === 'alignat') {
+        const columnCount = readLatexGroup(tex, 0);
+        if (columnCount && /^\d+$/.test(columnCount.content.trim())) {
+            tex = tex.slice(columnCount.end).trimStart();
+        }
+    }
     if (normalized && ['align', 'flalign', 'alignat', 'multline'].includes(normalized)) {
         return `\\begin{aligned}\n${tex}\n\\end{aligned}`;
     }

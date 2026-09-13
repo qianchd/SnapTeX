@@ -48,7 +48,7 @@ export const AST_LIST_RULE: AstRenderRule = (input, context) => {
     }
 
     const items = readListItems(input.node.content);
-    if (!envName || items.length === 0) {
+    if (items.length === 0) {
         return undefined;
     }
 

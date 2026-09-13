@@ -1,11 +1,10 @@
 import { extractAndHideLabels } from '../../utils';
+import { REGEX_STR } from '../../patterns';
 import { normalizeMathEnvironmentForKatex, renderNumberedEquationHtml } from '../../rule-helpers';
 import { environmentName, getSourcePosition } from '../visit-utils';
 import type { AstRenderContext, AstRenderRule } from './index';
 
-function isMathNodeType(type: string): boolean {
-    return type === 'inlinemath' || type === 'displaymath' || type === 'mathenv';
-}
+const MATH_ENVIRONMENTS = new Set(REGEX_STR.MATH_ENVS.split('|'));
 
 function isFollowedByText(input: Parameters<AstRenderRule>[0]): boolean {
     for (let index = input.index + 1; index < input.siblings.length; index++) {
@@ -83,9 +82,12 @@ function wrapSourceAnchor(html: string, node: Parameters<AstRenderRule>[0]['node
 
 export const AST_MATH_RULE: AstRenderRule = (input, context) => {
     const node = input.node;
-    if (!isMathNodeType(node.type)) { return undefined; }
-    const displayMode = node.type === 'displaymath' || node.type === 'mathenv';
     const envName = environmentName(node);
+    if (node.type !== 'inlinemath' && node.type !== 'displaymath' && node.type !== 'mathenv'
+        && (!envName || !MATH_ENVIRONMENTS.has(envName.replace(/\*$/, '')))) {
+        return undefined;
+    }
+    const displayMode = node.type !== 'inlinemath';
     const rawContent = mathNodeContent(context.sourceSlice(node), node.type, envName);
     const { cleanContent, hiddenHtml } = extractAndHideLabels(rawContent);
     let tex = cleanContent.trim();
@@ -97,7 +99,7 @@ export const AST_MATH_RULE: AstRenderRule = (input, context) => {
         applyMathRefPlaceholders(context.renderMath(mathRefs.tex, displayMode), mathRefs.refs),
         node
     );
-    const numbered = node.type === 'mathenv' && !(envName ?? '').endsWith('*');
+    const numbered = envName !== undefined && !envName.endsWith('*');
     const html = numbered
         ? renderNumberedEquationHtml(mathHtml, '(<span class="sn-cnt" data-type="eq"></span>)', hiddenHtml)
         : `${mathHtml}${hiddenHtml}`;

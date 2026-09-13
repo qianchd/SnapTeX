@@ -15,7 +15,7 @@ import {
     stringNodeContent,
     type SnaptexAstMacro
 } from '../visit-utils';
-import type { AstRenderContext, AstRenderInput, AstRenderRule } from './index';
+import { readAstCommandNodeArguments, type AstRenderContext, type AstRenderInput, type AstRenderRule } from './index';
 import {
     algorithmicIndentAfter,
     algorithmicIndentBefore,
@@ -167,36 +167,13 @@ function flushCell(rows: TableCell[][], cellNodes: SnaptexAstNode[], input: AstR
     cellNodes.length = 0;
 }
 
-function readRequiredContent(
-    macro: SnaptexAstMacro,
-    siblings: readonly SnaptexAstNode[],
-    macroIndex: number,
-    argumentIndex: number
-): { content: readonly SnaptexAstNode[]; consumedNodes: number } {
-    const attached = readRequiredMacroArgument(macro, argumentIndex);
-    if (attached) {
-        return { content: attached.content, consumedNodes: 1 };
-    }
-
-    let cursor = macroIndex + 1;
-    for (let seen = 0; cursor < siblings.length; seen++) {
-        cursor = skipWhitespaceOrComments(siblings, cursor);
-        const group = siblings[cursor];
-        if (!isGroupNode(group)) { break; }
-        if (seen === argumentIndex) {
-            return { content: group.content, consumedNodes: cursor - macroIndex + 1 };
-        }
-        cursor++;
-    }
-    return { content: [], consumedNodes: 1 };
-}
-
 function renderTableCell(cellNodes: readonly SnaptexAstNode[], input: AstRenderInput): TableCell {
     const significant = cellNodes.filter(node => !isWhitespaceOrCommentNode(node));
     const first = significant[0];
-    const contentAt = (index: number) => isMacroNode(first)
-        ? readRequiredContent(first, significant, 0, index).content
+    const args = isMacroNode(first)
+        ? readAstCommandNodeArguments({ ...input, node: first, siblings: significant, index: 0 }, 3).requiredArgs
         : [];
+    const contentAt = (index: number) => args[index] ?? [];
     if (isMacroNode(first, 'multicolumn')) {
         return {
             colspan: Number.parseInt(astNodesToText(contentAt(0)), 10) || undefined,
@@ -490,17 +467,17 @@ export const AST_TABLE_MACRO_RULE: AstRenderRule = input => {
         return undefined;
     }
     if (input.node.content === 'tnote') {
-        const marker = readRequiredContent(input.node, input.siblings, input.index, 0);
+        const marker = readAstCommandNodeArguments(input);
         return {
-            html: `<sup class="latex-tnote">${input.renderChildren(marker.content)}</sup>`,
+            html: `<sup class="latex-tnote">${input.renderChildren(marker.requiredArgs[0] ?? [])}</sup>`,
             consumedNodes: marker.consumedNodes
         };
     }
     const contentIndex = input.node.content === 'multicolumn' || input.node.content === 'multirow' ? 2 : 0;
-    const content = readRequiredContent(input.node, input.siblings, input.index, contentIndex);
-    const html = input.renderChildren(content.content);
+    const args = readAstCommandNodeArguments(input, contentIndex + 1);
+    const html = input.renderChildren(args.requiredArgs[contentIndex] ?? []);
     return {
         html: input.node.content === 'makecell' ? renderMakecell(html) : `<span>${html}</span>`,
-        consumedNodes: content.consumedNodes
+        consumedNodes: args.consumedNodes
     };
 };

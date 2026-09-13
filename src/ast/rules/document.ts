@@ -1,8 +1,8 @@
 import { BibTexParser } from '../../bib';
 import { renderBibliographyItemsHtml, renderCitedBibliographyHtml, renderExternalLinkHtml, renderMaketitleAuthorsHtml } from '../../rule-helpers';
 import { toRoman } from '../../utils';
-import { isEnvironmentNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
-import { readAstCommandArguments, renderInlineLatexSource, type AstRenderRule } from './index';
+import { astNodesToText, isEnvironmentNode, isMacroNode, readRequiredMacroArgument } from '../visit-utils';
+import { readAstCommandArguments, readAstCommandNodeArguments, renderInlineLatexSource, type AstRenderRule } from './index';
 
 const ABSTRACT_MACROS = new Set(['Abstract', 'abstract']);
 const KEYWORD_MACROS = new Set(['Keywords', 'keywords', 'Keyword', 'keyword']);
@@ -26,7 +26,7 @@ export const AST_MAKETITLE_RULE: AstRenderRule = (input, context) => {
     return { html: parts.join('') };
 };
 
-export const AST_ABSTRACT_KEYWORDS_RULE: AstRenderRule = (input, context) => {
+export const AST_ABSTRACT_KEYWORDS_RULE: AstRenderRule = input => {
     if (isEnvironmentNode(input.node, 'abstract') && Array.isArray(input.node.content)) {
         return { html: `<div class="latex-abstract"><span class="latex-abstract-title">Abstract</span>${input.renderChildren(input.node.content)}</div>` };
     }
@@ -36,16 +36,16 @@ export const AST_ABSTRACT_KEYWORDS_RULE: AstRenderRule = (input, context) => {
         return undefined;
     }
 
-    const args = readAstCommandArguments(input);
-    const content = args.requiredArgs[0] ?? '';
+    const args = readAstCommandNodeArguments(input);
+    const content = input.renderChildren(args.requiredArgs[0] ?? []);
     if (ABSTRACT_MACROS.has(input.node.content)) {
         return {
-            html: `<div class="latex-abstract"><span class="latex-abstract-title">Abstract</span>${renderInlineLatexSource(content, context)}</div>`,
+            html: `<div class="latex-abstract"><span class="latex-abstract-title">Abstract</span>${content}</div>`,
             consumedNodes: args.consumedNodes
         };
     }
     return {
-        html: `<div class="latex-keywords"><strong>Keywords:</strong> ${renderInlineLatexSource(content, context)}</div>`,
+        html: `<div class="latex-keywords"><strong>Keywords:</strong> ${content}</div>`,
         consumedNodes: args.consumedNodes
     };
 };
@@ -67,10 +67,10 @@ export const AST_LINK_RULE: AstRenderRule = (input, context) => {
     if (!isMacroNode(input.node) || !['href', 'url'].includes(input.node.content)) {
         return undefined;
     }
-    const args = readAstCommandArguments(input);
-    const rawUrl = args.requiredArgs[0];
-    const label = input.node.content === 'href' ? args.requiredArgs[1] : rawUrl;
-    const content = renderInlineLatexSource(label ?? rawUrl, context);
+    const args = readAstCommandNodeArguments(input, input.node.content === 'href' ? 2 : 1);
+    const rawUrl = astNodesToText(args.requiredArgs[0] ?? []);
+    const label = input.node.content === 'href' ? args.requiredArgs[1] : undefined;
+    const content = label ? input.renderChildren(label) : renderInlineLatexSource(rawUrl, context);
     return {
         html: renderExternalLinkHtml(rawUrl, content, `latex-${input.node.content}`) ?? content,
         consumedNodes: args.consumedNodes
@@ -92,9 +92,9 @@ export const AST_COMMON_MACRO_RULE: AstRenderRule = (input, context) => {
         return { html: '<span class="no-indent-marker"></span>' };
     }
     if (input.node.content === 'mbox' || input.node.content === 'text') {
-        const args = readAstCommandArguments(input);
+        const args = readAstCommandNodeArguments(input);
         return {
-            html: renderInlineLatexSource(args.requiredArgs[0] ?? '', context),
+            html: input.renderChildren(args.requiredArgs[0] ?? []),
             consumedNodes: args.consumedNodes
         };
     }

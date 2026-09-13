@@ -163,6 +163,14 @@ function renderListLabel(label: string, renderer: RenderContext): string {
     return escapeHtml(resolveLatexStyles(withMath, createStyleHtmlProtector(renderer), renderer.metadata?.colors));
 }
 
+function renderInlineContent(content: string | undefined, renderer: RenderContext): string {
+    return renderInlineLatexHtml(
+        content,
+        tex => renderMath(tex, false, renderer),
+        renderer.metadata?.colors
+    );
+}
+
 function renderLatexListContent(content: string, renderer: RenderContext): string {
     const nestedLists = renderLatexLists(content, renderer);
     const styled = resolveLatexStyles(nestedLists, createStyleHtmlProtector(renderer), renderer.metadata?.colors);
@@ -294,13 +302,6 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     },
 
     {
-        priority: 20,
-        apply: (text) => {
-            return text.replace(/\\mbox/g, '\\text');
-        }
-    },
-
-    {
         priority: 30,
         apply: (text) => {
             return text.replace(/\\(Rmnum|rmnum|romannumeral)\s*\{?(\d+)\}?/g, (_match, cmd, numStr) => {
@@ -370,6 +371,15 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 return processInline(content);
             });
         }
+    },
+
+    {
+        priority: 56,
+        apply: text => replaceLatexCommandCalls(text, {
+            name: 'mbox',
+            requiredArgs: 1,
+            render: call => call.requiredArgs[0].content
+        })
     },
 
     {
@@ -470,7 +480,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 const displayName = getTheoremDisplayName(envName);
                 let header = `<span class="latex-thm-head"><strong class="latex-theorem-header">${displayName} <span class="sn-cnt" data-type="thm"></span>`;
                 if (optArg) {
-                    header += `</strong>&nbsp;(${escapeHtml(optArg)}).</span>&nbsp; `;
+                    header += `</strong>&nbsp;(${renderInlineContent(optArg, renderer)}).</span>&nbsp; `;
                 } else {
                     header += `.</strong></span>&nbsp; `;
                 }
@@ -481,8 +491,9 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             text = text.replace(thmEndRegex, () => `\n\n${renderer.protectHtml('thm-close', '</div>')}\n\n`);
 
             text = text.replace(/\\begin\{proof\}(?:\[(.*?)\])?/gi, (_match, optArg) => {
-                const title = optArg ? `Proof (${escapeHtml(optArg)}).` : `Proof.`;
-                return `\n${renderer.protectHtml('raw', '<span class="no-indent-marker"></span>')}**${title}** `;
+                const title = optArg ? `Proof (${renderInlineContent(optArg, renderer)}).` : `Proof.`;
+                const heading = renderer.protectHtml('proof-title', `<strong>${title}</strong>`, 'inline');
+                return `\n${renderer.protectHtml('raw', '<span class="no-indent-marker"></span>')}${heading} `;
             });
             return text.replace(/\\end\{proof\}/gi, () => ` ${renderer.protectHtml('raw', '<span style="float:right;">QED</span>')}\n`);
         }
@@ -494,11 +505,7 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
             if (text.includes('\\maketitle')) {
                 let titleBlock = '';
                 const metadata = renderer.metadata;
-                const processMeta = (value: string | undefined) => renderInlineLatexHtml(
-                    value,
-                    tex => renderMath(tex, false, renderer),
-                    renderer.metadata?.colors
-                );
+                const processMeta = (value: string | undefined) => renderInlineContent(value, renderer);
 
                 const safeTitle = processMeta(metadata?.title);
                 const safeAuthors = renderMaketitleAuthorsHtml(
@@ -542,29 +549,29 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
     {
         priority: 170,
         apply: (text, renderer: RenderContext) => {
-            const sectionRegex = new RegExp(`\\\\(${REGEX_STR.SECTION_LEVELS})(\\*?)\\{((?:[^{}]|{[^{}]*})*)\\}\\s*(\\\\label\\{[^}]+\\})?\\s*`, 'g');
+            return replaceLatexCommandCalls(text, {
+                name: REGEX_STR.SECTION_LEVELS.split('|'),
+                allowStar: true,
+                optionalArgs: 1,
+                requiredArgs: 1,
+                render: call => {
+                    const level = call.name;
+                    const content = call.requiredArgs[0].content;
+                    let prefix = '##';
+                    if (level === 'subsection') { prefix = '###'; }
+                    else if (level === 'subsubsection') { prefix = '####'; }
+                    else if (level === 'paragraph') { prefix = '#####'; }
+                    else if (level === 'subparagraph') { prefix = '######'; }
 
-            return text.replace(sectionRegex, (_match, level, star, content, label) => {
-                let prefix = '##';
-                if (level === 'subsection') { prefix = '###'; }
-                else if (level === 'subsubsection') { prefix = '####'; }
-                else if (level === 'paragraph') { prefix = '#####'; }
-                else if (level === 'subparagraph') { prefix = '######'; }
+                    let numHtml = "";
+                    if (!call.star && !['paragraph', 'subparagraph'].includes(level)) {
+                        numHtml = `<span class="sn-cnt" data-type="sec"></span>. `;
+                    }
 
-                let numHtml = "";
-                if (star !== '*' && !['paragraph', 'subparagraph'].includes(level)) {
-                    numHtml = `<span class="sn-cnt" data-type="sec"></span>. `;
+                    if(numHtml) {numHtml = renderer.protectHtml('secnum', numHtml);}
+
+                    return `\n${prefix} ${numHtml}${content.trim()}\n`;
                 }
-
-                let anchor = "";
-                if (label) {
-                    const labelName = label.match(/\{([^}]+)\}/)?.[1] || "";
-                    anchor = createHiddenLabelAnchor(labelName);
-                }
-                if(anchor) {anchor = renderer.protectHtml('anchor', anchor);}
-                if(numHtml) {numHtml = renderer.protectHtml('secnum', numHtml);}
-
-                return `\n${prefix} ${numHtml}${content.trim()} ${anchor}\n`;
             });
         }
     },

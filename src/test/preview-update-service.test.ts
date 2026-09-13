@@ -96,7 +96,7 @@ suite('PreviewUpdateService', () => {
             '\\editor{Casey Editor}',
             '\\begin{document}',
             '\\maketitle',
-            '\\Abstract{A short abstract with $x=1$.}',
+            '\\Abstract{A \\textbf{short} abstract with $x=1$.}',
             '\\Keywords{preview, ast}',
             'See \\citep{doe2024}.',
             '\\begin{thebibliography}{9}',
@@ -114,6 +114,8 @@ suite('PreviewUpdateService', () => {
         assert.match(html, /class="latex-author">Alice Example/);
         assert.match(html, /Casey Editor/);
         assert.match(html, /class="latex-abstract"/);
+        assert.match(html, /class="latex-abstract"[\s\S]*A [\s\S]*short[\s\S]* abstract/);
+        assert.doesNotMatch(html, /\\textbf\{short\}/);
         assert.match(html, /class="latex-keywords"/);
         assert.match(html, /href="#ref-doe2024"/);
         assert.match(html, /class="latex-bibliography-list"/);
@@ -257,10 +259,12 @@ suite('PreviewUpdateService', () => {
     test('renders a representative document through legacy and AST splitter modes', async () => {
         const source = [
             '\\begin{document}',
-            '\\section{Intro}\\label{sec:intro}',
-            'See \\ref{sec:intro}, \\eqref{eq:model}, and \\citep{smith2024}.',
+            '\\section[Brief]{Intro \\textit{topic}}\\label{sec:intro}',
+            'See \\ref{sec:intro}, \\eqref{eq:model}, \\citep{smith2024}, and \\href{https://example.com}{a \\textbf{link}}.',
             '\\begin{equation}\\label{eq:model}x=1\\end{equation}',
-            '\\begin{condition}[Model]\\begin{enumerate}[(i)]\\item First\\end{enumerate}\\end{condition}',
+            '\\begin{alignat}{2}a&=b & c&=d\\end{alignat}',
+            'Text \\mbox{A \\textbf{box}} and $\\mbox{math text}$.',
+            '\\begin{condition}[Model \\textit{case}]\\begin{enumerate}[(i)]\\item First\\end{enumerate}\\end{condition}',
             '\\begin{table}\\begin{tabular}{cc}A & B\\\\\\end{tabular}\\caption{A table}\\end{table}',
             '\\begin{figure}\\begin{tikzpicture}\\node {A};\\end{tikzpicture}\\caption{A figure}\\end{figure}',
             '\\begin{thebibliography}{9}',
@@ -274,16 +278,21 @@ suite('PreviewUpdateService', () => {
             const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
             const html = payload.htmls?.join('\n') ?? '';
 
-            assert.match(html, /Intro/);
+            assert.match(html, /Intro[\s\S]*topic/);
             assert.match(html, /data-key="sec:intro"/);
             assert.match(html, /data-key="eq:model"/);
             assert.match(html, /href="#ref-smith2024"/);
+            assert.match(html, /href="https:\/\/example\.com\/?"[\s\S]*a [\s\S]*link/);
+            assert.match(html, /A [\s\S]*box/);
+            assert.match(html, /math text/);
             assert.match(html, /class="latex-theorem"/);
+            assert.match(html, /Model [\s\S]*case/);
             assert.match(html, /<li>/);
             assert.match(html, /\(i\)/);
             assert.match(html, /class="latex-tabular-preview"/);
             assert.match(html, /class="tikz-container"/);
             assert.match(html, /id="ref-smith2024"/);
+            assert.doesNotMatch(html, /\\(?:section|href|mbox|textit\{case\})|>2\s*<span class="katex-display"/);
         }
     });
 
@@ -547,7 +556,7 @@ suite('PreviewUpdateService', () => {
             '\\centering',
             '\\begin{subfigure}{0.48\\textwidth}',
             '\\centering',
-            '\\includegraphics[width=\\linewidth]{fig1.pdf}',
+            '\\includegraphics*[width=\\linewidth]{fig1.pdf}',
             '\\caption{First figure}',
             '\\label{fig:sub1}',
             '\\end{subfigure}',
@@ -616,6 +625,7 @@ suite('PreviewUpdateService', () => {
             assert.equal(payload.numbering.labels['fig:four-subfigures'], '2');
             assert.equal(payload.numbering.labels['fig:sub3'], '2c');
             assert.equal(payload.numbering.labels['fig:sub4'], '2d');
+            assert.equal((html.match(/data-req-path="fig1\.pdf"/g) ?? []).length, 2);
             assert.doesNotMatch(html, /\\(?:begin|end)\{subfigure\}|\\hfill|\\vspace|\[htbp\]/);
         }
     });
@@ -754,7 +764,8 @@ suite('PreviewUpdateService', () => {
         const service = new PreviewUpdateService(new MemoryFileProvider());
         const payload = await service.render(uri, [
             '\\begin{document}',
-            '\\begin{proof}[Sketch]',
+            '\\begin{theorem}\\label{thm:proof-target}Claim.\\end{theorem}',
+            '\\begin{proof}[Proof of Theorem~\\ref{thm:proof-target}]',
             'First step.',
             '',
             '\\begin{equation}',
@@ -771,7 +782,7 @@ suite('PreviewUpdateService', () => {
         });
         const html = payload.htmls?.join('\n') ?? '';
 
-        assert.match(html, /<strong>Proof \(Sketch\)\.<\/strong>/);
+        assert.match(html, /<strong>Proof \(Proof of Theorem&nbsp;<a[^>]*data-key="thm:proof-target"[^>]*>\?<\/a>\)\.<\/strong>/);
         assert.match(html, /First step\./);
         assert.match(html, /where x is defined\./);
         assert.match(html, /Last step\./);

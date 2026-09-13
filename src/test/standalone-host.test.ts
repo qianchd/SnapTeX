@@ -560,7 +560,7 @@ suite('StandaloneHost', () => {
             host.syncEditorSelection(1, 0, 'Changed paragraph.');
             assert.equal(messages.some(message => message.command === HostToPreviewCommand.ScrollToBlock), false);
 
-            host.updateSettings({ livePreview: true, autoScrollSync: true });
+            await host.updateSettings({ livePreview: true, autoScrollSync: true });
             host.handleEditorUpdate();
             assert.equal(scheduledRenders, 1);
 
@@ -596,8 +596,7 @@ suite('StandaloneHost', () => {
             await flushAsync();
             const updateCount = messages.filter(message => message.command === HostToPreviewCommand.Update).length;
 
-            host.updateSettings({ backendMode: 'ast(experimental)' });
-            await flushAsync();
+            await host.updateSettings({ backendMode: 'ast(experimental)' });
             const updates = messages.filter(message => message.command === HostToPreviewCommand.Update);
             const lastUpdate = updates[updates.length - 1];
 
@@ -606,8 +605,7 @@ suite('StandaloneHost', () => {
             assert.ok(lastUpdate.payload.type === 'full');
             assert.equal(lastUpdate.payload.resetPreviewState, true);
 
-            host.updateSettings({ backendMode: 'legacy' });
-            await flushAsync();
+            await host.updateSettings({ backendMode: 'legacy' });
             const switchedBackUpdates = messages.filter(message => message.command === HostToPreviewCommand.Update);
             const switchedBackUpdate = switchedBackUpdates[switchedBackUpdates.length - 1];
 

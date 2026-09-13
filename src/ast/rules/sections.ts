@@ -1,5 +1,5 @@
-import { argumentText, isMacroNode, readNodeArgument, readRequiredMacroArgument, type SnaptexAstMacro } from '../visit-utils';
-import { AST_SECTION_MACROS, type AstRenderRule, readAstCommandArguments } from './index';
+import { argumentText, isMacroNode, readNodeArgument, type SnaptexAstMacro } from '../visit-utils';
+import { AST_SECTION_MACROS, readAstCommandNodeArguments, type AstRenderRule } from './index';
 
 const SECTION_TAGS: Record<string, string> = {
     section: 'h2',
@@ -19,16 +19,15 @@ function isStarredSection(node: SnaptexAstMacro): boolean {
         || argumentText(readNodeArgument(node, '', 0)).trim() === '*';
 }
 
-export const AST_SECTION_RULE: AstRenderRule = (input, context) => {
+export const AST_SECTION_RULE: AstRenderRule = input => {
     if (!isMacroNode(input.node) || !AST_SECTION_MACROS.has(sectionName(input.node))) {
         return undefined;
     }
 
-    const args = readAstCommandArguments(input);
+    const args = readAstCommandNodeArguments(input);
     const level = sectionName(input.node);
-    const titleArgument = readRequiredMacroArgument(input.node);
-    const content = (titleArgument ? argumentText(titleArgument) : args.requiredArgs[0])?.trim();
-    if (!content) {
+    const title = args.requiredArgs[0];
+    if (!title || title.length === 0) {
         return undefined;
     }
 
@@ -36,8 +35,8 @@ export const AST_SECTION_RULE: AstRenderRule = (input, context) => {
     const numberHtml = isStarredSection(input.node) || level === 'paragraph' || level === 'subparagraph'
         ? ''
         : '<span class="sn-cnt" data-type="sec"></span>. ';
-    const titleHtml = titleArgument
-        ? input.renderChildren(titleArgument.content).trim()
-        : context.escapeHtml(content);
-    return { html: `<${tag}>${numberHtml}${titleHtml}</${tag}>`, consumedNodes: args.consumedNodes };
+    return {
+        html: `<${tag}>${numberHtml}${input.renderChildren(title).trim()}</${tag}>`,
+        consumedNodes: args.consumedNodes
+    };
 };

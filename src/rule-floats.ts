@@ -1,5 +1,5 @@
 import { PreprocessRule, RenderContext } from './types';
-import { escapeHtmlAttribute, extractAndHideLabels, findCommand, resolveLatexStyles } from './utils';
+import { escapeHtmlAttribute, extractAndHideLabels, findCommand, replaceLatexCommandCalls, resolveLatexStyles } from './utils';
 import { createStyleHtmlProtector, recoverPreservedTokens, renderCaptionContent, renderCaptionHtml, renderNumberedCaptionPrefix, renderSubfigureWidthStyle, unwrapResizeboxAroundProtectedContent } from './rule-helpers';
 import { findFirstTabularEnvironment, renderLatexTabular, renderLatexTableInlineContent } from './latex-table';
 import { renderAlgorithmicList } from './latex-algorithm';
@@ -18,6 +18,16 @@ export function renderIncludeGraphicsHtml(imgPath: string): string {
         return `<canvas id="${canvasId}" data-req-path="${safePath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`;
     }
     return `<img src="LOCAL_IMG:${safePath}" style="max-width:100%; display:block; margin:0 auto;">`;
+}
+
+function renderIncludeGraphics(content: string): string {
+    return replaceLatexCommandCalls(content, {
+        name: 'includegraphics',
+        allowStar: true,
+        optionalArgs: 1,
+        requiredArgs: 1,
+        render: call => renderIncludeGraphicsHtml(call.requiredArgs[0].content)
+    });
 }
 
 function extractRenderedCaption(content: string, renderer: RenderContext, className: string, prefixHtml = ''): { content: string; captionHtml: string } {
@@ -44,7 +54,7 @@ function renderSubfigureEnvironment(widthSpec: string, content: string, renderer
     const { cleanContent, hiddenHtml } = extractAndHideLabels(withoutCaption);
     let body = cleanFigureLayoutCommands(cleanContent).trim();
     body = unwrapResizeboxAroundProtectedContent(body);
-    body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (_imgMatch: string, imgPath: string) => renderIncludeGraphicsHtml(imgPath));
+    body = renderIncludeGraphics(body);
     return `<div class="latex-subfigure" style="${renderSubfigureWidthStyle(widthSpec)}">${body}${captionHtml}${hiddenHtml}</div>`;
 }
 
@@ -75,7 +85,7 @@ export function createFigureRule(): PreprocessRule {
                 body = cleanFigureLayoutCommands(body).trim();
                 body = unwrapResizeboxAroundProtectedContent(body);
 
-                body = body.replace(/\\includegraphics(?:\[.*?\])?\s*\{([^}]+)\}/g, (_imgMatch: string, imgPath: string) => renderIncludeGraphicsHtml(imgPath));
+                body = renderIncludeGraphics(body);
                 if (hasSubfigures) {
                     body = `<div class="latex-subfigure-grid">${body}</div>`;
                 }

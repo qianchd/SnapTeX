@@ -654,14 +654,13 @@ export class SmartRenderer {
     private getLineBySourceOffset(index: number, sourceStart: number | undefined, sourceEnd: number | undefined): number | undefined {
         if (sourceStart === undefined) { return undefined; }
 
-        const block = this.lastBlocks[index];
         const source = this.getSyncBlockSource(index);
-        if (!block || !source) { return undefined; }
+        if (!source) { return undefined; }
 
         const targetOffset = sourceEnd === undefined
             ? sourceStart
             : Math.floor((sourceStart + sourceEnd) / 2);
-        return block.line + lineAtOffset(source.text, targetOffset - source.prefixLength);
+        return source.block.line + lineAtOffset(source.text, targetOffset - source.prefixLength);
     }
 
     private getLineByBlockRatio(index: number, ratio: number): number {
@@ -676,29 +675,30 @@ export class SmartRenderer {
     private refineLineByAnchors(index: number, estimatedFlatLine: number, anchors: readonly string[]): number | undefined {
         if (anchors.length === 0) { return undefined; }
 
-        const block = this.lastBlocks[index];
         const source = this.getSyncBlockSource(index);
-        if (!block || !source) { return undefined; }
+        if (!source) { return undefined; }
 
         const lines = source.text.split(/\r?\n/);
-        const estimatedLineInBlock = Math.max(0, Math.min(block.lineCount - 1, estimatedFlatLine - block.line));
+        const estimatedLineInBlock = Math.max(0, Math.min(source.block.lineCount - 1, estimatedFlatLine - source.block.line));
         const matchedLine = findNearestSyncAnchorLine(
             anchors,
             0,
-            Math.min(lines.length - 1, Math.max(0, block.lineCount - 1)),
+            Math.min(lines.length - 1, Math.max(0, source.block.lineCount - 1)),
             estimatedLineInBlock,
             line => lines[line] ?? ''
         );
-        return matchedLine === undefined ? undefined : block.line + matchedLine;
+        return matchedLine === undefined ? undefined : source.block.line + matchedLine;
     }
 
-    private getSyncBlockSource(index: number): { text: string; prefixLength: number; startColumn: number } | undefined {
+    private getSyncBlockSource(index: number): { block: BlockSnapshot; text: string; prefixLength: number; startColumn: number } | undefined {
+        const block = this.lastBlocks[index];
         const span = this.lastTextSnapshot.blockSpans[index];
-        if (!span) { return undefined; }
+        if (!block || !span) { return undefined; }
         const lineStart = span.start > 0
             ? this.lastTextSnapshot.bodyText.lastIndexOf('\n', span.start - 1) + 1
             : 0;
         return {
+            block,
             text: this.lastTextSnapshot.bodyText.slice(span.start, span.end),
             prefixLength: span.prefix?.length ?? 0,
             startColumn: span.start - lineStart
@@ -708,10 +708,9 @@ export class SmartRenderer {
     private getAstPreviewAnchor(index: number, lineInBlock: number, character?: number): { ratio: number; sourceStart: number; sourceEnd: number } | undefined {
         if (character === undefined) { return undefined; }
 
-        const block = this.lastBlocks[index];
         const artifact = this.documentView?.getAstBlockArtifact(index);
         const source = this.getSyncBlockSource(index);
-        if (!block || !artifact || !source || artifact.sourceHints.starts.length === 0) {
+        if (!artifact || !source || artifact.sourceHints.starts.length === 0) {
             return undefined;
         }
 
@@ -725,7 +724,7 @@ export class SmartRenderer {
             if (sourceOffset >= start && sourceOffset <= end) {
                 const hintLine = lineAtOffset(source.text, Math.floor((start + end) / 2) - source.prefixLength);
                 return {
-                    ratio: Math.max(0, Math.min(1, hintLine / Math.max(1, block.lineCount))),
+                    ratio: Math.max(0, Math.min(1, hintLine / Math.max(1, source.block.lineCount))),
                     sourceStart: start,
                     sourceEnd: end
                 };

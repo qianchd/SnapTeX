@@ -7,7 +7,7 @@ import { SNAP_TEX_RULES, type RuleRegistry } from './rules';
 import { LatexBlockSplitter } from './splitter';
 import { extractAstBlockArtifact } from './ast/block-metadata';
 import type { AstBlockArtifact } from './ast/types';
-import { splitLatexWithAstIncremental, type AstSplitSnapshot } from './ast/splitter';
+import { splitLatexWithAstIncremental, type AstSplitResult } from './ast/splitter';
 import { getBlockSpanText, lineAtOffset, normalizeUri, scanLatexBraceBalance, stableHash, stripLatexComments } from './utils';
 
 export interface DocumentParseResult {
@@ -92,7 +92,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public rootDir: TUri | undefined;
 
     private bibCache: BibCacheEntry | undefined;
-    private astSplitSnapshot: AstSplitSnapshot | undefined;
+    private astSplitSnapshot: AstSplitResult | undefined;
     private astSplitSnapshotKey: string | undefined;
 
     constructor(private readonly fileProvider: IFileProvider<TUri>, private readonly registry: RuleRegistry = SNAP_TEX_RULES) {}

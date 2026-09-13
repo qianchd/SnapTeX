@@ -9,7 +9,6 @@ import type { BibEntry, PreambleData } from '../../types';
 import { parseLatexWithLoadedParser } from '../parse';
 import type { SnaptexAstNode } from '../types';
 import {
-    argumentText,
     astNodesRange,
     astNodesToText,
     getSourcePosition,
@@ -18,8 +17,7 @@ import {
     isMacroNode,
     isVerbatimLikeNode,
     readBracketNodes,
-    readOptionalMacroArgument,
-    readRequiredMacroArgument
+    skipWhitespaceOrComments
 } from '../visit-utils';
 
 const MAX_GENERATED_SOURCE_DEPTH = 8;
@@ -110,26 +108,27 @@ export function createDefaultAstRenderContext(options: AstRenderContextOptions =
 }
 
 export function readAstCommandArguments(input: AstRenderInput, requiredArgCount = 1): AstCommandArguments {
-    const requiredArgs: string[] = [];
-    const optionalArgs: string[] = [];
+    const args = readAstCommandNodeArguments(input, requiredArgCount);
+    return {
+        requiredArgs: args.requiredArgs.map(astNodesToText),
+        optionalArgs: args.optionalArgs.map(astNodesToText),
+        consumedNodes: args.consumedNodes
+    };
+}
+
+export function readAstCommandNodeArguments(input: AstRenderInput, requiredArgCount = 1) {
+    const requiredArgs: SnaptexAstNode[][] = [];
+    const optionalArgs: SnaptexAstNode[][] = [];
     if (!isMacroNode(input.node)) {
         return { requiredArgs, optionalArgs, consumedNodes: 1 };
     }
 
-    for (let index = 0; ; index++) {
-        const argument = readOptionalMacroArgument(input.node, index);
-        if (!argument) {
-            break;
+    for (const argument of input.node.args ?? []) {
+        if (argument.openMark === '[') {
+            optionalArgs.push(argument.content);
+        } else if (argument.openMark === '{') {
+            requiredArgs.push(argument.content);
         }
-        optionalArgs.push(argumentText(argument));
-    }
-
-    for (let index = 0; ; index++) {
-        const argument = readRequiredMacroArgument(input.node, index);
-        if (!argument) {
-            break;
-        }
-        requiredArgs.push(argumentText(argument));
     }
 
     let cursor = input.index + 1;
@@ -147,37 +146,30 @@ export function readAstCommandArguments(input: AstRenderInput, requiredArgCount 
 function readDetachedArguments(
     siblings: readonly SnaptexAstNode[],
     startIndex: number,
-    optionalArgs: string[],
-    requiredArgs: string[],
+    optionalArgs: SnaptexAstNode[][],
+    requiredArgs: SnaptexAstNode[][],
     requiredArgCount: number
 ): number {
-    let cursor = skipAstWhitespace(siblings, startIndex);
+    let cursor = skipWhitespaceOrComments(siblings, startIndex);
     while (true) {
         const optionalGroup = readBracketNodes(siblings, cursor);
         if (!optionalGroup) {
             break;
         }
-        optionalArgs.push(astNodesToText(optionalGroup.content));
-        cursor = skipAstWhitespace(siblings, optionalGroup.nextIndex);
+        optionalArgs.push(optionalGroup.content);
+        cursor = skipWhitespaceOrComments(siblings, optionalGroup.nextIndex);
     }
 
     while (requiredArgs.length < requiredArgCount) {
         const requiredGroup = siblings[cursor];
         if (!isGroupNode(requiredGroup)) { break; }
-        requiredArgs.push(astNodesToText(requiredGroup.content));
+        requiredArgs.push(requiredGroup.content);
         cursor++;
         if (requiredArgs.length < requiredArgCount) {
-            cursor = skipAstWhitespace(siblings, cursor);
+            cursor = skipWhitespaceOrComments(siblings, cursor);
         }
     }
     return cursor;
-}
-
-function skipAstWhitespace(nodes: readonly SnaptexAstNode[], index: number): number {
-    while (nodes[index]?.type === 'whitespace') {
-        index++;
-    }
-    return index;
 }
 
 export function renderInlineLatexSource(text: string, context: AstRenderContext): string {
@@ -210,7 +202,7 @@ function renderAstNodes(
                 ? renderAstSource(source, rules, context, generatedSourceDepth + 1)
                 : renderInlineLatexSource(source, context)
         };
-        const result = renderAstNodeWithRules(input, rules, context);
+        const result = renderAstNodeWithRules(input, rules, context, generatedSourceDepth);
         html += result.html;
         index += Math.max(1, result.consumedNodes ?? 1) - 1;
     }
@@ -236,7 +228,8 @@ function renderAstSource(
 function renderAstNodeWithRules(
     input: AstRenderInput,
     rules: readonly AstRenderRule[],
-    context: AstRenderContext
+    context: AstRenderContext,
+    generatedSourceDepth: number
 ): AstRenderResult {
     for (const rule of rules) {
         const result = rule(input, context);
@@ -245,13 +238,14 @@ function renderAstNodeWithRules(
         }
     }
 
-    return { html: renderFallbackNode(input.node, rules, context) };
+    return { html: renderFallbackNode(input.node, rules, context, generatedSourceDepth) };
 }
 
 function renderFallbackNode(
     node: SnaptexAstNode,
     rules: readonly AstRenderRule[],
-    context: AstRenderContext
+    context: AstRenderContext,
+    generatedSourceDepth: number
 ): string {
     if (isCommentNode(node)) {
         return '';
@@ -275,7 +269,7 @@ function renderFallbackNode(
         return context.escapeHtml(node.content).replace(/~/g, '&nbsp;');
     }
     if (Array.isArray(node.content)) {
-        return renderAstNodesWithRules(node.content, rules, context);
+        return renderAstNodes(node.content, rules, context, generatedSourceDepth);
     }
     return '';
 }

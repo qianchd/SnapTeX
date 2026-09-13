@@ -104,6 +104,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }, getAutoScrollDelay);
 
+    const beginPreviewToEditorSync = (message: RevealLineMessage | SyncScrollMessage) => {
+        scheduleAutoSyncToPreview.cancel();
+        suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
+        return updateService.getSourceSyncData(message.index, message.ratio, message);
+    };
+
     /**
      * Updates the preview target according to the active editor, subfile mapping,
      * and the renderOnSwitch policy.
@@ -206,10 +212,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('snaptex.internal.revealLine', async (message: RevealLineMessage) => {
-            scheduleAutoSyncToPreview.cancel();
-            suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
-
-            const sourceLoc = updateService.getSourceSyncData(message.index, message.ratio, message);
+            const sourceLoc = beginPreviewToEditorSync(message);
             if (!sourceLoc) {return;}
 
             const targetUri = vscode.Uri.parse(sourceLoc.file);
@@ -248,10 +251,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAutoScrollSyncEnabled()) { return; }
         if (Date.now() < suppressPreviewToTextUntil) { return; }
 
-        scheduleAutoSyncToPreview.cancel();
-        suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
-
-        const sourceLoc = updateService.getSourceSyncData(message.index, message.ratio, message);
+        const sourceLoc = beginPreviewToEditorSync(message);
         if (!sourceLoc) {return;}
 
         const targetUri = vscode.Uri.parse(sourceLoc.file);

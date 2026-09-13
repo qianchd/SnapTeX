@@ -296,22 +296,24 @@ export class StandaloneHost {
         return { ...this.settings };
     }
 
-    updateSettings(settings: Partial<StandalonePreviewSettings>) {
+    async updateSettings(settings: Partial<StandalonePreviewSettings>): Promise<void> {
         const previousVirtualMode = this.settings.virtualMode;
         const previousLivePreview = this.settings.livePreview;
         const previousBackendMode = this.settings.backendMode;
         this.settings = { ...this.settings, ...settings };
+        const virtualModeChanged = previousVirtualMode !== this.settings.virtualMode;
+        const backendModeChanged = previousBackendMode !== this.settings.backendMode;
+        const shouldRender = virtualModeChanged || backendModeChanged || (!previousLivePreview && this.settings.livePreview);
         if (this.previewReady) {
             this.postPreviewConfig();
-            const backendModeChanged = previousBackendMode !== this.settings.backendMode;
-            if (previousVirtualMode !== this.settings.virtualMode || backendModeChanged) {
+            if (virtualModeChanged || backendModeChanged) {
                 this.updateService.resetState();
-            }
-            if (previousVirtualMode !== this.settings.virtualMode || backendModeChanged || (!previousLivePreview && this.settings.livePreview)) {
-                void this.renderCurrentText();
             }
         }
         this.notifyStateChanged();
+        if (this.previewReady && shouldRender) {
+            await this.renderCurrentText();
+        }
     }
 
     getLatexCompletionData(): LatexCompletionData {
