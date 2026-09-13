@@ -31,6 +31,9 @@
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/extension.js",
+  "vsce": {
+    "dependencies": false
+  },
   "contributes": {
     "languages": [
       {
@@ -187,11 +190,12 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
-    "compile": "npm run check-types && npm run lint && node esbuild.js --target=vscode",
+    "compile": "npm run vscode:check && node esbuild.js --target=vscode",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch --target=vscode",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run check-types && npm run lint && node esbuild.js --production --target=vscode",
+    "package": "npm run vscode:check && node esbuild.js --production --target=vscode",
+    "vscode:check": "tsc --noEmit -p tsconfig.vscode.json && eslint src apps/vscode/src --ignore-pattern \"src/test/**\"",
     "compile-tests": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint && npm run web:test-server",

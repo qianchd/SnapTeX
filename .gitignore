@@ -11,5 +11,6 @@ media/webview-*.js.map
 apps/web/*.log
 apps/web/server.env
 .vscode-test/
+.tmp-*/
 *.vsix
 src/localtestTeX

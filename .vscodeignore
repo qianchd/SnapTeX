@@ -1,5 +1,6 @@
 .vscode/**
 .vscode-test/**
+.tmp-*/**
 out/**
 node_modules/**
 src/**
@@ -8,7 +9,7 @@ src/**
 esbuild.js
 CHANGELOG.repo.md
 media/demo/*.gif
-**/tsconfig.json
+**/tsconfig*.json
 **/eslint.config.mjs
 **/*.map
 **/*.ts
