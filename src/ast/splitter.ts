@@ -39,11 +39,6 @@ interface ContextWrapper {
     nodes: readonly SnaptexAstNode[];
 }
 
-interface CoarseBlockMeta {
-    span: BlockTextSpan;
-    hash: string;
-}
-
 /**
  * Experimental two-layer splitter.
  *
@@ -57,7 +52,7 @@ export async function splitLatexWithAst(text: string, options: AstSplitOptions):
         documentHash: stableHash(text),
         spans: await refineCoarseSpans(text, options, coarseSpans),
         coarseSpans,
-        coarseHashes: buildCoarseMeta(text, coarseSpans).map(block => block.hash)
+        coarseHashes: coarseSpans.map(span => stableHash(getBlockSpanText(text, span)))
     };
 }
 
@@ -81,19 +76,26 @@ export async function splitLatexWithAstIncremental(
     }
 
     const coarseSpans = createAstCoarseSpans(text, options);
-    const oldCoarse = previous.coarseSpans.map((span, index) => ({ span, hash: previous.coarseHashes[index] }));
-    const newCoarse = buildCoarseMeta(text, coarseSpans);
-    const diff = DiffEngine.compute(oldCoarse, newCoarse);
+    const coarseHashes = coarseSpans.map(span => stableHash(getBlockSpanText(text, span)));
+    const diff = DiffEngine.compute(previous.coarseHashes, coarseHashes);
     const spans: BlockTextSpan[] = [];
+    let refinedIndex = 0;
     const appendReused = (oldIndex: number, newIndex: number) => {
-        const oldSpan = oldCoarse[oldIndex]?.span;
-        const newSpan = newCoarse[newIndex]?.span;
+        const oldSpan = previous.coarseSpans[oldIndex];
+        const newSpan = coarseSpans[newIndex];
         if (!oldSpan || !newSpan) { return; }
 
-        const reused = refinedSpansInsideCoarse(previous.spans, oldSpan);
         const offsetDelta = newSpan.start - oldSpan.start;
         const lineDelta = newSpan.line - oldSpan.line;
-        spans.push(...(reused.length > 0 ? reused : [oldSpan]).map(span => offsetSpan(span, offsetDelta, lineDelta)));
+        const firstReused = spans.length;
+        // Both layers are source-ordered; visit each old refined span at most once.
+        while (refinedIndex < previous.spans.length && previous.spans[refinedIndex].start < oldSpan.end) {
+            const span = previous.spans[refinedIndex++];
+            if (span.start >= oldSpan.start && span.end <= oldSpan.end) {
+                spans.push(offsetSpan(span, offsetDelta, lineDelta));
+            }
+        }
+        if (spans.length === firstReused) { spans.push(offsetSpan(oldSpan, offsetDelta, lineDelta)); }
     };
 
     for (let index = 0; index < diff.start; index++) {
@@ -109,7 +111,7 @@ export async function splitLatexWithAstIncremental(
         appendReused(index + suffixOffset, index);
     }
 
-    return { documentHash, spans, coarseSpans, coarseHashes: newCoarse.map(block => block.hash) };
+    return { documentHash, spans, coarseSpans, coarseHashes };
 }
 
 function createAstCoarseSpans(text: string, options: SplitterOptions): BlockTextSpan[] {
@@ -118,13 +120,6 @@ function createAstCoarseSpans(text: string, options: SplitterOptions): BlockText
         .map(span => trimTransparentContainerEdges(text, span, options.rules))
         .filter((span): span is BlockTextSpan => span !== undefined);
     return mergeWrapperTransparentSpans(text, coarseSpans, options);
-}
-
-function buildCoarseMeta(text: string, spans: readonly BlockTextSpan[]): CoarseBlockMeta[] {
-    return spans.map(span => ({
-        span,
-        hash: stableHash(getBlockSpanText(text, span))
-    }));
 }
 
 async function refineCoarseSpans(
@@ -301,10 +296,6 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
     return accepted ? spans : undefined;
 }
 
-function refinedSpansInsideCoarse(spans: readonly BlockTextSpan[], coarse: BlockTextSpan): BlockTextSpan[] {
-    return spans.filter(span => span.start >= coarse.start && span.end <= coarse.end);
-}
-
 function trimTransparentContainerEdges(
     text: string,
     span: BlockTextSpan,
@@ -332,11 +323,12 @@ function trimTransparentContainerEdges(
     if (text.slice(start, end).trim().length === 0) {
         return undefined;
     }
+    if (start === span.start && end === span.end) { return span; }
     return {
         ...span,
         start,
         end,
-        line: lineAtOffset(text, start),
+        line: span.line + countLineBreaks(text, span.start, start),
         lineCount: countLineBreaks(text, start, end) + 1
     };
 }

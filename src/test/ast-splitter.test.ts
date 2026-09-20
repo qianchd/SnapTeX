@@ -1,7 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { splitLatexWithAst } from '../ast/splitter';
+import { splitLatexWithAst, splitLatexWithAstIncremental } from '../ast/splitter';
 import { SNAP_TEX_RULES } from '../rules';
 import type { SplitterRule } from '../types';
 import { spanText } from './test-helpers';
@@ -103,6 +103,28 @@ suite('AST splitter', () => {
         assert.ok(blocks.slice(2).every(block => block.startsWith('\\resizebox{\\linewidth}{!}{') && block.endsWith('}')));
         assert.match(blocks[2], /third line/);
         assert.match(blocks[3], /fourth line/);
+    });
+
+    test('incremental edits preserve full-split spans, line numbers and wrapper context', async () => {
+        const original = '\\begin{appendices}\nIntro.\n\n{\\color{blue} First.\n\nSecond.}\n\n'
+            + '\\begin{proof}\nProof text.\n\n\\begin{equation}x=1\\end{equation}\nwhere x is defined.\n\\end{proof}\n\n'
+            + 'Last paragraph.\n\\end{appendices}';
+        let previous = await splitLatexWithAst(original, SPLITTER_OPTIONS);
+        for (const text of [
+            original.replace('First.', 'First.\n\nInserted.'),
+            original.replace('First.\n\n', ''),
+            original.replace('blue', 'red').replace('Intro.', 'Changed intro.\nMore text.'),
+            original.replace('\\end{proof}', ''),
+            '', original
+        ]) {
+            const incremental = await splitLatexWithAstIncremental(text, SPLITTER_OPTIONS, previous);
+            assert.deepStrictEqual(incremental, await splitLatexWithAst(text, SPLITTER_OPTIONS));
+            for (const span of [...incremental.coarseSpans, ...incremental.spans]) {
+                assert.equal(span.line, text.slice(0, span.start).split('\n').length - 1);
+                assert.equal(span.lineCount, text.slice(span.start, span.end).split('\n').length);
+            }
+            previous = incremental;
+        }
     });
 
 });

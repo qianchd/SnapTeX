@@ -142,7 +142,7 @@ function prepareMathSource(
     const edits: MathSourceEdit[] = [];
 
     visitLatexAst({ type: 'root', content: [...nodes] }, (node, index, siblings) => {
-        if (!isMacroNode(node)) { return; }
+        if (!isMacroNode(node) || !hasMathRule(node.content, rules)) { return; }
         const ruleInput: AstMathRuleInput = {
             node,
             siblings,
