@@ -3,6 +3,8 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { PreviewUpdateService } from '../preview-update-service';
+import { renderLatexBlockWithAst } from '../ast/renderer';
+import { createDefaultAstRenderContext } from '../ast/rules';
 import { defineRuleRegistry, SNAP_TEX_RULES } from '../rules';
 import type { PreprocessRule } from '../types';
 import { normalizeUri } from '../utils';
@@ -373,6 +375,14 @@ suite('PreviewUpdateService', () => {
             assert.doesNotMatch(html, /\\(?:REQUIRE|ENSURE|STATE|FOR|IF|TO|ENDIF|ENDFOR)\b/);
             assert.doesNotMatch(html, /\[(?:tb|1)\]/);
         }
+        let mathCalls = 0;
+        await renderLatexBlockWithAst(source, {
+            context: createDefaultAstRenderContext({
+                sourceText: source,
+                renderMath: () => { mathCalls++; return '<span>formula</span>'; }
+            })
+        });
+        assert.equal(mathCalls, 10, 'each algorithm formula must render only once');
     });
 
     test('renders nested table captions and labels in AST splitter mode', async () => {
@@ -862,6 +872,26 @@ suite('PreviewUpdateService', () => {
 
         assert.equal(payload.type, 'patch');
         assert.ok(previewSync?.sourceStart !== undefined);
+    });
+
+    test('reuses AST hints only while source and parse status still match', async () => {
+        const source = 'See $x$ \\label{first}.';
+        const first = await renderLatexBlockWithAst(source);
+        const repeated = await renderLatexBlockWithAst(source, { artifact: first.artifact });
+        assert.strictEqual(repeated.artifact, first.artifact);
+        assert.equal(repeated.html, first.html);
+
+        const changed = await renderLatexBlockWithAst('Longer text $y$ \\label{second}.', { artifact: first.artifact });
+        assert.notStrictEqual(changed.artifact, first.artifact);
+        assert.deepEqual(changed.artifact.metadata.labels, ['second']);
+        assert.notDeepEqual(changed.artifact.sourceHints, first.artifact.sourceHints);
+
+        const failed = await renderLatexBlockWithAst(source, {
+            artifact: first.artifact,
+            parse: async () => ({ errors: [{ message: 'Parse unavailable' }] })
+        });
+        assert.equal(failed.artifact.parseOk, false);
+        assert.equal(failed.artifact.sourceHints.starts.length, 0);
     });
 
     test('maps included-file sync positions through both preview modes', async () => {

@@ -18,6 +18,7 @@ interface AstBlockRenderOptions {
     rules?: readonly AstRenderRule[];
     context?: AstRenderContext;
     parse?: (text: string) => Promise<AstParseResult>;
+    artifact?: AstBlockArtifact;
     wrapper?: AstBlockWrapperMeta;
 }
 
@@ -33,8 +34,11 @@ export async function renderLatexBlockWithAst(
     const context = options.context ?? createDefaultAstRenderContext({ sourceText: text });
     const parseResult = await (options.parse ?? parseLatexToAst)(text);
     const hash = options.wrapper?.hash ?? stableHash(text);
-    const artifact = createAstBlockArtifactFromParseResult(parseResult, hash);
-    if (!parseResult.ast || parseResult.errors.length > 0) {
+    const parseOk = !!parseResult.ast && parseResult.errors.length === 0;
+    const artifact = options.artifact?.hash === hash && options.artifact.parseOk === parseOk
+        ? options.artifact
+        : createAstBlockArtifactFromParseResult(parseResult, hash);
+    if (!parseResult.ast || !parseOk) {
         return {
             html: wrapAstBlockHtml(context.escapeHtml(text), text, options.wrapper),
             artifact

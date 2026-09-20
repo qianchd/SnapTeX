@@ -387,7 +387,7 @@ function renderAstAlgorithmic(input: AstRenderInput, context: AstRenderContext, 
     const listItems = splitAlgorithmicLines(content).map(line => {
         const first = line[0];
         const descriptor = isMacroNode(first) ? describeAlgorithmicCommand(first.content) : undefined;
-        let contentHtml = renderAlgorithmNodes(line, input);
+        let contentHtml: string;
         let prefix = '';
 
         if (descriptor && isMacroNode(first)) {
@@ -407,6 +407,8 @@ function renderAstAlgorithmic(input: AstRenderInput, context: AstRenderContext, 
             } else {
                 contentHtml = renderAlgorithmNodes(rest, input);
             }
+        } else {
+            contentHtml = renderAlgorithmNodes(line, input);
         }
 
         const lineIndent = algorithmicIndentBefore(indent, descriptor);

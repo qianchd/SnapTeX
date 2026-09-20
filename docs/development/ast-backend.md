@@ -25,7 +25,7 @@ Blocks can carry compact `AstBlockArtifact` data:
 
 The initial path parses artifacts needed for structurally long blocks. Visible blocks gain artifacts during normal rendering; remaining blocks gain them as the background height pass requests their lazy HTML. Rendering and hint extraction share that AST parse, so initial pagination does not run a second document-wide artifact parser.
 
-Dynamic source updates regenerate artifacts for affected blocks. Navigation reads stored hints; it does not run a new AST parse for every sync request. Renderer snapshots may reuse an artifact's label and citation arrays directly; artifact metadata must therefore be treated as immutable after publication.
+Dynamic source updates regenerate artifacts for affected blocks. Re-rendering an unchanged block reuses its artifact when the source hash and parse status still match, avoiding another hint collection pass without retaining the AST tree. Navigation reads stored hints; it does not run a new AST parse for every sync request. Renderer snapshots may reuse an artifact's label and citation arrays directly; artifact metadata must therefore be treated as immutable after publication.
 
 ## AST rules
 

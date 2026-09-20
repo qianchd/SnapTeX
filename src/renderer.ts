@@ -174,9 +174,10 @@ export class SmartRenderer {
         const result = await renderLatexBlockWithAst(text, {
             rules: this.registry.astRenderRules,
             context: this.createAstRenderContext(text),
+            artifact,
             wrapper: {
                 index,
-                hash: artifact?.hash ?? stableHash(text),
+                hash: block?.hash ?? stableHash(text),
                 line: block?.line,
                 lineCount: block?.lineCount
             }
