@@ -1,16 +1,12 @@
 import { splitLatexCitationKeys } from '../utils';
 import { parseLatexToAst } from './parse';
-import { AST_CITATION_MACROS, AST_REF_MACROS, AST_SECTION_MACROS } from './rules';
+import { AST_CITATION_MACROS, AST_REF_MACROS, AST_SECTION_MACROS, readAstCommandArguments } from './rules';
 import type { AstBlockArtifact, AstBlockMetadata, AstParseResult, CompactSourceHints, SnaptexAstRoot } from './types';
 import {
-    argumentText,
     astNodeRange,
-    astNodesToText,
     environmentName,
-    isGroupNode,
     isEnvironmentNode,
     isMacroNode,
-    readRequiredMacroArgument,
     visitLatexAst
 } from './visit-utils';
 
@@ -90,9 +86,7 @@ function collectAstBlockData(root: SnaptexAstRoot, metadata: AstBlockMetadata): 
         if (node.content !== 'label' && !AST_CITATION_MACROS.has(node.content)) {
             return;
         }
-        const attached = argumentText(readRequiredMacroArgument(node));
-        const next = siblings[index + 1];
-        const value = attached || (isGroupNode(next) ? astNodesToText(next.content) : '');
+        const value = readAstCommandArguments({ node, siblings, index }).requiredArgs[0];
         if (node.content === 'label') {
             pushUnique(metadata.labels, value);
         } else {

@@ -4,6 +4,7 @@ type LatexParser = (text: string) => SnaptexAstRoot;
 type LatexMathParser = (text: string) => SnaptexAstNode[];
 
 let loadedParser: LatexParser | undefined;
+let loadedMinimalParser: LatexParser | undefined;
 let loadedMathParser: LatexMathParser | undefined;
 
 function parseErrorFromUnknown(error: unknown): AstParseError {
@@ -23,8 +24,9 @@ function parseErrorFromUnknown(error: unknown): AstParseError {
 export async function parseLatexToAst(text: string): Promise<AstParseResult> {
     if (!loadedParser) {
         try {
-            const { parse, parseMathMinimal } = await import('@unified-latex/unified-latex-util-parse');
+            const { parse, parseMathMinimal, parseMinimal } = await import('@unified-latex/unified-latex-util-parse');
             loadedParser = parse as LatexParser;
+            loadedMinimalParser = parseMinimal as LatexParser;
             loadedMathParser = parseMathMinimal as LatexMathParser;
         } catch (error) {
             return { errors: [parseErrorFromUnknown(error)] };
@@ -43,12 +45,18 @@ export function parseMathWithLoadedParser(text: string): SnaptexAstNode[] | unde
     }
 }
 
-/** Parses nested generated source after the lazily loaded AST parser is available. */
+/** Parses nested source, retaining a minimal AST when full post-processing fails. */
 export function parseLatexWithLoadedParser(text: string): AstParseResult | undefined {
     if (!loadedParser) { return undefined; }
     try {
         return { ast: loadedParser(text), errors: [] };
     } catch (error) {
-        return { errors: [parseErrorFromUnknown(error)] };
+        try {
+            return loadedMinimalParser
+                ? { ast: loadedMinimalParser(text), errors: [] }
+                : { errors: [parseErrorFromUnknown(error)] };
+        } catch {
+            return { errors: [parseErrorFromUnknown(error)] };
+        }
     }
 }

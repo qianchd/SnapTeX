@@ -8,6 +8,7 @@ import { SmartRenderer } from '../renderer';
 import { defineAstMathRule, defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
 import type { RuleRegistry } from '../rules';
 import { isMacroNode } from '../ast/visit-utils';
+import { extractAstBlockArtifact } from '../ast/block-metadata';
 import { normalizeUri, stripLatexComments } from '../utils';
 import {
     createDocument,
@@ -18,6 +19,15 @@ import {
 } from './test-helpers';
 
 suite('LatexDocument source mapping', () => {
+    test('collects citation metadata through spaced optional arguments', async () => {
+        const artifact = await extractAstBlockArtifact([
+            'Text \\citep [see] {alpha,beta}.',
+            '\\cite % detached comment',
+            '{gamma}.'
+        ].join('\n'), 'citation-test');
+        assert.deepEqual(artifact.metadata.citations, ['alpha', 'beta', 'gamma']);
+    });
+
     test('maps flattened lines back to included source files', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const sectionUri = vscode.Uri.file('/project/section1.tex');
