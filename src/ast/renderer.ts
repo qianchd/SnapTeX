@@ -1,9 +1,8 @@
-import type { AstParseResult } from './types';
+import type { AstBlockArtifact, AstParseResult } from './types';
 import { parseLatexToAst } from './parse';
 import { createDefaultAstRenderContext, renderAstNodesWithRules, type AstRenderContext, type AstRenderRule } from './rules';
 import { DEFAULT_AST_RENDER_RULES } from './rules/defaults';
 import { createAstBlockArtifactFromParseResult } from './block-metadata';
-import type { AstBlockArtifact } from './types';
 import { escapeHtmlAttribute, stableHash } from '../utils';
 import { hasBlockLevelHtml } from '../rule-helpers';
 
@@ -38,25 +37,16 @@ export async function renderLatexBlockWithAst(
     const artifact = options.artifact?.hash === hash && options.artifact.parseOk === parseOk
         ? options.artifact
         : createAstBlockArtifactFromParseResult(parseResult, hash);
-    if (!parseResult.ast || !parseOk) {
-        return {
-            html: wrapAstBlockHtml(context.escapeHtml(text), text, options.wrapper),
-            artifact
-        };
-    }
-
-    const html = renderAstNodesWithRules(
-        parseResult.ast.content,
-        options.rules ?? DEFAULT_AST_RENDER_RULES,
-        context
-    );
+    const html = parseResult.ast && parseOk
+        ? renderAstNodesWithRules(parseResult.ast.content, options.rules ?? DEFAULT_AST_RENDER_RULES, context)
+        : context.escapeHtml(text);
     return {
-        html: wrapAstBlockHtml(html, text, options.wrapper),
+        html: wrapAstBlockHtml(html, hash, options.wrapper),
         artifact
     };
 }
 
-function wrapAstBlockHtml(html: string, sourceText: string, wrapper: AstBlockWrapperMeta | undefined): string {
+function wrapAstBlockHtml(html: string, hash: string, wrapper: AstBlockWrapperMeta | undefined): string {
     if (!wrapper) {
         return html;
     }
@@ -64,7 +54,7 @@ function wrapAstBlockHtml(html: string, sourceText: string, wrapper: AstBlockWra
     const attrs = [
         ['class', 'latex-block'],
         ['data-index', String(wrapper.index)],
-        ['data-block-hash', wrapper.hash ?? stableHash(sourceText)],
+        ['data-block-hash', hash],
         wrapper.line !== undefined ? ['data-line', String(wrapper.line)] : undefined,
         wrapper.lineCount !== undefined ? ['data-line-count', String(wrapper.lineCount)] : undefined
     ]

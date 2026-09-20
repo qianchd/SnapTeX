@@ -87,27 +87,25 @@ suite('Paged preview layout', () => {
         const controller = new PageLayoutController({} as HTMLElement, viewport as ViewportAnchorController);
         const applyPages = (controller as unknown as {applyPages: (...args: unknown[]) => void}).applyPages.bind(controller);
 
-        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, 0, true);
+        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, true);
 
         assert.equal(items[1].classList.contains('snaptex-page-start'), true);
         assert.equal(items[2].classList.contains('snaptex-page-start'), false);
         assert.equal(items[2].style.getPropertyValue('--snaptex-page-before'), '');
 
-        const before = items.map(item => [
+        const snapshot = () => items.map(item => [
             item.classList.contains('snaptex-page-start'), item.classList.contains('snaptex-page-end'),
             item.style.getPropertyValue('--snaptex-page-before'), item.style.getPropertyValue('--snaptex-page-after')
         ]);
+        const before = snapshot();
         let styleWrites = 0;
         for (const item of items) {
             const set = item.style.setProperty;
             item.style.setProperty = (name, value) => {styleWrites++; set(name, value);};
         }
-        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, 0, true);
+        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, true);
         assert.equal(styleWrites, 0, 'Unchanged page boundaries must not rewrite margins');
-        assert.deepEqual(items.map(item => [
-            item.classList.contains('snaptex-page-start'), item.classList.contains('snaptex-page-end'),
-            item.style.getPropertyValue('--snaptex-page-before'), item.style.getPropertyValue('--snaptex-page-after')
-        ]), before);
+        assert.deepEqual(snapshot(), before);
     });
 
     test('reuses heights only when the paper content width remains compatible', () => {

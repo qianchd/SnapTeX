@@ -1,11 +1,6 @@
-import type { AstParseError, AstParseResult, SnaptexAstNode, SnaptexAstRoot } from './types';
+import type { AstParseError, AstParseResult, SnaptexAstNode } from './types';
 
-type LatexParser = (text: string) => SnaptexAstRoot;
-type LatexMathParser = (text: string) => SnaptexAstNode[];
-
-let loadedParser: LatexParser | undefined;
-let loadedMinimalParser: LatexParser | undefined;
-let loadedMathParser: LatexMathParser | undefined;
+let parsers: typeof import('@unified-latex/unified-latex-util-parse', { with: { 'resolution-mode': 'import' } }) | undefined;
 
 function parseErrorFromUnknown(error: unknown): AstParseError {
     if (error instanceof Error) {
@@ -22,12 +17,9 @@ function parseErrorFromUnknown(error: unknown): AstParseError {
 
 /** Parses LaTeX through the shared, lazily loaded unified-latex parser. */
 export async function parseLatexToAst(text: string): Promise<AstParseResult> {
-    if (!loadedParser) {
+    if (!parsers) {
         try {
-            const { parse, parseMathMinimal, parseMinimal } = await import('@unified-latex/unified-latex-util-parse');
-            loadedParser = parse as LatexParser;
-            loadedMinimalParser = parseMinimal as LatexParser;
-            loadedMathParser = parseMathMinimal as LatexMathParser;
+            parsers = await import('@unified-latex/unified-latex-util-parse');
         } catch (error) {
             return { errors: [parseErrorFromUnknown(error)] };
         }
@@ -37,9 +29,8 @@ export async function parseLatexToAst(text: string): Promise<AstParseResult> {
 
 /** Parses one math node without AST post-processing so source offsets stay local and exact. */
 export function parseMathWithLoadedParser(text: string): SnaptexAstNode[] | undefined {
-    if (!loadedMathParser) { return undefined; }
     try {
-        return loadedMathParser(text);
+        return parsers?.parseMathMinimal(text);
     } catch {
         return undefined;
     }
@@ -47,14 +38,12 @@ export function parseMathWithLoadedParser(text: string): SnaptexAstNode[] | unde
 
 /** Parses nested source, retaining a minimal AST when full post-processing fails. */
 export function parseLatexWithLoadedParser(text: string): AstParseResult | undefined {
-    if (!loadedParser) { return undefined; }
+    if (!parsers) { return undefined; }
     try {
-        return { ast: loadedParser(text), errors: [] };
+        return { ast: parsers.parse(text), errors: [] };
     } catch (error) {
         try {
-            return loadedMinimalParser
-                ? { ast: loadedMinimalParser(text), errors: [] }
-                : { errors: [parseErrorFromUnknown(error)] };
+            return { ast: parsers.parseMinimal(text), errors: [] };
         } catch {
             return { errors: [parseErrorFromUnknown(error)] };
         }

@@ -500,7 +500,7 @@ export class PageLayoutController {
             .filter(index => index >= 0);
         const pages = paginateBlockHeights(this.measure(items), metrics, preferredStarts);
         this.viewportAnchor.preserve(items, () => this.applyPages(
-            items, pages, metrics, Math.max(1, pageWidth - margins.left - margins.right), 0, false
+            items, pages, metrics, Math.max(1, pageWidth - margins.left - margins.right), false
         ));
     }
 
@@ -521,7 +521,6 @@ export class PageLayoutController {
             pages,
             layout.metrics,
             layout.contentWidth,
-            pages[0].start,
             reuseSuffix
         ));
     }
@@ -531,27 +530,26 @@ export class PageLayoutController {
         pages: readonly PageRange[],
         metrics: PageMetrics,
         contentWidth: number,
-        start: number,
         reuseSuffix: boolean
     ): void {
-        const end = pages[pages.length - 1]?.end ?? start;
         const toContentWidthPercent = (height: number) => `${height / contentWidth * 100}%`;
         const topMargin = toContentWidthPercent(metrics.topMargin);
-        let pageIndex = 0;
-        for (let index = start; index < end; index++) {
-            if (index >= pages[pageIndex].end) {pageIndex += 1;}
-            const page = pages[pageIndex];
-            const item = items[index];
-            const isStart = index === page.start;
-            const isEnd = index === page.end - 1;
-            item.classList.toggle('snaptex-page-start', isStart);
-            item.classList.toggle('snaptex-page-end', isEnd);
-            setStyleProperty(item, '--snaptex-page-before', isStart ? topMargin : '');
-            setStyleProperty(item, '--snaptex-page-after', isEnd ? toContentWidthPercent(
+        for (const page of pages) {
+            const bottomMargin = toContentWidthPercent(
                 page.pageHeight - metrics.topMargin - page.usedHeight
-            ) : '');
+            );
+            for (let index = page.start; index < page.end; index++) {
+                const item = items[index];
+                const isStart = index === page.start;
+                const isEnd = index === page.end - 1;
+                item.classList.toggle('snaptex-page-start', isStart);
+                item.classList.toggle('snaptex-page-end', isEnd);
+                setStyleProperty(item, '--snaptex-page-before', isStart ? topMargin : '');
+                setStyleProperty(item, '--snaptex-page-after', isEnd ? bottomMargin : '');
+            }
         }
-        if (reuseSuffix && pages.length > 0 && end < items.length) {
+        const end = pages[pages.length - 1]?.end ?? items.length;
+        if (reuseSuffix && end < items.length) {
             const item = items[end];
             item.classList.toggle('snaptex-page-start', true);
             setStyleProperty(item, '--snaptex-page-before', topMargin);
