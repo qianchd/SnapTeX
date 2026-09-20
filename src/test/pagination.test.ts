@@ -19,7 +19,11 @@ suite('Paged preview layout', () => {
             classList: {
                 contains: (name: string) => classNames.has(name),
                 add: (name: string) => {classNames.add(name);},
-                remove: (name: string) => {classNames.delete(name);}
+                remove: (name: string) => {classNames.delete(name);},
+                toggle: (name: string, enabled: boolean) => {
+                    if (enabled) {classNames.add(name);} else {classNames.delete(name);}
+                    return enabled;
+                }
             },
             style: {
                 getPropertyValue: (name: string) => properties.get(name) ?? '',
@@ -88,6 +92,22 @@ suite('Paged preview layout', () => {
         assert.equal(items[1].classList.contains('snaptex-page-start'), true);
         assert.equal(items[2].classList.contains('snaptex-page-start'), false);
         assert.equal(items[2].style.getPropertyValue('--snaptex-page-before'), '');
+
+        const before = items.map(item => [
+            item.classList.contains('snaptex-page-start'), item.classList.contains('snaptex-page-end'),
+            item.style.getPropertyValue('--snaptex-page-before'), item.style.getPropertyValue('--snaptex-page-after')
+        ]);
+        let styleWrites = 0;
+        for (const item of items) {
+            const set = item.style.setProperty;
+            item.style.setProperty = (name, value) => {styleWrites++; set(name, value);};
+        }
+        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, 0, true);
+        assert.equal(styleWrites, 0, 'Unchanged page boundaries must not rewrite margins');
+        assert.deepEqual(items.map(item => [
+            item.classList.contains('snaptex-page-start'), item.classList.contains('snaptex-page-end'),
+            item.style.getPropertyValue('--snaptex-page-before'), item.style.getPropertyValue('--snaptex-page-after')
+        ]), before);
     });
 
     test('reuses heights only when the paper content width remains compatible', () => {
@@ -149,11 +169,24 @@ suite('Paged preview layout', () => {
 
         try {
             const controller = new ViewportAnchorController();
+            const virtualization = new BlockVirtualizationController({} as HTMLElement, controller);
+            let enumerations = 0;
+            virtualization.getShells = () => {enumerations++; return elements;};
             controller.pin(elements);
             layoutShift = 30;
-            controller.preserve([], () => undefined);
+            virtualization.withViewportAnchorPreserved(() => undefined, undefined);
             assert.equal(scrollDelta, 30);
+            assert.equal(enumerations, 0, 'A valid pinned anchor needs no shell enumeration');
             assert.ok(rectReads < 40, `Expected logarithmic anchor lookup, read ${rectReads} rectangles`);
+
+            controller.clear();
+            virtualization.withViewportAnchorPreserved(() => {layoutShift += 20;}, undefined);
+            assert.equal(scrollDelta, 20);
+            assert.equal(enumerations, 1, 'Without a pin, find a fresh visible anchor');
+
+            window.scrollY = 0;
+            virtualization.withViewportAnchorPreserved(() => undefined, undefined);
+            assert.equal(enumerations, 1, 'The document top needs no scroll compensation');
         } finally {
             if (previousWindow) {
                 Object.defineProperty(globalThis, 'window', previousWindow);

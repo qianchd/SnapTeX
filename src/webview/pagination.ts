@@ -537,31 +537,29 @@ export class PageLayoutController {
         const end = pages[pages.length - 1]?.end ?? start;
         const toContentWidthPercent = (height: number) => `${height / contentWidth * 100}%`;
         const topMargin = toContentWidthPercent(metrics.topMargin);
+        let pageIndex = 0;
         for (let index = start; index < end; index++) {
+            if (index >= pages[pageIndex].end) {pageIndex += 1;}
+            const page = pages[pageIndex];
             const item = items[index];
-            item.classList.remove('snaptex-page-start', 'snaptex-page-end');
-            item.style.removeProperty('--snaptex-page-before');
-            item.style.removeProperty('--snaptex-page-after');
-        }
-        for (const page of pages) {
-            const first = items[page.start];
-            const last = items[page.end - 1];
-            first.classList.add('snaptex-page-start');
-            last.classList.add('snaptex-page-end');
-            setStyleProperty(first, '--snaptex-page-before', topMargin);
-            setStyleProperty(last, '--snaptex-page-after', toContentWidthPercent(
+            const isStart = index === page.start;
+            const isEnd = index === page.end - 1;
+            item.classList.toggle('snaptex-page-start', isStart);
+            item.classList.toggle('snaptex-page-end', isEnd);
+            setStyleProperty(item, '--snaptex-page-before', isStart ? topMargin : '');
+            setStyleProperty(item, '--snaptex-page-after', isEnd ? toContentWidthPercent(
                 page.pageHeight - metrics.topMargin - page.usedHeight
-            ));
+            ) : '');
         }
         if (reuseSuffix && pages.length > 0 && end < items.length) {
             const item = items[end];
-            item.classList.add('snaptex-page-start');
+            item.classList.toggle('snaptex-page-start', true);
             setStyleProperty(item, '--snaptex-page-before', topMargin);
             if (!item.classList.contains('snaptex-page-end')) {
                 for (let index = end + 1; index < items.length; index++) {
                     const suffixItem = items[index];
-                    suffixItem.classList.remove('snaptex-page-start');
-                    suffixItem.style.removeProperty('--snaptex-page-before');
+                    suffixItem.classList.toggle('snaptex-page-start', false);
+                    setStyleProperty(suffixItem, '--snaptex-page-before', '');
                     if (suffixItem.classList.contains('snaptex-page-end')) {break;}
                 }
             }

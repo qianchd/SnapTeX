@@ -199,7 +199,9 @@ export class BlockVirtualizationController {
         }
 
         withViewportAnchorPreserved(callback, shells) {
-            return this.viewportAnchor.preserve(shells || this.getShells(), callback);
+            // A pinned anchor (or the document top) needs no new shell lookup.
+            const candidates = shells ?? (this.viewportAnchor.isPinned() || window.scrollY <= 0 ? [] : this.getShells());
+            return this.viewportAnchor.preserve(candidates, callback);
         }
 
         refreshMountedShellHeight(shell, settled = false) {

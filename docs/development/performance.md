@@ -26,6 +26,11 @@ The scanner caches block-local tokens by source hash, so unchanged blocks do not
 
 Shells carry estimated heights. Mounted blocks report real heights. For blocks inserted above the viewport, the runtime applies height changes and scroll compensation in the same frame so the visible content does not make a two-step jump.
 
+A valid pinned anchor is reused without enumerating all shells for each measured
+block. At the document top no anchor lookup is needed. Pagination updates only
+changed page classes and margins, so refreshing unchanged boundaries does not
+invalidate their styles again.
+
 Rendered HTML is stored per shell instance rather than by source hash because
 two identical source blocks still have different indices and runtime state.
 Offscreen cleanup removes that HTML while retaining the much smaller normalized
