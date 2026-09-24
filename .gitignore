@@ -13,3 +13,4 @@ apps/web/server.env
 .vscode-test/
 *.vsix
 src/localtestTeX
+tex_samplecode/

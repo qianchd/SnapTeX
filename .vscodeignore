@@ -19,6 +19,7 @@ apps/**
 demo/**
 .github/**
 docs/**
+tools/**
 todo.md
 media/favicon.ico
 media/icon-*.png

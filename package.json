@@ -208,6 +208,8 @@
     "web:test-server": "node --test apps/web/server.test.mjs",
     "web:serve-static": "npm run web:build-static && node apps/web/server.mjs dist-web",
     "web:serve-source": "npm run web:build && node apps/web/server.mjs .",
+    "audit:arxiv:fetch": "node tools/arxiv-audit/fetch.mjs",
+    "audit:arxiv": "node tools/arxiv-audit/run.mjs",
     "test": "vscode-test"
   },
   "devDependencies": {
@@ -238,6 +240,7 @@
     "@lezer/highlight": "^1.2.3",
     "@planktimerr/tikzjax": "^1.0.0",
     "@unified-latex/unified-latex-util-parse": "^1.8.4",
+    "@unified-latex/unified-latex-util-print-raw": "^1.8.4",
     "codemirror": "^6.0.2",
     "codemirror-lang-latex": "^0.4.1",
     "idb": "^8.0.3",
