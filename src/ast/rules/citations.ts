@@ -1,4 +1,4 @@
-import { splitLatexCitationKeys } from '../../utils';
+import { resolveLatexTextTransforms, splitLatexCitationKeys } from '../../utils';
 import { isMacroNode } from '../visit-utils';
 import { AST_CITATION_MACROS, type AstRenderRule, readAstCommandArguments } from './index';
 
@@ -15,10 +15,11 @@ export const AST_CITATION_RULE: AstRenderRule = (input, context) => {
 
     const firstOptional = args.optionalArgs[0];
     const secondOptional = args.optionalArgs[1];
+    const transformOption = (value: string | undefined) => value === undefined ? undefined : resolveLatexTextTransforms(value);
     return {
         html: context.renderCitation(input.node.content, keys, {
-            pre: secondOptional !== undefined ? firstOptional : undefined,
-            post: secondOptional ?? firstOptional
+            pre: secondOptional !== undefined ? transformOption(firstOptional) : undefined,
+            post: transformOption(secondOptional ?? firstOptional)
         }),
         consumedNodes: args.consumedNodes
     };

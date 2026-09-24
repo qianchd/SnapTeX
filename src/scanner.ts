@@ -1,7 +1,7 @@
 import { DiffEngine } from './diff';
-import { REGEX_STR } from './patterns';
-import { BlockNumberingCounts } from './types';
-import { extractLatexLabelNames } from './utils';
+import { REGEX_STR, SUBCAPTIONBOX_ARGUMENT_ORDER, SUBFIGURE_MACRO_COMMANDS } from './patterns';
+import { BlockNumberingCounts, PreambleEnvironmentDefinition } from './types';
+import { escapeRegExp, extractLatexLabelNames, replaceLatexCommandCalls } from './utils';
 
 export interface ScanResult {
     blockNumbering: BlockNumberingCounts[];
@@ -86,7 +86,7 @@ function formatSubfigureCounter(value: number): string {
 export function floatKindFromEnvironment(type: string): FloatKind | undefined {
     const normalized = type.replace(/\*$/, '');
     if (normalized === 'figure') { return 'fig'; }
-    if (normalized === 'table') { return 'tbl'; }
+    if (normalized === 'table' || normalized === 'longtable') { return 'tbl'; }
     if (normalized === 'algorithm') { return 'alg'; }
     return undefined;
 }
@@ -153,19 +153,22 @@ export class LatexCounterScanner {
         this.summaries = [];
     }
 
-    public scan(input: BlockScanInput): ScanResult {
-        const summaries = this.updateSummaries(input);
+    public scan(input: BlockScanInput, environmentDefinitions: Readonly<Record<string, PreambleEnvironmentDefinition>> = {}): ScanResult {
+        const summaries = this.updateSummaries(input, environmentDefinitions);
         return buildScanResultFromSummaries(summaries);
     }
 
-    private updateSummaries({ count, getText, hashes }: BlockScanInput): BlockScanSummary[] {
+    private updateSummaries(
+        { count, getText, hashes }: BlockScanInput,
+        environmentDefinitions: Readonly<Record<string, PreambleEnvironmentDefinition>>
+    ): BlockScanSummary[] {
         const previous = this.summaries;
         const diff = DiffEngine.compute(previous, hashes);
         const next = DiffEngine.rebuildArray(
             previous,
             count,
             diff,
-            index => this.parseBlock(getText(index), hashes[index]),
+            index => this.parseBlock(getText(index), hashes[index], environmentDefinitions),
             summary => summary
         );
 
@@ -173,16 +176,24 @@ export class LatexCounterScanner {
         return next;
     }
 
-    private parseBlock(text: string, hash: string): BlockScanSummary {
+    private parseBlock(
+        text: string,
+        hash: string,
+        environmentDefinitions: Readonly<Record<string, PreambleEnvironmentDefinition>>
+    ): BlockScanSummary {
         const tokens: ScanToken[] = [];
+        const customTheorems = Object.keys(environmentDefinitions)
+            .filter(name => environmentDefinitions[name].kind === 'theorem')
+            .map(escapeRegExp);
+        const theoremEnvironments = [REGEX_STR.THEOREM_ENVS, ...customTheorems].join('|');
         const tokenRegex = new RegExp(
-            `\\\\(?:(${REGEX_STR.SECTION_LEVELS})(\\*)?\\s*\\{|begin\\{(?:(${REGEX_STR.MATH_ENVS})(\\*)?|(${REGEX_STR.FLOAT_ENVS})(\\*)?|(${REGEX_STR.THEOREM_ENVS}))\\})`,
+            `\\\\(?:(${REGEX_STR.SECTION_LEVELS})(\\*)?\\s*\\{|begin\\{(?:(${REGEX_STR.MATH_ENVS})(\\*)?|(${REGEX_STR.FLOAT_ENVS})(\\*)?|(${theoremEnvironments})(\\*)?)\\})`,
             'g'
         );
         let match: RegExpExecArray | null;
 
         while ((match = tokenRegex.exec(text)) !== null) {
-            const [section, sectionStar, mathEnv, mathStar, floatEnv, , theoremEnv] = match.slice(1);
+            const [section, sectionStar, mathEnv, mathStar, floatEnv, , theoremEnv, theoremStar] = match.slice(1);
             if (section) {
                 if (sectionStar) { continue; }
                 tokens.push({
@@ -204,6 +215,8 @@ export class LatexCounterScanner {
                     tokens.push(...this.extractSubfigureTokens(env.block, match.index));
                 }
             } else if (theoremEnv) {
+                const definition = environmentDefinitions[theoremEnv];
+                if (theoremStar || (definition?.kind === 'theorem' && !definition.numbered)) { continue; }
                 tokens.push({
                     pos: match.index,
                     kind: 'thm',
@@ -211,6 +224,15 @@ export class LatexCounterScanner {
                     label: this.extractEnvInfo(text, match.index, theoremEnv).label
                 });
             }
+        }
+        const restatableRegex = new RegExp(`\\\\begin\\{restatable\\}(?:\\[[^\\]]*\\])?\\s*\\{(${REGEX_STR.THEOREM_ENVS})\\}\\s*\\{[^{}]*\\}`, 'g');
+        while ((match = restatableRegex.exec(text)) !== null) {
+            tokens.push({
+                pos: match.index,
+                kind: 'thm',
+                envName: match[1].toLowerCase(),
+                label: this.extractEnvInfo(text, match.index, 'restatable').label
+            });
         }
         tokens.sort((a, b) => a.pos - b.pos);
         return { hash, tokens };
@@ -234,12 +256,32 @@ export class LatexCounterScanner {
     }
 
     private stripSubfigureEnvironments(text: string): string {
-        return text.replace(/\\begin\{subfigure\*?\}(?:\[[^\]]*\])?\s*\{[^{}]*\}[\s\S]*?\\end\{subfigure\*?\}/gi, '');
+        const withoutEnvironments = text.replace(/\\begin\{subfigure\*?\}(?:\[[^\]]*\])?(?:\s*\{[^{}]*\})?[\s\S]*?\\end\{subfigure\*?\}/gi, '');
+        return this.replaceSubfigureMacros(withoutEnvironments, () => '');
+    }
+
+    private replaceSubfigureMacros(
+        text: string,
+        render: (start: number, end: number, numbered: boolean) => string
+    ): string {
+        return replaceLatexCommandCalls(text, [
+            {
+                name: SUBFIGURE_MACRO_COMMANDS,
+                optionalArgs: 1,
+                requiredArgs: 1,
+                render: call => render(call.start, call.end, call.optionalArgs.length > 0)
+            },
+            {
+                name: 'subcaptionbox',
+                argumentOrder: SUBCAPTIONBOX_ARGUMENT_ORDER,
+                render: call => render(call.start, call.end, true)
+            }
+        ]);
     }
 
     private extractSubfigureTokens(block: string, basePos: number): ScanToken[] {
         const tokens: ScanToken[] = [];
-        const regex = /\\begin\{subfigure\*?\}(?:\[[^\]]*\])?\s*\{[^{}]*\}[\s\S]*?\\end\{subfigure\*?\}/gi;
+        const regex = /\\begin\{subfigure\*?\}(?:\[[^\]]*\])?(?:\s*\{[^{}]*\})?[\s\S]*?\\end\{subfigure\*?\}/gi;
         let match;
         while ((match = regex.exec(block)) !== null) {
             tokens.push({
@@ -248,6 +290,16 @@ export class LatexCounterScanner {
                 label: extractLatexLabelNames(match[0])[0]
             });
         }
+        const recordMacro = (start: number, end: number) => {
+            tokens.push({
+                pos: basePos + start,
+                kind: 'subfloat',
+                label: extractLatexLabelNames(block.slice(start, end))[0]
+            });
+            return '';
+        };
+        this.replaceSubfigureMacros(block, (start, end, numbered) => numbered ? recordMacro(start, end) : '');
+        tokens.sort((a, b) => a.pos - b.pos);
         return tokens;
     }
 

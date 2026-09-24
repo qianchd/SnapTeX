@@ -1,17 +1,16 @@
 import MarkdownIt from 'markdown-it';
 
 import { DiffEngine, DiffResult } from './diff';
-import { BibEntry, BlockNumberingCounts, BlockTextSnapshot, BlockTextSpan, DependencyHelpers, DependencyState, NumberingPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RenderPayload, SourceLocation, SourceSyncOptions } from './types';
+import { BibEntry, BlockNumberingCounts, BlockTextSnapshot, BlockTextSpan, DependencyHelpers, DependencyState, LatexMacroDefinition, NumberingPayload, RenderContext, RenderDependency, RenderedBlockMeta, RenderDocumentView, RenderOptions, RenderPayload, SourceLocation, SourceSyncOptions } from './types';
 import type { AstBlockArtifact } from './ast/types';
 import { renderLatexBlockWithAst } from './ast/renderer';
 import { createDefaultAstRenderContext } from './ast/rules';
 import { SNAP_TEX_RULES, postProcessHtml, type RuleRegistry } from './rules';
-import { renderCitationHtml } from './rule-helpers';
+import { renderCitationHtml, renderIncludeGraphicsHtml } from './rule-helpers';
 import { LatexCounterScanner, type BlockScanInput, type ScanResult } from './scanner';
-import { R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
+import { R_BIBLIOGRAPHY, R_PRINTBIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { countLineBreaks, extractLatexCitationKeys, extractLatexLabelNames, findNearestSyncAnchorLine, getBlockSpanText, lineAtOffset, normalizeUri, offsetAtLine, stableHash } from './utils';
 import { ProtectionManager } from './protection';
-import { renderIncludeGraphicsHtml } from './rule-floats';
 
 const EMPTY_TEXT_SNAPSHOT: BlockTextSnapshot = { bodyText: "", blockSpans: [] };
 const EMPTY_BIB_ENTRIES: ReadonlyMap<string, BibEntry> = new Map();
@@ -55,7 +54,7 @@ export class SmartRenderer {
 
     private md!: MarkdownIt;
     private protector = new ProtectionManager();
-    private currentMacros: Record<string, string> = {};
+    private currentMacros: Record<string, LatexMacroDefinition> = {};
     private readonly registry: RuleRegistry;
 
     private scanner = new LatexCounterScanner();
@@ -100,10 +99,10 @@ export class SmartRenderer {
     /**
      * Rebuilds Markdown-it and applies the current macro table used by math rules.
      */
-    private rebuildMarkdownEngine(macros: Record<string, string>) {
+    private rebuildMarkdownEngine(macros: Record<string, LatexMacroDefinition>) {
         this.currentMacros = {
-            "\\mathparagraph": "\\P",
-            "\\mathsection": "\\S",
+            "\\mathparagraph": { body: "\\P", argumentCount: 0 },
+            "\\mathsection": { body: "\\S", argumentCount: 0 },
             ...macros
         };
         this.md = new MarkdownIt({ html: false, linkify: true });
@@ -239,8 +238,8 @@ export class SmartRenderer {
             lineCount: span?.lineCount ?? countLineBreaks(text) + 1,
             anchors: anchors.length > 0 ? anchors : undefined,
             hasBibliography: metadata
-                ? metadata.macros.includes('bibliography') || metadata.environments.includes('thebibliography')
-                : R_BIBLIOGRAPHY.test(text) || R_THEBIBLIOGRAPHY.test(text),
+                ? metadata.macros.some(macro => macro === 'bibliography' || macro === 'printbibliography') || metadata.environments.includes('thebibliography')
+                : R_BIBLIOGRAPHY.test(text) || R_PRINTBIBLIOGRAPHY.test(text) || R_THEBIBLIOGRAPHY.test(text),
             citationKeys: citationKeys.length > 0 ? citationKeys : undefined
         };
     }
@@ -407,13 +406,14 @@ export class SmartRenderer {
 
         this.protector.reset();
 
-        const renderDefinitionsJson = JSON.stringify([doc.metadata.macros, doc.metadata.colors]);
+        const renderDefinitionsJson = JSON.stringify([doc.metadata.macros, doc.metadata.colors, doc.metadata.environments]);
         const renderDefinitionsChanged = renderDefinitionsJson !== this.lastRenderDefinitionsJson;
         if (renderDefinitionsChanged) {
             this.rebuildMarkdownEngine(doc.metadata.macros);
             this.lastBlocks = [];
             this.lastTextSnapshot = EMPTY_TEXT_SNAPSHOT;
             this.dependencySummaries = [];
+            this.scanner.reset();
             this.lastRenderDefinitionsJson = renderDefinitionsJson;
         }
 
@@ -481,7 +481,7 @@ export class SmartRenderer {
 
     private prepareRenderState(doc: RenderDocumentView, options: RenderOptions): RenderPreparation {
         const base = this.prepareRenderBase(doc, options);
-        return this.finishRenderPreparation(doc, base, this.scanner.scan(base.blockAccess));
+        return this.finishRenderPreparation(doc, base, this.scanner.scan(base.blockAccess, doc.metadata.environments));
     }
 
     private commitRenderState(prepared: RenderPreparation) {

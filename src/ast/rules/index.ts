@@ -1,15 +1,17 @@
-import { CITATION_COMMANDS, REGEX_STR } from '../../patterns';
+import { CITATION_COMMANDS, REFERENCE_COMMANDS, SECTION_LEVELS } from '../../patterns';
 import { renderInlineLatexHtml, renderKatexHtml, renderReferenceLinksHtml } from '../../rule-helpers';
 import {
     createHiddenLabelAnchor,
     escapeHtml,
     escapeHtmlAttribute,
+    type LatexCommandArgumentSpec
 } from '../../utils';
-import type { BibEntry, PreambleData } from '../../types';
+import type { BibEntry, LatexMacroDefinition, PreambleData } from '../../types';
 import { parseLatexWithLoadedParser } from '../parse';
 import type { SnaptexAstNode } from '../types';
 import {
     astNodesRange,
+    astNodesToLatex,
     astNodesToText,
     getSourcePosition,
     isCommentNode,
@@ -24,9 +26,9 @@ import {
 
 const MAX_GENERATED_SOURCE_DEPTH = 8;
 
-export const AST_REF_MACROS = new Set(['ref', 'eqref']);
+export const AST_REF_MACROS = new Set<string>(REFERENCE_COMMANDS);
 export const AST_CITATION_MACROS = new Set<string>(CITATION_COMMANDS);
-export const AST_SECTION_MACROS = new Set(REGEX_STR.SECTION_LEVELS.split('|'));
+export const AST_SECTION_MACROS = new Set<string>(SECTION_LEVELS);
 
 export interface AstRenderInput {
     node: SnaptexAstNode;
@@ -84,7 +86,7 @@ export interface AstRenderContext {
 
 interface AstRenderContextOptions extends Partial<AstRenderContext> {
     sourceText?: string;
-    currentMacros?: Readonly<Record<string, string>>;
+    currentMacros?: Readonly<Record<string, LatexMacroDefinition>>;
 }
 
 function sourceReaders(sourceText: string): Pick<AstRenderContext, 'sourceSlice' | 'sourceContent'> {
@@ -93,11 +95,11 @@ function sourceReaders(sourceText: string): Pick<AstRenderContext, 'sourceSlice'
             const position = getSourcePosition(node);
             return position && sourceText
                 ? sourceText.slice(position.start.offset, position.end.offset)
-                : astNodesToText([node]);
+                : astNodesToLatex([node]);
         },
         sourceContent: nodes => {
             const range = astNodesRange(nodes);
-            return range && sourceText ? sourceText.slice(range.start, range.end) : astNodesToText(nodes);
+            return range && sourceText ? sourceText.slice(range.start, range.end) : astNodesToLatex(nodes);
         }
     };
 }
@@ -132,18 +134,26 @@ export function createDefaultAstRenderContext(options: AstRenderContextOptions =
     };
 }
 
-export function readAstCommandArguments(input: AstNodeLocation, requiredArgCount = 1): AstCommandArguments {
-    const args = readAstCommandNodeArguments(input, requiredArgCount);
+export function readAstCommandArguments(
+    input: AstNodeLocation,
+    requiredArgCount = 1,
+    argumentOrder?: readonly LatexCommandArgumentSpec[]
+): AstCommandArguments {
+    const args = readAstCommandNodeArguments(input, requiredArgCount, argumentOrder);
     return {
-        requiredArgs: args.requiredArgs.map(astNodesToText),
-        optionalArgs: args.optionalArgs.map(astNodesToText),
+        requiredArgs: args.requiredArgs.map(astNodesToLatex),
+        optionalArgs: args.optionalArgs.map(astNodesToLatex),
         requiredArgNodes: args.requiredArgs,
         optionalArgNodes: args.optionalArgs,
         consumedNodes: args.consumedNodes
     };
 }
 
-export function readAstCommandNodeArguments(input: AstNodeLocation, requiredArgCount = 1) {
+export function readAstCommandNodeArguments(
+    input: AstNodeLocation,
+    requiredArgCount = 1,
+    argumentOrder?: readonly LatexCommandArgumentSpec[]
+) {
     const requiredArgs: SnaptexAstNode[][] = [];
     const optionalArgs: SnaptexAstNode[][] = [];
     if (!isMacroNode(input.node)) {
@@ -160,7 +170,8 @@ export function readAstCommandNodeArguments(input: AstNodeLocation, requiredArgC
 
     let cursor = input.index + 1;
     if (requiredArgs.length < requiredArgCount) {
-        cursor = readDetachedArguments(input.siblings, cursor, optionalArgs, requiredArgs, requiredArgCount);
+        const detachedOrder = requiredArgs.length === 0 && optionalArgs.length === 0 ? argumentOrder : undefined;
+        cursor = readDetachedArguments(input.siblings, cursor, optionalArgs, requiredArgs, requiredArgCount, detachedOrder);
     }
 
     return {
@@ -175,12 +186,37 @@ function readDetachedArguments(
     startIndex: number,
     optionalArgs: SnaptexAstNode[][],
     requiredArgs: SnaptexAstNode[][],
-    requiredArgCount: number
+    requiredArgCount: number,
+    argumentOrder?: readonly LatexCommandArgumentSpec[]
 ): number {
     let cursor = skipWhitespaceOrComments(siblings, startIndex);
     if (stringNodeContent(siblings[cursor]) === '*') {
         cursor = skipWhitespaceOrComments(siblings, cursor + 1);
     }
+    if (argumentOrder) {
+        for (const argument of argumentOrder) {
+            cursor = skipWhitespaceOrComments(siblings, cursor);
+            if (argument.delimiter === 'bracket') {
+                const group = readBracketNodes(siblings, cursor);
+                if (!group) {
+                    if (argument.optional) { continue; }
+                    return cursor;
+                }
+                optionalArgs.push(group.content);
+                cursor = group.nextIndex;
+            } else {
+                const group = siblings[cursor];
+                if (!isGroupNode(group)) {
+                    if (!argument.optional) { return cursor; }
+                    continue;
+                }
+                requiredArgs.push(group.content);
+                cursor++;
+            }
+        }
+        return cursor;
+    }
+
     while (true) {
         const optionalGroup = readBracketNodes(siblings, cursor);
         if (!optionalGroup) {

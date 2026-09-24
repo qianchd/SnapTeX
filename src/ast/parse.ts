@@ -1,6 +1,7 @@
 import type { AstParseError, AstParseResult, SnaptexAstNode } from './types';
 
 let parsers: typeof import('@unified-latex/unified-latex-util-parse', { with: { 'resolution-mode': 'import' } }) | undefined;
+let printer: typeof import('@unified-latex/unified-latex-util-print-raw', { with: { 'resolution-mode': 'import' } }) | undefined;
 
 function parseErrorFromUnknown(error: unknown): AstParseError {
     if (error instanceof Error) {
@@ -17,14 +18,21 @@ function parseErrorFromUnknown(error: unknown): AstParseError {
 
 /** Parses LaTeX through the shared, lazily loaded unified-latex parser. */
 export async function parseLatexToAst(text: string): Promise<AstParseResult> {
-    if (!parsers) {
+    if (!parsers || !printer) {
         try {
-            parsers = await import('@unified-latex/unified-latex-util-parse');
+            [parsers, printer] = await Promise.all([
+                import('@unified-latex/unified-latex-util-parse'),
+                import('@unified-latex/unified-latex-util-print-raw')
+            ]);
         } catch (error) {
             return { errors: [parseErrorFromUnknown(error)] };
         }
     }
     return parseLatexWithLoadedParser(text)!;
+}
+
+export function printLatexWithLoadedPrinter(nodes: readonly SnaptexAstNode[]): string | undefined {
+    return printer?.printRaw(nodes as unknown as Parameters<typeof printer.printRaw>[0]);
 }
 
 /** Parses one math node without AST post-processing so source offsets stay local and exact. */

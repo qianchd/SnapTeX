@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { DocumentParseResult, LatexDocument } from '../document';
 import type { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
-import { AffiliationMetadata, AuthorMetadata, BlockTextSpan } from '../types';
+import { AffiliationMetadata, AuthorMetadata, BlockTextSpan, PreambleData } from '../types';
 import { getBlockSpanText, normalizeUri, stableHash } from '../utils';
 
 export class MemoryFileProvider implements IFileProvider<vscode.Uri> {
@@ -39,8 +39,9 @@ export class MemoryFileProvider implements IFileProvider<vscode.Uri> {
 export function createDocument(
     blockTexts: string[],
     options: {
-        macros?: Record<string, string>;
+        macros?: PreambleData['macros'];
         colors?: Record<string, string>;
+        environments?: PreambleData['environments'];
         tikzGlobal?: string;
         title?: string;
         date?: string;
@@ -83,6 +84,7 @@ export function createDocument(
         metadata: {
             macros: options.macros ?? {},
             colors: options.colors ?? {},
+            environments: options.environments ?? {},
             tikzGlobal: options.tikzGlobal ?? '',
             tikzMacroMap: new Map(),
             title: options.title,

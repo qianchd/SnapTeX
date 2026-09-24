@@ -157,16 +157,20 @@ export class BibTexParser {
         return fields;
     }
 
-    public static formatEntry(entry: BibEntry, renderer: Pick<RenderContext, 'protectHtml'>): string {
+    public static formatEntry(
+        entry: BibEntry,
+        renderer: Pick<RenderContext, 'protectHtml'>,
+        renderText: (value: string) => string = value => cleanLatexCommands(value, renderer)
+    ): string {
         const f = entry.fields;
         if (entry.type === 'bibitem') {
-            return cleanLatexCommands(f.raw || '', renderer);
+            return renderText(f.raw || '');
         }
 
-        let author = f.author ? cleanLatexCommands(f.author, renderer) : 'Unknown';
+        let author = f.author ? renderText(f.author) : 'Unknown';
         author = author.replace(/\s+and\s+/g, ', ');
 
-        const title = f.title ? cleanLatexCommands(f.title, renderer) : 'No Title';
+        const title = f.title ? renderText(f.title) : 'No Title';
         const year = escapeHtml(f.year || f.date || 'n.d.');
 
         const journal = f.journal || f.fjournal || f.booktitle || f.publisher || '';
@@ -174,7 +178,7 @@ export class BibTexParser {
         let html = `${author} (${year}). <em>${title}</em>.`;
 
         if (journal) {
-            html += ` ${cleanLatexCommands(journal, renderer)}`;
+            html += ` ${renderText(journal)}`;
             if (f.volume) {html += `, <strong>${escapeHtml(f.volume)}</strong>`;}
             if (f.number) {html += `(${escapeHtml(f.number)})`;}
             html += `.`;

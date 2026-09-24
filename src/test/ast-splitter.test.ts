@@ -21,7 +21,10 @@ suite('AST splitter', () => {
             '',
             'Next paragraph.'
         ].join('\n');
-        const result = await splitLatexWithAst(text, SPLITTER_OPTIONS);
+        const result = await splitLatexWithAst(text, {
+            ...SPLITTER_OPTIONS,
+            config: { ...SPLITTER_OPTIONS.config, maxBlockLines: 2 }
+        });
         const blocks = result.spans.map(span => spanText(text, span).trim()).filter(Boolean);
 
         assert.deepEqual(blocks, [
@@ -66,6 +69,114 @@ suite('AST splitter', () => {
             '{\\color{blue} second}',
             '{\\color{blue} third}',
             'tail'
+        ]);
+    });
+
+    test('keeps protected environments independently parseable', async () => {
+        const text = [
+            '\\begin{itemize}',
+            '\\item First item.',
+            '',
+            '\\item Second item after a paragraph break.',
+            '',
+            '\\item Third item.',
+            '\\end{itemize}',
+            '',
+            'Following paragraph.'
+        ].join('\n');
+        const result = await splitLatexWithAst(text, {
+            ...SPLITTER_OPTIONS,
+            config: { ...SPLITTER_OPTIONS.config, maxBlockLines: 2 }
+        });
+        const blocks = result.spans.map(span => spanText(text, span).trim()).filter(Boolean);
+
+        assert.deepEqual(blocks, [
+            text.slice(0, text.indexOf('\n\nFollowing paragraph.')).trim(),
+            'Following paragraph.'
+        ]);
+
+        const figure = [
+            '\\begin{figure}',
+            '\\centering',
+            '',
+            '\\includegraphics{first.pdf}',
+            '',
+            '\\includegraphics{second.pdf}',
+            '\\caption{Complete figure}',
+            '\\end{figure}',
+            '',
+            'Following figure.'
+        ].join('\n');
+        const figureResult = await splitLatexWithAst(figure, {
+            ...SPLITTER_OPTIONS,
+            config: { ...SPLITTER_OPTIONS.config, maxBlockLines: 2 }
+        });
+        const figureBlocks = figureResult.spans.map(span => spanText(figure, span).trim()).filter(Boolean);
+
+        assert.deepEqual(figureBlocks, [
+            figure.slice(0, figure.indexOf('\n\nFollowing figure.')).trim(),
+            'Following figure.'
+        ]);
+
+        const malformed = [
+            '\\begin{equation}',
+            'x=1',
+            '',
+            '\\begin{align}',
+            'y=2',
+            '',
+            'still malformed',
+            '',
+            '\\end{equation or align}',
+            '',
+            'Recovered paragraph.'
+        ].join('\n');
+        const recovered = await splitLatexWithAst(malformed, {
+            ...SPLITTER_OPTIONS,
+            config: { maxBlockLines: 2, maxNoEmergencySplitLines: 4 }
+        });
+
+        assert.equal(spanText(malformed, recovered.spans.at(-1)!).trim(), 'Recovered paragraph.');
+        const malformedBlock = recovered.spans.find(span => spanText(malformed, span).includes('still malformed'));
+        assert.ok(malformedBlock);
+        assert.doesNotMatch(spanText(malformed, malformedBlock), /Recovered paragraph/);
+
+        const nestedMath = [
+            '\\begin{equation}',
+            'x=1',
+            '\\begin{align}',
+            'y=2',
+            '\\end{align}',
+            '',
+            'Following malformed equation.'
+        ].join('\n');
+        const nestedMathResult = await splitLatexWithAst(nestedMath, {
+            ...SPLITTER_OPTIONS,
+            config: { maxBlockLines: 2, maxNoEmergencySplitLines: 20 }
+        });
+
+        assert.deepEqual(nestedMathResult.spans.map(span => spanText(nestedMath, span).trim()), [
+            '\\begin{equation}\nx=1',
+            '\\begin{align}\ny=2\n\\end{align}',
+            'Following malformed equation.'
+        ]);
+
+        const theoremWithMath = [
+            '\\begin{theorem}',
+            'Before.',
+            '\\begin{equation}',
+            'x=1',
+            '\\end{equation}',
+            'After.',
+            '\\end{theorem}',
+            '',
+            'Following theorem.'
+        ].join('\n');
+        const theoremResult = await splitLatexWithAst(theoremWithMath, SPLITTER_OPTIONS);
+
+        assert.deepEqual(theoremResult.spans.map(span => spanText(theoremWithMath, span).trim()), [
+            theoremWithMath.slice(0, theoremWithMath.indexOf('\n\nFollowing theorem.')),
+            'Following theorem.'
         ]);
     });
 

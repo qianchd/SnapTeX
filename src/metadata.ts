@@ -1,8 +1,9 @@
-import { AffiliationMetadata, AuthorMetadata, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleMetadata, TextRange } from './types';
-import { REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
-import { escapeRegExp, findCommand, latexColorModelToCss, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
+import { AffiliationMetadata, AuthorMetadata, LatexMacroDefinition, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleEnvironmentDefinition, PreambleMetadata, TextRange } from './types';
+import { LATEX_DECLARATION_STYLE_COMMANDS, REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
+import { countLatexMacroArguments, escapeRegExp, findCommand, latexColorModelToCss, maskLatexFalseBranches, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
 
-type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providenewcommand' | 'def' | 'gdef' | 'DeclareMathOperator';
+type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providecommand' | 'algnewcommand' | 'def' | 'gdef'
+    | 'DeclareMathOperator' | 'DeclarePairedDelimiter' | 'DeclarePairedDelimiterX';
 type AuthorExtraction = { authors: AuthorMetadata[]; affiliations: AffiliationMetadata[] };
 
 /**
@@ -21,7 +22,7 @@ interface MacroDefinitionHeader {
     name: string;
     star: boolean;
     argCount: number;
-    hasDefaultArgument: boolean;
+    defaultArgument?: string;
     body: {
         content: string;
         start: number;
@@ -45,7 +46,7 @@ function readMacroName(text: string, index: number): { name: string; end: number
 }
 
 function readMacroDefinitionHeader(fullDef: string): MacroDefinitionHeader | undefined {
-    const commandMatch = /^\\((?:provide|re)?newcommand|g?def|DeclareMathOperator)(\*)?/.exec(fullDef);
+    const commandMatch = /^\\(newcommand|renewcommand|providecommand|algnewcommand|g?def|DeclareMathOperator|DeclarePairedDelimiterX?)(\*)?/.exec(fullDef);
     if (!commandMatch) { return undefined; }
 
     const command = commandMatch[1] as MacroDefinitionCommand;
@@ -55,9 +56,36 @@ function readMacroDefinitionHeader(fullDef: string): MacroDefinitionHeader | und
 
     let index = macroName.end;
     let argCount = 0;
-    let hasDefaultArgument = false;
+    let defaultArgument: string | undefined;
 
-    if (command === 'newcommand' || command === 'renewcommand' || command === 'providenewcommand') {
+    if (command === 'DeclarePairedDelimiter' || command === 'DeclarePairedDelimiterX') {
+        if (command === 'DeclarePairedDelimiterX') {
+            const argCountGroup = readLatexGroup(fullDef, index, { delimiter: 'bracket' });
+            if (!argCountGroup || !/^\d+$/.test(argCountGroup.content.trim())) { return undefined; }
+            argCount = parseInt(argCountGroup.content.trim(), 10);
+            index = argCountGroup.end;
+        } else {
+            argCount = 1;
+        }
+        const left = readLatexGroup(fullDef, index);
+        const right = left && readLatexGroup(fullDef, left.end);
+        const content = command === 'DeclarePairedDelimiterX' && right
+            ? readLatexGroup(fullDef, right.end)
+            : undefined;
+        if (!left || !right || (command === 'DeclarePairedDelimiterX' && !content)) { return undefined; }
+        return {
+            command,
+            name: macroName.name,
+            star,
+            argCount,
+            body: {
+                content: `\\left${left.content}${content?.content ?? '#1'}\\right${right.content}`,
+                start: 0
+            }
+        };
+    }
+
+    if (command === 'newcommand' || command === 'renewcommand' || command === 'providecommand' || command === 'algnewcommand') {
         const argCountGroup = readLatexGroup(fullDef, index, { delimiter: 'bracket' });
         if (argCountGroup && /^\d+$/.test(argCountGroup.content.trim())) {
             argCount = parseInt(argCountGroup.content.trim(), 10);
@@ -65,7 +93,7 @@ function readMacroDefinitionHeader(fullDef: string): MacroDefinitionHeader | und
 
             const defaultArgGroup = readLatexGroup(fullDef, index, { delimiter: 'bracket' });
             if (defaultArgGroup) {
-                hasDefaultArgument = true;
+                defaultArgument = defaultArgGroup.content;
                 index = defaultArgGroup.end;
             }
         }
@@ -82,8 +110,8 @@ function readMacroDefinitionHeader(fullDef: string): MacroDefinitionHeader | und
         command,
         name: macroName.name,
         star,
-        argCount,
-        hasDefaultArgument,
+        argCount: Math.max(argCount, countLatexMacroArguments(body.content)),
+        defaultArgument,
         body: {
             content: body.content,
             start: body.start
@@ -95,7 +123,11 @@ function readMacroDefinitionHeader(fullDef: string): MacroDefinitionHeader | und
  * Converts simple \newcommand definitions to \def syntax accepted by TikZJax.
  */
 function transpileToDef(header: MacroDefinitionHeader, fullDef: string): string {
-    if (!header.command.endsWith('newcommand') || header.hasDefaultArgument) {return fullDef;}
+    if (header.command === 'DeclarePairedDelimiter' || header.command === 'DeclarePairedDelimiterX') {
+        const args = Array.from({ length: header.argCount }, (_unused, index) => `#${index + 1}`).join('');
+        return `\\def${header.name}${args}{${header.body.content}}`;
+    }
+    if (!header.command.endsWith('newcommand') || header.defaultArgument !== undefined) {return fullDef;}
 
     const args = Array.from({ length: header.argCount }, (_unused, index) => `#${index + 1}`).join('');
     return `\\def${header.name}${args}${fullDef.substring(header.body.start)}`;
@@ -153,6 +185,19 @@ function findDefinitionEnd(text: string, tokenEndIndex: number): number {
     return consumedGroup ? i : -1;
 }
 
+function findLetDefinitionEnd(text: string, tokenEndIndex: number): number {
+    const skipSpace = (index: number) => {
+        while (text[index] === ' ' || text[index] === '\t') { index++; }
+        return index;
+    };
+    let index = skipSpace(tokenEndIndex);
+    if (text[index] !== '\\') { return -1; }
+    index = skipSpace(consumeControlSequence(text, index));
+    if (text[index] === '=') { index = skipSpace(index + 1); }
+    if (index >= text.length || /[\r\n]/.test(text[index])) { return -1; }
+    return text[index] === '\\' ? consumeControlSequence(text, index) : index + 1;
+}
+
 function blankOutRanges(text: string, ranges: TextRange[]): string {
     if (ranges.length === 0) { return text; }
 
@@ -174,12 +219,14 @@ function blankOutRanges(text: string, ranges: TextRange[]): string {
 
 function collectDefinitions(text: string): DefinitionRecord[] {
     const records: DefinitionRecord[] = [];
-    const defRegex = new RegExp(`\\\\(${REGEX_STR.PREAMBLE_DEFINITIONS})\\*?`, 'g');
+    const defRegex = new RegExp(`\\\\(${REGEX_STR.PREAMBLE_DEFINITIONS}|let)\\*?(?=\\s|\\\\|\\{|\\[|$)`, 'g');
 
     let defMatch;
     while ((defMatch = defRegex.exec(text)) !== null) {
         const start = defMatch.index;
-        const end = findDefinitionEnd(text, start + defMatch[0].length);
+        const end = defMatch[1] === 'let'
+            ? findLetDefinitionEnd(text, start + defMatch[0].length)
+            : findDefinitionEnd(text, start + defMatch[0].length);
         if (end === -1) { continue; }
 
         records.push({ start, end, command: defMatch[1], fullDef: text.substring(start, end) });
@@ -189,15 +236,27 @@ function collectDefinitions(text: string): DefinitionRecord[] {
     return records;
 }
 
-function extractKatexMacro(header: MacroDefinitionHeader): { name: string; definition: string } | undefined {
-    if (header.command === 'providenewcommand') { return undefined; }
+export function stripLatexDefinitions(text: string): string {
+    return blankOutRanges(text, collectDefinitions(text));
+}
 
-    const rawDefinition = header.body.content.trim();
+function extractKatexMacro(header: MacroDefinitionHeader): { name: string; definition: LatexMacroDefinition } | undefined {
+    const rawDefinition = header.command === 'DeclareMathOperator'
+        ? header.body.content.trim()
+        : header.body.content;
     const definition = header.command === 'DeclareMathOperator'
         ? (header.star ? `\\operatorname*{${rawDefinition}}` : `\\operatorname{${rawDefinition}}`)
         : rawDefinition;
 
-    return { name: header.name, definition };
+    return {
+        name: header.name,
+        definition: {
+            body: definition,
+            argumentCount: header.argCount,
+            ...(header.defaultArgument !== undefined ? { defaultArgument: header.defaultArgument } : {}),
+            ...(/^DeclarePairedDelimiter/.test(header.command) ? { allowStar: true } : {})
+        }
+    };
 }
 
 function extractColorDefinition(fullDefinition: string): { name: string; color: string } | undefined {
@@ -213,6 +272,102 @@ function extractColorDefinition(fullDefinition: string): { name: string; color: 
     return name && color ? { name, color } : undefined;
 }
 
+function readEnvironmentBoundary(text: string, command: 'begin' | 'end'): { target: string; options?: string } | undefined {
+    const call = readLatexCommandAt(text, 0, { name: command, requiredArgs: 1 });
+    if (!call) { return undefined; }
+
+    const target = call.requiredArgs[0].content.trim();
+    const options = command === 'begin'
+        ? readLatexGroup(text, call.end, { delimiter: 'bracket' })
+        : undefined;
+    const end = skipLatexWhitespace(text, options?.end ?? call.end);
+    return end === text.length && /^[a-zA-Z@][a-zA-Z0-9@*.-]*$/.test(target)
+        ? { target, ...(options ? { options: options.content } : {}) }
+        : undefined;
+}
+
+function readStyleEnvironment(opening: string, closing: string): string | undefined {
+    if (closing.replace(/\\ignorespacesafterend\b/g, '').trim()) { return undefined; }
+    const declaration = opening.replace(/\\ignorespaces\b/g, '').trim();
+    const color = readLatexCommandAt(declaration, 0, { name: 'color', optionalArgs: 1, requiredArgs: 1 });
+    if (color?.end === declaration.length) { return declaration; }
+
+    return LATEX_DECLARATION_STYLE_COMMANDS.some(name =>
+        readLatexCommandAt(declaration, 0, { name })?.end === declaration.length
+    ) ? declaration : undefined;
+}
+
+function readWrappedListEnvironmentAlias(opening: string, closing: string): Extract<PreambleEnvironmentDefinition, { kind: 'alias' }> | undefined {
+    const beginMatch = /\\begin\s*\{([a-zA-Z@][a-zA-Z0-9@*.-]*)\}/.exec(opening);
+    const endMatch = /\\end\s*\{([a-zA-Z@][a-zA-Z0-9@*.-]*)\}/.exec(closing);
+    if (!beginMatch || !endMatch || beginMatch[1] !== endMatch[1]
+        || !new RegExp(`^(?:${REGEX_STR.LIST_ENVS})$`).test(beginMatch[1])
+        || /\\begin\s*\{/.test(opening.slice(beginMatch.index + beginMatch[0].length))
+        || /\\end\s*\{/.test(closing.slice(endMatch.index + endMatch[0].length))) {
+        return undefined;
+    }
+    return { kind: 'alias', target: beginMatch[1], opening, closing };
+}
+
+function extractEnvironmentDefinition(fullDefinition: string): { name: string; definition: PreambleEnvironmentDefinition } | undefined {
+    const tcolorbox = /^\\(?:new|renew|provide)tcolorbox/.exec(fullDefinition);
+    if (tcolorbox) {
+        const name = readLatexGroup(fullDefinition, tcolorbox[0].length);
+        const environmentName = name?.content.trim();
+        return environmentName && /^[a-zA-Z@][a-zA-Z0-9@*.-]*$/.test(environmentName)
+            ? { name: environmentName, definition: { kind: 'transparent' } }
+            : undefined;
+    }
+
+    const command = /^\\(newtheorem|(?:re)?newenvironment)(\*)?/.exec(fullDefinition);
+    if (!command) { return undefined; }
+
+    let index = command[0].length;
+    const name = readLatexGroup(fullDefinition, index);
+    if (!name) { return undefined; }
+    const environmentName = name.content.trim();
+    if (!/^[a-zA-Z@][a-zA-Z0-9@*.-]*$/.test(environmentName)) { return undefined; }
+    index = name.end;
+
+    if (command[1] === 'newtheorem') {
+        const sharedCounter = readLatexGroup(fullDefinition, index, { delimiter: 'bracket' });
+        if (sharedCounter) { index = sharedCounter.end; }
+        const displayName = readLatexGroup(fullDefinition, index);
+        return displayName
+            ? {
+                name: environmentName,
+                definition: { kind: 'theorem', displayName: displayName.content.trim(), numbered: !command[2] }
+            }
+            : undefined;
+    }
+
+    const argumentCount = readLatexGroup(fullDefinition, index, { delimiter: 'bracket' });
+    if (argumentCount) {
+        if (argumentCount.content.trim() !== '0') { return undefined; }
+        index = argumentCount.end;
+        const defaultArgument = readLatexGroup(fullDefinition, index, { delimiter: 'bracket' });
+        if (defaultArgument) { index = defaultArgument.end; }
+    }
+    const opening = readLatexGroup(fullDefinition, index);
+    const closing = opening && readLatexGroup(fullDefinition, opening.end);
+    if (!opening || !closing) { return undefined; }
+
+    if (!opening.content.trim() && !closing.content.trim()) {
+        return { name: environmentName, definition: { kind: 'transparent' } };
+    }
+    const style = readStyleEnvironment(opening.content, closing.content);
+    if (style) {
+        return { name: environmentName, definition: { kind: 'style', declaration: style } };
+    }
+
+    const begin = readEnvironmentBoundary(opening.content, 'begin');
+    const end = readEnvironmentBoundary(closing.content, 'end');
+    const alias = begin && end?.target === begin.target
+        ? { kind: 'alias' as const, target: begin.target, ...(begin.options ? { options: begin.options } : {}) }
+        : readWrappedListEnvironmentAlias(opening.content, closing.content);
+    return alias && environmentName !== alias.target ? { name: environmentName, definition: alias } : undefined;
+}
+
 interface MetadataCommandCall extends TextRange {
     name: string;
     content: string;
@@ -223,6 +378,7 @@ interface MetadataCommandCall extends TextRange {
 const AUTHOR_METADATA_COMMANDS = [
     'IEEEauthorblockN',
     'IEEEauthorblockA',
+    'address',
     'affiliation',
     'institute',
     'author',
@@ -260,6 +416,7 @@ function collectAuthorCommandCalls(text: string): MetadataCommandCall[] {
             name,
             optionalArgs: 1,
             requiredArgs: 1,
+            allowStar: true,
             skipWhitespace: false
         });
         if (!call) { continue; }
@@ -475,7 +632,7 @@ function parseIeeeAuthors(calls: MetadataCommandCall[]): AuthorExtraction {
  *   \author{Alice\\University A\\\texttt{alice@a.edu}\and Bob\\University B}
  *
  * Repeated/authblk forms:
- *   \author{Alice} \email{alice@a.edu} \affiliation{University A}
+ *   \author{Alice} \email{alice@a.edu} \address{University A}
  *   \author[1]{Alice} \author[1]{Bob} \affil[1]{University A}
  *   \author[1]{Alice} \author[2]{Bob} \email{alice@a.edu, bob@b.edu}
  *
@@ -536,8 +693,9 @@ function parseAuthorCommands(calls: MetadataCommandCall[]): AuthorExtraction {
                 break;
             }
             case 'affil':
+            case 'address':
             case 'affiliation': {
-                // Handles authblk \affil, ACM \affiliation, and Elsevier \affiliation[id].
+                // Handles journal \address, authblk \affil, ACM \affiliation, and Elsevier \affiliation[id].
                 const optionalId = call.optionalArg?.trim();
                 if (!optionalId && call.content.includes('@') && currentAuthor) {
                     appendUnique(currentAuthor.emails, splitEmails(call.content));
@@ -614,8 +772,12 @@ export const BUILTIN_METADATA_EXTRACTOR: MetadataExtractor = (text): MetadataExt
  * The returned cleanedText preserves line structure for source mapping while
  * blanking definitions that should not render as document body content.
  */
-export function extractMetadata(text: string, metadataExtractors: readonly MetadataExtractor[]): MetadataResult {
-    let cleanedText = stripLatexComments(text, { mode: 'mask' });
+export function extractMetadata(
+    text: string,
+    metadataExtractors: readonly MetadataExtractor[],
+    definitionSources: readonly string[] = []
+): MetadataResult {
+    let cleanedText = maskLatexFalseBranches(stripLatexComments(text, { mode: 'mask' }));
 
     const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     cleanedText = cleanedText.replace(/\\today\b/g, todayStr);
@@ -637,11 +799,23 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
 
     const tikzGlobalParts: string[] = [];
     const tikzMacroMap = new Map<string, string>();
-    const macros: Record<string, string> = {};
+    const macros: Record<string, LatexMacroDefinition> = {};
     const colors: Record<string, string> = {};
+    const environments: Record<string, PreambleEnvironmentDefinition> = {};
+    const usedMacros = new Set(cleanedText.match(/\\[a-zA-Z@]+/g) ?? []);
+    const usedEnvironments = new Set(
+        Array.from(cleanedText.matchAll(/\\(?:begin|end)\s*\{([^{}]+)\}/g), match => match[1])
+    );
 
     const definitionRecords = collectDefinitions(cleanedText);
-    for (const record of definitionRecords) {
+    const records = [
+        ...definitionSources.flatMap(source =>
+            collectDefinitions(maskLatexFalseBranches(stripLatexComments(source, { mode: 'mask' })))
+                .map(record => ({ record, imported: true }))
+        ),
+        ...definitionRecords.map(record => ({ record, imported: false }))
+    ];
+    for (const { record, imported } of records) {
         const { command, fullDef } = record;
 
         if (command === 'definecolor') {
@@ -649,6 +823,14 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
             if (colorDefinition) {
                 colors[colorDefinition.name] = colorDefinition.color;
             }
+        }
+
+        const environment = extractEnvironmentDefinition(fullDef);
+        if (environment) {
+            if (!imported || usedEnvironments.has(environment.name)) {
+                environments[environment.name] = environment.definition;
+            }
+            continue;
         }
 
         if (TIKZ_GLOBAL_COMMANDS.includes(command)) {
@@ -659,7 +841,10 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
         }
 
         const header = readMacroDefinitionHeader(fullDef);
-        if (!header) { continue; }
+        if (!header || (imported && (!usedMacros.has(header.name)
+            || /\\[a-zA-Z]*@|\\(?:if\w*|else|fi|let|[egx]?def|global|csname|endcsname|expandafter)\b/.test(header.body.content)))) {
+            continue;
+        }
 
         const finalDef = transpileToDef(header, fullDef);
         const tikzName = header.command === 'DeclareMathOperator' ? null : header.name;
@@ -668,7 +853,7 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
         }
 
         const katexMacro = extractKatexMacro(header);
-        if (katexMacro) {
+        if (katexMacro && (header.command !== 'providecommand' || macros[katexMacro.name] === undefined)) {
             macros[katexMacro.name] = katexMacro.definition;
         }
     }
@@ -678,6 +863,7 @@ export function extractMetadata(text: string, metadataExtractors: readonly Metad
     const data: PreambleData = {
         macros,
         colors,
+        environments,
         tikzGlobal,
         tikzMacroMap,
         ...metadata

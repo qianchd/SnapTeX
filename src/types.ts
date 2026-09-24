@@ -33,9 +33,23 @@ export interface AffiliationMetadata {
     text: string;
 }
 
+export type PreambleEnvironmentDefinition =
+    | { kind: 'theorem'; displayName: string; numbered: boolean }
+    | { kind: 'transparent' }
+    | { kind: 'style'; declaration: string }
+    | { kind: 'alias'; target: string; options?: string; opening?: string; closing?: string };
+
+export interface LatexMacroDefinition {
+    body: string;
+    argumentCount: number;
+    defaultArgument?: string;
+    allowStar?: boolean;
+}
+
 export interface PreambleData {
-    macros: Record<string, string>;
+    macros: Record<string, LatexMacroDefinition>;
     colors: Record<string, string>;
+    environments: Record<string, PreambleEnvironmentDefinition>;
     tikzGlobal: string;
     tikzMacroMap: Map<string, string>;
     title?: string;
@@ -46,7 +60,7 @@ export interface PreambleData {
     custom: Record<string, string>;
 }
 
-export type PreambleMetadata = Omit<PreambleData, 'macros' | 'colors' | 'tikzGlobal' | 'tikzMacroMap'>;
+export type PreambleMetadata = Omit<PreambleData, 'macros' | 'colors' | 'environments' | 'tikzGlobal' | 'tikzMacroMap'>;
 
 export interface MetadataResult {
     data: PreambleData;
@@ -194,7 +208,7 @@ export type RenderPayload =
     };
 
 export interface RenderContext {
-    currentMacros: Readonly<Record<string, string>>;
+    currentMacros: Readonly<Record<string, LatexMacroDefinition>>;
     metadata?: PreambleData;
     bibEntries: ReadonlyMap<string, BibEntry>;
     protectHtml(namespace: string, html: string, mode?: ProtectedHtmlMode): string;
@@ -242,10 +256,9 @@ export interface SplitterConfig {
 export type SplitterWrapperContent = 'group-remainder' | { requiredArgument: number };
 
 export type SplitterRule =
-    | { name: string; kind: 'ignored-env'; envPattern: RegExp }
-    | { name: string; kind: 'transparent-env'; envPattern: RegExp; preserveWrapper?: boolean }
-    | { name: string; kind: 'split-env'; envPattern: RegExp }
+    | { name: string; kind: 'split-env'; envPattern: RegExp; allowNestedBlocks?: boolean }
     | { name: string; kind: 'no-emergency-split-env'; envPattern: RegExp }
+    | { name: string; kind: 'context-wrapper'; envPattern: RegExp; preserveWrapper?: boolean }
     | { name: string; kind: 'context-wrapper'; macroPattern: RegExp; content: SplitterWrapperContent }
     | { name: string; kind: 'emergency-split-end-env'; envPattern: RegExp };
 

@@ -417,6 +417,8 @@ body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg text {
 }
 
 .latex-figure { text-align: center; margin: 20px 0; }
+.latex-center { text-align: center; }
+.latex-minipage { display: inline-block; box-sizing: border-box; max-width: 100%; vertical-align: top; }
 .latex-figure img { max-width: 100%; height: auto; }
 .latex-subfigure-grid {
     display: flex;

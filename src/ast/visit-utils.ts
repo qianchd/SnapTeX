@@ -1,5 +1,6 @@
 import type { TextRange } from '../types';
 import { isRecord } from '../utils';
+import { printLatexWithLoadedPrinter } from './parse';
 import type { AstSourcePosition, SnaptexAstArgument, SnaptexAstNode, SnaptexAstRoot } from './types';
 
 const VERBATIM_LIKE_ENVIRONMENTS = new Set(['verbatim', 'lstlisting', 'minted']);
@@ -123,6 +124,13 @@ export function readBracketNodes(nodes: readonly SnaptexAstNode[], startIndex: n
     return undefined;
 }
 
+export function splitLeadingBracketNodes(nodes: readonly SnaptexAstNode[]): { head: readonly SnaptexAstNode[]; tail: readonly SnaptexAstNode[] } {
+    const bracket = readBracketNodes(nodes, skipWhitespaceOrComments(nodes, 0));
+    return bracket
+        ? { head: bracket.content, tail: nodes.slice(bracket.nextIndex) }
+        : { head: [], tail: nodes };
+}
+
 export function isVerbatimLikeNode(node: unknown): boolean {
     const envName = environmentName(node);
     return isRecord(node)
@@ -240,6 +248,10 @@ export function astNodesToText(nodes: readonly SnaptexAstNode[]): string {
         }
         return '';
     }).join('');
+}
+
+export function astNodesToLatex(nodes: readonly SnaptexAstNode[]): string {
+    return printLatexWithLoadedPrinter(nodes) ?? astNodesToText(nodes);
 }
 
 export function argumentText(argument: SnaptexAstArgument | undefined): string {

@@ -28,7 +28,7 @@ export const AST_SECTION_RULE: AstRenderRule = input => {
     const level = sectionName(input.node);
     const title = args.requiredArgs[0];
     if (!title || title.length === 0) {
-        return undefined;
+        return { html: '', consumedNodes: args.consumedNodes };
     }
 
     const tag = SECTION_TAGS[level] ?? 'h2';

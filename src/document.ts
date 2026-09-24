@@ -2,9 +2,9 @@ import type { IFileProvider } from './file-provider';
 import { extractMetadata } from './metadata';
 import { BibTexParser } from './bib';
 import { BibEntry, SourceLocation, PreambleData, MetadataResult, BlockTextSnapshot, BlockTextSpan, DocumentDiagnostic, RenderDocumentView, BackendMode, UriLike } from './types';
-import { REGEX_STR, R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
+import { REGEX_STR, R_ADDBIBRESOURCE, R_BIBLIOGRAPHY, R_THEBIBLIOGRAPHY } from './patterns';
 import { SNAP_TEX_RULES, type RuleRegistry } from './rules';
-import { LatexBlockSplitter } from './splitter';
+import { expandSplitterEnvironmentAliases, LatexBlockSplitter, resolveSplitterRules } from './splitter';
 import { extractAstBlockArtifact } from './ast/block-metadata';
 import type { AstBlockArtifact } from './ast/types';
 import { splitLatexWithAstIncremental, type AstSplitResult } from './ast/splitter';
@@ -31,9 +31,13 @@ export interface SourceMapSegment {
 }
 
 interface BibCacheEntry {
-    uri: string;
     mtime: number;
     entries: Map<string, BibEntry>;
+}
+
+interface DefinitionSourceCacheEntry {
+    mtime: number;
+    source: string;
 }
 
 interface FlattenOutput {
@@ -59,6 +63,23 @@ interface ParseOptions {
     backendMode?: BackendMode;
 }
 
+function localDefinitionFiles(text: string): string[] {
+    const clean = stripLatexComments(text);
+    const files: string[] = [];
+    const add = (names: string, extension: string) => {
+        for (const name of names.split(',').map(value => value.trim()).filter(Boolean)) {
+            if (/^[a-zA-Z0-9@._/-]+$/.test(name)) {
+                files.push(name.endsWith(extension) ? name : `${name}${extension}`);
+            }
+        }
+    };
+
+    for (const match of clean.matchAll(/\\(?:usepackage|RequirePackage)(?:\s*\[[^\]]*\])?\s*\{([^{}]+)\}/g)) {
+        add(match[1], '.sty');
+    }
+    return files;
+}
+
 /**
  * Parsed LaTeX document state used by the renderer.
  *
@@ -81,6 +102,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public metadata: PreambleData = {
         macros: {},
         colors: {},
+        environments: {},
         tikzGlobal: "",
         tikzMacroMap: new Map(),
         authors: [],
@@ -91,7 +113,8 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
     public bibEntries: Map<string, BibEntry> = new Map();
     public rootDir: TUri | undefined;
 
-    private bibCache: BibCacheEntry | undefined;
+    private bibCache = new Map<string, BibCacheEntry>();
+    private definitionSourceCache = new Map<string, DefinitionSourceCacheEntry>();
     private astSplitSnapshot: AstSplitResult | undefined;
     private astSplitSnapshotKey: string | undefined;
 
@@ -151,6 +174,10 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         const filePool: string[] = [];
 
         const rootDir = this.fileProvider.dir(entryUri);
+        if (this.rootDir?.toString() !== rootDir.toString()) {
+            this.definitionSourceCache.clear();
+            this.bibCache.clear();
+        }
         this.rootDir = rootDir;
 
         const diagnostics: DocumentDiagnostic[] = [];
@@ -161,7 +188,8 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         let normalizedText = textLines.join('\n');
         textLines.length = 0;
 
-        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors);
+        const definitionSources = await this.loadLocalDefinitionSources(normalizedText, rootDir, diagnostics);
+        const metaRes: MetadataResult = extractMetadata(normalizedText, this.registry.metadataExtractors, definitionSources);
         normalizedText = "";
         options.trace?.('after metadata');
 
@@ -181,8 +209,9 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         const useAstBackend = options.backendMode === 'ast(experimental)';
         const splitterOptions = {
             config: this.registry.splitterConfig,
-            rules: this.registry.splitterRules
+            rules: resolveSplitterRules(this.registry.splitterRules, metaRes.data.environments)
         };
+        bodyText = expandSplitterEnvironmentAliases(bodyText, splitterOptions.rules, metaRes.data.macros);
         const astSplitKey = entryUri.toString();
         const astSplitResult = useAstBackend
             ? await splitLatexWithAstIncremental(
@@ -244,7 +273,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
     private hasRenderableContent(text: string): boolean {
         const withoutListStructure = stripLatexComments(text)
-            .replace(/\\(?:begin|end)\{(?:itemize|enumerate)\}/g, '')
+            .replace(new RegExp(`\\\\(?:begin|end)\\{(?:${REGEX_STR.LIST_ENVS})\\}`, 'g'), '')
             .replace(/\\item(?:\[[^\]]*\])?/g, '');
 
         return withoutListStructure.trim().length > 0;
@@ -333,6 +362,32 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
         }
     }
 
+    private async loadLocalDefinitionSources(
+        rootText: string,
+        rootDir: TUri,
+        diagnostics: DocumentDiagnostic[]
+    ): Promise<string[]> {
+        const sources: string[] = [];
+
+        for (const relativePath of [...new Set(localDefinitionFiles(rootText))].slice(0, 64)) {
+            const uri = this.fileProvider.resolve(rootDir, relativePath);
+            const key = uri.toString();
+            const cached = this.definitionSourceCache.get(key);
+
+            if (!(await this.fileProvider.exists(uri))) { continue; }
+
+            try {
+                const { mtime } = await this.fileProvider.stat(uri);
+                const source = cached?.mtime === mtime ? cached.source : await this.fileProvider.read(uri);
+                this.definitionSourceCache.set(key, { mtime, source });
+                sources.push(source);
+            } catch {
+                diagnostics.push({ message: `Error reading local definition file: ${key}` });
+            }
+        }
+        return sources;
+    }
+
     private selectStandaloneLines(lines: string[]): number[] | undefined {
         const beginIndex = lines.findIndex(line => /\\begin\{document\}/i.test(line));
         if (beginIndex === -1) { return undefined; }
@@ -380,31 +435,34 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             return BibTexParser.parseBibItems(inlineBibliography[0]);
         }
 
-        const match = text.match(R_BIBLIOGRAPHY);
-        if (!match) { return new Map(); }
+        const files = [
+            ...text.matchAll(new RegExp(R_BIBLIOGRAPHY, 'g')),
+            ...text.matchAll(new RegExp(R_ADDBIBRESOURCE, 'g'))
+        ].flatMap(match => match[1].split(',').map(file => file.trim()).filter(Boolean));
+        const merged = new Map<string, BibEntry>();
 
-        let bibFile = match[1].trim();
-        if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
-        const bibUri = this.fileProvider.resolve(rootDir, bibFile);
-        const bibUriStr = bibUri.toString();
-
-        try {
-            const { mtime } = await this.fileProvider.stat(bibUri);
-            if (mtime === 0) {
-                diagnostics.push({ message: `Missing bibliography file: ${bibUriStr}` });
-                return new Map();
+        for (let bibFile of new Set(files)) {
+            if (!bibFile.endsWith('.bib')) { bibFile += '.bib'; }
+            const bibUri = this.fileProvider.resolve(rootDir, bibFile);
+            const bibUriStr = bibUri.toString();
+            try {
+                const { mtime } = await this.fileProvider.stat(bibUri);
+                if (mtime === 0) {
+                    diagnostics.push({ message: `Missing bibliography file: ${bibUriStr}` });
+                    continue;
+                }
+                let cached = this.bibCache.get(bibUriStr);
+                if (cached?.mtime !== mtime) {
+                    cached = { mtime, entries: BibTexParser.parse(await this.fileProvider.read(bibUri)) };
+                    this.bibCache.set(bibUriStr, cached);
+                }
+                for (const entry of cached.entries) { merged.set(...entry); }
+            } catch (e) {
+                console.error('Failed to load bib file:', e);
+                diagnostics.push({ message: `Error reading bibliography file: ${bibUriStr}` });
             }
-            if (this.bibCache?.uri === bibUriStr && this.bibCache.mtime === mtime) {
-                return this.bibCache.entries;
-            }
-            const entries = BibTexParser.parse(await this.fileProvider.read(bibUri));
-            this.bibCache = { uri: bibUriStr, mtime, entries };
-            return entries;
-        } catch (e) {
-            console.error('Failed to load bib file:', e);
-            diagnostics.push({ message: `Error reading bibliography file: ${bibUriStr}` });
         }
-        return new Map();
+        return merged;
     }
 
     public getOriginalPosition(flatLine: number): SourceLocation | undefined {

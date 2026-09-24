@@ -1,6 +1,6 @@
 import { DiffEngine } from '../diff';
 import {
-    findSplitterContextWrapperRule,
+    findSplitterMacroContextRule,
     findSplitterEnvRule,
     LatexBlockSplitter,
     matchesSplitterEnvRule
@@ -117,9 +117,9 @@ export async function splitLatexWithAstIncremental(
 function createAstCoarseSpans(text: string, options: SplitterOptions): BlockTextSpan[] {
     const coarseSpans = LatexBlockSplitter
         .split(text, options)
-        .map(span => trimTransparentContainerEdges(text, span, options.rules))
+        .map(span => trimContextEnvironmentEdges(text, span, options.rules))
         .filter((span): span is BlockTextSpan => span !== undefined);
-    return mergeWrapperTransparentSpans(text, coarseSpans, options);
+    return mergePreservedContextSpans(text, coarseSpans, options);
 }
 
 async function refineCoarseSpans(
@@ -154,10 +154,10 @@ function shouldRefineCoarseSpan(text: string, span: BlockTextSpan, options: Spli
     if (text.trim().length === 0) {
         return false;
     }
-    if (containsRefinableContextWrapper(text, options.rules)) {
+    if (containsRefinableMacroContext(text, options.rules)) {
         return true;
     }
-    if (containsEnvRule(text, options.rules, 'transparent-env')) {
+    if (containsEnvRule(text, options.rules, 'context-wrapper')) {
         return true;
     }
     return span.lineCount > options.config.maxBlockLines && !containsEnvRule(text, options.rules, 'no-emergency-split-env');
@@ -199,7 +199,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
             suffix: `${suffix}${spans[lastSpanIndex].suffix ?? ''}`
         };
     };
-    const processTransparentEnvironment = (
+    const processContextEnvironment = (
         node: SnaptexAstNode,
         position: AstSourcePosition,
         contexts: readonly ContextWrapper[],
@@ -273,9 +273,9 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
                 continue;
             }
 
-            const transparentRule = findSplitterEnvRule(options.rules, 'transparent-env', envName);
-            if (transparentRule) {
-                processTransparentEnvironment(node, position, contexts, transparentRule.preserveWrapper === true);
+            const contextRule = findSplitterEnvRule(options.rules, 'context-wrapper', envName);
+            if (contextRule) {
+                processContextEnvironment(node, position, contexts, contextRule.preserveWrapper === true);
                 continue;
             }
 
@@ -296,7 +296,7 @@ async function refineTextWithAst(text: string, options: AstSplitOptions): Promis
     return accepted ? spans : undefined;
 }
 
-function trimTransparentContainerEdges(
+function trimContextEnvironmentEdges(
     text: string,
     span: BlockTextSpan,
     rules: readonly SplitterRule[]
@@ -306,7 +306,7 @@ function trimTransparentContainerEdges(
 
     while (true) {
         const leading = text.slice(start, end).match(/^\s*\\begin\s*\{([^}]+)\}\s*/);
-        if (!leading || !isDroppableTransparentEnv(rules, leading[1])) {
+        if (!leading || !isDroppableContextEnvironment(rules, leading[1])) {
             break;
         }
         start += leading[0].length;
@@ -314,7 +314,7 @@ function trimTransparentContainerEdges(
 
     while (true) {
         const trailing = text.slice(start, end).match(/\s*\\end\s*\{([^}]+)\}\s*$/);
-        if (!trailing || !isDroppableTransparentEnv(rules, trailing[1])) {
+        if (!trailing || !isDroppableContextEnvironment(rules, trailing[1])) {
             break;
         }
         end -= trailing[0].length;
@@ -333,12 +333,12 @@ function trimTransparentContainerEdges(
     };
 }
 
-function isDroppableTransparentEnv(rules: readonly SplitterRule[], envName: string): boolean {
-    const rule = findSplitterEnvRule(rules, 'transparent-env', envName);
+function isDroppableContextEnvironment(rules: readonly SplitterRule[], envName: string): boolean {
+    const rule = findSplitterEnvRule(rules, 'context-wrapper', envName);
     return Boolean(rule && rule.preserveWrapper !== true);
 }
 
-function mergeWrapperTransparentSpans(text: string, spans: readonly BlockTextSpan[], options: SplitterOptions): BlockTextSpan[] {
+function mergePreservedContextSpans(text: string, spans: readonly BlockTextSpan[], options: SplitterOptions): BlockTextSpan[] {
     const merged: BlockTextSpan[] = [];
     let pending: BlockTextSpan[] = [];
     let balance = 0;
@@ -353,7 +353,7 @@ function mergeWrapperTransparentSpans(text: string, spans: readonly BlockTextSpa
 
     for (const span of spans) {
         if (pending.length === 0) {
-            const delta = wrapperTransparentEnvBalance(getBlockSpanText(text, span), options.rules);
+            const delta = preservedContextBalance(getBlockSpanText(text, span), options.rules);
             if (delta <= 0) {
                 merged.push(span);
                 continue;
@@ -362,7 +362,7 @@ function mergeWrapperTransparentSpans(text: string, spans: readonly BlockTextSpa
             balance = delta;
         } else {
             pending.push(span);
-            balance += wrapperTransparentEnvBalance(getBlockSpanText(text, span), options.rules);
+            balance += preservedContextBalance(getBlockSpanText(text, span), options.rules);
         }
 
         const first = pending[0];
@@ -387,12 +387,12 @@ function mergeSpans(spans: readonly BlockTextSpan[]): BlockTextSpan {
     };
 }
 
-function wrapperTransparentEnvBalance(text: string, rules: readonly SplitterRule[]): number {
+function preservedContextBalance(text: string, rules: readonly SplitterRule[]): number {
     let balance = 0;
     const tokenRegex = /\\(begin|end)\s*\{([^}]+)\}/g;
     let match: RegExpExecArray | null;
     while ((match = tokenRegex.exec(text)) !== null) {
-        const rule = findSplitterEnvRule(rules, 'transparent-env', match[2]);
+        const rule = findSplitterEnvRule(rules, 'context-wrapper', match[2]);
         if (!rule?.preserveWrapper) {
             continue;
         }
@@ -401,7 +401,7 @@ function wrapperTransparentEnvBalance(text: string, rules: readonly SplitterRule
     return balance;
 }
 
-function containsEnvRule(text: string, rules: readonly SplitterRule[], kind: 'transparent-env' | 'split-env' | 'no-emergency-split-env'): boolean {
+function containsEnvRule(text: string, rules: readonly SplitterRule[], kind: 'context-wrapper' | 'split-env' | 'no-emergency-split-env'): boolean {
     const tokenRegex = /\\(?:begin|end)\s*\{([^}]+)\}/g;
     let match: RegExpExecArray | null;
     while ((match = tokenRegex.exec(text)) !== null) {
@@ -412,7 +412,7 @@ function containsEnvRule(text: string, rules: readonly SplitterRule[], kind: 'tr
     return false;
 }
 
-function containsRefinableContextWrapper(text: string, rules: readonly SplitterRule[]): boolean {
+function containsRefinableMacroContext(text: string, rules: readonly SplitterRule[]): boolean {
     if (!/\n\s*\n/.test(text) && !containsEnvRule(text, rules, 'split-env')) {
         return false;
     }
@@ -420,7 +420,7 @@ function containsRefinableContextWrapper(text: string, rules: readonly SplitterR
     const macroPattern = /(?<!\\)\\([a-zA-Z@]+)/g;
     let match: RegExpExecArray | null;
     while ((match = macroPattern.exec(text)) !== null) {
-        if (findSplitterContextWrapperRule(rules, match[1])) {
+        if (findSplitterMacroContextRule(rules, match[1])) {
             return true;
         }
     }
@@ -447,7 +447,7 @@ function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonl
         if (!leading || !isMacroNode(leading.node)) {
             return undefined;
         }
-        const rule = findSplitterContextWrapperRule(rules, leading.node.content);
+        const rule = findSplitterMacroContextRule(rules, leading.node.content);
         if (rule?.content !== 'group-remainder') {
             return undefined;
         }
@@ -469,7 +469,7 @@ function createContextWrapper(text: string, node: SnaptexAstNode, rules: readonl
     if (!isMacroNode(node)) {
         return undefined;
     }
-    const rule = findSplitterContextWrapperRule(rules, node.content);
+    const rule = findSplitterMacroContextRule(rules, node.content);
     if (!rule || rule.content === 'group-remainder') {
         return undefined;
     }

@@ -1,4 +1,4 @@
-import { REGEX_STR } from '../patterns';
+import { MATH_ENVS, SECTION_LEVELS, THEOREM_ENVS } from '../patterns';
 import {
     buildScanResultFromSummaries,
     floatKindFromEnvironment,
@@ -35,9 +35,9 @@ import type { AstParseResult, SnaptexAstNode } from './types';
  * AST artifacts finish warming. Keep this module available for validation and
  * future background correction work.
  */
-const SECTION_LEVELS = new Set(REGEX_STR.SECTION_LEVELS.split('|') as SectionLevel[]);
-const MATH_ENVIRONMENTS = new Set(REGEX_STR.MATH_ENVS.split('|'));
-const THEOREM_ENVIRONMENTS = new Set(REGEX_STR.THEOREM_ENVS.split('|'));
+const SECTION_LEVEL_SET = new Set<SectionLevel>(SECTION_LEVELS);
+const MATH_ENVIRONMENTS = new Set<string>(MATH_ENVS);
+const THEOREM_ENVIRONMENTS = new Set<string>(THEOREM_ENVS);
 
 interface PositionedLabel {
     pos: number;
@@ -111,7 +111,7 @@ export class AstLatexScanner {
                 return;
             }
 
-            if (isMacroNode(node) && SECTION_LEVELS.has(node.content as SectionLevel) && !isStarredSection(node)) {
+            if (isMacroNode(node) && SECTION_LEVEL_SET.has(node.content as SectionLevel) && !isStarredSection(node)) {
                 tokens.push({
                     pos: nodePosition(node),
                     kind: 'sec',
@@ -151,7 +151,7 @@ export class AstLatexScanner {
                     return;
                 }
 
-                if (THEOREM_ENVIRONMENTS.has(envName)) {
+                if (THEOREM_ENVIRONMENTS.has(envName) && !rawEnvName.endsWith('*')) {
                     tokens.push({
                         pos: nodePosition(node),
                         kind: 'thm',

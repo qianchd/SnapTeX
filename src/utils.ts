@@ -2,8 +2,8 @@
  * Shared text, URI, and lightweight LaTeX parsing utilities.
  */
 
-import { R_CITATION } from './patterns';
-import type { BlockTextSpan, RenderContext, UriLike } from './types';
+import { LATEX_DECLARATION_STYLE_COMMANDS, LATEX_TEXT_ACCENTS, R_CITATION } from './patterns';
+import type { BlockTextSpan, LatexMacroDefinition, RenderContext, UriLike } from './types';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -31,37 +31,6 @@ export function debounce<Args extends unknown[]>(
     };
     debounced.cancel = cancel;
     return debounced;
-}
-
-const LATEX_ACCENTS: Record<string, string> = {
-    '\\"a': 'ä', '\\"o': 'ö', '\\"u': 'ü', '\\"A': 'Ä', '\\"O': 'Ö', '\\"U': 'Ü',
-    "\\'a": 'á', "\\'e": 'é', "\\'i": 'í', "\\'o": 'ó', "\\'u": 'ú', "\\'y": 'ý', "\\'c": 'ć',
-    "\\'A": 'Á', "\\'E": 'É', "\\'I": 'Í', "\\'O": 'Ó', "\\'U": 'Ú', "\\'Y": 'Ý', "\\'C": 'Ć',
-    "\\`a": 'à', "\\`e": 'è', "\\`i": 'ì', "\\`o": 'ò', "\\`u": 'ù',
-    "\\`A": 'À', "\\`E": 'È', "\\`I": 'Ì', "\\`O": 'Ò', "\\`U": 'Ù',
-    "\\^a": 'â', "\\^e": 'ê', "\\^i": 'î', "\\^o": 'ô', "\\^u": 'û',
-    "\\^A": 'Â', "\\^E": 'Ê', "\\^I": 'Î', "\\^O": 'Ô', "\\^U": 'Û',
-    "\\~a": 'ã', "\\~n": 'ñ', "\\~o": 'õ',
-    "\\~A": 'Ã', "\\~N": 'Ñ', "\\~O": 'Õ',
-    "\\v{s}": 'š', "\\v{S}": 'Š', "\\v{z}": 'ž', "\\v{Z}": 'Ž',
-    "\\c{c}": 'ç', "\\c{C}": 'Ç',
-    "\\ss": 'ß', "\\aa": 'å', "\\AA": 'Å', "\\ae": 'æ', "\\AE": 'Æ', "\\o": 'ø', "\\O": 'Ø'
-};
-
-/**
- * Decodes common LaTeX accents to Unicode for citation and bibliography text.
- */
-function decodeLatexAccents(text: string): string {
-    const replaceAccent = (match: string, command: string, char: string) =>
-        LATEX_ACCENTS[`\\${command}${char}`] || match;
-
-    text = text.replace(/\\(["'`^~v])\s*\{([a-zA-Z])\}/g, replaceAccent);
-    text = text.replace(/\\(["'`^~])([a-zA-Z])/g, replaceAccent);
-
-    text = text.replace(/\\c\s*\{([a-zA-Z])\}/g, (m, c) => LATEX_ACCENTS[`\\c{${c}}`] || m);
-    text = text.replace(/\\(ss|aa|AA|ae|AE|o|O)\b/g, (m, c) => LATEX_ACCENTS[`\\${c}`] || m);
-
-    return text;
 }
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
@@ -222,25 +191,71 @@ export function createHiddenLabelAnchor(labelName: string): string {
     return `<span id="${safeLabel}" class="latex-label-anchor" data-label="${safeLabel}" style="visibility:hidden; position:relative; top:-50px;"></span>`;
 }
 
-const LATEX_LABEL_PATTERN = /\\label\s*\{([^}]+)\}/g;
 type StyleHtmlProtector = (html: string, mode?: Parameters<RenderContext['protectHtml']>[2]) => string;
 type LatexStyleSpec = [inlineStart: string, inlineEnd: string, blockStyle: string];
 
 const LATEX_STYLE_TAGS: Record<string, LatexStyleSpec> = {
     textbf: ['<strong>', '</strong>', 'font-weight: bold'],
     bf: ['<strong>', '</strong>', 'font-weight: bold'],
+    bfseries: ['<strong>', '</strong>', 'font-weight: bold'],
     textit: ['<em>', '</em>', 'font-style: italic'],
     emph: ['<em>', '</em>', 'font-style: italic'],
     it: ['<em>', '</em>', 'font-style: italic'],
+    itshape: ['<em>', '</em>', 'font-style: italic'],
+    em: ['<em>', '</em>', 'font-style: italic'],
+    textsl: ['<em>', '</em>', 'font-style: oblique'],
+    slshape: ['<em>', '</em>', 'font-style: oblique'],
+    textsc: ['<span style="font-variant: small-caps;">', '</span>', 'font-variant: small-caps'],
+    scshape: ['<span style="font-variant: small-caps;">', '</span>', 'font-variant: small-caps'],
     texttt: ['<code>', '</code>', 'font-family: monospace'],
     tt: ['<code>', '</code>', 'font-family: monospace'],
+    ttfamily: ['<code>', '</code>', 'font-family: monospace'],
     textsf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>', 'font-family: sans-serif; font-size: 0.85em'],
     sf: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>', 'font-family: sans-serif; font-size: 0.85em'],
+    sffamily: ['<span style="font-family: sans-serif; font-size: 0.85em;">', '</span>', 'font-family: sans-serif; font-size: 0.85em'],
     textrm: ['<span style="font-family: serif;">', '</span>', 'font-family: serif'],
     rm: ['<span style="font-family: serif;">', '</span>', 'font-family: serif'],
-    underline: ['<u>', '</u>', 'text-decoration: underline']
+    rmfamily: ['<span style="font-family: serif;">', '</span>', 'font-family: serif'],
+    textup: ['<span style="font-style: normal;">', '</span>', 'font-style: normal'],
+    upshape: ['<span style="font-style: normal;">', '</span>', 'font-style: normal'],
+    textnormal: ['<span style="font-family: inherit; font-style: normal; font-weight: normal; font-variant: normal;">', '</span>', 'font-family: inherit; font-style: normal; font-weight: normal; font-variant: normal'],
+    normalfont: ['<span style="font-family: inherit; font-style: normal; font-weight: normal; font-variant: normal;">', '</span>', 'font-family: inherit; font-style: normal; font-weight: normal; font-variant: normal'],
+    phantom: ['<span style="visibility: hidden;">', '</span>', 'visibility: hidden'],
+    hphantom: ['<span style="visibility: hidden;">', '</span>', 'visibility: hidden'],
+    vphantom: ['<span style="visibility: hidden;">', '</span>', 'visibility: hidden'],
+    underline: ['<u>', '</u>', 'text-decoration: underline'],
+    textsuperscript: ['<sup>', '</sup>', 'vertical-align: super; font-size: smaller'],
+    textsubscript: ['<sub>', '</sub>', 'vertical-align: sub; font-size: smaller']
 };
-const LATEX_TEXT_STYLE_COMMANDS = ['textbf', 'textit', 'emph', 'texttt', 'textsf', 'textrm', 'underline'];
+const LATEX_TEXT_STYLE_COMMANDS = ['textbf', 'textit', 'emph', 'textsl', 'textsc', 'texttt', 'textsf', 'textrm', 'textup', 'textnormal', 'underline', 'textsuperscript', 'textsubscript', 'phantom', 'hphantom', 'vphantom'];
+const LATEX_STYLE_COMMANDS = Array.from(new Set([...LATEX_TEXT_STYLE_COMMANDS, ...LATEX_DECLARATION_STYLE_COMMANDS]));
+const LATEX_DECLARATION_STYLE_PATTERN = new RegExp(`\\\\(${LATEX_DECLARATION_STYLE_COMMANDS.join('|')})\\b`);
+const LATEX_COLOR_DECLARATION_PATTERN = /\\color\b/;
+
+export function latexTextStyleCss(command: string): string | undefined {
+    return LATEX_STYLE_TAGS[command]?.[2];
+}
+
+const LATEX_TEXT_SYMBOLS: Readonly<Record<string, string>> = {
+    S: '§', P: '¶', dots: '…', ldots: '…', textendash: '–', textemdash: '—',
+    textdagger: '†', textdaggerdbl: '‡', ddag: '‡', copyright: '©', textregistered: '®',
+    textquotesingle: "'", thinspace: ' ', xspace: ' ',
+    ss: 'ß', aa: 'å', AA: 'Å', ae: 'æ', AE: 'Æ', o: 'ø', O: 'Ø', l: 'ł', L: 'Ł', i: 'ı', j: 'ȷ'
+};
+const LATEX_TEXT_SYMBOL_NAMES = Object.keys(LATEX_TEXT_SYMBOLS).map(escapeRegExp).join('|');
+const LATEX_TEXT_SYMBOL_PATTERN = new RegExp(`\\{\\\\(${LATEX_TEXT_SYMBOL_NAMES})\\b(?:\\{\\})?\\}|\\\\(${LATEX_TEXT_SYMBOL_NAMES})\\b(?:\\{\\})?`, 'g');
+
+const LATEX_TEXT_ACCENT_PATTERN = /\\(['`^"~=.]|[uvHcdbrk]\b)\s*(?:\{([^{}]*)\}|\\([ij])|([A-Za-z]))/g;
+
+export function resolveLatexTextSymbol(command: string): string | undefined {
+    return LATEX_TEXT_SYMBOLS[command];
+}
+
+export function resolveLatexTextAccent(command: string, content: string): string | undefined {
+    const mark = LATEX_TEXT_ACCENTS[command as keyof typeof LATEX_TEXT_ACCENTS];
+    const base = content.trim().replace(/^\\([ij])$/, '$1');
+    return mark && Array.from(base).length === 1 ? `${base}${mark}`.normalize('NFC') : undefined;
+}
 
 function startsAfterTextOnLine(source: string, offset: number): boolean {
     const lineStart = Math.max(source.lastIndexOf('\n', offset - 1), source.lastIndexOf('\r', offset - 1)) + 1;
@@ -401,7 +416,7 @@ function renderStyleCommandGroup(
         );
     }
 
-    for (const cmd of ['bf', 'it', 'sf', 'rm', 'tt']) {
+    for (const cmd of LATEX_DECLARATION_STYLE_COMMANDS) {
         const call = readLatexCommandAt(group.content, innerStart, {
             name: cmd,
             skipWhitespace: false
@@ -418,7 +433,18 @@ function renderStyleCommandGroup(
  * Applies text-only LaTeX transforms that do not emit HTML.
  */
 export function resolveLatexTextTransforms(text: string): string {
-    return text.replace(/\\(?:uppercase|MakeUppercase)\s*\{([^{}]*)\}/g, (_match, content: string) => content.toUpperCase());
+    return text
+        .replace(/\\(?:uppercase|MakeUppercase)\s*\{([^{}]*)\}/g, (_match, content: string) => content.toUpperCase())
+        .replace(LATEX_TEXT_ACCENT_PATTERN, (match, command: string, grouped: string, escaped: string, bare: string) => (
+            resolveLatexTextAccent(command, grouped ?? escaped ?? bare ?? '') ?? match
+        ))
+        .replace(LATEX_TEXT_SYMBOL_PATTERN, (match, groupedCommand: string, command: string, offset: number, source: string) => {
+            const symbol = resolveLatexTextSymbol(groupedCommand || command);
+            if (!symbol) { return match; }
+            const isCommandArgument = groupedCommand
+                && /\\[A-Za-z@]+\*?\s*$/.test(source.slice(Math.max(0, offset - 128), offset));
+            return isCommandArgument ? `{${symbol}}` : symbol;
+        });
 }
 
 export function countLatexMacroArguments(definition: string): number {
@@ -426,16 +452,32 @@ export function countLatexMacroArguments(definition: string): number {
 }
 
 /** Expands simple user macros while leaving built-in LaTeX commands untouched. */
-export function expandLatexTextMacros(text: string, macros: Record<string, string>): string {
+export function expandLatexTextMacros(
+    text: string,
+    macros: Readonly<Record<string, LatexMacroDefinition>>,
+    excludedNames?: ReadonlySet<string>
+): string {
     let expanded = text;
     for (let pass = 0; pass < 8; pass++) {
-        const rules = Object.entries(macros)
-            .filter(([name]) => name.startsWith('\\') && expanded.includes(name))
+        const names = new Set(expanded.match(/\\[a-zA-Z0-9@]+/g) ?? []);
+        const rules = Array.from(names)
+            .map(name => [name, macros[name]] as const)
+            .filter((entry): entry is readonly [string, LatexMacroDefinition] =>
+                entry[1] !== undefined && !excludedNames?.has(entry[0])
+            )
             .map(([name, definition]) => ({
                 name: name.slice(1),
-                requiredArgs: countLatexMacroArguments(definition),
-                render: (call: LatexCommandCall) => definition.replace(/#([1-9])/g, (_match, index: string) => {
-                    return call.requiredArgs[Number(index) - 1]?.content ?? '';
+                allowStar: definition.allowStar,
+                optionalArgs: definition.defaultArgument === undefined ? 0 : 1,
+                requiredArgs: definition.argumentCount - (definition.defaultArgument === undefined ? 0 : 1),
+                render: (call: LatexCommandCall) => definition.body.replace(/#([1-9])/g, (_match, index: string, offset: number) => {
+                    const argumentIndex = Number(index) - 1;
+                    const argument = definition.defaultArgument === undefined
+                        ? call.requiredArgs[argumentIndex]?.content
+                        : argumentIndex === 0
+                            ? call.optionalArgs[0]?.content ?? definition.defaultArgument
+                            : call.requiredArgs[argumentIndex - 1]?.content;
+                    return /\\[a-zA-Z@]+$/.test(definition.body.slice(0, offset)) ? `{${argument ?? ''}}` : argument ?? '';
                 })
             }));
         if (rules.length === 0) { break; }
@@ -465,7 +507,7 @@ export function resolveLatexStyles(
     );
 
     text = replaceLatexCommandCalls(text, [
-        ...LATEX_TEXT_STYLE_COMMANDS
+        ...LATEX_STYLE_COMMANDS
             .map(name => ({
                 name,
                 requiredArgs: 1,
@@ -492,7 +534,38 @@ export function resolveLatexStyles(
         }
     ]);
 
-    return replaceStyleCommandGroups(text, protectHtml, colors);
+    text = replaceStyleCommandGroups(text, protectHtml, colors);
+    const colorDeclaration = LATEX_COLOR_DECLARATION_PATTERN.exec(text);
+    if (colorDeclaration) {
+        const call = readLatexCommandAt(text, colorDeclaration.index, {
+            name: 'color',
+            optionalArgs: 1,
+            requiredArgs: 1,
+            skipWhitespace: false
+        });
+        if (call) {
+            const contentStart = skipLatexInlineWhitespace(text, call.end);
+            return text.slice(0, colorDeclaration.index) + renderLatexStyle(
+                colorStyleSpec(call.requiredArgs[0].content.trim(), colors, call.optionalArgs[0]?.content),
+                text.slice(contentStart),
+                protectHtml,
+                colors,
+                text,
+                colorDeclaration.index
+            );
+        }
+    }
+    const declaration = LATEX_DECLARATION_STYLE_PATTERN.exec(text);
+    return declaration
+        ? text.slice(0, declaration.index) + renderLatexStyle(
+            LATEX_STYLE_TAGS[declaration[1]],
+            text.slice(declaration.index + declaration[0].length),
+            protectHtml,
+            colors,
+            text,
+            declaration.index
+        )
+        : text;
 }
 
 /**
@@ -500,21 +573,29 @@ export function resolveLatexStyles(
  */
 export function extractAndHideLabels(content: string) {
     const labels: string[] = [];
-    LATEX_LABEL_PATTERN.lastIndex = 0;
-    const cleanContent = content.replace(LATEX_LABEL_PATTERN, (_match, labelName) => {
-        labels.push(createHiddenLabelAnchor(labelName));
-        return '';
+    const cleanContent = replaceLatexCommandCalls(content, {
+        name: 'label',
+        optionalArgs: 1,
+        requiredArgs: 1,
+        render: call => {
+            labels.push(createHiddenLabelAnchor(call.requiredArgs[0].content));
+            return '';
+        }
     });
     return { cleanContent, hiddenHtml: labels.join('') };
 }
 
 export function extractLatexLabelNames(content: string): string[] {
     const labels: string[] = [];
-    LATEX_LABEL_PATTERN.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = LATEX_LABEL_PATTERN.exec(content)) !== null) {
-        labels.push(match[1]);
-    }
+    replaceLatexCommandCalls(content, {
+        name: 'label',
+        optionalArgs: 1,
+        requiredArgs: 1,
+        render: call => {
+            labels.push(call.requiredArgs[0].content);
+            return '';
+        }
+    });
     return labels;
 }
 
@@ -565,8 +646,14 @@ interface LatexCommandReadOptions {
     name: string;
     requiredArgs?: number;
     optionalArgs?: number;
+    argumentOrder?: readonly LatexCommandArgumentSpec[];
     allowStar?: boolean;
     skipWhitespace?: boolean;
+}
+
+export interface LatexCommandArgumentSpec {
+    delimiter: LatexGroupDelimiter;
+    optional?: boolean;
 }
 
 interface LatexCommandReplacementRule extends Omit<LatexCommandReadOptions, 'name' | 'skipWhitespace'> {
@@ -617,6 +704,55 @@ export function stripLatexComments(text: string, options: { mode?: LatexCommentS
     return text
         .replace(/^[ \t]*%.*(?:\r?\n|$)/gm, '')
         .replace(/(?<!\\)%.*(\r?\n)?/g, '');
+}
+
+/**
+ * Hides false TeX conditional branches without changing source offsets.
+ * Unknown or unterminated conditionals are left untouched.
+ */
+export function maskLatexFalseBranches(text: string): string {
+    const output = text.split('');
+    const mask = (start: number, end: number): void => {
+        for (let i = start; i < end; i++) {
+            if (output[i] !== '\n' && output[i] !== '\r') { output[i] = ' '; }
+        }
+    };
+    const processRange = (start: number, end: number): void => {
+        const falsePattern = /\\iffalse\b/g;
+        falsePattern.lastIndex = start;
+        let match: RegExpExecArray | null;
+
+        while ((match = falsePattern.exec(text)) && match.index < end) {
+            const tokenPattern = /\\(if[a-zA-Z@]*|else|fi)\b/g;
+            tokenPattern.lastIndex = falsePattern.lastIndex;
+            let depth = 1;
+            let elseRange: [number, number] | undefined;
+            let token: RegExpExecArray | null;
+
+            while ((token = tokenPattern.exec(text)) && token.index < end) {
+                if (token[1].startsWith('if')) {
+                    depth++;
+                } else if (token[1] === 'fi') {
+                    if (--depth === 0) { break; }
+                } else if (depth === 1 && !elseRange) {
+                    elseRange = [token.index, tokenPattern.lastIndex];
+                }
+            }
+            if (!token || depth !== 0) { break; }
+
+            if (elseRange) {
+                mask(match.index, elseRange[1]);
+                processRange(elseRange[1], token.index);
+                mask(token.index, tokenPattern.lastIndex);
+            } else {
+                mask(match.index, tokenPattern.lastIndex);
+            }
+            falsePattern.lastIndex = tokenPattern.lastIndex;
+        }
+    };
+
+    processRange(0, text.length);
+    return output.join('');
 }
 
 /**
@@ -679,6 +815,19 @@ export function readLatexCommandAt(text: string, startIndex: number, options: La
     const requiredArgs: LatexGroup[] = [];
     let index = commandEnd;
 
+    if (options.argumentOrder) {
+        for (const argument of options.argumentOrder) {
+            const group = readLatexGroup(text, index, { delimiter: argument.delimiter });
+            if (!group) {
+                if (argument.optional) { continue; }
+                return undefined;
+            }
+            (argument.delimiter === 'bracket' ? optionalArgs : requiredArgs).push(group);
+            index = group.end;
+        }
+        return { name: options.name, start, end: index, commandEnd, star, optionalArgs, requiredArgs };
+    }
+
     const optionalCount = options.optionalArgs ?? 0;
     for (let i = 0; i < optionalCount; i++) {
         const optionalGroup = readLatexGroup(text, index, { delimiter: 'bracket' });
@@ -737,6 +886,7 @@ export function replaceLatexCommandCalls(text: string, rules: LatexCommandReplac
             name: commandName,
             requiredArgs: rule.requiredArgs,
             optionalArgs: rule.optionalArgs,
+            argumentOrder: rule.argumentOrder,
             allowStar: rule.allowStar,
             skipWhitespace: false
         });
@@ -859,6 +1009,14 @@ export function formatEnumerateLabel(template: string, index: number): string {
         ?? template;
 }
 
+export function normalizeEnumerateLabelTemplate(options: string): string {
+    const template = options.match(/(?:^|,)\s*label\s*=\s*([^,]+)/)?.[1].trim() ?? options.trim();
+    return template
+        .replace(/\\arabic(?:\*|\{\*\})?/g, '1')
+        .replace(/\\roman(?:\*|\{\*\})?/g, 'i')
+        .replace(/\\alph(?:\*|\{\*\})?/g, 'a');
+}
+
 /**
  * Convert numbers to Roman numerals.
  */
@@ -930,17 +1088,13 @@ function applyLatexStyle(style: LatexStyleSpec, content: string, protectHtml: St
 export function cleanLatexCommands(text: string, renderer: Pick<RenderContext, 'protectHtml'>): string {
     if (!text) {return '';}
 
-    let processed = decodeLatexAccents(text);
+    let processed = resolveLatexTextTransforms(text);
 
     processed = processed.replace(/\$((?:\\.|[^\\$])*)\$/g, (match) => {
         return renderer.protectHtml('math', match);
     });
 
-    processed = processed
-        .replace(/\\textbf\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<b>${escapeHtml(content)}</b>`))
-        .replace(/\\textit\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<i>${escapeHtml(content)}</i>`))
-        .replace(/\\texttt\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<code>${escapeHtml(content)}</code>`))
-        .replace(/\\emph\{([^}]+)\}/g, (_match, content) => renderer.protectHtml('bib-style', `<em>${escapeHtml(content)}</em>`))
+    processed = resolveLatexStyles(processed, html => renderer.protectHtml('bib-style', html))
         .replace(/\\cite\{[^}]+\}/g, '[cite]')
         .replace(/\\ref\{[^}]+\}/g, '[ref]')
         .replace(/\\([%#&])/g, '$1')

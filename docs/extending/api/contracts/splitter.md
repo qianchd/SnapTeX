@@ -11,14 +11,14 @@ one coarse split, while AST mode refines selected coarse blocks structurally.
 ```text
 legacy: source -> LatexBlockSplitter -> final block spans
 
-AST:    source -> LatexBlockSplitter -> transparent-wrapper adjustment
+AST:    source -> LatexBlockSplitter -> context-wrapper adjustment
                -> selective AST refinement -> final block spans
 ```
 
 The AST path deliberately starts with the legacy splitter. Its inexpensive
 environment, brace, paragraph, and malformed-input recovery logic provides
 stable coarse spans. AST parsing then runs only for coarse spans that contain a
-transparent environment, a refinable context wrapper, or an
+environment or macro context wrapper, or an
 unprotected block longer than `maxBlockLines`.
 
 On an edit, AST mode runs the coarse splitter again, compares coarse-block
@@ -45,12 +45,17 @@ safety splitting.
 
 | `kind` | Coarse splitter | AST refinement |
 | --- | --- | --- |
-| `ignored-env` | Excludes the environment from coarse stack tracking | Not read directly |
-| `transparent-env` | Not read directly | Recurses into the environment; optionally preserves its wrapper text |
 | `split-env` | Starts an explicit coarse block | Starts a structural block while traversing parsed nodes |
 | `no-emergency-split-env` | Extends the emergency-split budget inside the environment | Prevents long protected blocks from being selected only because of length |
-| `context-wrapper` | Recognizes the wrapper macro with a lightweight source scan and extends its emergency-split budget | Finds the exact content in the parsed node, refines it, and restores the wrapper around resulting blocks |
+| `context-wrapper` | Lets paragraphs split inside an environment, or protects a wrapper macro from premature emergency splitting | Refines the wrapper content and either restores or discards its outer syntax as configured |
 | `emergency-split-end-env` | Permits malformed-input recovery after a recognized environment end | Not read directly |
+
+`split-env` also accepts `allowNestedBlocks: false`. When another
+environment recognized by the splitter starts inside such an environment, the
+splitter treats the outer environment as malformed and starts a new block. The
+built-in top-level math environments use this option. Nested helpers such as
+`aligned`, `split`, and `cases` do not define block boundaries, while containers
+such as theorem environments may still contain top-level math environments.
 
 Every rule has a diagnostic `name` and an `envPattern` or `macroPattern`
 according to its kind.
@@ -58,9 +63,26 @@ according to its kind.
 Splitter rules describe structure; they do not render content. Add them only
 when a construct's boundaries cannot be handled correctly by existing rules.
 
-Use `context-wrapper` for macros that make surrounding source necessary to
-render independently split content. Set `content` to `group-remainder` when
-the payload follows a declaration macro inside the same group:
+Use an environment `context-wrapper` when the outer environment should not
+prevent its contents from becoming normal blocks. Omit `preserveWrapper` for a
+layout-only shell such as `samepage`; set it to `true` when the first and last
+resulting blocks still need the environment syntax, as `proof` does:
+
+```ts
+{
+    name: 'transparent-containers',
+    kind: 'context-wrapper',
+    envPattern: /^(?:samepage|sloppypar)$/
+}
+```
+
+Environment wrappers and macro wrappers use the same splitting path. Their
+different fields only describe how to find the payload and whether outer
+syntax must be restored.
+
+For macros that make surrounding source necessary to render independently
+split content, set `content` to `group-remainder` when the payload follows a
+declaration macro inside the same group:
 
 ```ts
 {

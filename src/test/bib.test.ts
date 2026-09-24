@@ -42,7 +42,7 @@ suite('BibTexParser', () => {
         const entries = BibTexParser.parseBibItems(`
             \\begin{thebibliography}{99}
             \\bibitem{rivera2027}
-            Rivera, A., \\& Quinn, B. (2027). Synthetic inline references. \\textit{Journal of Preview Fixtures}, \\textbf{12}, 34--56.
+            Rivera, A., \\& Quinn, B. (2027). Synthetic inline references. \\textit{Journal of \\textbf{Preview} Fixtures}, \\textbf{12}, 34--56.
 
             %\\bibitem{hidden2025}
             %Commented, A. (2015). Hidden entry.
@@ -56,14 +56,14 @@ suite('BibTexParser', () => {
         assert.ok(entry);
         assert.equal(entry.type, 'bibitem');
         assert.equal(entry.fields.year, '2027');
-        assert.match(entry.fields.raw, /Journal of Preview Fixtures/);
+        assert.match(entry.fields.raw, /Journal of .*Preview.* Fixtures/);
         assert.equal(BibTexParser.getShortAuthor(entry), 'Rivera & Quinn');
         assert.ok(!entries.has('hidden2025'));
 
         const protector = new ProtectionManager();
         const html = protector.resolve(BibTexParser.formatEntry(entry, { protectHtml: protector.protect.bind(protector) }));
         assert.match(html, /Rivera, A\., &amp; Quinn, B\./);
-        assert.match(html, /<i>Journal of Preview Fixtures<\/i>/);
+        assert.match(html, /<em>Journal of <strong>Preview<\/strong> Fixtures<\/em>/);
     });
 
     test('escapes formatted bibliography fields and rejects unsafe URLs', () => {
@@ -85,7 +85,7 @@ suite('BibTexParser', () => {
 
         assert.doesNotMatch(html, /<script|<img|onclick="/i);
         assert.match(html, /Eve &lt;img src=x onerror=alert\(1\)&gt;/);
-        assert.match(html, /<b>Bold &lt;script&gt;alert\(1\)&lt;\/script&gt;<\/b>/);
+        assert.match(html, /<strong>Bold &lt;script&gt;alert\(1\)&lt;\/script&gt;<\/strong>/);
         assert.match(html, /2026&quot;&gt;&lt;script&gt;/);
         assert.match(html, /href="https:\/\/doi\.org\/10\.1\/example%22%20onclick=%22alert\(1\)%3Cx%3E"/);
 

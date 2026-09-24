@@ -1,14 +1,13 @@
-import { formatEnumerateLabel } from '../../utils';
+import { getListTagName } from '../../patterns';
+import { formatEnumerateLabel, normalizeEnumerateLabelTemplate } from '../../utils';
 import type { SnaptexAstArgument, SnaptexAstNode } from '../types';
-import { argumentText, environmentName, isEnvironmentNode, isMacroNode, readNodeArgument } from '../visit-utils';
-import { renderInlineLatexSource, type AstRenderContext, type AstRenderRule } from './index';
+import { astNodesToLatex, environmentName, isEnvironmentNode, isMacroNode, readNodeArgument } from '../visit-utils';
+import { renderInlineLatexSource, type AstRenderRule } from './index';
 
 interface AstListItem {
     label?: SnaptexAstArgument;
     content: readonly SnaptexAstNode[];
 }
-
-const LIST_ENVIRONMENTS = new Set(['itemize', 'enumerate']);
 
 function itemBodyArgument(node: SnaptexAstNode): SnaptexAstArgument | undefined {
     if (!Array.isArray(node.args)) {
@@ -23,27 +22,31 @@ function itemBodyArgument(node: SnaptexAstNode): SnaptexAstArgument | undefined 
 }
 
 function readListItems(nodes: readonly SnaptexAstNode[]): AstListItem[] {
-    return nodes.flatMap(node => {
-        if (!isMacroNode(node, 'item')) {
-            return [];
-        }
+    const items: AstListItem[] = [];
+    for (let index = 0; index < nodes.length; index++) {
+        const node = nodes[index];
+        if (!isMacroNode(node, 'item')) { continue; }
 
-        return [{
+        const attachedBody = itemBodyArgument(node)?.content ?? [];
+        let nextItem = index + 1;
+        while (nextItem < nodes.length && !isMacroNode(nodes[nextItem], 'item')) { nextItem++; }
+        items.push({
             label: readNodeArgument(node, '[', 0),
-            content: itemBodyArgument(node)?.content ?? []
-        }];
-    });
+            content: attachedBody.length > 0 ? attachedBody : nodes.slice(index + 1, nextItem)
+        });
+        index = nextItem - 1;
+    }
+    return items;
 }
 
-function argumentSource(argument: SnaptexAstArgument | undefined, context: AstRenderContext): string {
-    return argument
-        ? (context.sourceContent(argument.content).trim() || argumentText(argument).trim())
-        : '';
+function argumentSource(argument: SnaptexAstArgument | undefined): string {
+    return argument ? astNodesToLatex(argument.content).trim() : '';
 }
 
 export const AST_LIST_RULE: AstRenderRule = (input, context) => {
     const envName = environmentName(input.node);
-    if (!isEnvironmentNode(input.node) || !envName || !LIST_ENVIRONMENTS.has(envName) || !Array.isArray(input.node.content)) {
+    const tagName = envName ? getListTagName(envName) : undefined;
+    if (!isEnvironmentNode(input.node) || !tagName || !Array.isArray(input.node.content)) {
         return undefined;
     }
 
@@ -52,11 +55,10 @@ export const AST_LIST_RULE: AstRenderRule = (input, context) => {
         return undefined;
     }
 
-    const tagName = envName === 'enumerate' ? 'ol' : 'ul';
-    const template = argumentSource(readNodeArgument(input.node, '[', 0), context);
+    const template = normalizeEnumerateLabelTemplate(argumentSource(readNodeArgument(input.node, '[', 0)));
     const className = template || items.some(item => item.label) ? 'latex-list latex-list-custom-label' : 'latex-list';
     const itemHtml = items.map((item, index) => {
-        const label = argumentSource(item.label, context) || (template ? formatEnumerateLabel(template, index + 1) : '');
+        const label = argumentSource(item.label) || (template ? formatEnumerateLabel(template, index + 1) : '');
         const labelHtml = label ? `<span class="latex-list-label">${renderInlineLatexSource(label, context)}</span> ` : '';
         return `<li>${labelHtml}${input.renderChildren(item.content).trim()}</li>`;
     }).join('');

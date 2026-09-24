@@ -1,38 +1,17 @@
-import { renderTikzPictureHtml } from '../../rule-tikz';
-import { readLatexGroup } from '../../utils';
-import { argumentText, isEnvironmentNode, readNodeArgument } from '../visit-utils';
+import { renderTikzSourceHtml } from '../../rule-tikz';
+import { environmentName, isEnvironmentNode } from '../visit-utils';
 import type { AstRenderRule } from './index';
 
-function tikzSourceFromEnvironment(source: string): { options: string; content: string } | undefined {
-    const begin = source.match(/^\\begin\{tikzpicture\}/);
-    if (!begin) {
-        return undefined;
-    }
-
-    let index = begin[0].length;
-    let options = '';
-    const optionalGroup = readLatexGroup(source, index, { delimiter: 'bracket' });
-    if (optionalGroup) {
-        options = optionalGroup.content;
-        index = optionalGroup.end;
-    }
-
-    const endIndex = source.lastIndexOf('\\end{tikzpicture}');
-    return endIndex > index
-        ? { options, content: source.slice(index, endIndex) }
-        : undefined;
-}
-
 export const AST_TIKZ_RULE: AstRenderRule = (input, context) => {
-    if (!isEnvironmentNode(input.node, 'tikzpicture') || !Array.isArray(input.node.content)) {
+    if (!isEnvironmentNode(input.node)) {
         return undefined;
     }
 
-    const source = tikzSourceFromEnvironment(context.sourceSlice(input.node));
-    const options = source?.options ?? argumentText(readNodeArgument(input.node, '[', 0));
-    const content = source?.content ?? context.sourceContent(input.node.content);
-    const rendered = renderTikzPictureHtml(options, content, context);
-    return {
-        html: rendered.html + rendered.hiddenHtml
-    };
+    const envName = environmentName(input.node);
+    if (!envName || !['tikzpicture', 'tikzcd', 'equation', 'equation*'].includes(envName)) { return undefined; }
+    const source = context.sourceSlice(input.node);
+    if (envName.startsWith('equation') && !/\\begin\{tikz(?:picture|cd)\}/.test(source)) { return undefined; }
+
+    const html = renderTikzSourceHtml(source, context);
+    return html ? { html } : undefined;
 };

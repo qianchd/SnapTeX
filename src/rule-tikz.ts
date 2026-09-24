@@ -1,8 +1,17 @@
 import type { PreprocessRule, RenderContext } from './types';
 import { CITATION_COMMANDS } from './patterns';
-import { renderCitationTex } from './rule-helpers';
-import { escapeRegExp, escapeScriptRawText, extractAndHideLabels, replaceLatexCommandCalls, splitLatexCitationKeys } from './utils';
+import { renderCitationTex, renderNumberedEquationHtml } from './rule-helpers';
+import { escapeRegExp, escapeScriptRawText, extractAndHideLabels, replaceLatexCommandCalls, splitLatexCitationKeys, stripLatexComments } from './utils';
 import { optimizeTikzPreviewSource } from './tikz-preview-optimizer';
+
+type TikzEnvironmentName = 'tikzpicture' | 'tikzcd';
+
+function parseTikzEnvironmentSource(source: string): { environment: TikzEnvironmentName; options: string; content: string } | undefined {
+    const match = /^\\begin\{(tikzpicture|tikzcd)\}(?:\[([^\]]*)\])?([\s\S]*)\\end\{\1\}$/.exec(source.trim());
+    return match
+        ? { environment: match[1] as TikzEnvironmentName, options: match[2] ?? '', content: match[3] }
+        : undefined;
+}
 
 function resolveDependencies(content: string, macroMap: Map<string, string>): string {
     const usedMacros = new Set<string>();
@@ -155,7 +164,8 @@ function filterTikzGlobalForPicture(globalPreamble: string, pictureSource: strin
 /**
  * Builds the inert TikZJax container shared by legacy and AST renderers.
  */
-export function renderTikzPictureHtml(
+function renderTikzEnvironmentHtml(
+    environment: TikzEnvironmentName,
     options: string,
     content: string,
     renderer: Pick<RenderContext, 'metadata' | 'bibEntries' | 'resolveCitation'>
@@ -193,12 +203,16 @@ export function renderTikzPictureHtml(
         optimized.macroDefinitions,
         '\\makeatother',
         fontConfig,
-        `\\begin{tikzpicture}${opts}`,
+        `\\begin{${environment}}${opts}`,
         optimized.content,
-        `\\end{tikzpicture}`
+        `\\end{${environment}}`
     ].join('\n');
-    const packageAttribute = /\\boldsymbol\b/.test(fullCode)
-        ? ` data-tex-packages='{"amsbsy":""}'`
+    const packages = {
+        ...(/\\boldsymbol\b/.test(fullCode) ? { amsbsy: '' } : {}),
+        ...(environment === 'tikzcd' ? { 'tikz-cd': '' } : {})
+    };
+    const packageAttribute = Object.keys(packages).length > 0
+        ? ` data-tex-packages='${JSON.stringify(packages)}'`
         : '';
 
     return {
@@ -211,21 +225,46 @@ export function renderTikzPictureHtml(
     };
 }
 
+export function renderTikzSourceHtml(
+    source: string,
+    renderer: Pick<RenderContext, 'metadata' | 'bibEntries' | 'resolveCitation'>
+): string | undefined {
+    source = stripLatexComments(source).trim();
+    const equation = /^\\begin\{equation(\*)?\}([\s\S]*)\\end\{equation\1\}$/.exec(source);
+    let hiddenHtml = '';
+    if (equation) {
+        const extracted = extractAndHideLabels(equation[2]);
+        source = extracted.cleanContent.trim();
+        hiddenHtml = extracted.hiddenHtml;
+    }
+
+    const parsed = parseTikzEnvironmentSource(source);
+    if (!parsed) { return undefined; }
+
+    const rendered = renderTikzEnvironmentHtml(parsed.environment, parsed.options, parsed.content, renderer);
+    hiddenHtml += rendered.hiddenHtml;
+    return equation && !equation[1]
+        ? renderNumberedEquationHtml(rendered.html, '(<span class="sn-cnt" data-type="eq"></span>)', hiddenHtml)
+        : rendered.html + hiddenHtml;
+}
+
 /**
- * Renders tikzpicture environments as inert TikZJax scripts.
+ * Renders supported TikZ environments as inert TikZJax scripts.
  *
  * The rule prunes global TikZ library/style input to the current picture and
  * resolves only macro definitions reachable from the picture source.
  */
-export function createTikzPictureRule(): PreprocessRule {
+export function createTikzRule(): PreprocessRule {
     return {
         priority: 6,
         apply: (text, renderer: RenderContext) => {
-            const regex = /\\begin\{tikzpicture\}(?:\[([\s\S]*?)\])?([\s\S]*?)\\end\{tikzpicture\}/g;
-
-            return text.replace(regex, (_match, options, content) => {
-                const rendered = renderTikzPictureHtml(options || '', content, renderer);
-                return renderer.protectHtml('tikz', rendered.html) + (rendered.hiddenHtml ? renderer.protectHtml('raw', rendered.hiddenHtml) : '');
+            text = text.replace(/\\begin\{(equation\*?)\}[\s\S]*?\\begin\{tikzcd\}[\s\S]*?\\end\{tikzcd\}[\s\S]*?\\end\{\1\}/g, match => {
+                const html = renderTikzSourceHtml(match, renderer);
+                return html ? renderer.protectHtml('tikz', html) : match;
+            });
+            return text.replace(/\\begin\{(tikzpicture|tikzcd)\}(?:\[[\s\S]*?\])?[\s\S]*?\\end\{\1\}/g, match => {
+                const html = renderTikzSourceHtml(match, renderer);
+                return html ? renderer.protectHtml('tikz', html) : match;
             });
         }
     };

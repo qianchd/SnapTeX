@@ -1,6 +1,6 @@
 import { RenderContext } from './types';
 import { readLatexCommandAt, readLatexGroup, replaceLatexCommandCalls, resolveLatexStyles, type LatexGroup } from './utils';
-import { createStyleHtmlProtector, renderMath } from './rule-helpers';
+import { createStyleHtmlProtector, renderIncludeGraphicsHtml, renderMath, stripLatexPreviewCommands } from './rule-helpers';
 
 type TableRuleKind = 'top' | 'mid' | 'bottom' | 'hline';
 
@@ -16,6 +16,7 @@ interface LatexTableModel {
 }
 
 interface TabularEnvironment {
+    envName: string;
     beginStart: number;
     bodyStart: number;
     bodyEnd: number;
@@ -36,7 +37,7 @@ interface TableScanStep {
     depthAfter: number;
 }
 
-const TABULAR_ENV_REGEX = /\\begin\{(tabular\*?|tabularx)\}/g;
+const TABULAR_ENV_REGEX = /\\begin\{(tabular\*?|tabularx|longtable)\}/g;
 
 function readTableCommandGroups(text: string, commandName: string, groupCount: number): LatexGroup[] | undefined {
     return readLatexCommandAt(text, 0, {
@@ -48,7 +49,7 @@ function readTableCommandGroups(text: string, commandName: string, groupCount: n
 }
 
 function findMatchingTabularEnd(text: string, envName: string, bodyStart: number): { start: number; end: number } | undefined {
-    const envRegex = /\\(begin|end)\{(tabular\*?|tabularx)\}/g;
+    const envRegex = /\\(begin|end)\{(tabular\*?|tabularx|longtable)\}/g;
     envRegex.lastIndex = bodyStart;
     let depth = 1;
     let match: RegExpExecArray | null;
@@ -70,13 +71,13 @@ function findMatchingTabularEnd(text: string, envName: string, bodyStart: number
 }
 
 function readTabularEnvironmentAt(text: string, beginStart: number): TabularEnvironment | undefined {
-    const beginMatch = /^\\begin\{(tabular\*?|tabularx)\}/.exec(text.substring(beginStart));
+    const beginMatch = /^\\begin\{(tabular\*?|tabularx|longtable)\}/.exec(text.substring(beginStart));
     if (!beginMatch) { return undefined; }
 
     const envName = beginMatch[1];
     const args: string[] = [];
     let index = beginStart + beginMatch[0].length;
-    const requiredArgs = envName === 'tabular' ? 1 : 2;
+    const requiredArgs = envName === 'tabular' || envName === 'longtable' ? 1 : 2;
 
     while (args.length < requiredArgs) {
         const optionalGroup = readLatexGroup(text, index, { delimiter: 'bracket' });
@@ -95,6 +96,7 @@ function readTabularEnvironmentAt(text: string, beginStart: number): TabularEnvi
     if (!endMatch) { return undefined; }
 
     return {
+        envName,
         beginStart,
         bodyStart: index,
         bodyEnd: endMatch.start,
@@ -119,18 +121,18 @@ function classifyTableRule(token: string): TableRuleKind | undefined {
     if (token.startsWith('\\toprule')) { return 'top'; }
     if (token.startsWith('\\midrule') || token.startsWith('\\cmidrule')) { return 'mid'; }
     if (token.startsWith('\\bottomrule')) { return 'bottom'; }
-    if (token.startsWith('\\hline')) { return 'hline'; }
+    if (token.startsWith('\\hline') || token.startsWith('\\hhline')) { return 'hline'; }
     return undefined;
 }
 
 function matchTableBoundaryAt(text: string, index: number): TableBoundary | undefined {
     const slice = text.substring(index);
-    const rowMatch = /^\\\\(?:\[.*?\])?/.exec(slice);
+    const rowMatch = /^(?:\\\\|\\tabularnewline\b)(?:\[.*?\])?/.exec(slice);
     if (rowMatch) {
         return { kind: 'row', end: index + rowMatch[0].length };
     }
 
-    const ruleMatch = /^(\\toprule(?:\[.*?\])?|\\midrule(?:\[.*?\])?|\\bottomrule(?:\[.*?\])?|\\cmidrule(?:\[.*?\])?(?:\(.*?\))?\{[^}]+\}|\\hline)/.exec(slice);
+    const ruleMatch = /^(\\toprule(?:\[.*?\])?|\\midrule(?:\[.*?\])?|\\bottomrule(?:\[.*?\])?|\\cmidrule(?:\[.*?\])?(?:\(.*?\))?\{[^}]+\}|\\hhline\{[^}]+\}|\\hline)/.exec(slice);
     if (ruleMatch) {
         return {
             kind: 'rule',
@@ -326,6 +328,13 @@ export function renderLatexMakecellHtml(lines: readonly string[]): string {
 function renderTableInlineCommands(content: string, renderer: RenderContext): string {
     return replaceLatexCommandCalls(content, [
         {
+            name: 'includegraphics',
+            allowStar: true,
+            optionalArgs: 1,
+            requiredArgs: 1,
+            render: call => renderer.protectHtml('image', renderIncludeGraphicsHtml(call.requiredArgs[0].content))
+        },
+        {
             name: 'makecell',
             requiredArgs: 1,
             optionalArgs: 1,
@@ -346,7 +355,7 @@ function renderTableInlineCommands(content: string, renderer: RenderContext): st
 }
 
 export function renderLatexTableInlineContent(content: string, renderer: RenderContext): string {
-    const withNestedTables = renderNestedTabulars(cleanLatexTableCell(content), renderer);
+    const withNestedTables = renderNestedTabulars(stripLatexPreviewCommands(cleanLatexTableCell(content)), renderer);
     const withTableCommands = renderTableInlineCommands(withNestedTables, renderer);
     const withMath = withTableCommands.replace(/\$((?:\\.|[^\\$])+?)\$/g, (_match: string, tex: string) => {
         return renderMath(tex.trim(), false, renderer);
@@ -490,7 +499,7 @@ function renderLatexTableRows(rows: LatexTableRow[], renderer: RenderContext, ta
 }
 
 export function renderLatexTabular(rawContent: string, renderer: RenderContext): string {
-    const model = parseLatexTableRows(rawContent);
+    const model = parseLatexTableRows(rawContent.replace(/\\(?:endfirsthead|endhead|endfoot|endlastfoot)\b/g, ''));
     if (model.rows.length === 0) { return ''; }
 
     const firstBodyRowIndex = model.rows.findIndex((row, index) => index > 0 && row.rulesBefore.some(rule => rule === 'mid' || rule === 'hline'));

@@ -104,22 +104,25 @@ suite('LatexDocument source mapping', () => {
     test('loads bibliography entries relative to the root document', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const bibUri = vscode.Uri.file('/project/refs.bib');
+        const extraBibUri = vscode.Uri.file('/project/more.bib');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
+                '\\bibliography{refs,more}',
                 '\\begin{document}',
-                'See \\cite{smith2024}.',
-                '\\bibliography{refs}',
+                'See \\cite{smith2024,jones2025}.',
                 '\\end{document}'
             ].join('\n')],
-            [normalizeUri(bibUri), '@article{smith2024, title={Paper}, author={Smith, Jane}, year={2024}}']
+            [normalizeUri(bibUri), '@article{smith2024, title={Paper}, author={Smith, Jane}, year={2024}}'],
+            [normalizeUri(extraBibUri), '@article{jones2025, title={More}, author={Jones, Alex}, year={2025}}']
         ]));
         const doc = new LatexDocument(provider);
 
         const result = await doc.parse(mainUri);
 
         assert.ok(result.bibEntries.has('smith2024'));
+        assert.ok(result.bibEntries.has('jones2025'));
         assert.equal(result.bibEntries.get('smith2024')?.fields.title, 'Paper');
-        assert.equal(result.contentStartLineOffset, 0);
+        assert.equal(result.contentStartLineOffset, 1);
         assert.equal(result.blockSpans.length, 1);
     });
 
@@ -587,9 +590,9 @@ suite('SmartRenderer', () => {
     test('escapes maketitle metadata while preserving LaTeX formatting', () => {
         const renderer = new SmartRenderer();
         const payload = renderer.render(createDocument(['\\maketitle'], {
-            title: '<img src=x onerror=alert(1)> \\textbf{Safe} $x<y$\\footnote{Hidden note}',
-            authors: [{ name: 'Ada & Bob', emails: [], affiliationIds: [] }],
-            date: '2026 <script>alert(1)</script>'
+            title: '<img src=x onerror=alert(1)> \\textbf{Safe} $x<y$\\footnote{Title note}',
+            authors: [{ name: 'Ada & Bob \\quad \\href{https://example.test}{Profile}\\smallskip', emails: [], affiliationIds: [] }],
+            date: '\\bigskip 2026 <script>alert(1)</script>'
         }));
         const html = payload.htmls?.join('') ?? '';
 
@@ -597,10 +600,12 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /<script/i);
         assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
         assert.match(html, /Ada &amp; Bob/);
+        assert.match(html, /href="https:\/\/example\.test\/"[^>]*>Profile<\/a>/);
+        assert.doesNotMatch(html, /\\(?:quad|href|smallskip|bigskip)/);
         assert.match(html, /2026 &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
         assert.match(html, /<strong>Safe<\/strong>/);
         assert.match(html, /class="katex"/);
-        assert.doesNotMatch(html, /Hidden note/);
+        assert.match(html, /<em>\(Title note\)<\/em><br\/>/);
     });
 
     test('renders structured maketitle emails next to their authors', () => {
@@ -632,7 +637,8 @@ suite('SmartRenderer', () => {
     test('escapes raw source HTML while preserving generated preview HTML', () => {
         const html = renderBlocks([
             'Plain <img src=x onerror=alert(1)> and \\textbf{bold <script>alert(2)</script>}.',
-            '\\begin{theorem}<script>alert(1)</script> and \\emph{safe}.\\end{theorem}'
+            '\\begin{theorem}<script>alert(1)</script> and \\emph{safe}.\\end{theorem}',
+            '\\begin{figure}<script>alert(3)</script> and \\textit{styled}.\\end{figure}'
         ]);
 
         assert.doesNotMatch(html, /<img|<script/i);
@@ -641,6 +647,7 @@ suite('SmartRenderer', () => {
         assert.match(html, /class="latex-theorem"/);
         assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
         assert.match(html, /<em>safe<\/em>/);
+        assert.match(html, /&lt;script&gt;alert\(3\)&lt;\/script&gt; and <em>styled<\/em>/);
     });
 
     test('renders nested lists and block content inside theorem environments', () => {
@@ -808,13 +815,17 @@ suite('SmartRenderer', () => {
                 '\\includegraphics{figures/result.pdf}',
                 '\\label{fig:result}',
                 '\\end{figure}'
-            ].join('\n')
+            ].join('\n'),
+            '\\begin{center}\\includegraphics{figures/standalone.png}\\captionof{figure}{Standalone figure}\\end{center}'
         ]);
 
         assert.match(html, /class="latex-figure"/);
         assert.match(html, /data-req-path="figures\/result\.pdf"/);
+        assert.match(html, /src="LOCAL_IMG:figures\/standalone\.png"/);
+        assert.match(html, /Standalone figure/);
+        assert.doesNotMatch(html, /\\(?:includegraphics|captionof)\b/);
         assert.match(html, /data-key="sec:intro"/);
-        assert.equal(html.match(/class="latex-block/g)?.length ?? 0, 2);
+        assert.equal(html.match(/class="latex-block/g)?.length ?? 0, 3);
     });
 
     test('escapes includegraphics paths before inserting them into attributes', () => {
@@ -836,7 +847,7 @@ suite('SmartRenderer', () => {
         const doc = createDocument([
             [
                 '\\section{Intro}\\label{sec:intro}',
-                'See \\ref{sec:intro,fig:missing}, Eq.~\\eqref{eq:one}, \\ref{sec:a&b}, \\citep[see][p. 2]{smith2024,doe2025}, \\citet{smith2024}, and \\citeyear{doe2025}.',
+                'See \\ref{sec:intro,fig:missing}, Eq.~\\eqref{eq:one}, \\ref{sec:a&b}, \\citep[see][p. 2]{smith2024,doe2025}, \\citet{smith2024}, \\citealp{smith2024}, \\citealt{doe2025}, and \\citeyear{doe2025}. Also \\citep{undated} and \\citep{missing}.',
                 '\\label{sec:a&b}'
             ].join('\n'),
             '\\begin{equation}\\label{eq:one}x=1\\end{equation}',
@@ -844,7 +855,8 @@ suite('SmartRenderer', () => {
         ]);
         doc.bibEntries = new Map([
             ['smith2024', { key: 'smith2024', type: 'article', fields: { author: 'Smith, Jane', year: '2024', title: 'A Paper' } }],
-            ['doe2025', { key: 'doe2025', type: 'article', fields: { author: 'Doe, John', year: '2025', title: 'Another Paper' } }]
+            ['doe2025', { key: 'doe2025', type: 'article', fields: { author: 'Doe, John', year: '2025', title: 'Another Paper' } }],
+            ['undated', { key: 'undated', type: 'misc', fields: { author: 'Vale, Alex', title: 'Undated Work', year: '' } }]
         ]);
         const renderer = new SmartRenderer();
         const payload = renderer.render(doc);
@@ -857,7 +869,11 @@ suite('SmartRenderer', () => {
         assert.match(html, /href="#sec:a&amp;b"[^>]*data-key="sec:a&amp;b"[^>]*>\?<\/a>/);
         assert.match(html, /\(see <a href="#ref-smith2024"[^>]*>Smith, 2024<\/a>; <a href="#ref-doe2025"[^>]*>Doe, 2025<\/a>, p\. 2\)/);
         assert.match(html, /Smith \(<a href="#ref-smith2024"[^>]*>2024<\/a>\)/);
+        assert.match(html, /<a href="#ref-smith2024"[^>]*>Smith, 2024<\/a>/);
+        assert.match(html, /Doe <a href="#ref-doe2025"[^>]*>2025<\/a>/);
         assert.match(html, /and <a href="#ref-doe2025"[^>]*>2025<\/a>/);
+        assert.match(html, /<a href="#ref-undated"[^>]*>Vale, n\.d\.<\/a>/);
+        assert.match(html, /\[missing\?\]/);
         assert.doesNotMatch(html, /\\bibliographystyle|alpha/);
     });
 

@@ -1,9 +1,11 @@
 import type { SnaptexAstNode } from '../types';
 import {
+    astNodesToLatex,
     astNodesToText,
     environmentName,
     findAstNode,
     getSourcePosition,
+    isCommentNode,
     isGroupNode,
     isEnvironmentNode,
     isMacroNode,
@@ -12,8 +14,7 @@ import {
     readNodeArgument,
     readRequiredMacroArgument,
     skipWhitespaceOrComments,
-    stringNodeContent,
-    type SnaptexAstMacro
+    stringNodeContent
 } from '../visit-utils';
 import { readAstCommandNodeArguments, type AstRenderContext, type AstRenderInput, type AstRenderRule } from './index';
 import {
@@ -21,22 +22,56 @@ import {
     algorithmicIndentBefore,
     algorithmicInlineMacroHtml,
     algorithmicItemAttributes,
-    describeAlgorithmicCommand
+    describeAlgorithmicCommand,
+    isAlgorithm2eSource,
+    renderAlgorithm2eList
 } from '../../latex-algorithm';
 import { renderLatexMakecellHtml, renderTableRowCells } from '../../latex-table';
-import { renderCaptionHtml, renderNumberedCaptionPrefix, renderSubfigureWidthStyle } from '../../rule-helpers';
+import { SUBCAPTIONBOX_ARGUMENT_ORDER, SUBFIGURE_MACRO_COMMANDS } from '../../patterns';
+import { renderCaptionHtml, renderNumberedCaptionPrefix, renderSubfigureHtml } from '../../rule-helpers';
+import { expandLatexTextMacros, extractAndHideLabels } from '../../utils';
 
 const FLOATS = new Set(['figure', 'figure*', 'table', 'table*', 'algorithm']);
 const SUBFIGURE_ENVS = new Set(['subfigure', 'subfigure*']);
-const TABULAR_ENVS = new Set(['tabular', 'tabular*', 'tabularx']);
+const TABULAR_ENVS = new Set(['tabular', 'tabular*', 'tabularx', 'longtable']);
 const TABLENOTES_ENVS = new Set(['tablenotes']);
 const ALGORITHMIC_ENVS = new Set(['algorithmic']);
 const BOOKTABS_TABLE_MACROS = new Set(['toprule', 'midrule', 'bottomrule', 'cmidrule']);
-const RULE_TABLE_MACROS = new Set(['hline', 'cline']);
+const RULE_TABLE_MACROS = new Set(['hline', 'hhline', 'cline']);
 const IGNORED_TABLE_MACROS = new Set([...BOOKTABS_TABLE_MACROS, ...RULE_TABLE_MACROS]);
 const TABLE_NOTE_LAYOUT_MACROS = new Set(['footnotesize', 'small', 'scriptsize', 'tiny']);
 const FLOAT_LAYOUT_MACROS = new Set(['centering', 'hfill', 'small', 'footnotesize']);
 const TABLE_CELL_MACROS = new Set(['multicolumn', 'multirow', 'makecell', 'tnote']);
+const LONGTABLE_LAYOUT_MACROS = new Set(['endfirsthead', 'endhead', 'endfoot', 'endlastfoot']);
+
+interface AstCaption {
+    content: readonly SnaptexAstNode[];
+    starred: boolean;
+    nodes: readonly SnaptexAstNode[];
+}
+
+function collectCaptions(nodes: readonly SnaptexAstNode[], searchNested: boolean): AstCaption[] {
+    const captions: AstCaption[] = [];
+    for (let index = 0; index < nodes.length; index++) {
+        const node = nodes[index];
+        if (isMacroNode(node, 'caption')) {
+            const attached = readRequiredMacroArgument(node)?.content ?? [];
+            const starred = astNodesToText(attached).trim() === '*';
+            const detachedIndex = starred ? skipWhitespaceOrComments(nodes, index + 1) : -1;
+            const detached = detachedIndex >= 0 && isGroupNode(nodes[detachedIndex]) ? nodes[detachedIndex] : undefined;
+            captions.push({
+                content: detached?.content ?? attached,
+                starred,
+                nodes: detached ? [node, detached] : [node]
+            });
+        }
+        if (searchNested && Array.isArray(node.content)
+            && !SUBFIGURE_ENVS.has(environmentName(node) ?? '')) {
+            captions.push(...collectCaptions(node.content, true));
+        }
+    }
+    return captions;
+}
 
 function captionHtml(
     input: AstRenderInput,
@@ -45,24 +80,16 @@ function captionHtml(
     prefixHtml: string,
     searchNested = false
 ): { html: string; nodes: Set<SnaptexAstNode> } {
-    const nodes = new Set<SnaptexAstNode>();
-    const caption = searchNested
-        ? findFirstMacro(contentNodes, 'caption')
-        : contentNodes.find((node): node is SnaptexAstMacro => isMacroNode(node, 'caption'));
-    if (!caption) {
-        return { html: '', nodes };
-    }
-
-    nodes.add(caption);
-    const content = readRequiredMacroArgument(caption)?.content ?? [];
+    const captions = collectCaptions(contentNodes, searchNested);
+    const nodes = new Set(captions.flatMap(caption => caption.nodes));
     return {
-        html: renderCaptionHtml(className, input.renderChildren(content), prefixHtml),
+        html: captions.map(caption => renderCaptionHtml(
+            className,
+            input.renderChildren(caption.content),
+            caption.starred ? '' : prefixHtml
+        )).join(''),
         nodes
     };
-}
-
-function findFirstMacro(nodes: readonly SnaptexAstNode[], name: string): SnaptexAstMacro | undefined {
-    return findAstNode(nodes, (node): node is SnaptexAstMacro => isMacroNode(node, name));
 }
 
 function renderNestedLabels(input: AstRenderInput, nodes: readonly SnaptexAstNode[]): string {
@@ -91,9 +118,17 @@ function visibleFloatChildren(nodes: readonly SnaptexAstNode[], omitted: Set<Sna
             }
             continue;
         }
-        visible.push(node);
+        visible.push(Array.isArray(node.content)
+            ? { ...node, content: removeNestedNodes(node.content, omitted) }
+            : node);
     }
     return visible;
+}
+
+function removeNestedNodes(nodes: readonly SnaptexAstNode[], omitted: Set<SnaptexAstNode>): SnaptexAstNode[] {
+    return nodes.flatMap(node => omitted.has(node)
+        ? []
+        : [{ ...node, ...(Array.isArray(node.content) ? { content: removeNestedNodes(node.content, omitted) } : {}) }]);
 }
 
 function stripLeadingEnvironmentOption(nodes: readonly SnaptexAstNode[]): SnaptexAstNode[] {
@@ -221,7 +256,7 @@ function tableRuleConsumedNodes(nodes: readonly SnaptexAstNode[], index: number)
     if (macro.content === 'cmidrule') {
         cursor = skipParenthesizedTableModifier(nodes, cursor);
     }
-    if (macro.content === 'cmidrule' || macro.content === 'cline') {
+    if (macro.content === 'cmidrule' || macro.content === 'cline' || macro.content === 'hhline') {
         cursor = skipWhitespaceOrComments(nodes, cursor);
         if (isGroupNode(nodes[cursor])) {
             cursor++;
@@ -230,22 +265,35 @@ function tableRuleConsumedNodes(nodes: readonly SnaptexAstNode[], index: number)
     return Math.max(1, cursor - index);
 }
 
-function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode): string {
+function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode, omitted?: ReadonlySet<SnaptexAstNode>): string {
     if (!Array.isArray(tabular.content)) {
         return '';
+    }
+
+    const envName = environmentName(tabular);
+    const argumentCount = envName === 'tabularx' || envName === 'tabular*' ? 2 : 1;
+    const optionalArgument = readBracketNodes(tabular.content, skipWhitespaceOrComments(tabular.content, 0));
+    let bodyStart = optionalArgument?.nextIndex ?? 0;
+    for (let argument = 0; argument < argumentCount; argument++) {
+        bodyStart = skipWhitespaceOrComments(tabular.content, bodyStart);
+        if (!isGroupNode(tabular.content[bodyStart])) { break; }
+        bodyStart++;
     }
 
     const rows: TableCell[][] = [[]];
     const cellNodes: SnaptexAstNode[] = [];
     let hasBooktabs = false;
     let hasRules = false;
-    for (let index = 0; index < tabular.content.length; index++) {
+    for (let index = bodyStart; index < tabular.content.length; index++) {
         const node = tabular.content[index];
+        if (omitted?.has(node) || (isMacroNode(node) && LONGTABLE_LAYOUT_MACROS.has(node.content))) {
+            continue;
+        }
         if (node.type === 'string' && node.content === '&') {
             flushCell(rows, cellNodes, input);
             continue;
         }
-        if (isMacroNode(node, '\\')) {
+        if (isMacroNode(node) && (node.content === '\\' || node.content === 'tabularnewline')) {
             flushCell(rows, cellNodes, input);
             rows.push([]);
             continue;
@@ -290,7 +338,7 @@ function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode): strin
 
 function renderFigure(input: AstRenderInput): string {
     const content = stripLeadingEnvironmentOption(input.node.content as SnaptexAstNode[]);
-    const caption = captionHtml(input, content, 'figure-caption', renderNumberedCaptionPrefix('Figure', 'fig'));
+    const caption = captionHtml(input, content, 'figure-caption', renderNumberedCaptionPrefix('Figure', 'fig'), true);
     const body = input.renderChildren(visibleFloatChildren(content, caption.nodes));
     const wrappedBody = body.includes('class="latex-subfigure"')
         ? `<div class="latex-subfigure-grid">${body}</div>`
@@ -306,7 +354,52 @@ function renderSubfigure(input: AstRenderInput): string {
     const content = isGroupNode(widthNode) ? rawContent.slice(widthCursor + 1) : rawContent;
     const caption = captionHtml(input, content, 'subfigure-caption', '(<span class="sn-cnt" data-type="subfig"></span>) ');
     const body = input.renderChildren(visibleFloatChildren(content, caption.nodes));
-    return `<div class="latex-subfigure" style="${renderSubfigureWidthStyle(widthSpec)}">${body}${caption.html}</div>`;
+    return renderSubfigureHtml(body, caption.html, widthSpec);
+}
+
+function renderSubfigureMacro(input: AstRenderInput): { html: string; consumedNodes: number } | undefined {
+    if (!isMacroNode(input.node) || ![...SUBFIGURE_MACRO_COMMANDS, 'subcaptionbox'].includes(input.node.content)) {
+        return undefined;
+    }
+    const subcaptionBox = input.node.content === 'subcaptionbox';
+    const args = readAstCommandNodeArguments(
+        input,
+        subcaptionBox ? 2 : 1,
+        subcaptionBox ? SUBCAPTIONBOX_ARGUMENT_ORDER : undefined
+    );
+    const caption = subcaptionBox ? args.requiredArgs[0] : args.optionalArgs[0];
+    const body = args.requiredArgs[subcaptionBox ? 1 : 0];
+    if (!body) { return undefined; }
+
+    const captionHtml = caption && caption.length > 0
+        ? renderCaptionHtml(
+            'subfigure-caption',
+            input.renderChildren(caption),
+            '(<span class="sn-cnt" data-type="subfig"></span>) '
+        )
+        : '';
+    const widthSpec = subcaptionBox && args.optionalArgs[0]
+        ? astNodesToLatex(args.optionalArgs[0])
+        : '0.48\\textwidth';
+    return {
+        html: renderSubfigureHtml(input.renderChildren(body), captionHtml, widthSpec),
+        consumedNodes: args.consumedNodes
+    };
+}
+
+function renderCaptionOfMacro(input: AstRenderInput) {
+    if (!isMacroNode(input.node, 'captionof')) { return undefined; }
+    const args = readAstCommandNodeArguments(input, 2);
+    const type = astNodesToText(args.requiredArgs[0] ?? []).trim().toLowerCase();
+    const knownType = type === 'table' ? 'table' : type === 'figure' ? 'figure' : undefined;
+    return {
+        html: renderCaptionHtml(
+            knownType ? `${knownType}-caption` : 'latex-caption',
+            input.renderChildren(args.requiredArgs[1] ?? []),
+            knownType ? renderNumberedCaptionPrefix(knownType === 'table' ? 'Table' : 'Figure', knownType === 'table' ? 'tbl' : 'fig') : ''
+        ),
+        consumedNodes: args.consumedNodes
+    };
 }
 
 function renderTable(input: AstRenderInput): string {
@@ -319,23 +412,34 @@ function renderTable(input: AstRenderInput): string {
 }
 
 function renderAlgorithmNodes(nodes: readonly SnaptexAstNode[], input: AstRenderInput): string {
-    return nodes.map(node => {
-        if (isMacroNode(node)) {
-            const replacement = algorithmicInlineMacroHtml(node.content);
-            if (replacement !== undefined) {
-                return replacement;
-            }
+    let html = '';
+    let start = 0;
+    let consumedThrough = -1;
+    nodes.forEach((node, index) => {
+        if (index <= consumedThrough) { return; }
+        if (isMacroNode(node) && /^comment$/i.test(node.content)) {
+            const attached = readRequiredMacroArgument(node)?.content;
+            const siblingNode = nodes[index + 1];
+            const sibling = isGroupNode(siblingNode) && Array.isArray(siblingNode.content) ? siblingNode.content : undefined;
+            const argument = attached?.length ? attached : sibling ?? [];
+            html += input.renderChildren(nodes.slice(start, index));
+            html += `<em>(${renderAlgorithmNodes(argument, input)})</em>`;
+            consumedThrough = sibling && !attached?.length ? index + 1 : index;
+            start = consumedThrough + 1;
+            return;
         }
-        if (isGroupNode(node)) {
-            return renderAlgorithmNodes(node.content, input);
-        }
-        return input.renderChildren([node]);
-    }).join('');
+        const replacement = isMacroNode(node) ? algorithmicInlineMacroHtml(node.content) : undefined;
+        if (replacement === undefined && !isGroupNode(node)) { return; }
+        html += input.renderChildren(nodes.slice(start, index));
+        html += isGroupNode(node) ? renderAlgorithmNodes(node.content, input) : replacement;
+        start = index + 1;
+    });
+    return html + input.renderChildren(nodes.slice(start));
 }
 
 function isLineBreakNode(node: SnaptexAstNode): boolean {
     const position = getSourcePosition(node);
-    return node.type === 'parbreak'
+    return node.type === 'parbreak' || isCommentNode(node)
         || (node.type === 'whitespace' && (
             (typeof node.content === 'string' && /\r|\n/.test(node.content))
             || (position !== undefined && position.end.line > position.start.line)
@@ -386,13 +490,14 @@ function renderAstAlgorithmic(input: AstRenderInput, context: AstRenderContext, 
     let indent = 0;
     const listItems = splitAlgorithmicLines(content).map(line => {
         const first = line[0];
-        const descriptor = isMacroNode(first) ? describeAlgorithmicCommand(first.content) : undefined;
+        const descriptor = isMacroNode(first) ? describeAlgorithmicCommand(first.content, context.metadata?.macros) : undefined;
         let contentHtml: string;
         let prefix = '';
 
         if (descriptor && isMacroNode(first)) {
             const rest = line.slice(1);
-            prefix = descriptor.label ? `<strong>${context.escapeHtml(descriptor.label)}</strong> ` : '';
+            prefix = descriptor.label ? `<strong>${context.escapeHtml(descriptor.label)}</strong> `
+                : descriptor.labelSource ? `${input.renderSource(descriptor.labelSource)} ` : '';
 
             if (descriptor.consumesArgument) {
                 const argument = readRequiredMacroArgument(first)?.content ?? [];
@@ -421,20 +526,33 @@ function renderAstAlgorithmic(input: AstRenderInput, context: AstRenderContext, 
 
 function renderAlgorithm(input: AstRenderInput, context: AstRenderContext): string {
     const content = stripLeadingEnvironmentOption(input.node.content as SnaptexAstNode[]);
-    const caption = captionHtml(input, content, 'alg-caption', renderNumberedCaptionPrefix('Algorithm', 'alg'));
+    const caption = captionHtml(input, content, 'alg-caption', renderNumberedCaptionPrefix('Algorithm', 'alg'), true);
     const algorithmic = findFirstEnvironment(content, ALGORITHMIC_ENVS);
     const omitted = new Set(caption.nodes);
     if (algorithmic) {
         omitted.add(algorithmic);
     }
+    const visibleContent = visibleFloatChildren(content, caption.nodes);
+    const topLevelLabels = new Set<SnaptexAstNode>(visibleContent.filter(node => isMacroNode(node, 'label')));
+    const source = expandLatexTextMacros(
+        astNodesToLatex(visibleContent.filter(node => !topLevelLabels.has(node))),
+        context.metadata?.macros ?? {}
+    );
+    const extractedSource = extractAndHideLabels(source);
     const body = algorithmic
         ? renderAstAlgorithmic(input, context, algorithmic)
-        : input.renderChildren(visibleFloatChildren(content, caption.nodes));
-    const hidden = algorithmic ? input.renderChildren(visibleFloatChildren(content, omitted)) : '';
+        : isAlgorithm2eSource(extractedSource.cleanContent)
+            ? renderAlgorithm2eList(extractedSource.cleanContent, input.renderSource)
+            : input.renderChildren(visibleContent);
+    const hidden = algorithmic
+        ? input.renderChildren(visibleFloatChildren(content, omitted))
+        : input.renderChildren([...topLevelLabels]) + extractedSource.hiddenHtml;
     return `<div class="latex-algorithm">${caption.html}${body}${hidden}<div class="alg-bottom-rule"></div></div>`;
 }
 
 export const AST_FLOAT_RULE: AstRenderRule = (input, context) => {
+    const captionOf = renderCaptionOfMacro(input);
+    if (captionOf) { return captionOf; }
     if (!isEnvironmentNode(input.node) || !Array.isArray(input.node.content)) {
         return undefined;
     }
@@ -451,6 +569,8 @@ export const AST_FLOAT_RULE: AstRenderRule = (input, context) => {
 };
 
 export const AST_SUBFIGURE_RULE: AstRenderRule = input => {
+    const macro = renderSubfigureMacro(input);
+    if (macro) { return macro; }
     if (!isEnvironmentNode(input.node)
         || !SUBFIGURE_ENVS.has(environmentName(input.node) ?? '')
         || !Array.isArray(input.node.content)) {
@@ -459,10 +579,18 @@ export const AST_SUBFIGURE_RULE: AstRenderRule = input => {
     return { html: renderSubfigure(input) };
 };
 
-export const AST_TABULAR_RULE: AstRenderRule = input =>
-    isEnvironmentNode(input.node) && TABULAR_ENVS.has(environmentName(input.node) ?? '')
-        ? { html: renderAstTabular(input, input.node) }
-        : undefined;
+export const AST_TABULAR_RULE: AstRenderRule = input => {
+    const envName = environmentName(input.node) ?? '';
+    if (!isEnvironmentNode(input.node) || !TABULAR_ENVS.has(envName)) {
+        return undefined;
+    }
+    if (envName !== 'longtable' || !Array.isArray(input.node.content)) {
+        return { html: renderAstTabular(input, input.node) };
+    }
+
+    const caption = captionHtml(input, input.node.content, 'table-caption', renderNumberedCaptionPrefix('Table', 'tbl'));
+    return { html: `<div class="latex-table">${caption.html}<div class="table-body">${renderAstTabular(input, input.node, caption.nodes)}</div></div>` };
+};
 
 export const AST_TABLE_MACRO_RULE: AstRenderRule = input => {
     if (!isMacroNode(input.node) || !TABLE_CELL_MACROS.has(input.node.content)) {

@@ -1,15 +1,57 @@
-import { BlockTextSpan, SplitterOptions, SplitterRule } from './types';
-import { countLineBreaks, scanLatexBraceBalance } from './utils';
+import { BlockTextSpan, LatexMacroDefinition, PreambleEnvironmentDefinition, SplitterOptions, SplitterRule } from './types';
+import { countLineBreaks, escapeRegExp, expandLatexTextMacros, scanLatexBraceBalance } from './utils';
 
 type SplitterEnvRule = Extract<SplitterRule, { envPattern: RegExp }>;
 type SplitterEnvRuleKind = SplitterEnvRule['kind'];
-type SplitterContextWrapperRule = Extract<SplitterRule, { kind: 'context-wrapper' }>;
+type SplitterMacroContextRule = Extract<SplitterRule, { kind: 'context-wrapper'; macroPattern: RegExp }>;
 
 function testPattern(pattern: RegExp, value: string): boolean {
     pattern.lastIndex = 0;
     const matched = pattern.test(value);
     pattern.lastIndex = 0;
     return matched;
+}
+
+export function resolveSplitterRules(
+    rules: readonly SplitterRule[],
+    definitions: Readonly<Record<string, PreambleEnvironmentDefinition>>
+): SplitterRule[] {
+    const resolved = [...rules];
+    for (const [name, definition] of Object.entries(definitions)) {
+        const envPattern = new RegExp(`^${escapeRegExp(name)}$`);
+        if (definition.kind === 'theorem') {
+            if (!rules.some(rule => rule.kind === 'split-env' && testPattern(rule.envPattern, name))) {
+                resolved.push({ name: `preamble-${name}`, kind: 'split-env', envPattern });
+            }
+        } else if (definition.kind === 'transparent' || definition.kind === 'style') {
+            resolved.push({
+                name: `preamble-${name}`,
+                kind: 'context-wrapper',
+                envPattern,
+                preserveWrapper: definition.kind === 'style'
+            });
+        } else {
+            for (const rule of rules) {
+                if ('envPattern' in rule && testPattern(rule.envPattern, definition.target)) {
+                    resolved.push({ ...rule, name: `preamble-${name}-${rule.name}`, envPattern });
+                }
+            }
+        }
+    }
+    return resolved;
+}
+
+export function expandSplitterEnvironmentAliases(
+    text: string,
+    rules: readonly SplitterRule[],
+    macros: Readonly<Record<string, LatexMacroDefinition>>
+): string {
+    const aliases = Object.fromEntries(Object.entries(macros).filter(([, definition]) => {
+        if (definition.argumentCount !== 0) { return false; }
+        const boundary = /^\\(?:begin|end)\s*\{([^{}]+)\}\s*$/.exec(definition.body);
+        return boundary && rules.some(rule => 'envPattern' in rule && testPattern(rule.envPattern, boundary[1]));
+    }));
+    return expandLatexTextMacros(text, aliases);
 }
 
 export function findSplitterEnvRule<K extends SplitterEnvRuleKind>(
@@ -26,12 +68,12 @@ export function matchesSplitterEnvRule(rules: readonly SplitterRule[], kind: Spl
     return findSplitterEnvRule(rules, kind, envName) !== undefined;
 }
 
-export function findSplitterContextWrapperRule(
+export function findSplitterMacroContextRule(
     rules: readonly SplitterRule[],
     macroName: string
-): SplitterContextWrapperRule | undefined {
-    return rules.find((rule): rule is SplitterContextWrapperRule =>
-        rule.kind === 'context-wrapper' && testPattern(rule.macroPattern, macroName)
+): SplitterMacroContextRule | undefined {
+    return rules.find((rule): rule is SplitterMacroContextRule =>
+        rule.kind === 'context-wrapper' && 'macroPattern' in rule && testPattern(rule.macroPattern, macroName)
     );
 }
 
@@ -39,7 +81,7 @@ function containsArgumentContextWrapper(text: string, rules: readonly SplitterRu
     const macroPattern = /(?<!\\)\\([a-zA-Z@]+)/g;
     let match: RegExpExecArray | null;
     while ((match = macroPattern.exec(text)) !== null) {
-        const rule = findSplitterContextWrapperRule(rules, match[1]);
+        const rule = findSplitterMacroContextRule(rules, match[1]);
         if (rule && rule.content !== 'group-remainder') {
             return true;
         }
@@ -152,11 +194,25 @@ export class LatexBlockSplitter {
                 }
             }
             else if (isBegin && beginName) {
-                const isIgnoredEnv = matchesSplitterEnvRule(options.rules, 'ignored-env', beginName);
+                const isContextEnvironment = matchesSplitterEnvRule(options.rules, 'context-wrapper', beginName);
+                const protectedRule = findSplitterEnvRule(options.rules, 'no-emergency-split-env', beginName);
+                const beginsBlockEnvironment = matchesSplitterEnvRule(options.rules, 'split-env', beginName)
+                    || isContextEnvironment;
+                const breaksProtectedNesting = beginsBlockEnvironment && envStack.some(envName =>
+                    findSplitterEnvRule(options.rules, 'split-env', envName)?.allowNestedBlocks === false
+                );
 
-                if (!isIgnoredEnv) {
+                if (breaksProtectedNesting) {
+                    if (hasBufferedContent) {
+                        pushCurrentBlockAndStartAt(match.index, currentLine, match.index);
+                    }
+                    envStack = [];
+                    braceDepth = 0;
+                }
+
+                if (!isContextEnvironment) {
                     const isMajorEnv = matchesSplitterEnvRule(options.rules, 'split-env', beginName);
-                    const beginsNoEmergencySplitEnv = matchesSplitterEnvRule(options.rules, 'no-emergency-split-env', beginName);
+                    const beginsNoEmergencySplitEnv = protectedRule !== undefined;
 
                     if (isMajorEnv && (envStack.length === 0 && braceDepth === 0 || isTrapped && !beginsNoEmergencySplitEnv)) {
                         if (hasBufferedContent) {
@@ -169,8 +225,7 @@ export class LatexBlockSplitter {
                 advanceCurrentBlock(fullMatch, matchLines);
             }
             else if (isEnd && endName) {
-                const isIgnoredEnv = matchesSplitterEnvRule(options.rules, 'ignored-env', endName);
-                if (!isIgnoredEnv) {
+                if (!matchesSplitterEnvRule(options.rules, 'context-wrapper', endName)) {
                     const idx = envStack.lastIndexOf(endName);
                     if (idx !== -1) { envStack = envStack.slice(0, idx); }
                 }
@@ -187,7 +242,7 @@ export class LatexBlockSplitter {
             }
             else if (isOpenBrace) {
                 const macroName = text.slice(regex.lastIndex).match(/^\s*\\([a-zA-Z@]+)/)?.[1];
-                const wrapperRule = macroName ? findSplitterContextWrapperRule(options.rules, macroName) : undefined;
+                const wrapperRule = macroName ? findSplitterMacroContextRule(options.rules, macroName) : undefined;
                 if (wrapperRule?.content === 'group-remainder') {
                     hasContextWrapperStart = true;
                 }

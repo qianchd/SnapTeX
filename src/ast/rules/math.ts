@@ -1,6 +1,6 @@
 import { formatLatexRomanNumeral } from '../../utils';
-import { REGEX_STR } from '../../patterns';
-import { normalizeMathEnvironmentForKatex, renderNumberedEquationHtml } from '../../rule-helpers';
+import { MATH_ENVS } from '../../patterns';
+import { normalizeMathEnvironmentForKatex, normalizeOptimizationEnvironmentForKatex, renderNumberedEquationHtml } from '../../rule-helpers';
 import type { SnaptexAstNode } from '../types';
 import { parseMathWithLoadedParser } from '../parse';
 import { astNodesRange, environmentName, getSourcePosition, isMacroNode, visitLatexAst } from '../visit-utils';
@@ -14,7 +14,8 @@ import {
     type AstRenderRule
 } from './index';
 
-const MATH_ENVIRONMENTS = new Set(REGEX_STR.MATH_ENVS.split('|'));
+const MATH_ENVIRONMENTS = new Set<string>(MATH_ENVS);
+const OPTIMIZATION_ENVIRONMENT_PATTERN = /^(?:mini|maxi)(?:e|!)?\*?$/;
 
 function isFollowedByText(input: Parameters<AstRenderRule>[0]): boolean {
     for (let index = input.index + 1; index < input.siblings.length; index++) {
@@ -76,12 +77,29 @@ const AST_LABEL_MATH_RULE: AstMathRule = {
     }
 };
 
+const AST_OMITTED_MATH_RULE: AstMathRule = {
+    commands: ['qedhere'],
+    apply: () => ({ replacement: '' })
+};
+
 export const DEFAULT_AST_MATH_RULES: readonly AstMathRule[] = [
     AST_MBOX_MATH_RULE,
     AST_ROMAN_NUMERAL_MATH_RULE,
     AST_REF_MATH_RULE,
-    AST_LABEL_MATH_RULE
+    AST_LABEL_MATH_RULE,
+    AST_OMITTED_MATH_RULE
 ];
+
+export const AST_OPTIMIZATION_RULE: AstRenderRule = (input, context) => {
+    const envName = environmentName(input.node);
+    if (!envName || !OPTIMIZATION_ENVIRONMENT_PATTERN.test(envName) || !Array.isArray(input.node.content)) {
+        return undefined;
+    }
+    const normalized = normalizeOptimizationEnvironmentForKatex(context.sourceContent(input.node.content), envName);
+    if (!normalized) { return undefined; }
+    const star = envName.endsWith('*') ? '*' : '';
+    return { html: input.renderSource(`\\begin{equation${star}}${normalized}\\end{equation${star}}`) };
+};
 
 interface MathSourceEdit {
     start: number;

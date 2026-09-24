@@ -93,7 +93,7 @@ suite('PreviewUpdateService', () => {
     test('renders title, abstract, keywords, citations, and inline bibliography in AST splitter mode', async () => {
         const service = new PreviewUpdateService(new MemoryFileProvider());
         const payload = await service.render(uri, [
-            '\\title{Demo \\textbf{Paper}}',
+            '\\title{\\Large\\bf Demo \\textbf{Paper}\\footnotemark[2]}',
             '\\author{Alice Example}',
             '\\editor{Casey Editor}',
             '\\begin{document}',
@@ -111,8 +111,9 @@ suite('PreviewUpdateService', () => {
         });
         const html = payload.htmls?.join('\n') ?? '';
 
-        assert.match(html, /class="latex-title">Demo <strong>Paper<\/strong>/);
-        assert.doesNotMatch(html, /\\textbf\{Paper\}/);
+        assert.match(html, /class="latex-title">[\s\S]*Demo[\s\S]*Paper[\s\S]*<\/h1>/);
+        assert.doesNotMatch(html, /\\(?:Large|bf|textbf)\b/);
+        assert.doesNotMatch(html, /\\footnotemark/);
         assert.match(html, /class="latex-author">Alice Example/);
         assert.match(html, /Casey Editor/);
         assert.match(html, /class="latex-abstract"/);
@@ -126,22 +127,25 @@ suite('PreviewUpdateService', () => {
     test('renders external bibliographies in both backend modes', async () => {
         const bibUri = vscode.Uri.file('/project/refs.bib');
         const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(bibUri), '@article{doe2024, author={Doe, Jane}, title={Example}, year={2024}}']
+            [normalizeUri(bibUri), '@article{doe2024, author={Doe, Jane}, title={Example $\\sqrt{n}$}, year={2024}}']
         ]));
-        const source = [
-            '\\begin{document}',
-            'See \\citep{doe2024}.',
-            '\\bibliography{refs}',
-            '\\end{document}'
-        ].join('\n');
+        for (const [preamble, citation, bibliography] of [
+            ['', '\\citep{doe2024}', '\\bibliography{refs}'],
+            ['\\addbibresource{refs.bib}', '\\textcite{doe2024} and \\parencite{doe2024}', '\\printbibliography[heading=bibintoc]']
+        ]) {
+            const source = [preamble, '\\begin{document}', `See ${citation}.`, bibliography, '\\end{document}']
+                .filter(Boolean)
+                .join('\n');
+            for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+                const service = new PreviewUpdateService(provider);
+                const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+                const html = payload.htmls?.join('\n') ?? '';
 
-        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
-            const service = new PreviewUpdateService(provider);
-            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
-            const html = payload.htmls?.join('\n') ?? '';
-
-            assert.match(html, /class="latex-bibliography-list"/);
-            assert.doesNotMatch(html, /No citations found/);
+                assert.match(html, /class="latex-bibliography-list"/);
+                assert.match(html, /class="katex"/);
+                assert.doesNotMatch(html, /No citations found|\\(?:addbibresource|printbibliography|textcite|parencite)/);
+                assert.doesNotMatch(html.replace(/<annotation\b[\s\S]*?<\/annotation>/g, ''), /\\sqrt/);
+            }
         }
     });
 
@@ -170,11 +174,44 @@ suite('PreviewUpdateService', () => {
 
             assert.match(html, /<ul class="[^"]*\blatex-list\b[^"]*">/);
             assert.match(html, /<ol class="[^"]*\blatex-list\b[^"]*">/);
-            assert.match(html, /First <(?:span style="font-weight: 600"|strong)>item<\/(?:span|strong)>/);
+            assert.match(html, /First (?:<strong>item<\/strong>|<span[^>]*font-weight: (?:600|bold)[^>]*>item<\/span>)/);
             assert.match(html, /class="latex-list-label">[\s\S]*katex/);
             assert.match(html, /equation-container/);
             assert.match(html, /where x is defined/);
             assert.doesNotMatch(html, /\\begin\{itemize\}|\\begin\{enumerate\}|\\item|\\textbf/);
+        }
+    });
+
+    test('preserves AST control-word boundaries across comments', async () => {
+        const source = '\\unknown% first comment\n% second comment\nText and plain% comment\ntext.';
+        const { html } = await renderLatexBlockWithAst(source);
+
+        assert.match(html, /\\unknown Text and plaintext\./);
+        assert.doesNotMatch(html, /\\unknownText/);
+    });
+
+    test('omits comment environments in both backend modes', async () => {
+        const source = [
+            '\\newcommand{\\Verify}{\\textsc{Verify}}',
+            '\\begin{document}',
+            'Visible before.',
+            '\\begin{comment}',
+            '\\begin{theorem}Hidden theorem.\\end{theorem}',
+            '',
+            '\\begin{itemize}\\item Hidden item.\\end{itemize}',
+            '\\end{comment}',
+            'Visible after.',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.match(html, /Visible before/);
+            assert.match(html, /Visible after/);
+            assert.doesNotMatch(html, /Hidden|\\begin\{comment\}|\\end\{comment\}/);
         }
     });
 
@@ -183,9 +220,25 @@ suite('PreviewUpdateService', () => {
         const payload = await service.render(uri, [
             '\\newcommand{\\vect}[1]{\\mathbf{#1}}',
             '\\newcommand{\\rbf}{\\mathbf{r}}',
+            '\\def\\second#1#2{#2}',
+            '\\newcommand{\\linkedq}{\\second{ignored}{q}}',
+            '\\newcommand{\\tightnorm}[1]{\\left\\lVert#1\\right.\\kern-\\nulldelimiterspace}',
+            '\\newcommand{\\expectation}[2][P]{\\mathbb{E}_{#1}[#2]}',
+            '\\newcommand{\\newlink}[2]{{\\protect\\hyperlink{#1}{\\normalcolor #2}}}',
+            '\\def\\Hy@raisedlink@left#1{\\unsupportedinternal{#1}}',
+            '\\newcommand{\\newtarget}[2]{\\Hy@raisedlink@left{\\hypertarget{#1}{}}#2}',
+            '\\newcommand{\\independent}{\\mathpalette{\\independentSymbol}{\\perp}}',
+            '\\DeclarePairedDelimiter{\\abs}{\\lvert}{\\rvert}',
+            '\\DeclarePairedDelimiterX{\\inner}[2]{\\langle}{\\rangle}{#1,#2}',
+            '\\def\\independentSymbol#1#2{\\mathrel{\\rlap{$#1#2$}\\mkern2mu{#1#2}}}',
+            '\\def\\beq{\\begin{eqnarray}}',
+            '\\def\\eeq{\\end{eqnarray}}',
             '\\begin{document}',
-            'Let $\\mathbb P$ and $\\mathbf v$ be given.',
-            '\\[\\mathcal L(\\vect{x}) = \\mathbb P\\]',
+            'Let $\\mathbb P$, $\\mathds{1}$, $\\mathbbm{R}$, $\\mathbf v$, $\\ell_{\\linkedq}$, $\\tightnorm{x}$, $\\expectation{X}$, $\\expectation[Q]{Y}$, $\\newlink{def:x}{O_{p,q}}$, $\\newtarget{def:y}{Y}$, and $X\\independent Y$ be given.',
+            '\\[\\mathcal L(\\vect{x}) = \\mathbb P + \\abs*{x} + \\inner{x}{y} + \\Bar{X} + \\Tilde{Y} + \\Tr(A)\\]',
+            '\\beq y &=& 1 \\eeq',
+            '\\begin{IEEEeqnarray}{rCl} \\IEEEeqnarraymulticol{3}{l}{z = 2} \\end{IEEEeqnarray}',
+            '\\[\\scalebox{0.8}{$\\begin{array}{@{}cc@{}} a & b \\\\ c & d \\end{array}$}\\]',
             '\\begin{equation}',
             '\\begin{aligned}',
             '\\frac{\\Rmnum{1}}{2}\\|\\rbf-\\vect{x}_1\\|_2^2 &= \\frac12\\left\\{1 + 1\\right\\}+\\mbox{bold \\textbf{note}}+C_{\\ref*{eq:model}},\\\\',
@@ -198,12 +251,13 @@ suite('PreviewUpdateService', () => {
             backendMode: 'ast(experimental)'
         });
         const html = payload.htmls?.join('\n') ?? '';
+        const visibleHtml = html.replace(/<annotation\b[\s\S]*?<\/annotation>/g, '');
 
         assert.match(html, /katex/);
         assert.match(html, /mathvariant="bold"|mord mathbf/);
         assert.match(html, /data-key="eq:model"/);
         assert.doesNotMatch(html, /katex-error/);
-        assert.doesNotMatch(html, /\\(?:Rmnum|mbox)/);
+        assert.doesNotMatch(visibleHtml, /\\(?:Rmnum|mbox|mathds|mathbbm|Bar|Tilde|Tr)/);
         assert.doesNotMatch(html, /\\mathbb P\$/);
     });
 
@@ -213,7 +267,8 @@ suite('PreviewUpdateService', () => {
             '\\definecolor{accent}{rgb}{0.2,0.4,0.8}',
             '\\newcommand{\\brandtext}[1]{{\\color{brand}#1}}',
             '\\begin{document}',
-            'Plain \\brandtext{colored \\textbf{text}}, \\textcolor{accent}{accent}, \\textcolor{brand!25!accent}{mixed}, and \\textcolor[RGB]{255,0,0}{direct}.',
+            'Plain \\brandtext{colored \\textbf{text}}, \\textcolor{accent}{accent}, \\textcolor{brand!25!accent}{mixed}, \\textcolor[RGB]{255,0,0}{direct}, \\textsuperscript{super}, \\textsuperscript{\\textdagger}, \\raisebox{.5ex}[1em][0pt]{raised}, \\phantom{hidden}, \\L{}ojasiewicz, Y{\\i}ld{\\i}r{\\i}m, \\textemdash, \\textdagger, \\copyright, \\textregistered, \\textquotesingle, joined\\xspace words, thin\\thinspace space, \\allowbreak and \\S 2, \\phantomsection\\nolinebreak \\enquote{quoted}, \\fbox{boxed}, \\ovalbox{oval}, \\num{51}, \\SI{2.1}{\\giga\\hertz}, $a\\centernot=b$, $x\\nolinebreak\\xspace y$, $\\nicefrac{1}{2}+\\sfrac{1}{3}$, and $\\qty{38}{\\milli\\meter}$.',
+            '\\captionof{figure}{Standalone caption}',
             '\\end{document}'
         ].join('\n');
 
@@ -221,16 +276,75 @@ suite('PreviewUpdateService', () => {
             const service = new PreviewUpdateService(new MemoryFileProvider());
             const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
             const html = payload.htmls?.join('\n') ?? '';
+            const visibleHtml = html.replace(/<annotation\b[\s\S]*?<\/annotation>/g, '');
 
             assert.match(html, /--snaptex-latex-color: #663399/);
             assert.match(html, /--snaptex-latex-color: rgb\(51 102 204\)/);
             assert.match(html, /--snaptex-latex-color: color-mix\(in srgb, #663399 25%, rgb\(51 102 204\)\)/);
             assert.match(html, /--snaptex-latex-color: rgb\(255 0 0\)/);
-            assert.match(html, /colored [\s\S]*<(?:strong|span style="font-weight: 600")>text<\/(?:strong|span)>/);
-            assert.doesNotMatch(html, /\\brandtext|\\color|\\textcolor|\\textbf/);
+            assert.match(html, /colored [\s\S]*(?:<strong>text<\/strong>|<span[^>]*font-weight: (?:600|bold)[^>]*>text<\/span>)/);
+            assert.match(html, /<sup(?:\s[^>]*)?>super<\/sup>|vertical-align: super[^>]*>super/);
+            assert.match(html, /<sup(?:\s[^>]*)?>†<\/sup>|vertical-align: super[^>]*>†/);
+            assert.match(html, /raised/);
+            assert.match(html, /visibility: hidden[^>]*>hidden/);
+            assert.match(html, /Standalone caption/);
+            assert.match(html, /Yıldırım/);
+            assert.match(html, /—, †, ©, ®, (?:'|&#39;), joined\s+words, thin  space/);
+            assert.match(html, /§ 2/);
+            assert.match(html, /“quoted”, boxed, oval/);
+            assert.match(html, /51/);
+            assert.match(html, /2\.1/);
+            assert.match(html, /38/);
+            assert.doesNotMatch(visibleHtml, /\\brandtext|\\color|\\textcolor|\\textbf|\\textsuperscript|\\captionof|\\(?:raisebox|phantom|L|i|textemdash|textdagger|copyright|textregistered|textquotesingle|xspace|thinspace|allowbreak|phantomsection|nolinebreak|S|enquote|fbox|ovalbox|num|SI|centernot|nicefrac|sfrac|qty|giga|hertz|milli|meter)\b/);
 
             const updated = await service.render(uri, source.replace('663399', '8844AA'), { deferFullHtml: false, backendMode });
             assert.match(updated.htmls?.join('\n') ?? '', /--snaptex-latex-color: #8844AA/);
+        }
+    });
+
+    test('reuses built-in rendering for simple local package definitions', async () => {
+        const source = [
+            '\\usepackage{custom}',
+            '\\begin{document}',
+            '\\begin{assumptionB}\\label{assumption:custom}Regularity holds.\\end{assumptionB}',
+            '\\begin{enumalpha}\\item First case.\\item Second case.\\end{enumalpha}',
+            '\\begin{revision}Visible revision.\\end{revision}',
+            '\\begin{reviewtext}Styled review.\\end{reviewtext}',
+            '\\begin{remarks}\\item First remark.\\item Second remark.\\end{remarks}',
+            '\\begin{boxednote}First box paragraph.',
+            '',
+            'Second box paragraph.\\end{boxednote}',
+            '\\nfeq{x = y}',
+            '\\end{document}'
+        ].join('\n');
+        const definitions = [
+            '\\newtheorem{assumptionB}{B.}',
+            '\\newenvironment{enumalpha}{\\begin{enumerate}[label=(\\alph*)]}{\\end{enumerate}}',
+            '\\newenvironment{revision}{}{}',
+            '\\newenvironment{reviewtext}{\\color{blue}\\ignorespaces}{\\ignorespacesafterend}',
+            '\\newenvironment{remarks}{\\noindent\\textbf{Remarks.}\\begin{itemize}}{\\end{itemize}\\par}',
+            '\\newtcolorbox{boxednote}{colback=blue!5}',
+            '\\providecommand{\\nfeq}[1]{\\begin{equation*}#1\\end{equation*}}'
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const files = new Map<string, string>();
+            const provider = new MemoryFileProvider(files);
+            const service = new PreviewUpdateService(provider);
+            await service.render(uri, source, { deferFullHtml: false, backendMode });
+            files.set(normalizeUri(vscode.Uri.file('/project/custom.sty')), definitions);
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+
+            assert.match(html, /B\. <span class="sn-cnt" data-type="thm">[\s\S]*Regularity holds/);
+            assert.match(html, /latex-list-custom-label[\s\S]*\(a\)[\s\S]*First case[\s\S]*\(b\)[\s\S]*Second case/);
+            assert.match(html, /Visible revision/);
+            assert.match(html, /color: blue[\s\S]*Styled review/);
+            assert.match(html, /Remarks\.[\s\S]*First remark[\s\S]*Second remark/);
+            assert.match(html, /First box paragraph/);
+            assert.match(html, /Second box paragraph/);
+            assert.match(html, /class="katex-display"[\s\S]*x[\s\S]*=[\s\S]*y/);
+            assert.doesNotMatch(html, /\\(?:begin|end)(?:boxednote|\{(?:assumptionB|enumalpha|revision|reviewtext|remarks|boxednote|equation\*)\})|\\nfeq|\\item\b/);
+            assert.equal(payload.numbering.labels['assumption:custom'], '1');
         }
     });
 
@@ -262,15 +376,60 @@ suite('PreviewUpdateService', () => {
 
     test('renders a representative document through legacy and AST splitter modes', async () => {
         const source = [
+            '\\newcommand{\\supplementsetup}{\\setcounter{section}{0}\\renewcommand{\\thesection}{S\\arabic{section}}}',
+            '\\newcommand{\\dotmark}{\\,\\begin{picture}(-1,1)(-1,-2)\\circle*{2}\\end{picture}\\ }',
             '\\begin{document}',
+            '\\titleformat{\\section}{\\Large\\bfseries}{\\thesection}{1em}{}',
+            '\\supplementsetup',
             '\\section[Brief]{Intro \\textit{topic} after \\ref*{sec:prior}}\\label{sec:intro}',
-            'See \\ref{sec:intro}, \\eqref{eq:model}, \\citep{smith2024}, and \\href{https://example.com}{a \\textbf{link}}.',
-            '\\begin{equation}\\label{eq:model}x=1\\end{equation}',
+            'See \\ref{sec:intro}, \\eqref{eq:model}, \\cref{sec:intro}, \\Cref{eq:model}, \\subref{sec:intro}, \\vref{eq:model}, \\autoref{sec:intro}, \\citep[\\S 2]{smith2024}, and \\href{https://example.com}{a \\textbf{link}}.',
+            '\\begin{equation}\\label{eq:model}x=1+\\Verify+\\textsl{Step}\\qedhere\\end{equation}',
             '\\begin{alignat}{2}a&=b & c&=d\\end{alignat}',
-            'Text \\mbox{A \\textbf{box}} and $\\mbox{math text}$.',
-            '\\begin{condition}[Model \\textit{case}]\\begin{enumerate}[(i)]\\item First\\end{enumerate}\\end{condition}',
-            '\\begin{table}\\begin{tabular}{cc}A & B\\\\\\end{tabular}\\caption{A table}\\end{table}',
-            '\\begin{figure}\\begin{tikzpicture}\\node {A};\\end{tikzpicture}\\caption{A figure}\\end{figure}',
+            '\\begin{eqnarray}a&=&b\\\\c&=&d\\end{eqnarray}',
+            '\\begin{align*}\\MoveEqLeft a&=b\\tag{A}\\\\c&=d\\tag{B}\\end{align*}',
+            '\\begin{align}p&=q\\\\\\intertext{Since $q=r$, continue}p&=r\\end{align}',
+            'Text \\mbox{A \\textbf{box}}, $\\mbox{math text}$, \\text{outside text}, \\ensuremath{\\alpha}, and $x_{\\dotmark}$.',
+            "Names Erd\\H{o}s, \\v{S}amal, G\\'eza, G\\v S, Bio\\v{c}i\\'{c}, Stra\\ss{}e; text dots\\ldots and more\\dots",
+            '\\hbox{HBox} \\makebox[2cm][l]{Make box} \\scalebox{0.8}{Scaled text} \\rotatebox{90}{Rotated text} \\centerline{Centered text} \\hyperlink{target}{Linked text} \\colorbox{yellow}{Color box} \\fcolorbox{red}{white}{Framed text} \\parbox[c]{2cm}{Paragraph box}.',
+            'Scaled matrix $A=\\scalebox{0.75}{$\\begin{bmatrix}1&0\\\\0&1\\end{bmatrix}$}$.',
+            '\\begin{sloppypar}Layout A\\medskip Layout B\\par Layout C\\vspace{1em}\\vskip 2mm\\newpage \\small Layout D\\normalsize.\\end{sloppypar}',
+            '\\begingroup{\\em Scoped emphasis.} {\\bfseries Bold} and \\textsc{Small caps}.\\endgroup\\FloatBarrier\\tableofcontents',
+            'Visible note markers\\footnote[7]{Footnote $x$}\\footnotemark[8]\\footnotetext[8]{Detached note}\\thanks{Thanks text}\\footnote{\\color{darkgray}Scoped note}.',
+            '\\allowdisplaybreaks[1]\\raggedbottom\\enlargethispage{-1cm}First\\linebreak{}Second\\newline Third',
+            '\\begin{samepage}\\begin{condition}[Model \\textit{case}]\\begin{enumerate}[(i)]\\item First\\end{enumerate}\\end{condition}\\end{samepage}',
+            '\\begin{fact}A useful fact.\\end{fact}',
+            '\\begin{Theorem*}[Unnumbered]No counter.\\end{Theorem*}\\begin{pro}Short proposition.\\end{pro}',
+            '\\begin{observation}Observed.\\end{observation}\\begin{problem}Open problem.\\end{problem}\\begin{principle}Core principle.\\end{principle}\\begin{property}Useful property.\\end{property}\\begin{result}Final result.\\end{result}',
+            '\\begin{restatable}[Reusable result]{lemma}{savedLemma}A restated lemma.\\label{lem:restated}\\end{restatable}',
+            '\\begin{defn}A short definition.\\end{defn}\\begin{assump}A short assumption.\\end{assump}\\begin{con}A short condition.\\end{con}',
+            '\\begin{hypothesis}A short hypothesis.\\end{hypothesis}',
+            '\\begin{example}[Boundary form]',
+            'An example split across paragraphs.',
+            '',
+            '\\begin{equation*}u=v\\end{equation*}',
+            'The example continues.',
+            '\\end{example}',
+            '\\begin{IEEEproof}[Sketch]A compact proof.\\end{IEEEproof}',
+            '\\begin{quote}Quoted \\emph{text}.\\end{quote}\\begin{quotation}Long quotation.\\end{quotation}',
+            '\\begin{appendix}Appendix wrapper.\\end{appendix}',
+            '\\begin{landscape}Landscape wrapper.\\end{landscape}\\begin{NoHyper}Unlinked wrapper.\\end{NoHyper}',
+            '\\begin{compactitem}\\item Compact item.\\end{compactitem}',
+            '\\begin{list}{}{\\setlength{\\leftmargin}{2em}}\\item Generic item.\\end{list}',
+            '\\begin{description}\\item[Term] Description text.\\end{description}',
+            '\\begin{highlights}\\item Highlight text.\\end{highlights}',
+            '\\begin{acks}[Statement on support]Acknowledgment text.\\end{acks}',
+            '\\cortext[cor1]{Corresponding author}',
+            '\\begin{IEEEkeywords}preview \\sep LaTeX\\end{IEEEkeywords}',
+            '\\begin{keywords}AST \\sep rules\\end{keywords}',
+            '\\begin{subequations}\\begin{align}x &= 1\\end{align}\\end{subequations}',
+            '\\begin{center}Centered text.\\begin{tabular}{cc}Standalone & table\\\\\\end{tabular}\\end{center}',
+            '\\begin{minipage}[t]{0.5\\textwidth}Half-width content.\\end{minipage}',
+            '\\section{A \\texorpdfstring{$K$}{K} and \\textup{upright} heading}',
+            'Nested math text: \\ensuremath{\\theta_0}.',
+            '\\begin{table}\\begin{tabular}{cc}A\\hspace{2pt} & B\\\\\\addlinespace[2pt]C & D\\\\\\end{tabular}\\caption{A table}\\caption*{Table note}\\end{table}',
+            '\\begin{figure}\\begin{center}\\begin{tikzpicture}\\node {A};\\end{tikzpicture} Figure \\textit{continued}.\\caption{A figure}\\end{center}\\end{figure}',
+            '\\begin{equation}\\label{eq:diagram}\\begin{tikzcd}A \\arrow[r] & B\\end{tikzcd}\\end{equation}',
+            '\\begin{mini}{x}{f(x)}{\\label{eq: opt_{i,j}}}{}\\addConstraint{x}{\\ge 0}\\end{mini}',
             '\\begin{thebibliography}{9}',
             '\\bibitem{smith2024} Smith, A. (2024). Demo.',
             '\\end{thebibliography}',
@@ -286,26 +445,82 @@ suite('PreviewUpdateService', () => {
             assert.match(html, /<h2>[\s\S]*?data-key="sec:prior"[\s\S]*?<\/h2>/);
             assert.match(html, /data-key="sec:intro"/);
             assert.match(html, /data-key="eq:model"/);
+            assert.equal((html.match(/data-key="sec:intro"/g) ?? []).length, 4);
+            assert.equal((html.match(/data-key="eq:model"/g) ?? []).length, 3);
+            assert.doesNotMatch(html, /\\(?:C?cref|subref|vref|autoref)/);
             assert.match(html, /href="#ref-smith2024"/);
+            assert.match(html, /§ 2/);
             assert.match(html, /href="https:\/\/example\.com\/?"[\s\S]*a [\s\S]*link/);
             assert.match(html, /A [\s\S]*box/);
+            assert.match(html, /Erdős, Šamal, Géza, GŠ, Biočić, Straße; text dots… and more…/);
             assert.match(html, /math text/);
+            assert.match(html, /HBox[\s\S]*Make box[\s\S]*Scaled text[\s\S]*Rotated text[\s\S]*Centered text[\s\S]*Linked text[\s\S]*Color box[\s\S]*Framed text[\s\S]*Paragraph box/);
+            assert.doesNotMatch(html, /\\(?:hbox|makebox|scalebox|rotatebox|centerline|hyperlink|colorbox|fcolorbox|parbox)\b/);
+            assert.match(html, /Scaled matrix/);
+            assert.match(html, /Verify[\s\S]*Step/);
+            assert.doesNotMatch(html, /katex-error/);
+            assert.doesNotMatch(html.replace(/<annotation\b[\s\S]*?<\/annotation>/gi, ''), /\\(?:begin|end)\{bmatrix\}|\\scalebox/);
+            assert.doesNotMatch(html, /\\(?:setcounter|renewcommand)/);
+            assert.match(html, /Layout A[\s\S]*Layout B[\s\S]*Layout C[\s\S]*Layout D/);
+            assert.match(html, /Scoped emphasis/);
+            assert.match(html, /Bold[\s\S]*Small caps/);
+            assert.match(html, /Visible note markers/);
+            assert.match(html, /<em>\(Footnote[\s\S]*x[\s\S]*\)<\/em><br\/>/);
+            assert.match(html, /<em>\(Detached note\)<\/em><br\/>/);
+            assert.match(html, /<em>\(Thanks text\)<\/em><br\/>/);
+            assert.match(html, /<em>\(<span style="color: darkgray; --snaptex-latex-color: darkgray">Scoped note<\/span>\)<\/em><br\/>/);
+            assert.doesNotMatch(html, /\\color\{darkgray\}/);
             assert.match(html, /class="latex-theorem"/);
+            assert.match(html, /class="latex-theorem-header"/);
+            assert.match(html, /Fact <span class="sn-cnt" data-type="thm">/);
+            assert.match(html, /Theorem[\s\S]*?Unnumbered[\s\S]*?No counter/, backendMode);
+            assert.match(html, /Proposition <span class="sn-cnt" data-type="thm">[\s\S]*Short proposition/);
+            assert.match(html, /Observation <span class="sn-cnt" data-type="thm">[\s\S]*Problem <span class="sn-cnt" data-type="thm">[\s\S]*Principle <span class="sn-cnt" data-type="thm">[\s\S]*Property <span class="sn-cnt" data-type="thm">[\s\S]*Result <span class="sn-cnt" data-type="thm">/);
+            assert.match(html, /Lemma <span class="sn-cnt" data-type="thm">[\s\S]*Reusable result[\s\S]*A restated lemma/);
+            assert.match(html, /Definition <span class="sn-cnt" data-type="thm">[\s\S]*Assumption <span class="sn-cnt" data-type="thm">[\s\S]*Condition <span class="sn-cnt" data-type="thm">/);
+            assert.match(html, /Hypothesis <span class="sn-cnt" data-type="thm">/);
+            assert.match(html, /Example <span class="sn-cnt" data-type="thm">[\s\S]*Boundary form[\s\S]*The example continues/);
+            assert.doesNotMatch(html, /\\(?:begin|end)example/);
+            assert.match(html, /Proof \([\s\S]*Sketch[\s\S]*\)[\s\S]*A compact proof[\s\S]*QED/);
+            assert.match(html, /<blockquote class="latex-quote">[\s\S]*Quoted[\s\S]*text[\s\S]*<\/blockquote>/);
+            assert.match(html, /<blockquote class="latex-quote">[\s\S]*Long quotation[\s\S]*<\/blockquote>/);
+            assert.match(html, /Compact item/, backendMode);
+            assert.match(html, /Landscape wrapper[\s\S]*Unlinked wrapper[\s\S]*Generic item/, backendMode);
+            assert.match(html, /Term[\s\S]*Description text[\s\S]*Highlight text/, backendMode);
+            assert.match(html, /<section class="latex-acknowledgments"><h2>Statement on support<\/h2>[\s\S]*Acknowledgment text[\s\S]*<\/section>/);
+            assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> preview, LaTeX<\/div>/);
+            assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> AST, rules<\/div>/);
+            assert.match(html, /<em>\(Corresponding author\)<\/em>/);
+            assert.match(html, /class="latex-center"/);
+            assert.match(html, /class="latex-minipage" style="width:50%"/, backendMode);
+            assert.match(html, /Standalone/);
             assert.match(html, /Model [\s\S]*case/);
             assert.match(html, /<li>/);
             assert.match(html, /\(i\)/);
             assert.match(html, /class="latex-tabular-preview"/);
             assert.match(html, /class="tikz-container"/);
+            assert.match(html, /Figure[\s\S]*<(?:em|span[^>]*font-style: italic)[^>]*>continued<\/(?:em|span)>/);
+            assert.match(html, /data-tex-packages='\{"tikz-cd":""\}'/);
+            assert.match(html, /\\begin\{tikzcd\}/);
+            assert.doesNotMatch(html, /\\(?:begin|end)\{equation\}/);
+            assert.match(html, /minimize[\s\S]*subject to/);
+            assert.doesNotMatch(html, /\\(?:begin|end)\{mini\}|\\addConstraint/);
+            assert.equal(payload.numbering.labels['eq:diagram'], '6');
+            assert.equal(payload.numbering.labels['eq: opt_{i,j}'], '7');
             assert.match(html, /id="ref-smith2024"/);
-            assert.doesNotMatch(html, /\\(?:section|href|mbox|textit\{case\})|>2\s*<span class="katex-display"/);
+            const leakedLatex = html.match(/\\(?:section|caption|cortext|sep\b|href|mbox|medskip|par\b|vspace|vskip|titleformat|thesection|newpage|normalsize|allowdisplaybreaks|raggedbottom|enlargethispage|linebreak|newline|begingroup|endgroup|tableofcontents|FloatBarrier|addlinespace|qedhere|footnote|footnotemark|footnotetext|thanks|em\b|bfseries|textsc|texorpdfstring|textit\{case\}|textup\{upright\})|\\small Layout D|\\(?:begin|end)\{(?:samepage|sloppypar|appendix|landscape|NoHyper|subequations|eqnarray|center|tabular|minipage|fact|Theorem\*|pro|observation|problem|principle|property|result|defn|assump|con|hypothesis|restatable|IEEEproof|list|compactitem|description|highlights|quote|quotation|acks|IEEEkeywords|keywords)\}|>2mm|>2\s*<span class="katex-display"/)?.[0];
+            const leakIndex = leakedLatex ? html.indexOf(leakedLatex) : -1;
+            assert.equal(leakedLatex, undefined, `${backendMode}: leaked ${html.slice(Math.max(0, leakIndex - 40), leakIndex + 80)}`);
         }
     });
 
     test('renders starred section titles with inline math through both preview modes', async () => {
         const source = [
             '\\newcommand{\\Hcal}{\\mathcal{H}}',
+            '\\renewcommand\\paragraph{\\@startsection{paragraph}{4}{\\z@}{1ex}{-1em}{\\itshape}}',
             '\\begin{document}',
             '\\subsubsection*{Case 2: $\\Hcal_2 = \\Hcal_3 = \\emptyset$}',
+            '\\paragraph{Semantic heading}Body.',
             '\\end{document}'
         ].join('\n');
 
@@ -316,25 +531,30 @@ suite('PreviewUpdateService', () => {
             const visibleHtml = html.replace(/<annotation\b[\s\S]*?<\/annotation>/g, '');
 
             assert.match(html, /<h4>/);
+            assert.match(html, /<h5>[\s\S]*Semantic heading/);
             assert.match(html, /Case 2:/);
             assert.match(html, /katex/);
             assert.doesNotMatch(visibleHtml, /data-type="sec"/);
             assert.doesNotMatch(visibleHtml, /<h4>\s*\./);
             assert.doesNotMatch(visibleHtml, /Hcal_|emptyset/);
+            assert.doesNotMatch(visibleHtml, /@startsection|\\z@/);
         }
     });
 
     test('renders algorithmic commands through both preview modes', async () => {
         const source = [
             '\\newcommand{\\estcps}{\\widehat{\\mathcal T}}',
+            '\\algnewcommand\\Inferred{\\item[\\textbf{Inferred:}]}',
             '\\begin{document}',
             '\\begin{algorithm}[tb]',
             '\\caption{\\small Cross-fitting framework}',
-            '\\label{alg:cf_meta}',
+            '\\label[algorithm]{alg:cf_meta}',
             '\\begin{algorithmic}[1]',
             '\\REQUIRE Data sequence $\\{z_i\\}_{i=1}^n$ and folds $M$.',
             '\\ENSURE Estimated changepoint set $\\estcps$.',
-            '\\STATE \\textbf{Loss evaluation:} For each segment $I = (s, e]$.',
+            '\\Inferred Latent state $z$.',
+            '\\STATE \\textbf{Loss evaluation:} For each segment $I = (s, e]$.\\label{alg:step}',
+            '\\STATE Initialize the estimate. \\Comment{warm start}',
             '\\FOR{$m = 1$ \\TO $M$}',
             '    \\IF{$m = 1$}',
             '        \\STATE \\textit{Initialize} $\\hat f_m$.',
@@ -342,10 +562,25 @@ suite('PreviewUpdateService', () => {
             '    \\STATE \\textit{Estimate} $\\hat f_m$.',
             '\\ENDFOR',
             '\\STATE Solve:',
+            '\\STATEX Continue with the selected candidate.',
+            '\\STATE \\RETURN $\\estcps$.',
             '\\[',
             '    \\estcps = \\operatorname{argmin}_{\\mathcal T}\\sum_k L_k.',
             '\\]',
             '\\end{algorithmic}',
+            '\\end{algorithm}',
+            '\\begin{algorithm}',
+            '\\caption{Nested algorithm2e syntax}',
+            '\\label{alg:nested}',
+            '\\DontPrintSemicolon',
+            '\\SetKwInOut{Input}{Input}',
+            '\\SetKwInOut{Output}{Output}',
+            '\\Input{Custom data $z$}',
+            '\\Output{Custom result $r$}',
+            '\\KwIn{Data $x$}',
+            '\\KwOut{Result $y$}',
+            'Compare Algorithm~\\ref{alg:cf_meta} with Eqs.~\\eqref{eq:first}--\\eqref{eq:second}\\;',
+            '\\For{$i=1$ \\KwTo $n$}{Process $x_i$\\;\\If{$x_i>0$}{\\Return{$x_i$}\\;}}',
             '\\end{algorithm}',
             '\\end{document}'
         ].join('\n');
@@ -359,20 +594,32 @@ suite('PreviewUpdateService', () => {
             assert.match(html, /class="alg-caption"/);
             assert.match(html, /Cross-fitting framework/);
             assert.match(html, /id="alg:cf_meta"/);
+            assert.match(html, /id="alg:step"/);
+            assert.match(html, /id="alg:nested"/);
+            assert.match(html, /data-key="alg:cf_meta"/);
+            assert.match(html, /data-key="eq:first"/);
+            assert.match(html, /data-key="eq:second"/);
             assert.match(html, /<ol class="alg-list">/);
             assert.match(html, /Require:/);
             assert.match(html, /Ensure:/);
             assert.match(html, /Loss evaluation/);
+            assert.match(html, /<em>\(warm start\)<\/em>/);
             assert.match(html, /for[\s\S]*to[\s\S]*if[\s\S]*end if[\s\S]*end for/);
+            assert.match(html, /return/);
+            assert.match(html, /Input:[\s\S]*Custom data/);
+            assert.match(html, /Output:[\s\S]*Custom result/);
+            assert.doesNotMatch(html, /\\RETURN/);
             assert.match(html, /katex/);
             assert.match(html, /<li class="alg-item"><strong>Require:/);
             assert.match(html, /<li class="alg-item"><strong>Ensure:/);
+            assert.match(html, /<li class="alg-item">[\s\S]*Inferred:[\s\S]*Latent state/);
             assert.match(html, /style="padding-left: calc\(5px \+ 1\.5em\)">if/);
             assert.match(html, /style="padding-left: calc\(5px \+ 3em\)">[\s\S]*Initialize/);
             assert.match(html, /style="padding-left: calc\(5px \+ 1\.5em\)">[\s\S]*Estimate/);
             assert.ok((html.match(/class="alg-item/g) ?? []).length >= 8);
             assert.doesNotMatch(html, /alg-item-no-marker/);
-            assert.doesNotMatch(html, /\\(?:REQUIRE|ENSURE|STATE|FOR|IF|TO|ENDIF|ENDFOR)\b/);
+            assert.doesNotMatch(html, /\\(?:REQUIRE|ENSURE|STATE|STATEX|FOR|IF|TO|ENDIF|ENDFOR|Comment|Inferred|item|label)\b/);
+            assert.doesNotMatch(html, /\\(?:KwIn|KwOut|KwTo|For|If|Return|DontPrintSemicolon|SetKwInOut|Input|Output)\b/);
             assert.doesNotMatch(html, /\[(?:tb|1)\]/);
         }
         let mathCalls = 0;
@@ -382,7 +629,7 @@ suite('PreviewUpdateService', () => {
                 renderMath: () => { mathCalls++; return '<span>formula</span>'; }
             })
         });
-        assert.equal(mathCalls, 10, 'each algorithm formula must render only once');
+        assert.equal(mathCalls, 21, 'each algorithm formula must render only once');
     });
 
     test('renders nested table captions and labels in AST splitter mode', async () => {
@@ -439,10 +686,11 @@ suite('PreviewUpdateService', () => {
                 '&& \\multicolumn{2}{c}{Small document} & \\multicolumn{2}{c}{Large document} \\\\',
                 '\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}',
                 'Mode & Workload & \\textbf{Blocks} & \\textbf{Latency} & \\textbf{Blocks} & \\textbf{Latency} \\\\',
+                '\\hhline{|=|=|=|=|=|=|}',
                 '\\midrule',
                 '\\multirow{3}{*}{Full render}',
                 '& Text + math & 46 & $38\\,ms$ & 620 & $410\\,ms$ \\\\',
-                '& Figures & 8 & $92\\,ms$ & 74 & $1.8\\,s$\\tnote{$\\dagger$} \\\\',
+                '& Figures & 8 & $92\\,ms$ & 74 \\includegraphics[width=.2\\linewidth]{figures/sample.png} & $1.8\\,s$\\tnote{$\\dagger$} \\\\',
                 '& Tables & \\multicolumn{2}{c}{\\{tabular, booktabs\\}} & \\multicolumn{2}{c}{\\{tabular*, makecell, notes\\}} \\\\',
                 '\\cline{2-6}',
                 '\\multirow{3}{*}{Patch render}',
@@ -461,6 +709,16 @@ suite('PreviewUpdateService', () => {
                 '\\end{tablenotes}',
                 '\\end{threeparttable}',
                 '\\end{table}',
+                '\\newcolumntype{P}[1]{>{\\raggedright\\arraybackslash}p{#1}}',
+                '\\begin{longtable}[]{P{.3\\columnwidth}ll}',
+                '\\caption{Long table summary}\\label{tab:long}\\tabularnewline\\noalign{}',
+                '\\toprule',
+                'Name & Value & Note\\tabularnewline',
+                '\\midrule\\endhead',
+                'Alpha & $1$ & First\\tabularnewline',
+                'Beta & $2$ & Second\\tabularnewline',
+                '\\bottomrule',
+                '\\end{longtable}',
                 '\\end{document}'
             ].join('\n'), {
                 deferFullHtml: false,
@@ -474,14 +732,18 @@ suite('PreviewUpdateService', () => {
             assert.doesNotMatch(html, /<tr><td><\/td><td>Figures/);
             assert.doesNotMatch(html, /<tr><td><\/td><td>Tables/);
             assert.match(html, /<tr><td>Figures<\/td><td>8<\/td>/);
+            assert.match(html, /figures\/sample\.png/);
             assert.match(html, /<tr><td>Tables<\/td><td colspan="2"[^>]*>\{tabular, booktabs\}<\/td>/);
             assert.match(html, /class="latex-makecell"/);
             assert.match(html, /class="latex-tnote"/);
             assert.match(html, /class="latex-tablenotes"/);
             assert.match(html, /Virtual mode keeps only viewport-near blocks/);
             assert.match(html, /id="tab:demo-complex-table"/);
-            assert.doesNotMatch(html, /\\(?:cmidrule|cline|multirow|multicolumn|makecell|tnote)\b/);
-            assert.doesNotMatch(html, /\[!ht\]|\\(?:begin|end)\{(?:threeparttable|tabular\*)\}/);
+            assert.match(html, /Long table summary/);
+            assert.match(html, /<tr><td>Alpha<\/td><td>.*1.*<\/td><td>First<\/td><\/tr>/s);
+            assert.match(html, /id="tab:long"/);
+            assert.doesNotMatch(html, /\\(?:cmidrule|cline|hhline|multirow|multicolumn|makecell|tnote|includegraphics|textwidth|columnwidth|hsize|arraybackslash|newcolumntype|noalign)\b/);
+            assert.doesNotMatch(html, /\[!ht\]|\\(?:begin|end)\{(?:threeparttable|tabular\*|longtable)\}|\\(?:tabularnewline|endhead)\b/);
         }
     });
 
@@ -567,7 +829,7 @@ suite('PreviewUpdateService', () => {
             '\\begin{document}',
             '\\begin{figure}[htbp]',
             '\\centering',
-            '\\begin{subfigure}{0.48\\textwidth}',
+            '\\begin{subfigure}',
             '\\centering',
             '\\includegraphics*[width=\\linewidth]{fig1.pdf}',
             '\\caption{First figure}',
@@ -616,6 +878,14 @@ suite('PreviewUpdateService', () => {
             '\\caption{Four subfigures arranged in a $2 \\times 2$ layout.}',
             '\\label{fig:four-subfigures}',
             '\\end{figure}',
+            '',
+            '\\begin{figure}',
+            '\\subfloat[Macro first.\\label{fig:macro1}]{{\\includegraphics[width=0.45\\textwidth]{fig1.pdf}}}',
+            '\\subcaptionbox{Macro second.\\label{fig:macro2}}[.48\\textwidth]{\\includegraphics[width=\\linewidth]{fig2.pdf}}',
+            '\\subfigure[Macro third.\\label{fig:macro3}]{\\includegraphics[width=.48\\textwidth]{fig1.pdf}}',
+            '\\caption{Macro subfigures.}',
+            '\\label{fig:macro-subfigures}',
+            '\\end{figure}',
             '\\end{document}'
         ].join('\n');
 
@@ -624,12 +894,14 @@ suite('PreviewUpdateService', () => {
             const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
             const html = payload.htmls?.join('\n') ?? '';
 
-            assert.equal((html.match(/class="latex-subfigure"/g) ?? []).length, 6);
+            assert.equal((html.match(/class="latex-subfigure"/g) ?? []).length, 9);
+            assert.match(html, /class="latex-subfigure" style="flex: 1 1 100%; max-width: 100%;"/);
             assert.match(html, /class="latex-subfigure-grid"/);
             assert.match(html, /class="subfigure-caption"[^>]*>\(<span class="sn-cnt" data-type="subfig"><\/span>\) First figure/);
             assert.match(html, /class="subfigure-caption"[^>]*>\(<span class="sn-cnt" data-type="subfig"><\/span>\) Fourth figure/);
             assert.match(html, /<strong>Figure <span class="sn-cnt" data-type="fig"><\/span>:<\/strong> Two subfigures in one row\./);
             assert.match(html, /Four subfigures arranged in a/);
+            assert.match(html, /Macro first[\s\S]*Macro second/);
             assert.match(html, /id="fig:sub1"/);
             assert.match(html, /id="fig:four-subfigures"/);
             assert.equal(payload.numbering.labels['fig:two-subfigures'], '1');
@@ -638,8 +910,12 @@ suite('PreviewUpdateService', () => {
             assert.equal(payload.numbering.labels['fig:four-subfigures'], '2');
             assert.equal(payload.numbering.labels['fig:sub3'], '2c');
             assert.equal(payload.numbering.labels['fig:sub4'], '2d');
-            assert.equal((html.match(/data-req-path="fig1\.pdf"/g) ?? []).length, 2);
-            assert.doesNotMatch(html, /\\(?:begin|end)\{subfigure\}|\\hfill|\\vspace|\[htbp\]/);
+            assert.equal(payload.numbering.labels['fig:macro-subfigures'], '3');
+            assert.equal(payload.numbering.labels['fig:macro1'], '3a');
+            assert.equal(payload.numbering.labels['fig:macro2'], '3b');
+            assert.equal(payload.numbering.labels['fig:macro3'], '3c');
+            assert.equal((html.match(/data-req-path="fig1\.pdf"/g) ?? []).length, 4);
+            assert.doesNotMatch(html, /\\(?:begin|end)\{subfigure\}|\\(?:subfloat|subfigure|subcaptionbox)\b|\\hfill|\\vspace|\[htbp\]/);
         }
     });
 
