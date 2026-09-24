@@ -83,6 +83,7 @@ export function createDocument(
         sourceMapSegments: [],
         metadata: {
             macros: options.macros ?? {},
+            macroAliases: [],
             colors: options.colors ?? {},
             environments: options.environments ?? {},
             tikzGlobal: options.tikzGlobal ?? '',

@@ -463,13 +463,14 @@ export function expandLatexTextMacros(
         const rules = Array.from(names)
             .map(name => [name, macros[name]] as const)
             .filter((entry): entry is readonly [string, LatexMacroDefinition] =>
-                entry[1] !== undefined && !excludedNames?.has(entry[0])
+                entry[1] !== undefined && entry[1].textExpandable !== false && !excludedNames?.has(entry[0])
             )
             .map(([name, definition]) => ({
                 name: name.slice(1),
                 allowStar: definition.allowStar,
                 optionalArgs: definition.defaultArgument === undefined ? 0 : 1,
                 requiredArgs: definition.argumentCount - (definition.defaultArgument === undefined ? 0 : 1),
+                allowTokenArguments: true,
                 render: (call: LatexCommandCall) => definition.body.replace(/#([1-9])/g, (_match, index: string, offset: number) => {
                     const argumentIndex = Number(index) - 1;
                     const argument = definition.defaultArgument === undefined
@@ -648,6 +649,7 @@ interface LatexCommandReadOptions {
     optionalArgs?: number;
     argumentOrder?: readonly LatexCommandArgumentSpec[];
     allowStar?: boolean;
+    allowTokenArguments?: boolean;
     skipWhitespace?: boolean;
 }
 
@@ -838,7 +840,17 @@ export function readLatexCommandAt(text: string, startIndex: number, options: La
 
     const requiredCount = options.requiredArgs ?? 0;
     for (let i = 0; i < requiredCount; i++) {
-        const requiredGroup = readLatexGroup(text, index, { delimiter: 'brace' });
+        let requiredGroup = readLatexGroup(text, index, { delimiter: 'brace' });
+        if (!requiredGroup && options.allowTokenArguments) {
+            const start = skipLatexWhitespace(text, index);
+            if (start >= text.length) { return undefined; }
+            let end = start + (text.codePointAt(start)! > 0xFFFF ? 2 : 1);
+            if (text[start] === '\\') {
+                end = Math.min(text.length, start + 2);
+                while (/[a-zA-Z@]/.test(text[end] ?? '')) { end++; }
+            }
+            requiredGroup = { content: text.slice(start, end), start, end, open: '{', close: '}' };
+        }
         if (!requiredGroup) { return undefined; }
         requiredArgs.push(requiredGroup);
         index = requiredGroup.end;
@@ -888,6 +900,7 @@ export function replaceLatexCommandCalls(text: string, rules: LatexCommandReplac
             optionalArgs: rule.optionalArgs,
             argumentOrder: rule.argumentOrder,
             allowStar: rule.allowStar,
+            allowTokenArguments: rule.allowTokenArguments,
             skipWhitespace: false
         });
         if (!call) {

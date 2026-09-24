@@ -101,6 +101,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
 
     public metadata: PreambleData = {
         macros: {},
+        macroAliases: [],
         colors: {},
         environments: {},
         tikzGlobal: "",
@@ -350,7 +351,7 @@ export class LatexDocument<TUri extends UriLike = UriLike> implements RenderDocu
             const match = line.match(inputRegex);
             if (match) {
                 let relPath = match[2];
-                if (!relPath.toLowerCase().endsWith('.tex')) { relPath += '.tex'; }
+                if (!/\.[^/\\]+$/.test(relPath)) { relPath += '.tex'; }
 
                 const currentDir = this.fileProvider.dir(fileUri);
                 const targetUri = this.fileProvider.resolve(currentDir, relPath);

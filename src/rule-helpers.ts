@@ -1,7 +1,7 @@
 import katex from 'katex';
 import { BibTexParser } from './bib';
 import { LATEX_CONTENT_WRAPPER_COMMANDS, LATEX_INLINE_NOTE_COMMANDS, LATEX_LAYOUT_BREAK_COMMANDS, LATEX_LAYOUT_SWITCH_COMMANDS, LATEX_OMITTED_ARGUMENT_COMMANDS, LATEX_PREVIEW_NOOP_COMMANDS, LATEX_PREVIEW_OMITTED_COMMANDS } from './patterns';
-import type { AffiliationMetadata, AuthorMetadata, BibEntry, LatexMacroDefinition, RenderContext } from './types';
+import type { AffiliationMetadata, AuthorMetadata, BibEntry, LatexMacroAlias, LatexMacroDefinition, RenderContext } from './types';
 import {
     escapeHtml,
     escapeHtmlAttribute,
@@ -17,6 +17,7 @@ import {
 } from './utils';
 
 const BLOCK_LEVEL_HTML_PATTERN = /<(?:div|section|article|table|ul|ol|li|h[1-6]|p|blockquote|pre|canvas|script)\b|class="katex-display"/i;
+const EMPTY_MACRO_ALIASES: readonly LatexMacroAlias[] = [];
 const INLINE_LAYOUT_COMMAND_PATTERN = new RegExp(`\\\\(?:quad|qquad|${LATEX_LAYOUT_SWITCH_COMMANDS.join('|')})\\b\\s*`, 'g');
 const INLINE_LAYOUT_BREAK_PATTERN = new RegExp(`\\\\(?:${LATEX_LAYOUT_BREAK_COMMANDS.join('|')})\\b\\s*`, 'g');
 const PREVIEW_COMMAND_RULES = [
@@ -55,6 +56,54 @@ const KATEX_COMPATIBILITY_MACROS = {
     '\\Hy@raisedlink@left': '#1',
     '\\mathpalette': '\\mathchoice{#1{\\displaystyle}{#2}}{#1{\\textstyle}{#2}}{#1{\\scriptstyle}{#2}}{#1{\\scriptscriptstyle}{#2}}'
 };
+const KATEX_ALIAS_CACHE = new WeakMap<readonly LatexMacroAlias[], Record<string, string | object>>();
+
+function createKatexMacros(
+    macros: Readonly<Record<string, LatexMacroDefinition>>,
+    aliases: readonly LatexMacroAlias[]
+): Record<string, string | object> {
+    const fallback = Object.fromEntries(Object.entries(macros).map(([name, definition]) => [name, katexMacroBody(definition)]));
+    if (aliases.length === 0) {
+        return { ...fallback, ...KATEX_COMPATIBILITY_MACROS };
+    }
+
+    let compiled = KATEX_ALIAS_CACHE.get(aliases);
+    if (!compiled) {
+        compiled = { ...KATEX_COMPATIBILITY_MACROS };
+        for (const alias of aliases) {
+            const previousTarget = compiled[alias.target];
+            try {
+                if (alias.targetDefinition) {
+                    compiled[alias.target] = katexMacroBody(alias.targetDefinition);
+                }
+                katex.renderToString(`\\let${alias.name}${alias.target}`, {
+                    macros: compiled,
+                    globalGroup: true,
+                    throwOnError: true,
+                    strict: 'ignore',
+                    trust: false
+                });
+            } catch {
+                // Unsupported aliases stay absent while ordinary macros keep their string fallback.
+            } finally {
+                if (alias.targetDefinition) {
+                    if (previousTarget === undefined) {
+                        delete compiled[alias.target];
+                    } else {
+                        compiled[alias.target] = previousTarget;
+                    }
+                }
+            }
+        }
+        KATEX_ALIAS_CACHE.set(aliases, compiled);
+    }
+
+    return {
+        ...fallback,
+        ...compiled,
+        ...KATEX_COMPATIBILITY_MACROS
+    };
+}
 const SIUNITX_COMMAND_ARGUMENTS = new Map<string, number>([
     ['num', 1], ['SI', 2], ['qty', 2], ['si', 1], ['unit', 1]
 ]);
@@ -310,16 +359,14 @@ export function hasBlockLevelHtml(html: string): boolean {
 export function renderKatexHtml(
     tex: string,
     displayMode: boolean,
-    macros: Readonly<Record<string, LatexMacroDefinition>>
+    macros: Readonly<Record<string, LatexMacroDefinition>>,
+    aliases: readonly LatexMacroAlias[] = EMPTY_MACRO_ALIASES
 ): string {
     try {
         tex = normalizeKatexSource(normalizeStarredMacroCalls(tex, macros));
         const options = {
             displayMode,
-            macros: {
-                ...Object.fromEntries(Object.entries(macros).map(([name, definition]) => [name, katexMacroBody(definition)])),
-                ...KATEX_COMPATIBILITY_MACROS
-            },
+            macros: createKatexMacros(macros, aliases),
             throwOnError: false,
             errorColor: '#cc0000',
             globalGroup: true,
@@ -340,7 +387,12 @@ export function renderKatexHtml(
  */
 export function renderMath(tex: string, displayMode: boolean, renderer: RenderContext): string {
     const compatibleTex = replaceLegacyRomanNumerals(tex).replace(/\\mbox\b/g, '\\text');
-    return renderer.protectHtml('math', renderKatexHtml(compatibleTex, displayMode, renderer.currentMacros));
+    return renderer.protectHtml('math', renderKatexHtml(
+        compatibleTex,
+        displayMode,
+        renderer.currentMacros,
+        renderer.metadata?.macroAliases
+    ));
 }
 
 export function renderIncludeGraphicsHtml(imgPath: string): string {
@@ -401,7 +453,12 @@ export function renderInlineLatexHtml(
 }
 
 export function unwrapLatexContentCommands(text: string): string {
-    return replaceLatexCommandCalls(text, CONTENT_WRAPPER_RULES);
+    for (let pass = 0; pass < 8; pass++) {
+        const next = replaceLatexCommandCalls(text, CONTENT_WRAPPER_RULES);
+        if (next === text) { break; }
+        text = next;
+    }
+    return text;
 }
 
 export function replaceLatexLinks(

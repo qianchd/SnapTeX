@@ -215,6 +215,39 @@ suite('PreviewUpdateService', () => {
         }
     });
 
+    test('resolves stateful macro aliases and semantic wrappers in both backend modes', async () => {
+        const source = [
+            '\\let\\oldnu\\nu',
+            '\\newcommand{\\symbolmark}{A}',
+            '\\let\\oldsymbolmark\\symbolmark',
+            '\\renewcommand{\\symbolmark}{B\\oldsymbolmark}',
+            '\\newcommand{\\newlink}[2]{{\\protect\\hyperlink{#1}{\\normalcolor #2}}}',
+            '\\def\\Hy@raisedlink@left#1{\\ifvmode#1\\else\\penalty100 #1\\fi}',
+            '\\newcommand{\\newtarget}[2]{\\Hy@raisedlink@left{\\hypertarget{#1}{}}#2}',
+            '\\newcommand{\\linkofproof}[1]{\\textbf{of \\ref{#1}. }\\newtarget{proof:#1}}',
+            '\\renewcommand{\\nu}{\\newlink{def:nu}{\\oldnu}}',
+            '\\begin{document}',
+            'A \\newtarget{target}visible target, $\\nu$, and $\\symbolmark$.',
+            '\\begin{proof}\\linkofproof{thm:x}',
+            'Visible proof body.',
+            '\\end{proof}',
+            '\\end{document}'
+        ].join('\n');
+
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+            const visibleHtml = html.replace(/<annotation\b[\s\S]*?<\/annotation>/g, '');
+            const visibleText = visibleHtml.replace(/<[^>]+>/g, '');
+
+            assert.match(visibleHtml, /visible target/);
+            assert.match(visibleText, /BA/);
+            assert.doesNotMatch(visibleHtml, /\\(?:newtarget|oldnu|Hy@raisedlink@left|hypertarget|penalty|ifvmode|fi)/);
+            assert.doesNotMatch(html, /katex-error/);
+        }
+    });
+
     test('preserves nested math, TeX shorthand, and preamble macros in AST mode', async () => {
         const service = new PreviewUpdateService(new MemoryFileProvider());
         const payload = await service.render(uri, [

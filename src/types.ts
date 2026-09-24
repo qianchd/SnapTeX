@@ -44,10 +44,18 @@ export interface LatexMacroDefinition {
     argumentCount: number;
     defaultArgument?: string;
     allowStar?: boolean;
+    textExpandable?: boolean;
+}
+
+export interface LatexMacroAlias {
+    name: string;
+    target: string;
+    targetDefinition?: LatexMacroDefinition;
 }
 
 export interface PreambleData {
     macros: Record<string, LatexMacroDefinition>;
+    macroAliases: LatexMacroAlias[];
     colors: Record<string, string>;
     environments: Record<string, PreambleEnvironmentDefinition>;
     tikzGlobal: string;
@@ -60,7 +68,7 @@ export interface PreambleData {
     custom: Record<string, string>;
 }
 
-export type PreambleMetadata = Omit<PreambleData, 'macros' | 'colors' | 'environments' | 'tikzGlobal' | 'tikzMacroMap'>;
+export type PreambleMetadata = Omit<PreambleData, 'macros' | 'macroAliases' | 'colors' | 'environments' | 'tikzGlobal' | 'tikzMacroMap'>;
 
 export interface MetadataResult {
     data: PreambleData;

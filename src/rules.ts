@@ -18,7 +18,7 @@ import {
     resolveLatexTextTransforms,
     stripLatexComments
 } from './utils';
-import { BlockDependencyRule, LatexMacroDefinition, MetadataExtractor, PreambleEnvironmentDefinition, PreprocessRule, RenderContext, SplitterConfig, SplitterRule } from './types';
+import { BibEntry, BlockDependencyRule, LatexMacroDefinition, MetadataExtractor, PreambleEnvironmentDefinition, PreprocessRule, RenderContext, SplitterConfig, SplitterRule } from './types';
 import { BibTexParser } from './bib';
 import {
     REGEX_STR,
@@ -29,6 +29,7 @@ import {
     R_BIBLIOGRAPHY_STYLE,
     R_PRINTBIBLIOGRAPHY,
     R_THEBIBLIOGRAPHY,
+    LATEX_CONTENT_WRAPPER_COMMANDS,
     LATEX_DECLARATION_STYLE_COMMANDS,
     LATEX_DIMENSION_SOURCE,
     LATEX_INLINE_NOTE_COMMANDS,
@@ -65,7 +66,9 @@ function replaceLatexLinkCommands(text: string, renderer: RenderContext): string
     }, html => renderer.protectHtml('link', html));
 }
 
-const SEMANTIC_MACROS = new Set<string>(SECTION_LEVELS.map(name => `\\${name}`));
+const SEMANTIC_MACROS = new Set<string>(
+    [...SECTION_LEVELS, ...Object.keys(LATEX_CONTENT_WRAPPER_COMMANDS)].map(name => `\\${name}`)
+);
 
 function replaceMathRefs(content: string, renderer: RenderContext): string {
     return content.replace(R_REF, (_match, reftype, key) => {
@@ -561,14 +564,21 @@ export const DEFAULT_RENDER_RULES: PreprocessRule[] = [
                 tex => renderMath(tex, false, renderer),
                 renderer.metadata?.colors
             );
+            const renderEntries = (entries: Iterable<BibEntry>) => {
+                const items = Array.from(entries);
+                return items.length
+                    ? renderer.protectHtml('bib', renderBibliographyItemsHtml(items.map(entry => ({ key: entry.key, entry })), renderer, renderText))
+                    : '';
+            };
             text = text.replace(R_BIBLIOGRAPHY_STYLE, '');
             text = text.replace(new RegExp(R_ADDBIBRESOURCE, 'g'), '');
-            text = text.replace(new RegExp(R_THEBIBLIOGRAPHY, 'gi'), (_match, content) => {
-                const entries = Array.from(BibTexParser.parseBibItems(content).values());
-                return entries.length
-                    ? renderer.protectHtml('bib', renderBibliographyItemsHtml(entries.map(entry => ({ key: entry.key, entry })), renderer, renderText))
-                    : '';
-            });
+            text = text.replace(new RegExp(R_THEBIBLIOGRAPHY, 'gi'), (_match, content) =>
+                renderEntries(BibTexParser.parseBibItems(content).values())
+            );
+            text = text.replace(/\\begin\{thebibliography\}(?:\{[^}]*\})?[\s\S]*/i, () =>
+                renderEntries(renderer.bibEntries.values())
+            );
+            text = text.replace(/\\end\{thebibliography\}/gi, '');
             text = text.replace(new RegExp(R_BIBLIOGRAPHY, 'g'), () => {
                 return renderer.protectHtml('bib', renderCitedBibliographyHtml(renderer.getCitedKeys(), renderer.bibEntries, renderer, renderText));
             });

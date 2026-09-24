@@ -179,6 +179,7 @@ export const LATEX_CONTENT_WRAPPER_COMMANDS: Readonly<Record<string, LatexConten
     texorpdfstring: { requiredArgs: 2, contentArg: 0 },
     hyperlink: { requiredArgs: 2, contentArg: 1 },
     hypertarget: { requiredArgs: 2, contentArg: 1 },
+    'Hy@raisedlink@left': { requiredArgs: 1, contentArg: 0 },
     enquote: { requiredArgs: 1, contentArg: 0, optionalArgs: 1, prefix: '“', suffix: '”' }
 };
 

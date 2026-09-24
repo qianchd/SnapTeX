@@ -113,13 +113,14 @@ export interface AstCommandArguments {
 }
 
 export function createDefaultAstRenderContext(options: AstRenderContextOptions = {}): AstRenderContext {
-    const { sourceText = '', currentMacros = {}, ...overrides } = options;
+    const { sourceText = '', currentMacros = {}, metadata, ...overrides } = options;
 
     return {
+        metadata,
         bibEntries: new Map(),
         escapeHtml,
         ...sourceReaders(sourceText),
-        renderMath: (tex, displayMode) => renderKatexHtml(tex, displayMode, currentMacros),
+        renderMath: (tex, displayMode) => renderKatexHtml(tex, displayMode, currentMacros, metadata?.macroAliases),
         renderLabel: createHiddenLabelAnchor,
         renderRef: (labels, type) => renderReferenceLinksHtml(labels, type),
         resolveCitation: () => 1,

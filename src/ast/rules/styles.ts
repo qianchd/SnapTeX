@@ -1,8 +1,9 @@
-import { hasBlockLevelHtml } from '../../rule-helpers';
+import { hasBlockLevelHtml, unwrapLatexContentCommands } from '../../rule-helpers';
 import { stripLatexDefinitions } from '../../metadata';
-import { escapeHtmlAttribute, expandLatexTextMacros, latexColorStyle, latexTextStyleCss } from '../../utils';
+import type { LatexMacroDefinition } from '../../types';
+import { escapeHtmlAttribute, expandLatexTextMacros, latexColorStyle, latexTextStyleCss, readLatexCommandAt } from '../../utils';
 import type { SnaptexAstNode } from '../types';
-import { argumentText, astNodesToText, firstSignificantNode, isGroupNode, isMacroNode, readOptionalMacroArgument, readRequiredMacroArgument } from '../visit-utils';
+import { argumentText, astNodesToText, firstSignificantNode, isGroupNode, isMacroNode, isWhitespaceOrCommentNode, readOptionalMacroArgument, readRequiredMacroArgument } from '../visit-utils';
 import { readAstCommandArguments, readAstCommandNodeArguments, renderInlineLatexSource, type AstRenderRule } from './index';
 
 function wrapStyledHtml(html: string, style: string): string {
@@ -92,20 +93,46 @@ export const AST_USER_MACRO_RULE: AstRenderRule = (input, context) => {
     const macros = context.metadata?.macros ?? {};
     const name = `\\${input.node.content}`;
     const definition = macros[name];
-    if (!definition) { return undefined; }
+    if (!definition || definition.textExpandable === false) { return undefined; }
     const requiredArgCount = definition.argumentCount - (definition.defaultArgument === undefined ? 0 : 1);
     const args = definition.argumentCount > 0
         ? readAstCommandArguments(input, requiredArgCount)
         : { requiredArgs: [], consumedNodes: 1 };
-    if (args.requiredArgs.length < requiredArgCount) { return undefined; }
-
-    const source = context.sourceSlice(input.node)
-        + input.siblings.slice(input.index + 1, input.index + args.consumedNodes)
+    let consumedNodes = args.consumedNodes;
+    let source = context.sourceSlice(input.node)
+        + input.siblings.slice(input.index + 1, input.index + consumedNodes)
             .map(context.sourceSlice)
             .join('');
-    const expanded = stripLatexDefinitions(expandLatexTextMacros(source, macros));
+    const expand = (value: string) =>
+        unwrapLatexContentCommands(stripLatexDefinitions(expandLatexTextMacros(value, macros)));
+    let expanded = expand(source);
+    while (hasIncompleteMacroCall(expanded, macros)) {
+        let cursor = input.index + consumedNodes;
+        while (isWhitespaceOrCommentNode(input.siblings[cursor])) { cursor++; }
+        if (!input.siblings[cursor]) { break; }
+        source += input.siblings.slice(input.index + consumedNodes, cursor + 1).map(context.sourceSlice).join('');
+        consumedNodes = cursor - input.index + 1;
+        expanded = expand(source);
+    }
     return {
         html: expanded === source ? renderInlineLatexSource(source, context) : input.renderSource(expanded),
-        consumedNodes: args.consumedNodes
+        consumedNodes
     };
 };
+
+function hasIncompleteMacroCall(text: string, macros: Readonly<Record<string, LatexMacroDefinition>>): boolean {
+    for (const match of text.matchAll(/\\[a-zA-Z0-9@]+/g)) {
+        const definition = macros[match[0]];
+        if (!definition || definition.textExpandable === false || definition.argumentCount === 0) { continue; }
+        if (!readLatexCommandAt(text, match.index!, {
+            name: match[0].slice(1),
+            allowStar: definition.allowStar,
+            optionalArgs: definition.defaultArgument === undefined ? 0 : 1,
+            requiredArgs: definition.argumentCount - (definition.defaultArgument === undefined ? 0 : 1),
+            skipWhitespace: false
+        })) {
+            return true;
+        }
+    }
+    return false;
+}

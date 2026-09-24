@@ -1,5 +1,5 @@
-import { AffiliationMetadata, AuthorMetadata, LatexMacroDefinition, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleEnvironmentDefinition, PreambleMetadata, TextRange } from './types';
-import { LATEX_DECLARATION_STYLE_COMMANDS, REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
+import { AffiliationMetadata, AuthorMetadata, LatexMacroAlias, LatexMacroDefinition, MetadataExtractionResult, MetadataExtractor, MetadataResult, PreambleData, PreambleEnvironmentDefinition, PreambleMetadata, TextRange } from './types';
+import { LATEX_CONTENT_WRAPPER_COMMANDS, LATEX_DECLARATION_STYLE_COMMANDS, REGEX_STR, TIKZ_GLOBAL_COMMANDS } from './patterns';
 import { countLatexMacroArguments, escapeRegExp, findCommand, latexColorModelToCss, maskLatexFalseBranches, readLatexCommandAt, readLatexGroup, resolveLatexTextTransforms, skipLatexWhitespace, stripLatexComments } from './utils';
 
 type MacroDefinitionCommand = 'newcommand' | 'renewcommand' | 'providecommand' | 'algnewcommand' | 'def' | 'gdef'
@@ -253,10 +253,24 @@ function extractKatexMacro(header: MacroDefinitionHeader): { name: string; defin
         definition: {
             body: definition,
             argumentCount: header.argCount,
+            ...(!isDeclarativeMacroBody(definition) ? { textExpandable: false } : {}),
             ...(header.defaultArgument !== undefined ? { defaultArgument: header.defaultArgument } : {}),
             ...(/^DeclarePairedDelimiter/.test(header.command) ? { allowStar: true } : {})
         }
     };
+}
+
+function isDeclarativeMacroBody(body: string): boolean {
+    if (/\\(?:if\w*|else|fi|let|[egx]?def|global|csname|endcsname|expandafter|penalty)\b/.test(body)) {
+        return false;
+    }
+    return Array.from(body.matchAll(/\\([a-zA-Z@]+)/g), match => match[1])
+        .every(name => !name.includes('@') || LATEX_CONTENT_WRAPPER_COMMANDS[name] !== undefined);
+}
+
+function readMacroAlias(fullDefinition: string): Pick<LatexMacroAlias, 'name' | 'target'> | undefined {
+    const match = /^\\let\s*(\\(?:[a-zA-Z@]+|.))\s*=?\s*(\\(?:[a-zA-Z@]+|.)|[^\s])/.exec(fullDefinition);
+    return match ? { name: match[1], target: match[2] } : undefined;
 }
 
 function extractColorDefinition(fullDefinition: string): { name: string; color: string } | undefined {
@@ -800,6 +814,8 @@ export function extractMetadata(
     const tikzGlobalParts: string[] = [];
     const tikzMacroMap = new Map<string, string>();
     const macros: Record<string, LatexMacroDefinition> = {};
+    const activeMacros: Record<string, LatexMacroDefinition> = {};
+    const macroAliases: LatexMacroAlias[] = [];
     const colors: Record<string, string> = {};
     const environments: Record<string, PreambleEnvironmentDefinition> = {};
     const usedMacros = new Set(cleanedText.match(/\\[a-zA-Z@]+/g) ?? []);
@@ -815,8 +831,33 @@ export function extractMetadata(
         ),
         ...definitionRecords.map(record => ({ record, imported: false }))
     ];
+    const importedHeaders = new Map(records.flatMap(({ record, imported }) => {
+        const header = imported && record.command !== 'let' ? readMacroDefinitionHeader(record.fullDef) : undefined;
+        return header ? [[header.name, header] as const] : [];
+    }));
+    const relevantMacros = new Set(usedMacros);
+    for (const name of relevantMacros) {
+        for (const match of importedHeaders.get(name)?.body.content.matchAll(/\\[a-zA-Z@]+/g) ?? []) {
+            relevantMacros.add(match[0]);
+        }
+    }
+    const aliasTargets = new Set(records.flatMap(({ record }) => {
+        const alias = record.command === 'let' ? readMacroAlias(record.fullDef) : undefined;
+        return alias ? [alias.target] : [];
+    }));
     for (const { record, imported } of records) {
         const { command, fullDef } = record;
+
+        if (command === 'let') {
+            const alias = readMacroAlias(fullDef);
+            if (alias) {
+                macroAliases.push({ ...alias, targetDefinition: activeMacros[alias.target] });
+                if (activeMacros[alias.target]) {
+                    activeMacros[alias.name] = activeMacros[alias.target];
+                }
+            }
+            continue;
+        }
 
         if (command === 'definecolor') {
             const colorDefinition = extractColorDefinition(fullDef);
@@ -841,18 +882,23 @@ export function extractMetadata(
         }
 
         const header = readMacroDefinitionHeader(fullDef);
-        if (!header || (imported && (!usedMacros.has(header.name)
-            || /\\[a-zA-Z]*@|\\(?:if\w*|else|fi|let|[egx]?def|global|csname|endcsname|expandafter)\b/.test(header.body.content)))) {
+        if (!header || (imported && !relevantMacros.has(header.name) && !aliasTargets.has(header.name))) {
             continue;
         }
 
         const finalDef = transpileToDef(header, fullDef);
+        const katexMacro = extractKatexMacro(header);
+        if (katexMacro && (header.command !== 'providecommand' || activeMacros[katexMacro.name] === undefined)) {
+            activeMacros[katexMacro.name] = katexMacro.definition;
+        }
+        if (imported && !isDeclarativeMacroBody(header.body.content)) {
+            continue;
+        }
         const tikzName = header.command === 'DeclareMathOperator' ? null : header.name;
         if (tikzName && !tikzMacroMap.has(tikzName)) {
             tikzMacroMap.set(tikzName, finalDef);
         }
 
-        const katexMacro = extractKatexMacro(header);
         if (katexMacro && (header.command !== 'providecommand' || macros[katexMacro.name] === undefined)) {
             macros[katexMacro.name] = katexMacro.definition;
         }
@@ -860,8 +906,20 @@ export function extractMetadata(
 
     const tikzGlobal = tikzGlobalParts.join('\n');
     cleanedText = blankOutRanges(cleanedText, definitionRecords);
+    const aliasReferences = new Set(usedMacros);
+    for (const definition of Object.values(activeMacros)) {
+        for (const match of definition.body.matchAll(/\\[a-zA-Z@]+/g)) {
+            aliasReferences.add(match[0]);
+        }
+    }
+    for (let i = macroAliases.length - 1; i >= 0; i--) {
+        if (aliasReferences.has(macroAliases[i].name)) {
+            aliasReferences.add(macroAliases[i].target);
+        }
+    }
     const data: PreambleData = {
         macros,
+        macroAliases: macroAliases.filter(alias => aliasReferences.has(alias.name)),
         colors,
         environments,
         tikzGlobal,

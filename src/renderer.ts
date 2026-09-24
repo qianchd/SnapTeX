@@ -406,7 +406,12 @@ export class SmartRenderer {
 
         this.protector.reset();
 
-        const renderDefinitionsJson = JSON.stringify([doc.metadata.macros, doc.metadata.colors, doc.metadata.environments]);
+        const renderDefinitionsJson = JSON.stringify([
+            doc.metadata.macros,
+            doc.metadata.macroAliases,
+            doc.metadata.colors,
+            doc.metadata.environments
+        ]);
         const renderDefinitionsChanged = renderDefinitionsJson !== this.lastRenderDefinitionsJson;
         if (renderDefinitionsChanged) {
             this.rebuildMarkdownEngine(doc.metadata.macros);

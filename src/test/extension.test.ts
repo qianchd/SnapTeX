@@ -126,6 +126,38 @@ suite('LatexDocument source mapping', () => {
         assert.equal(result.blockSpans.length, 1);
     });
 
+    test('preserves explicit input file extensions', async () => {
+        const mainUri = vscode.Uri.file('/project/main.tex');
+        const bblUri = vscode.Uri.file('/project/references.bbl');
+        const bibItems = Array.from({ length: 300 }, (_unused, index) =>
+            `\\bibitem{entry${index}} Author ${index}. Paper ${index}.`
+        );
+        const provider = new MemoryFileProvider(new Map([
+            [normalizeUri(mainUri), [
+                '\\begin{document}',
+                'See \\cite{entry0}.',
+                '\\input{references.bbl}',
+                '\\end{document}'
+            ].join('\n')],
+            [normalizeUri(bblUri), [
+                '\\begin{thebibliography}{300}',
+                ...bibItems,
+                '\\end{thebibliography}'
+            ].join('\n')]
+        ]));
+
+        const doc = new LatexDocument(provider);
+        const result = await doc.parse(mainUri);
+        doc.applyResult(result);
+        const payload = await new SmartRenderer().renderAsync(doc);
+        const html = payload.htmls?.join('\n') ?? '';
+
+        assert.ok(result.bibEntries.has('entry0'));
+        assert.doesNotMatch(result.diagnostics.map(item => item.message).join('\n'), /Missing input file/);
+        assert.match(html, /class="latex-bibliography-list"/);
+        assert.doesNotMatch(html, /\\(?:begin|end)\{thebibliography\}/);
+    });
+
     test('uses preview anchors while preserving included-file source mapping', async () => {
         const mainUri = vscode.Uri.file('/project/main.tex');
         const sectionUri = vscode.Uri.file('/project/section.tex');
