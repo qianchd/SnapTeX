@@ -21,6 +21,8 @@ let currentRenderedUri: vscode.Uri | undefined;
 let activeCursorScreenRatio = 0.5;
 let suppressTextToPreviewUntil = 0;
 let suppressPreviewToTextUntil = 0;
+let previewControlsSync = false;
+let previewTarget: { editor: vscode.TextEditor; line: number; start?: number; end?: number } | undefined;
 
 const isAutoScrollSyncEnabled = () => vscode.workspace.getConfiguration('snaptex').get<boolean>('autoScrollSync', true);
 
@@ -66,6 +68,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     const triggerSyncToPreview = (editor: vscode.TextEditor, targetLine: number, isAutoScroll: boolean, viewRatio: number, targetChar?: number) => {
         if (!TexPreviewPanel.currentPanel) {return;}
+        if (isAutoScroll && previewControlsSync) {return;}
+        if (!isAutoScroll) {
+            previewControlsSync = false;
+            previewTarget = undefined;
+        }
 
         const sourceUri = editor.document.uri.toString();
         const syncData = updateService.getPreviewSyncData(sourceUri, targetLine, targetChar);
@@ -87,7 +94,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const shouldSuppressTextToPreview = () => Date.now() < suppressTextToPreviewUntil;
     const canAutoSyncTextToPreview = () => {
-        if (!TexPreviewPanel.currentPanel || !isAutoScrollSyncEnabled()) { return false; }
+        if (!TexPreviewPanel.currentPanel || !isAutoScrollSyncEnabled() || previewControlsSync) { return false; }
         if (!shouldSuppressTextToPreview()) { return true; }
         scheduleAutoSyncToPreview.cancel();
         return false;
@@ -99,12 +106,14 @@ export function activate(context: vscode.ExtensionContext) {
         viewRatio: number,
         targetChar?: number
     ) => {
-        if (!shouldSuppressTextToPreview()) {
+        if (!previewControlsSync && !shouldSuppressTextToPreview()) {
             void triggerSyncToPreview(editor, targetLine, true, viewRatio, targetChar);
         }
     }, getAutoScrollDelay);
 
     const beginPreviewToEditorSync = (message: RevealLineMessage | SyncScrollMessage) => {
+        previewControlsSync = true;
+        previewTarget = undefined;
         scheduleAutoSyncToPreview.cancel();
         suppressTextToPreviewUntil = Date.now() + getSyncSuppressionDuration();
         return updateService.getSourceSyncData(message.index, message.ratio, message);
@@ -260,8 +269,25 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (editor) {
             const line = Math.max(0, Math.min(sourceLoc.line, editor.document.lineCount - 1));
-            editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.InCenter);
+            const visible = editor.visibleRanges[0];
+            const centered = visible && Math.abs(line - (visible.start.line + visible.end.line) / 2)
+                <= (visible.end.line - visible.start.line) / 4;
+            previewTarget = {
+                editor, line,
+                start: centered ? visible?.start.line : undefined,
+                end: centered ? visible?.end.line : undefined
+            };
+            if (!centered) {
+                editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.InCenter);
+            }
         }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.previewScrollStarted', () => {
+        previewControlsSync = true;
+        previewTarget = undefined;
+        suppressPreviewToTextUntil = 0;
+        scheduleAutoSyncToPreview.cancel();
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('snaptex.internal.previewLayoutChanged', () => {
@@ -272,7 +298,15 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(e => {
-        if (e.textEditor !== vscode.window.activeTextEditor || isEditorScrolling) {return;}
+        if (e.textEditor !== vscode.window.activeTextEditor) {return;}
+        const userSelection = e.kind === vscode.TextEditorSelectionChangeKind.Mouse
+            || e.kind === vscode.TextEditorSelectionChangeKind.Keyboard;
+        if (userSelection) {
+            previewControlsSync = false;
+            previewTarget = undefined;
+            suppressTextToPreviewUntil = 0;
+        }
+        if (isEditorScrolling && !userSelection) {return;}
 
         const sel = e.selections[0].active;
         const visible = e.textEditor.visibleRanges[0];
@@ -287,6 +321,22 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(e => {
+        if (e.textEditor !== vscode.window.activeTextEditor) { return; }
+        if (previewControlsSync) {
+            const visible = e.visibleRanges[0];
+            if (previewTarget?.editor === e.textEditor && visible) {
+                if (previewTarget.start === undefined
+                    && visible.start.line <= previewTarget.line && previewTarget.line <= visible.end.line) {
+                    previewTarget.start = visible.start.line;
+                    previewTarget.end = visible.end.line;
+                    return;
+                }
+                if (previewTarget.start === visible.start.line && previewTarget.end === visible.end.line) { return; }
+            }
+            if (shouldSuppressTextToPreview()) { return; }
+            previewControlsSync = false;
+            previewTarget = undefined;
+        }
         if (!canAutoSyncTextToPreview()) { return; }
 
         isEditorScrolling = true;
@@ -309,6 +359,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e => {
         if (vscode.window.activeTextEditor && e.document === vscode.window.activeTextEditor.document) {
+            previewControlsSync = false;
+            previewTarget = undefined;
             suppressPreviewToTextUntil = Date.now() + getSyncSuppressionDuration();
             const currentConfig = vscode.workspace.getConfiguration('snaptex');
             if (currentConfig.get<boolean>('livePreview', true)) {

@@ -684,6 +684,41 @@ suite('StandaloneHost', () => {
         }
     });
 
+    test('keeps preview-driven scrolling from rebounding through the editor', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        let cancelledSyncs = 0;
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, {},
+            () => { cancelledSyncs += 1; });
+
+        try {
+            await host.loadProject({
+                files: [{ path: '/main.tex', text: '\\begin{document}\nFirst paragraph.\nSecond paragraph.\n\\end{document}' }],
+                rootPath: '/main.tex'
+            });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            host.syncEditorSelection(1, 0, 'First paragraph.');
+            const scrollCount = () => messages.filter(message => message.command === HostToPreviewCommand.ScrollToBlock).length;
+            assert.equal(scrollCount(), 1);
+
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewScrollStarted });
+            host.syncEditorSelection(2, 0, 'Second paragraph.');
+            assert.equal(scrollCount(), 1);
+            assert.equal(cancelledSyncs, 1);
+
+            host.beginEditorInteraction();
+            host.syncEditorSelection(2, 0, 'Second paragraph.');
+            assert.equal(scrollCount(), 2);
+
+            host.setPaneVisibility(false, true);
+            host.syncEditorSelection(0, 0, '\\begin{document}');
+            assert.equal(scrollCount(), 2);
+        } finally {
+            restoreWindow();
+        }
+    });
+
     test('reveals preview double-click locations in the active editor', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];

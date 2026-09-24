@@ -447,6 +447,7 @@ const previewBridge = getPreviewBridge();
             this.pendingScroll = null;
             this.isFirstLoad = true;
             this.lastScrollTime = 0;
+            this.lastUserScrollSignal = 0;
             this.scrollCommandSeq = 0;
             this.renderCompletionSeq = 0;
             this.previewLayoutSyncSuppressedUntil = 0;
@@ -509,12 +510,18 @@ const previewBridge = getPreviewBridge();
         bindEvents() {
             window.addEventListener('message', event => this.onMessage(event));
             const deferHeightWarmup = () => this.deferHeightWarmup();
+            const previewPane = document.getElementById('preview-pane');
+            const isPreviewInput = event => !previewPane || (event.target instanceof Node && previewPane.contains(event.target));
             ['wheel', 'touchmove', 'pointerdown'].forEach(eventName => {
-                window.addEventListener(eventName, deferHeightWarmup, { passive: true });
+                window.addEventListener(eventName, event => {
+                    deferHeightWarmup();
+                    if (isPreviewInput(event)) this.beginUserScroll();
+                }, { passive: true });
             });
             window.addEventListener('keydown', event => {
                 if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
                     deferHeightWarmup();
+                    if (isPreviewInput(event)) this.beginUserScroll();
                 }
             });
             window.addEventListener('scroll', () => {
@@ -535,6 +542,23 @@ const previewBridge = getPreviewBridge();
 
         getSyncSuppressionDuration() {
             return Math.max(500, this.config.autoScrollDelay + 300);
+        }
+
+        beginUserScroll() {
+            if (this.interactiveResizeActive) return;
+            this.scrollCommandSeq++;
+            if (this.pendingScroll?.auto) this.pendingScroll = null;
+            if (this.state === 'SCROLLING_AUTO') {
+                if (this.scrollTimeout !== null) clearTimeout(this.scrollTimeout);
+                this.scrollTimeout = null;
+                this.state = 'IDLE';
+            }
+            this.previewLayoutSyncSuppressedUntil = 0;
+            const now = Date.now();
+            if (now - this.lastUserScrollSignal < 100) return;
+            this.lastScrollTime = 0;
+            this.lastUserScrollSignal = now;
+            previewBridge.postMessage({ command: PreviewToHostCommand.PreviewScrollStarted });
         }
 
         getPageWidth() {

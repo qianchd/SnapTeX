@@ -126,6 +126,7 @@ export class StandaloneHost {
     private previewVisible = true;
     private pendingEditorScroll: { position: number; viewRatio: number } | undefined;
     private pendingPreviewSync: { line: number; character: number; lineText?: string; viewRatio: number; auto: boolean } | undefined;
+    private previewControlsSync = false;
     private programmaticEditorUpdate = false;
     private suppressNextSelectionSync = false;
     private suppressEditorToPreviewUntil = 0;
@@ -171,6 +172,7 @@ export class StandaloneHost {
         this.labels = [];
         this.pendingEditorScroll = undefined;
         this.pendingPreviewSync = undefined;
+        this.previewControlsSync = false;
         this.savedTexts.clear();
         this.dirtyPaths.clear();
         this.conflictedPaths.clear();
@@ -486,7 +488,8 @@ export class StandaloneHost {
     }
 
     syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5, auto = true) {
-        if ((auto && !this.settings.autoScrollSync) || !this.previewReady) {
+        if (!auto) { this.beginEditorInteraction(); }
+        if ((auto && (!this.settings.autoScrollSync || !this.editorVisible || this.previewControlsSync)) || !this.previewReady) {
             return;
         }
         if (!this.previewVisible) {
@@ -569,6 +572,17 @@ export class StandaloneHost {
         this.cancelPendingEditorSync();
     }
 
+    beginPreviewScroll() {
+        this.previewControlsSync = true;
+        this.suppressPreviewToEditorUntil = 0;
+        this.cancelEditorToPreviewSync();
+    }
+
+    beginEditorInteraction() {
+        this.previewControlsSync = false;
+        this.suppressEditorToPreviewUntil = 0;
+    }
+
     private async openSourceForPreview(index: number, ratio: number, options: SourceSyncOptions = {}) {
         const source = this.updateService.getSourceSyncData(index, ratio, options);
         if (!source) {
@@ -615,7 +629,7 @@ export class StandaloneHost {
             return;
         }
 
-        this.cancelEditorToPreviewSync();
+        this.beginPreviewScroll();
         const target = await this.openSourceForPreview(index, ratio, options);
         if (!target || Date.now() < this.suppressPreviewToEditorUntil) {
             return;
@@ -628,6 +642,7 @@ export class StandaloneHost {
 
     handleEditorUpdate() {
         if (this.programmaticEditorUpdate) { return; }
+        this.beginEditorInteraction();
         const text = this.editorView.state.doc.toString();
         this.persistActiveEditorText(text);
         this.scheduleAutosave();
@@ -656,6 +671,9 @@ export class StandaloneHost {
                 break;
             case PreviewToHostCommand.SyncScroll:
                 void this.syncPreviewScroll(message.index, message.ratio, message);
+                break;
+            case PreviewToHostCommand.PreviewScrollStarted:
+                this.beginPreviewScroll();
                 break;
             case PreviewToHostCommand.PreviewLayoutChanged: {
                 const duration = Math.max(500, this.settings.autoScrollDelayMs + 300);
@@ -813,6 +831,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     };
 
     const scheduleEditorScrollSync = (view: EditorView) => {
+        if (view.scrollDOM.clientHeight <= 0) { return; }
         const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop + view.scrollDOM.clientHeight * activeCursorScreenRatio);
         const line = view.state.doc.lineAt(block.from);
         pendingSelection = {
@@ -859,11 +878,15 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
                             pendingSelection = undefined;
                             return;
                         }
+                        host?.beginEditorInteraction();
                         updateCursorScreenRatio(update.view);
                         scheduleEditorSelectionSync(update.view, true);
                     }
                 }),
                 EditorView.domEventHandlers({
+                    pointerdown: () => { host?.beginEditorInteraction(); },
+                    wheel: () => { host?.beginEditorInteraction(); },
+                    keydown: () => { host?.beginEditorInteraction(); },
                     scroll: (_event, view) => {
                         scheduleEditorScrollSync(view);
                     }

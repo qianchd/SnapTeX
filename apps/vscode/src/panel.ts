@@ -236,6 +236,9 @@ export class TexPreviewPanel {
                     case PreviewToHostCommand.SyncScroll:
                         vscode.commands.executeCommand('snaptex.internal.syncScroll', message);
                         break;
+                    case PreviewToHostCommand.PreviewScrollStarted:
+                        vscode.commands.executeCommand('snaptex.internal.previewScrollStarted');
+                        break;
                     case PreviewToHostCommand.PreviewLayoutChanged:
                         vscode.commands.executeCommand('snaptex.internal.previewLayoutChanged');
                         break;

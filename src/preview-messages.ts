@@ -11,6 +11,7 @@ export const PreviewToHostCommand = {
     PreviewLoaded: 'previewLoaded',
     RevealLine: 'revealLine',
     SyncScroll: 'syncScroll',
+    PreviewScrollStarted: 'previewScrollStarted',
     PreviewLayoutChanged: 'previewLayoutChanged',
     RequestPdf: 'requestPdf',
     RequestBlockHtml: 'requestBlockHtml'
@@ -47,6 +48,10 @@ interface PreviewLayoutChangedMessage {
     command: typeof PreviewToHostCommand.PreviewLayoutChanged;
 }
 
+interface PreviewScrollStartedMessage {
+    command: typeof PreviewToHostCommand.PreviewScrollStarted;
+}
+
 export interface RequestPdfMessage {
     command: typeof PreviewToHostCommand.RequestPdf;
     id: string;
@@ -68,6 +73,7 @@ export type PreviewToHostMessage =
     | PreviewLoadedMessage
     | RevealLineMessage
     | SyncScrollMessage
+    | PreviewScrollStartedMessage
     | PreviewLayoutChangedMessage
     | RequestPdfMessage
     | RequestBlockHtmlMessage;
@@ -151,6 +157,7 @@ export function isPreviewToHostMessage(value: unknown): value is PreviewToHostMe
 
     switch (value.command) {
         case PreviewToHostCommand.PreviewLoaded:
+        case PreviewToHostCommand.PreviewScrollStarted:
         case PreviewToHostCommand.PreviewLayoutChanged:
             return true;
         case PreviewToHostCommand.RevealLine:
