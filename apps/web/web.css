@@ -54,6 +54,7 @@ body {
 }
 
 body[data-theme="dark"] {
+    color-scheme: dark;
     --snaptex-shell-bg: #111827;
     --snaptex-ui-fg: #e5e7eb;
     --snaptex-toolbar-bg: #172033;
@@ -117,11 +118,105 @@ body[data-theme="rose"] {
     --snaptex-active-fg: #be123c;
 }
 
+body[data-theme="solarized-light"] {
+    --snaptex-shell-bg: #eee8d5;
+    --snaptex-ui-fg: #000000;
+    --snaptex-toolbar-bg: #eee8d5;
+    --snaptex-panel-bg: #f7f0de;
+    --snaptex-editor-bg: #fdf6e3;
+    --snaptex-editor-fg: #000000;
+    --snaptex-border: #d3c6a5;
+    --snaptex-subtle-border: #e5dac0;
+    --snaptex-muted: #657b83;
+    --snaptex-editor-active-line-bg: #f4edd8;
+    --snaptex-editor-selection-bg: rgba(38, 139, 210, 0.22);
+    --snaptex-button-fg: #000000;
+    --snaptex-hover-bg: #e8dfc9;
+    --snaptex-active-bg: #d5e8e4;
+    --snaptex-active-fg: #006f86;
+    --snaptex-cm-keyword: #6c8000;
+    --snaptex-cm-atom: #b04020;
+    --snaptex-cm-operator: #a3005a;
+    --snaptex-cm-bracket: #586e75;
+    --snaptex-cm-string: #087f74;
+    --snaptex-cm-variable: #166a9e;
+    --snaptex-cm-macro: #095f9c;
+    --snaptex-cm-label: #087f74;
+    --snaptex-cm-comment: #657b83;
+    --snaptex-cm-meta: #70439a;
+    --snaptex-cm-invalid: #c43a25;
+    --vscode-textLink-foreground: #095f9c;
+    --vscode-textLink-activeForeground: #006f86;
+}
+
+body[data-theme="skyblue"] {
+    --snaptex-shell-bg: #e9f1e8;
+    --snaptex-ui-fg: #24352b;
+    --snaptex-toolbar-bg: #e1ece0;
+    --snaptex-panel-bg: #eff5ed;
+    --snaptex-editor-bg: #fbfdf9;
+    --snaptex-editor-fg: #1f2e24;
+    --snaptex-border: #b8c9b5;
+    --snaptex-subtle-border: #d9e3d5;
+    --snaptex-muted: #596b5b;
+    --snaptex-editor-active-line-bg: #f2f7ef;
+    --snaptex-editor-selection-bg: rgba(76, 124, 83, 0.22);
+    --snaptex-button-fg: #24352b;
+    --snaptex-hover-bg: #e7f0e4;
+    --snaptex-active-bg: #d7e8d4;
+    --snaptex-active-fg: #285c36;
+    --snaptex-cm-keyword: #7c2c91;
+    --snaptex-cm-atom: #a33f2c;
+    --snaptex-cm-operator: #a32965;
+    --snaptex-cm-bracket: #24352b;
+    --snaptex-cm-string: #176b4c;
+    --snaptex-cm-variable: #a45310;
+    --snaptex-cm-macro: #0c6699;
+    --snaptex-cm-label: #28716b;
+    --snaptex-cm-comment: #596b5b;
+    --snaptex-cm-meta: #6b4aa7;
+    --snaptex-cm-invalid: #be3141;
+    --vscode-textLink-foreground: #0c6699;
+    --vscode-textLink-activeForeground: #285c36;
+}
+
+body[data-theme="github-light"] {
+    --snaptex-shell-bg: #f6f8fa;
+    --snaptex-ui-fg: #1f2328;
+    --snaptex-toolbar-bg: #f6f8fa;
+    --snaptex-panel-bg: #f6f8fa;
+    --snaptex-editor-bg: #ffffff;
+    --snaptex-editor-fg: #1f2328;
+    --snaptex-border: #d0d7de;
+    --snaptex-subtle-border: #eaeef2;
+    --snaptex-muted: #57606a;
+    --snaptex-editor-active-line-bg: #f6f8fa;
+    --snaptex-editor-selection-bg: rgba(9, 105, 218, 0.20);
+    --snaptex-button-fg: #1f2328;
+    --snaptex-hover-bg: #eaeef2;
+    --snaptex-active-bg: #ddf4ff;
+    --snaptex-active-fg: #0969da;
+    --snaptex-cm-keyword: #cf222e;
+    --snaptex-cm-atom: #0550ae;
+    --snaptex-cm-operator: #a40e26;
+    --snaptex-cm-bracket: #1f2328;
+    --snaptex-cm-string: #0a3069;
+    --snaptex-cm-variable: #953800;
+    --snaptex-cm-macro: #8250df;
+    --snaptex-cm-label: #0550ae;
+    --snaptex-cm-comment: #57606a;
+    --snaptex-cm-meta: #8250df;
+    --snaptex-cm-invalid: #cf222e;
+    --vscode-textLink-foreground: #0969da;
+    --vscode-textLink-activeForeground: #0550ae;
+}
+
 body {
     --vscode-editor-background: var(--snaptex-editor-bg);
-    --vscode-editor-foreground: var(--snaptex-ui-fg);
+    --vscode-editor-foreground: var(--snaptex-editor-fg);
 
     background: var(--snaptex-shell-bg);
+    color-scheme: light;
     box-sizing: border-box;
     max-width: none;
     padding: 0;

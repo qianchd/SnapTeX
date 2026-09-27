@@ -38,7 +38,8 @@ let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
 const browserWorkspaces = new BrowserWorkspaceStore();
 let activeHistoryId: string | undefined;
-type WebTheme = 'light' | 'dark' | 'blue' | 'rose';
+const WEB_THEMES = ['light', 'dark', 'blue', 'rose', 'solarized-light', 'skyblue', 'github-light'] as const;
+type WebTheme = typeof WEB_THEMES[number];
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
 type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
 type TextPreviewSetting = keyof PreviewStyleSettings;
@@ -131,9 +132,7 @@ function loadWebPreferences() {
                 }
             }
         }
-        const theme: WebTheme = stored.theme === 'dark' || stored.theme === 'blue' || stored.theme === 'rose'
-            ? stored.theme
-            : 'light';
+        const theme: WebTheme = WEB_THEMES.find(value => value === stored.theme) ?? 'light';
         return {
             settings,
             editorStyle,
@@ -920,7 +919,7 @@ function setTheme(theme: WebTheme): void {
     document.body.dataset.theme = theme;
     webControls.themeSelect.value = theme;
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-        ?.setAttribute('content', theme === 'dark' ? '#000000' : '#2563eb');
+        ?.setAttribute('content', theme === 'dark' ? '#000000' : getComputedStyle(document.body).getPropertyValue('--snaptex-toolbar-bg').trim());
 }
 
 function applyEditorStyle(): void {
