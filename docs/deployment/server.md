@@ -11,6 +11,7 @@ Use this edition only when project files must stay on the server. For GitHub Pag
 - a complete SnapTeX source tree;
 - a projects directory whose direct children are named LaTeX projects;
 - a dedicated HTTPS origin such as `https://snaptex.example.com`.
+- for PDF compilation and source mapping, either `latexmk` or `Rscript` with the R package `tinytex`, plus the `synctex` CLI available to the dedicated service account.
 
 ## Configure
 
@@ -47,6 +48,10 @@ SNAPTEX_PUBLIC_PATH=/
 | `SNAPTEX_AUTH_USERNAME` / `SNAPTEX_AUTH_PASSWORD` | Built-in remote-project login. Use a unique username and a long random password. |
 | `SNAPTEX_PUBLIC_ORIGIN` | Exact public HTTPS origin used for origin and cookie checks, for example `https://snaptex.example.com`. |
 | `SNAPTEX_PUBLIC_PATH` | URL base path. Use `/` for the recommended dedicated-origin deployment. |
+| `SNAPTEX_RSCRIPT` | Optional path to `Rscript` when it is not on the service account's `PATH`. |
+| `SNAPTEX_PDF_COMPILER` | Server default: `tinytex` (default), `latexmk`, or `auto`. The web setting can override it per compilation; Auto probes Rscript with TinyTeX before direct `latexmk`. |
+| `SNAPTEX_LATEXMK` | Optional path to `latexmk` when it is not on the service account's `PATH`. |
+| `SNAPTEX_SYNCTEX` | Optional path to `synctex` when it is not on the service account's `PATH`. |
 
 `apps/web/server.env` is ignored by Git. Protect the source checkout and configuration so only administrators can read the credentials.
 
@@ -65,6 +70,14 @@ The installer:
 5. validates and installs a hardened systemd unit;
 6. atomically switches the runtime and checks `/healthz`;
 7. restores the previous runtime if deployment fails.
+
+For repeated development deployments from another machine, synchronize the current tracked and non-ignored working tree and invoke the same installer with:
+
+```bash
+npm run web:deploy-server -- <ssh-host> </absolute/remote/source-path>
+```
+
+The command uses the local SSH configuration, preserves the ignored remote `apps/web/server.env`, and contains no credentials or deployment-specific addresses.
 
 The production build minifies browser JavaScript and precompresses eligible text assets with Brotli and gzip. The Node service prefers Brotli, falls back to gzip, and serves the original file when neither encoding is accepted. It also supplies per-file ETags, `304 Not Modified` responses, immutable caching for content-versioned URLs, and revalidation caching for HTML and `service-worker.js`. API, authentication, and project-file responses remain `no-store`.
 
@@ -93,6 +106,12 @@ If `SNAPTEX_PROJECTS_ROOT=/srv/snaptex/projects`, entering project name `paper-o
 
 The API exposes only allowlisted project files and rejects hidden paths, traversal, symbolic-link escapes, unsupported writes, and files outside the selected project. Text-file responses include ETags, the manifest includes lightweight file revisions, and updates require `If-Match` so concurrent external edits cannot be overwritten by a stale browser save.
 
+The Explorer lists project PDFs alongside text files. Click a PDF to view it in the preview panel; use **TeX Preview** to return. In a server project, **File > Compile PDF** or `Ctrl+B` saves the active edited file and compiles the current TeX root. Choose TinyTeX, direct `latexmk`, or Auto under **Settings > PDF compiler**; Auto probes TinyTeX first. If its generated PDF is already open, the preview refreshes after compilation; compilation does not open the PDF automatically. Other modified files must be saved first. Compilation failures open a dialog containing the compiler output.
+
+PDF mode does not auto-sync scrolling with the editor. Server-compiled PDFs with a `.synctex.gz` file support `Ctrl+Alt+M` from the editor to the PDF and double-clicking the PDF to locate its TeX source. Imported or static-project PDFs remain viewable, but do not have server-side SyncTeX lookup.
+
+Compilation runs under the dedicated service account, not as root, with shell escape and automatic package installation disabled. Only give remote-project access to users trusted to submit TeX source: TeX compilation can still read files accessible to that account. `Ctrl+B` is intentionally limited to server projects; local and imported browser projects can open existing PDFs but cannot execute local programs.
+
 ## Operate
 
 ```bash
@@ -116,4 +135,5 @@ See [Security Model](./security.md) before exposing a deployment publicly.
 3. Save a synthetic text change, reload, and verify the server file changed.
 4. While the project is open, edit the same file on the server and verify the browser updates; then edit the same line on both sides and verify conflict markers appear.
 5. Confirm an invalid project name, hidden path, unsupported extension, and unauthenticated write are rejected.
-6. Review service logs and back up the project root before making the deployment available to other users.
+6. Compile a synthetic TeX root with `Ctrl+B`, click its PDF in Explorer, edit the TeX and compile again to verify the PDF preview refreshes.
+7. Review service logs and back up the project root before making the deployment available to other users.

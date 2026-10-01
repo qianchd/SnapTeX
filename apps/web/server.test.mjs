@@ -66,9 +66,25 @@ test('serves a writable project through the remote project API', async () => {
             publicOrigin
         }
     }), /16 characters/);
+    let compileFailure;
     const server = createSnapTeXWebServer({
         root: staticRoot,
         projectsRoot,
+        compilePdf: async (source, root, compiler) => {
+            assert.equal(source, join(projectRoot, 'main.tex'));
+            assert.equal(root, projectRoot);
+            assert.ok(compiler === 'tinytex' || compiler === 'latexmk');
+            if (compileFailure) throw compileFailure;
+            await writeFile(join(projectRoot, 'main.pdf'), '%PDF-1.4 test');
+            await writeFile(join(projectRoot, 'main.synctex.gz'), 'sync data');
+        },
+        querySyncTeX: async (query, root) => {
+            assert.equal(root, projectRoot);
+            assert.equal(query.pdf, join(projectRoot, 'main.pdf'));
+            return query.direction === 'forward'
+                ? { page: 3, x: 42, y: 120 }
+                : { path: '/sections/intro.tex', line: 8, column: 2 };
+        },
         auth: {
             username: 'test-user',
             password: 'a-secure-test-password',
@@ -124,6 +140,67 @@ test('serves a writable project through the remote project API', async () => {
         assert.equal(manifest.rootPath, '/main.tex');
         assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);
         assert.deepEqual(Object.keys(manifest.revisions), ['/main.tex', '/sections/intro.tex']);
+        const eventsResponse = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`);
+        assert.equal(eventsResponse.status, 200);
+        assert.match(eventsResponse.headers.get('content-type'), /text\/event-stream/);
+        const eventsReader = eventsResponse.body.getReader();
+        const readEvent = async () => new TextDecoder().decode((await eventsReader.read()).value);
+        assert.match(await readEvent(), /event: manifest/);
+        await writeFile(join(projectRoot, 'main.tex'), 'External event');
+        const changedEvent = await Promise.race([
+            readEvent(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for project event.')), 3000))
+        ]);
+        assert.match(changedEvent, /event: text\ndata:"\/main\.tex"/);
+        await eventsReader.cancel();
+        await writeFile(join(projectRoot, 'main.tex'), 'Original');
+        assert.equal((await fetch(`${baseUrl}/api/projects/paper-one/compile`, { method: 'POST' })).status, 401);
+        const invalidCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+            method: 'POST', body: JSON.stringify({ rootPath: '/../outside.tex' })
+        });
+        assert.equal(invalidCompile.status, 404);
+        const invalidCompiler = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+            method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'shell' })
+        });
+        assert.equal(invalidCompiler.status, 400);
+        const compiled = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+            method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'tinytex' })
+        });
+        assert.equal(compiled.status, 200);
+        assert.equal((await compiled.json()).path, '/main.pdf');
+        assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.pdf`)).text(), '%PDF-1.4 test');
+        assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/main.pdf'));
+        compileFailure = Object.assign(new Error('compiler exited'), {
+            snaptexCompiler: 'latexmk',
+            stdout: 'LaTeX entered extended mode',
+            stderr: '! Undefined control sequence.'
+        });
+        const failedCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+            method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'latexmk' })
+        });
+        assert.equal(failedCompile.status, 422);
+        assert.match((await failedCompile.json()).error, /latexmk[\s\S]*extended mode[\s\S]*Undefined control sequence/);
+        compileFailure = undefined;
+        const syncUrl = `${baseUrl}/api/projects/paper-one/synctex`;
+        assert.equal((await fetch(syncUrl, { method: 'POST' })).status, 401);
+        assert.equal((await fetch(syncUrl, { method: 'POST', headers: { cookie, Origin: publicOrigin } })).status, 403);
+        assert.equal((await authenticatedFetch(syncUrl, {
+            method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/../outside.tex', line: 1, column: 1 })
+        })).status, 400);
+        const forward = await authenticatedFetch(syncUrl, {
+            method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/main.tex', line: 12, column: 1 })
+        });
+        assert.equal(forward.status, 200);
+        assert.deepEqual(await forward.json(), { page: 3, x: 42, y: 120 });
+        const inverse = await authenticatedFetch(syncUrl, {
+            method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
+        });
+        assert.equal(inverse.status, 200);
+        assert.deepEqual(await inverse.json(), { path: '/sections/intro.tex', line: 8, column: 2 });
+        await rm(join(projectRoot, 'main.synctex.gz'));
+        assert.equal((await authenticatedFetch(syncUrl, {
+            method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
+        })).status, 409);
         const projectFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`);
         assert.equal(projectFile.headers.get('cache-control'), 'no-store');
         const originalEtag = projectFile.headers.get('etag');

@@ -121,14 +121,15 @@ suite('RemoteProject', () => {
     test('watches changed files and rejects stale writes', async () => {
         let text = 'Base';
         let revision = 1;
-        let intervalCallback: (() => void) | undefined;
-        const originalSetInterval = globalThis.setInterval;
-        const originalClearInterval = globalThis.clearInterval;
-        globalThis.setInterval = ((callback: () => void) => {
-            intervalCallback = callback;
-            return 1 as unknown as ReturnType<typeof setInterval>;
-        }) as typeof setInterval;
-        globalThis.clearInterval = (() => undefined) as typeof clearInterval;
+        let events: EventTarget | undefined;
+        const OriginalEventSource = globalThis.EventSource;
+        globalThis.EventSource = class extends EventTarget {
+            constructor(_url: string | URL) {
+                super();
+                events = this;
+            }
+            close() {}
+        } as unknown as typeof EventSource;
         const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             const url = String(input);
             const headers = new Headers(init?.headers);
@@ -155,14 +156,13 @@ suite('RemoteProject', () => {
             const stop = project.watchTextFiles?.(change => { changes.push(change.text); }, error => assert.fail(String(error)));
             text = 'Changed externally';
             revision += 1;
-            intervalCallback?.();
+            events?.dispatchEvent(new MessageEvent('text', { data: JSON.stringify('/main.tex') }));
             await new Promise(resolve => setTimeout(resolve, 0));
             assert.deepEqual(changes, ['Changed externally']);
             await assert.rejects(async () => { await file.writeText?.('Local edit'); }, ProjectWriteConflictError);
             stop?.();
         } finally {
-            globalThis.setInterval = originalSetInterval;
-            globalThis.clearInterval = originalClearInterval;
+            globalThis.EventSource = OriginalEventSource;
         }
     });
 });

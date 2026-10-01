@@ -27,6 +27,7 @@ SNAPTEX_RUN_USER="${SNAPTEX_RUN_USER:-snaptex}"
 SNAPTEX_PUBLIC_PATH="${SNAPTEX_PUBLIC_PATH:-/}"
 HOST="${HOST:-localhost}"
 PORT="${PORT:-3000}"
+SNAPTEX_PDF_COMPILER="${SNAPTEX_PDF_COMPILER:-tinytex}"
 
 if [[ ! "$SNAPTEX_SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
     echo "Invalid SNAPTEX_SERVICE_NAME: $SNAPTEX_SERVICE_NAME" >&2
@@ -38,6 +39,10 @@ if [[ "$HOST" != "127.0.0.1" && "$HOST" != "::1" && "$HOST" != "localhost" ]]; t
 fi
 if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
     echo "Invalid PORT: $PORT" >&2
+    exit 1
+fi
+if [[ ! "$SNAPTEX_PDF_COMPILER" =~ ^(auto|latexmk|tinytex)$ ]]; then
+    echo "SNAPTEX_PDF_COMPILER must be auto, latexmk, or tinytex." >&2
     exit 1
 fi
 if [[ ! "$SNAPTEX_PUBLIC_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
@@ -173,6 +178,10 @@ SNAPTEX_AUTH_USERNAME="$(systemd_quote "$SNAPTEX_AUTH_USERNAME")"
 SNAPTEX_AUTH_PASSWORD="$(systemd_quote "$SNAPTEX_AUTH_PASSWORD")"
 SNAPTEX_PUBLIC_ORIGIN="$(systemd_quote "$SNAPTEX_PUBLIC_ORIGIN")"
 SNAPTEX_PUBLIC_PATH="$(systemd_quote "$SNAPTEX_PUBLIC_PATH")"
+SNAPTEX_PDF_COMPILER="$(systemd_quote "$SNAPTEX_PDF_COMPILER")"
+SNAPTEX_LATEXMK="$(systemd_quote "${SNAPTEX_LATEXMK:-latexmk}")"
+SNAPTEX_RSCRIPT="$(systemd_quote "${SNAPTEX_RSCRIPT:-Rscript}")"
+SNAPTEX_SYNCTEX="$(systemd_quote "${SNAPTEX_SYNCTEX:-synctex}")"
 EOF
 
 echo "[SnapTeX] Installing runtime files in $SNAPTEX_INSTALL_DIR..."
