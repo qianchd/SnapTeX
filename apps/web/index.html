@@ -50,6 +50,7 @@
                         <button id="new-file-button" type="button">New File</button>
                         <button id="delete-file-button" type="button">Delete</button>
                         <button id="save-button" type="button">Save</button>
+                        <button id="compile-pdf-button" type="button" hidden>Compile PDF</button>
                         <button id="export-button" type="button">Export ZIP</button>
                     </div>
                 </details>
@@ -62,6 +63,7 @@
                 <button type="button" data-mobile-pane="preview" aria-pressed="false">Preview</button>
             </div>
             <div class="toolbar-group toolbar-actions">
+                <button id="close-pdf-preview" type="button" hidden>TeX Preview</button>
                 <a class="toolbar-link" href="https://qianchd.github.io/SnapTeX/docs/" target="_blank" rel="noopener noreferrer">Docs</a>
                 <details class="toolbar-menu">
                     <summary>Settings</summary>
@@ -88,6 +90,14 @@
                             <select id="preview-layout-select">
                                 <option value="paged">Paged</option>
                                 <option value="continuous">Continuous</option>
+                            </select>
+                        </label>
+                        <label id="pdf-compiler-setting" class="setting-row">
+                            <span>PDF compiler</span>
+                            <select id="pdf-compiler-select">
+                                <option value="tinytex">TinyTeX</option>
+                                <option value="latexmk">latexmk</option>
+                                <option value="auto">Auto</option>
                             </select>
                         </label>
                         <label class="setting-row">
@@ -182,6 +192,9 @@
             </div>
             <section id="preview-pane" aria-label="SnapTeX preview">
                 <div id="content-root"></div>
+                <div id="pdf-preview" hidden>
+                    <div id="pdf-preview-host" aria-label="PDF preview"></div>
+                </div>
             </section>
         </div>
         <input id="open-file-input" type="file" accept=".tex" hidden>
@@ -225,6 +238,15 @@
                 <div class="dialog-actions">
                     <button id="new-file-cancel-button" type="button">Cancel</button>
                     <button class="primary-action" type="submit">Create</button>
+                </div>
+            </form>
+        </dialog>
+        <dialog id="compile-output-dialog" class="project-dialog compile-output-dialog">
+            <form method="dialog" class="project-dialog-form">
+                <h2>PDF compilation failed</h2>
+                <pre id="compile-output"></pre>
+                <div class="dialog-actions">
+                    <button type="submit">Close</button>
                 </div>
             </form>
         </dialog>

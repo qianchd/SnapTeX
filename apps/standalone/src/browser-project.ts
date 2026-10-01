@@ -16,6 +16,25 @@ export interface BrowserProjectTextChange {
     text: string;
 }
 
+export type PdfSyncQuery =
+    | { direction: 'forward'; pdfPath: string; sourcePath: string; line: number; column: number }
+    | { direction: 'inverse'; pdfPath: string; page: number; x: number; y: number };
+
+export interface PdfPosition {
+    page: number;
+    x: number;
+    y: number;
+    boxX?: number;
+    baseline?: number;
+    width?: number;
+    height?: number;
+    depth?: number;
+}
+
+export type PdfSyncResult =
+    | PdfPosition
+    | { path: string; line: number; column: number };
+
 export class ProjectWriteConflictError extends Error {
     constructor(
         public readonly path: string,
@@ -58,6 +77,10 @@ export function isProjectFile(path: string): boolean {
 
 export function isTexFile(path: string): boolean {
     return /\.tex$/i.test(path);
+}
+
+export function isPdfFile(path: string): boolean {
+    return /\.pdf$/i.test(path);
 }
 
 export function chooseRootPath(files: readonly BrowserProjectFile[]): string | undefined {
@@ -119,9 +142,14 @@ export function createProjectTree(paths: readonly string[]): ProjectTreeNode {
     return root;
 }
 
+export const PDF_COMPILERS = ['tinytex', 'latexmk', 'auto'] as const;
+export type PdfCompiler = typeof PDF_COMPILERS[number];
+
 interface BrowserProjectOperations {
     createTextFile(path: string, text: string): Promise<BrowserProjectFile>;
     deleteFile(path: string): Promise<void>;
+    compilePdf?: (rootPath: string, compiler: PdfCompiler) => Promise<BrowserProjectFile>;
+    syncPdf?: (query: PdfSyncQuery) => Promise<PdfSyncResult>;
 }
 
 export interface BrowserProjectSnapshotFile {

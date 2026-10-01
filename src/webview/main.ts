@@ -824,11 +824,31 @@ const previewBridge = getPreviewBridge();
         }
 
         resetPreviewRuntimeState() {
+            if (this.initialExpansionFrame !== null) {
+                cancelAnimationFrame(this.initialExpansionFrame);
+                this.initialExpansionFrame = null;
+            }
+            if (this.pdfRenderTimer !== null) {
+                clearTimeout(this.pdfRenderTimer);
+                this.pdfRenderTimer = null;
+            }
+            this.initPdfObserver();
             this.virtualization.resetCaches();
             this.pagination.reset();
+            this.currentNumbering = null;
             this.isFirstLoad = true;
             this.deferHeavyPreviewWork = false;
             this.pendingScroll = null;
+            document.body.classList.remove('preload-mode');
+        }
+
+        clearPreview() {
+            this.renderCompletionSeq++;
+            this.cancelHeightWarmup();
+            this.clearPendingBlockHtmlRequests();
+            this.resetPreviewRuntimeState();
+            this.contentRoot.replaceChildren();
+            this.state = 'IDLE';
         }
 
         formatDebugMb(bytes) {
@@ -2029,6 +2049,8 @@ const previewBridge = getPreviewBridge();
         }
 
         initPdfObserver() {
+            this.pdfObserver?.disconnect();
+            this.pdfObserver = null;
             if (!('IntersectionObserver' in window)) return;
             const rootMargin = `${viewportHeightToPixels(PDF_RENDER_MARGIN_VH)}px`;
             this.pdfObserver = new IntersectionObserver(entries => {

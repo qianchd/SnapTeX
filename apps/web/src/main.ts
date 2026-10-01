@@ -4,10 +4,13 @@ import type { BackendMode, PreviewLayoutMode, PreviewStyleSettings } from '../..
 import { ChevronDown, ChevronLeft, ChevronRight, createElement } from 'lucide';
 import {
     createProjectTree,
+    isPdfFile,
     isProjectFile,
     isTexFile,
+    PDF_COMPILERS,
     projectFolderPaths,
     type BrowserProject,
+    type PdfCompiler,
     type ProjectTreeNode
 } from '../../standalone/src/browser-project';
 import { DEMO_PROJECT_ID, DEMO_PROJECT_NAME, loadDemoFiles } from './demo-project';
@@ -24,6 +27,7 @@ import {
     RemoteProjectAuthenticationError,
     RemoteProjectNotFoundError
 } from './remote-project';
+import { PdfPreview } from './pdf-preview';
 
 
 interface BrowserFilePickerWindow extends Window {
@@ -32,6 +36,16 @@ interface BrowserFilePickerWindow extends Window {
         types?: Array<{ description: string; accept: Record<string, string[]> }>;
     }) => Promise<BrowserFileHandle[]>;
     showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>;
+}
+
+interface InteractivePreviewController {
+    beginInteractiveResize(): void;
+    finishInteractiveResize(update: () => void): void;
+    clearPreview(): void;
+}
+
+function getPreviewController(): InteractivePreviewController | undefined {
+    return (window as Window & { snaptexPreviewController?: InteractivePreviewController }).snaptexPreviewController;
 }
 
 let explorerCollapsed = false;
@@ -85,6 +99,7 @@ const EDITOR_STYLE_CONTROLS: ReadonlyArray<[EditorStyleControl, EditorStyleSetti
     ['editorFontFamilyInput', 'fontFamily']
 ];
 const WEB_PREFERENCES_STORAGE_KEY = 'snaptex.previewStyle';
+const DEFAULT_PDF_COMPILER: PdfCompiler = PDF_COMPILERS[0];
 
 function readEditorStyle(): EditorStyleSettings {
     const style = getComputedStyle(document.documentElement);
@@ -133,15 +148,24 @@ function loadWebPreferences() {
             }
         }
         const theme: WebTheme = WEB_THEMES.find(value => value === stored.theme) ?? 'light';
+        const pdfCompiler = PDF_COMPILERS.find(value => value === stored.pdfCompiler) ?? DEFAULT_PDF_COMPILER;
         return {
             settings,
             editorStyle,
             theme,
+            pdfCompiler,
             explorerCollapsed: stored.explorerCollapsed !== false,
             diagnosticsVisible: stored.diagnosticsVisible !== false
         };
     } catch {
-        return { settings, editorStyle, theme: 'light' as WebTheme, explorerCollapsed: true, diagnosticsVisible: true };
+        return {
+            settings,
+            editorStyle,
+            theme: 'light' as WebTheme,
+            pdfCompiler: DEFAULT_PDF_COMPILER,
+            explorerCollapsed: true,
+            diagnosticsVisible: true
+        };
     }
 }
 
@@ -151,6 +175,7 @@ function storeWebPreferences(host: StandaloneHost): void {
             ...host.getSettings(),
             editorStyle: webPreferences.editorStyle,
             theme: document.body.dataset.theme,
+            pdfCompiler: webPreferences.pdfCompiler,
             explorerCollapsed,
             diagnosticsVisible: document.body.dataset.diagnosticsVisible === 'true'
         }));
@@ -189,6 +214,13 @@ function readControls() {
         deleteFileButton: requireElement<HTMLButtonElement>('delete-file-button'),
         exportButton: requireElement<HTMLButtonElement>('export-button'),
         saveButton: requireElement<HTMLButtonElement>('save-button'),
+        compilePdfButton: requireElement<HTMLButtonElement>('compile-pdf-button'),
+        compileOutputDialog: requireElement<HTMLDialogElement>('compile-output-dialog'),
+        compileOutput: requireElement('compile-output'),
+        previewPane: requireElement('preview-pane'),
+        pdfPreview: requireElement('pdf-preview'),
+        pdfPreviewHost: requireElement('pdf-preview-host'),
+        closePdfPreviewButton: requireElement<HTMLButtonElement>('close-pdf-preview'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
         logoutButton: requireElement<HTMLButtonElement>('logout-button'),
         showExplorerToggle: requireElement<HTMLInputElement>('show-explorer-toggle'),
@@ -199,6 +231,7 @@ function readControls() {
         debugMemoryToggle: requireElement<HTMLInputElement>('debug-memory-toggle'),
         backendModeSelect: requireElement<HTMLSelectElement>('backend-mode-select'),
         previewLayoutSelect: requireElement<HTMLSelectElement>('preview-layout-select'),
+        pdfCompilerSelect: requireElement<HTMLSelectElement>('pdf-compiler-select'),
         renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
         autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
         previewFontSizeInput: requireElement<HTMLInputElement>('preview-font-size-input'),
@@ -236,6 +269,50 @@ function readControls() {
 }
 
 const webControls = readControls();
+let openPdfPath: string | undefined;
+let pdfRequestId = 0;
+let pdfViewer: PdfPreview | undefined;
+
+function closePdfPreview(): void {
+    pdfRequestId++;
+    openPdfPath = undefined;
+    window.snaptexStandaloneHost?.setPdfPreviewActive(false);
+    document.body.dataset.pdfOpen = 'false';
+    webControls.pdfPreview.hidden = true;
+    webControls.closePdfPreviewButton.hidden = true;
+    webControls.previewPane.dataset.pdfOpen = 'false';
+    pdfViewer?.close();
+}
+
+async function openPdfPreview(host: StandaloneHost, path: string): Promise<void> {
+    const requestId = ++pdfRequestId;
+    const blob = await host.readProjectPdf(path);
+    if (requestId !== pdfRequestId) {return;}
+    openPdfPath = path;
+    webControls.previewPane.scrollTop = 0;
+    webControls.previewPane.dataset.pdfOpen = 'true';
+    document.body.dataset.pdfOpen = 'true';
+    webControls.pdfPreview.hidden = false;
+    webControls.closePdfPreviewButton.hidden = false;
+    host.setPdfPreviewActive(true);
+    getPreviewController()?.clearPreview();
+    pdfViewer ??= new PdfPreview(webControls.pdfPreviewHost, point => {
+        if (!openPdfPath) {return;}
+        host.syncPdf({ direction: 'inverse', pdfPath: openPdfPath, ...point })
+            .then(result => {
+                if ('path' in result) {return host.revealEditorLocation(result.path, result.line, result.column);}
+                throw new Error('The server returned an invalid SyncTeX source location.');
+            })
+            .catch(error => reportFailure('PDF to source', error));
+    });
+    try {
+        await pdfViewer.open(blob, path);
+        if (requestId === pdfRequestId) {setStatus(`Viewing ${path}`);}
+    } catch (error) {
+        if (requestId === pdfRequestId) {closePdfPreview();}
+        throw error;
+    }
+}
 
 function enableSplitPaneResize(splitter: HTMLElement): void {
     const shell = document.getElementById('workspace');
@@ -246,12 +323,6 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     }
 
     type PaneLayout = 'split' | 'editor' | 'preview';
-    interface InteractivePreviewController {
-        beginInteractiveResize(): void;
-        finishInteractiveResize(update: () => void): void;
-    }
-    const getPreviewController = (): InteractivePreviewController | undefined =>
-        (window as Window & { snaptexPreviewController?: InteractivePreviewController }).snaptexPreviewController;
     const portraitLayout = window.matchMedia('(max-width: 820px) and (orientation: portrait)');
     const mobilePaneButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-mobile-pane]'));
     let paneLayout: PaneLayout = 'split';
@@ -462,8 +533,18 @@ function reportFailure(action: string, error: unknown): void {
     setStatus(`${action} failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
+function reportCompileFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus('PDF compilation failed');
+    webControls.compileOutput.textContent = message;
+    if (!webControls.compileOutputDialog.open) {
+        webControls.compileOutputDialog.showModal();
+    }
+}
+
 async function loadProject(host: StandaloneHost, project: BrowserProject, historyId = project.id): Promise<void> {
     const rootPath = await host.loadProject(project);
+    closePdfPreview();
     activeHistoryId = historyId;
 
     expandedFolders.clear();
@@ -493,6 +574,7 @@ function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
     controls.activePathLabel.textContent = activePathText;
     controls.activePathLabel.title = activePathText;
     controls.saveButton.disabled = !projectOpen;
+    controls.compilePdfButton.hidden = !projectOpen || !host.canCompilePdf();
     controls.exportButton.disabled = !projectOpen;
     controls.newFileButton.disabled = !projectOpen || !host.canModifyProject();
     controls.deleteFileButton.disabled = !projectOpen || !host.canModifyProject() || activePath === rootPath;
@@ -504,7 +586,7 @@ function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
 }
 
 function renderProjectFiles(host: StandaloneHost): void {
-    const rows = createProjectTree(host.getProjectTextPaths())
+    const rows = createProjectTree([...host.getProjectTextPaths(), ...host.getProjectPdfPaths()])
         .children
         .flatMap(node => renderProjectTreeNode(host, node, 0));
     webControls.projectFiles.replaceChildren(...rows);
@@ -552,6 +634,11 @@ function renderProjectTreeNode(host: StandaloneHost, node: ProjectTreeNode, dept
     openButton.textContent = node.name;
     openButton.title = node.path;
     openButton.addEventListener('click', () => {
+        if (isPdfFile(node.path)) {
+            openPdfPreview(host, node.path).catch(error => reportFailure('Open PDF', error));
+            return;
+        }
+        closePdfPreview();
         host.openEditorFile(node.path)
             .then(() => {
                 setStatus(`Editing ${node.path}`);
@@ -879,6 +966,24 @@ function bindSaveShortcut(host: StandaloneHost): void {
     }, { capture: true });
 }
 
+async function compilePdf(host: StandaloneHost): Promise<void> {
+    const button = webControls.compilePdfButton;
+    if (button.disabled) {
+        return;
+    }
+    button.disabled = true;
+    setStatus(`Compiling ${host.getRootPath()}...`);
+    try {
+        const path = await host.compilePdf(webPreferences.pdfCompiler);
+        if (openPdfPath === path) {
+            await openPdfPreview(host, path);
+        }
+        setStatus(`Compiled ${path}`);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function setActiveFileAsRoot(host: StandaloneHost): Promise<void> {
     const path = host.getActivePath();
     if (!isTexFile(path) || path === host.getRootPath()) {
@@ -936,6 +1041,7 @@ function syncSettingsControls(host: StandaloneHost): void {
     }
     controls.backendModeSelect.value = settings.backendMode;
     controls.previewLayoutSelect.value = settings.previewLayout;
+    controls.pdfCompilerSelect.value = webPreferences.pdfCompiler;
     for (const [controlName, setting] of NUMBER_SETTING_CONTROLS) {
         setInputValue(controls[controlName], settings[setting]);
     }
@@ -1025,6 +1131,34 @@ function bindProjectControls(host: StandaloneHost): void {
     controls.saveButton.addEventListener('click', () => {
         saveActiveFile(host).catch(error => reportFailure('Save', error));
     });
+    controls.compilePdfButton.addEventListener('click', () => {
+        compilePdf(host).catch(reportCompileFailure);
+    });
+    controls.closePdfPreviewButton.addEventListener('click', closePdfPreview);
+    document.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey
+            && (event.code === 'KeyM' || event.key.toLowerCase() === 'm') && openPdfPath) {
+            event.preventDefault();
+            event.stopPropagation();
+            const location = host.getEditorPdfSyncLocation();
+            host.syncPdf({ direction: 'forward', pdfPath: openPdfPath, sourcePath: location.path,
+                line: location.line, column: location.column })
+                .then(result => {
+                    if ('page' in result) {
+                        pdfViewer?.reveal(result);
+                        setStatus(`PDF page ${result.page}`);
+                    }
+                    else {throw new Error('The server returned an invalid SyncTeX PDF location.');}
+                })
+                .catch(error => reportFailure('Source to PDF', error));
+            return;
+        }
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+            && event.key.toLowerCase() === 'b' && host.canCompilePdf()) {
+            event.preventDefault();
+            compilePdf(host).catch(reportCompileFailure);
+        }
+    }, { capture: true });
     controls.exportButton.addEventListener('click', () => {
         exportProject(host).catch(error => reportFailure('Export', error));
     });
@@ -1049,6 +1183,10 @@ function bindProjectControls(host: StandaloneHost): void {
     });
     controls.previewLayoutSelect.addEventListener('change', () => {
         host.updateSettings({ previewLayout: controls.previewLayoutSelect.value as PreviewLayoutMode });
+        storeWebPreferences(host);
+    });
+    controls.pdfCompilerSelect.addEventListener('change', () => {
+        webPreferences.pdfCompiler = controls.pdfCompilerSelect.value as PdfCompiler;
         storeWebPreferences(host);
     });
     for (const [controlName, setting, fallback] of NUMBER_SETTING_CONTROLS) {

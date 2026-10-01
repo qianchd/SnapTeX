@@ -1,11 +1,13 @@
 import {
+    isPdfFile,
     isProjectFile,
     isProjectTextFile,
     isTexFile,
     normalizeBrowserPath,
     ProjectWriteConflictError,
     type BrowserProject,
-    type BrowserProjectFile
+    type BrowserProjectFile,
+    type PdfSyncResult
 } from '../../standalone/src/browser-project';
 
 interface RemoteProjectManifest {
@@ -13,8 +15,6 @@ interface RemoteProjectManifest {
     files: string[];
     revisions: Record<string, string>;
 }
-
-const REMOTE_PROJECT_POLL_INTERVAL_MS = 1000;
 
 export class RemoteProjectNotFoundError extends Error {
     constructor(projectName: string) {
@@ -69,6 +69,10 @@ function withCsrf(fetcher: typeof fetch, apiBaseUrl: string): typeof fetch {
                 }
                 const value = await response.json() as { csrfToken?: unknown };
                 return typeof value.csrfToken === 'string' ? value.csrfToken : '';
+            })
+            .catch(error => {
+                csrfToken = undefined;
+                throw error;
             });
         const token = await csrfToken;
         const headers = new Headers(init?.headers);
@@ -176,41 +180,82 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
             }
             : { path, resourceUrl: url };
     };
+    const postJson = async <T>(route: string, body: unknown): Promise<T> => {
+        const url = new URL(route, baseUrl).toString();
+        const response = await fetcher(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const result = await response.json().catch(() => undefined) as (T & { error?: string }) | undefined;
+        if (!response.ok) {
+            throw new Error(result?.error ?? requestError(response, 'POST', url).message);
+        }
+        if (result === undefined) {
+            throw new Error(`POST ${url} returned invalid JSON.`);
+        }
+        return result;
+    };
     return {
         name: projectName,
         rootPath: manifest.rootPath,
         files: manifest.files.map(path => createFile(path)),
         watchTextFiles: (onChange, onError) => {
-            let polling = false;
+            const pendingText = new Set<string>();
+            let manifestPending = false;
+            let syncing = false;
             let stopped = false;
-            const poll = async () => {
-                if (polling || stopped) {
-                    return;
-                }
-                polling = true;
+            const sync = async () => {
+                if (syncing || stopped) {return;}
+                syncing = true;
                 try {
-                    const response = await fetchOk(fetcher, new URL('manifest', baseUrl).toString());
-                    const nextManifest = readManifest(await response.json());
-                    for (const [path, revision] of Object.entries(nextManifest.revisions)) {
-                        if (revision === currentManifest.revisions[path]) {
-                            continue;
+                    while (!stopped && (manifestPending || pendingText.size > 0)) {
+                        if (manifestPending) {
+                            manifestPending = false;
+                            const previousManifest = currentManifest;
+                            const response = await fetchOk(fetcher, new URL('manifest', baseUrl).toString());
+                            currentManifest = readManifest(await response.json());
+                            Object.entries(currentManifest.revisions)
+                                .filter(([path, revision]) => revision !== previousManifest.revisions[path])
+                                .forEach(([path]) => pendingText.add(path));
                         }
-                        const text = await readText(path, true);
-                        if (!stopped && text !== undefined) {
-                            await onChange({ path, text });
+                        const paths = [...pendingText];
+                        pendingText.clear();
+                        for (const path of paths) {
+                            if (!currentManifest.files.includes(path)) {continue;}
+                            const text = await readText(path, true);
+                            if (!stopped && text !== undefined) {await onChange({ path, text });}
                         }
                     }
-                    currentManifest = nextManifest;
                 } catch (error) {
+                    manifestPending = false;
+                    pendingText.clear();
                     onError(error);
                 } finally {
-                    polling = false;
+                    syncing = false;
                 }
             };
-            const timer = globalThis.setInterval(() => void poll(), REMOTE_PROJECT_POLL_INTERVAL_MS);
+            const events = new EventSource(new URL('events', baseUrl), { withCredentials: true });
+            events.addEventListener('manifest', () => {
+                manifestPending = true;
+                void sync();
+            });
+            events.addEventListener('text', event => {
+                try {
+                    const path = JSON.parse((event as MessageEvent<string>).data);
+                    if (typeof path === 'string') {
+                        const normalizedPath = normalizeBrowserPath(path);
+                        if (currentManifest.files.includes(normalizedPath)) {pendingText.add(normalizedPath);}
+                        else {manifestPending = true;}
+                        void sync();
+                    }
+                } catch (error) {
+                    onError(error);
+                }
+            });
             return () => {
                 stopped = true;
-                globalThis.clearInterval(timer);
+                events.close();
             };
         },
         operations: {
@@ -225,6 +270,14 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
             deleteFile: async path => {
                 await fetchOk(fetcher, remoteFileUrl(baseUrl, path), { method: 'DELETE' });
                 etags.delete(path);
+            },
+            syncPdf: query => postJson<PdfSyncResult>('synctex', query),
+            compilePdf: async (rootPath, compiler) => {
+                const { path } = await postJson<{ path: string }>('compile', { rootPath, compiler });
+                if (!isPdfFile(path)) {
+                    throw new Error('The server returned an invalid PDF path.');
+                }
+                return createFile(normalizeBrowserPath(path));
             }
         }
     };

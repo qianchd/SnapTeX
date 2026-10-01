@@ -1,10 +1,12 @@
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, watch } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { readRequestText, sendJson } from './http-utils.mjs';
 import { createWebSessionAuth } from './web-session.mjs';
 
@@ -16,6 +18,7 @@ const projectFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt|pdf|png|jpe?g|gif|sv
 const projectTextFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
 const projectApiPrefix = '/api/projects';
 const projectNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const pdfCompilerModes = new Set(['auto', 'latexmk', 'tinytex']);
 const maxWriteBytes = 10 * 1024 * 1024;
 const sourceWebFiles = new Set([
     '/apps/web/index.html',
@@ -64,6 +67,103 @@ const contentTypes = new Map([
 ]);
 const compressibleAssetPattern = /\.(?:css|html|js|json|mjs|svg|tex|bib|md|txt|wasm|webmanifest)$/i;
 const PROJECT_MANIFEST_CACHE_MS = 1500;
+const execFileAsync = promisify(execFile);
+
+function texProcessEnv() {
+    return Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'R_LIBS_USER', 'TEXMFHOME', 'TMPDIR']
+        .filter(name => process.env[name] !== undefined)
+        .map(name => [name, process.env[name]]));
+}
+
+async function compileProjectPdf(filePath, projectRoot, requestedMode) {
+    const source = relative(projectRoot, filePath);
+    const mode = String(requestedMode || process.env.SNAPTEX_PDF_COMPILER || 'tinytex').toLowerCase();
+    if (!pdfCompilerModes.has(mode)) {
+        throw new Error(`Invalid SNAPTEX_PDF_COMPILER: ${mode}`);
+    }
+    const compilers = [
+        {
+            id: 'tinytex',
+            name: 'Rscript + tinytex',
+            command: process.env.SNAPTEX_RSCRIPT || 'Rscript',
+            probeArgs: ['--vanilla', '-e', 'quit(status = if (requireNamespace("tinytex", quietly = TRUE) && tinytex::is_tinytex()) 0 else 127)'],
+            args: ['--vanilla', '-e', 'if (!requireNamespace("tinytex", quietly = TRUE)) stop("R package tinytex is not installed."); tinytex::latexmk(Sys.getenv("SNAPTEX_TEX_FILE"), engine_args = c("-synctex=1", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape"), install_packages = FALSE)']
+        },
+        {
+            id: 'latexmk',
+            name: 'latexmk',
+            command: process.env.SNAPTEX_LATEXMK || 'latexmk',
+            probeArgs: ['-v'],
+            args: ['-pdf', '-synctex=1', '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', source]
+        }
+    ].filter(compiler => mode === 'auto' || compiler.id === mode);
+    const baseEnv = { ...texProcessEnv(), SNAPTEX_TEX_FILE: source };
+    for (const compiler of compilers) {
+        const env = compiler.id === 'latexmk' && isAbsolute(compiler.command)
+            ? { ...baseEnv, PATH: [dirname(compiler.command), baseEnv.PATH].filter(Boolean).join(delimiter) }
+            : baseEnv;
+        if (mode === 'auto') {
+            try {
+                await execFileAsync(compiler.command, compiler.probeArgs, {
+                    cwd: projectRoot, env, timeout: 10_000, maxBuffer: 1024 * 1024, windowsHide: true
+                });
+            } catch {
+                continue;
+            }
+        }
+        try {
+            await execFileAsync(compiler.command, compiler.args, {
+                cwd: projectRoot, env, timeout: 300_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true
+            });
+            return;
+        } catch (error) {
+            error.snaptexCompiler = compiler.name;
+            throw error;
+        }
+    }
+    const error = new Error('Neither Rscript with TinyTeX nor latexmk is available to the SnapTeX server account.');
+    error.code = 'ENOENT';
+    throw error;
+}
+
+function compilerErrorMessage(error) {
+    if (error?.killed) return 'PDF compilation exceeded the five-minute limit.';
+    const compiler = error?.snaptexCompiler ? ` with ${error.snaptexCompiler}` : '';
+    const output = [error?.stdout, error?.stderr]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .join('\n\n') || String(error?.message || error);
+    return `PDF compilation failed${compiler}:\n${output.slice(-16_000)}`;
+}
+
+async function queryProjectSyncTeX(args, projectRoot) {
+    const command = args.direction === 'forward' ? 'view' : 'edit';
+    const location = args.direction === 'forward'
+        ? `${args.line}:${args.column}:${args.source}`
+        : `${args.page}:${args.x}:${args.y}:${args.pdf}`;
+    const { stdout } = await execFileAsync(process.env.SNAPTEX_SYNCTEX || 'synctex', [
+        command, args.direction === 'forward' ? '-i' : '-o', location,
+        ...(args.direction === 'forward' ? ['-o', args.pdf] : [])
+    ], { cwd: projectRoot, env: texProcessEnv(), timeout: 5000, maxBuffer: 256 * 1024, windowsHide: true });
+    if (args.direction === 'forward') {
+        const match = /(?:^|\n)Page:(\d+)\r?\nx:([\d.]+)\r?\ny:([\d.]+)([\s\S]*?)(?=\r?\nPage:|$)/.exec(stdout);
+        if (!match) return undefined;
+        const dimension = name => Number(new RegExp(`(?:^|\\n)${name}:([\\d.]+)`).exec(match[4])?.[1]) || undefined;
+        return { page: Number(match[1]), x: Number(match[2]), y: Number(match[3]),
+            boxX: dimension('h'), baseline: dimension('v'), width: dimension('W'),
+            height: dimension('H'), depth: dimension('D') };
+    }
+    const match = [...stdout.matchAll(/(?:^|\n)Input:([^\r\n]+)\r?\nLine:(\d+)\r?\nColumn:(-?\d+)/g)]
+        .find(result => Number(result[2]) > 0);
+    if (!match) return undefined;
+    const source = [resolve(dirname(args.pdf), match[1]), resolve(projectRoot, match[1])]
+        .find(path => isWithin(projectRoot, path) && resolveProjectFile(projectRoot, `/${relative(projectRoot, path)}`) === path);
+    return source && {
+        path: `/${relative(projectRoot, source).split(sep).join('/')}`,
+        line: Number(match[2]),
+        column: Math.max(1, Number(match[3]))
+    };
+}
 
 function defaultIndexPath(root) {
     return root === repoRoot ? '/apps/web/index.html' : '/index.html';
@@ -155,6 +255,75 @@ function cachedProjectManifest(cache, projectRoot) {
     const manifest = projectManifest(projectRoot);
     cache.set(projectRoot, { expiresAt: now + PROJECT_MANIFEST_CACHE_MS, manifest });
     return manifest;
+}
+
+function createProjectWatchRegistry() {
+    const projects = new Map();
+    const subscribe = (projectRoot, listener) => {
+        let project = projects.get(projectRoot);
+        if (!project) {
+            const listeners = new Set();
+            let knownFiles = new Set(listProjectFiles(projectRoot));
+            let notifyTimer;
+            let unknownChange = false;
+            const pendingPaths = new Set();
+            const fail = error => {
+                listeners.forEach(callback => callback({ kind: 'error', error }));
+                project.close();
+            };
+            const watcher = watch(projectRoot, { recursive: true }, (_event, filename) => {
+                const path = filename && `/${String(filename).replaceAll('\\', '/')}`;
+                if (path && !projectFilePattern.test(path)) return;
+                if (path) pendingPaths.add(path);
+                else unknownChange = true;
+                clearTimeout(notifyTimer);
+                notifyTimer = setTimeout(() => {
+                    try {
+                        const textPaths = [];
+                        let manifestChanged = unknownChange;
+                        for (const path of pendingPaths) {
+                            const exists = resolveProjectFile(projectRoot, path) !== undefined;
+                            if (exists !== knownFiles.has(path) || !projectTextFilePattern.test(path)) {
+                                manifestChanged = true;
+                            } else if (exists) {
+                                textPaths.push(path);
+                            }
+                        }
+                        const event = manifestChanged ? { kind: 'manifest' } : { kind: 'text', paths: textPaths };
+                        if (manifestChanged) knownFiles = new Set(listProjectFiles(projectRoot));
+                        unknownChange = false;
+                        pendingPaths.clear();
+                        listeners.forEach(callback => callback(event));
+                    } catch (error) {
+                        fail(error);
+                    }
+                }, 100);
+            });
+            let closed = false;
+            project = { listeners, close: () => {
+                if (closed) return;
+                closed = true;
+                clearTimeout(notifyTimer);
+                watcher.close();
+                projects.delete(projectRoot);
+            } };
+            projects.set(projectRoot, project);
+            watcher.once('error', fail);
+        }
+        project.listeners.add(listener);
+        return () => {
+            project.listeners.delete(listener);
+            if (project.listeners.size) return;
+            project.close();
+        };
+    };
+    return {
+        subscribe,
+        close: () => {
+            projects.forEach(project => project.close());
+            projects.clear();
+        }
+    };
 }
 
 function resolveProjectFile(root, pathname, requireExisting = true) {
@@ -261,6 +430,19 @@ function textEtag(content) {
     return `"${createHash('sha256').update(content).digest('base64url')}"`;
 }
 
+async function readJsonRequest(request) {
+    const text = await readRequestText(request, 4096);
+    try {
+        return JSON.parse(text);
+    } catch {
+        return undefined;
+    }
+}
+
+function sendSseEvent(response, event, data = '') {
+    response.write(`event: ${event}\ndata:${data}\n\n`);
+}
+
 async function sendProjectTextFile(request, response, filePath) {
     const content = await readFile(filePath);
     const headers = {
@@ -339,7 +521,7 @@ async function sendFile(request, response, filePath, options = {}) {
     await pipeline(createReadStream(responsePath), response);
 }
 
-async function handleProjectRequest(request, response, projectsRoot, manifestCache) {
+async function handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, pdfTools) {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
     if (pathname !== projectApiPrefix && !pathname.startsWith(`${projectApiPrefix}/`)) {
         return false;
@@ -407,6 +589,40 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
         return true;
     }
 
+    if (route === 'events' && request.method === 'GET') {
+        let unsubscribe;
+        try {
+            unsubscribe = projectWatches.subscribe(projectRoot, event => {
+                if (event.kind === 'error') {
+                    response.end();
+                    return;
+                }
+                manifestCache.delete(projectRoot);
+                if (event.kind === 'manifest') {
+                    sendSseEvent(response, 'manifest');
+                } else {
+                    event.paths.forEach(path => sendSseEvent(response, 'text', JSON.stringify(path)));
+                }
+            });
+        } catch {
+            sendJson(response, 503, { error: 'Project file watching is unavailable.' });
+            return true;
+        }
+        response.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+        sendSseEvent(response, 'manifest');
+        const heartbeat = setInterval(() => response.write(': keepalive\n\n'), 25_000);
+        response.once('close', () => {
+            clearInterval(heartbeat);
+            unsubscribe();
+        });
+        return true;
+    }
+
     if (route === 'manifest' && request.method === 'GET') {
         let manifest;
         try {
@@ -424,6 +640,102 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             sendJson(response, 409, { error: 'No TeX root file found.' });
         } else {
             sendJson(response, 200, manifest);
+        }
+        return true;
+    }
+
+    if (route === 'compile' && request.method === 'POST') {
+        const body = await readJsonRequest(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            sendJson(response, 400, { error: 'Expected a JSON rootPath and optional compiler.' });
+            return true;
+        }
+        const { rootPath, compiler } = body;
+        if (compiler !== undefined && (typeof compiler !== 'string' || !pdfCompilerModes.has(compiler))) {
+            sendJson(response, 400, { error: 'PDF compiler must be tinytex, latexmk, or auto.' });
+            return true;
+        }
+        const source = typeof rootPath === 'string' && /\.tex$/i.test(rootPath)
+            ? resolveProjectFile(projectRoot, rootPath)
+            : undefined;
+        if (!source) {
+            sendJson(response, 404, { error: 'TeX root file not found.' });
+            return true;
+        }
+        if (pdfTools.compilingProjects.has(projectRoot)) {
+            sendJson(response, 409, { error: 'This project is already compiling.' });
+            return true;
+        }
+        pdfTools.compilingProjects.add(projectRoot);
+        try {
+            await pdfTools.compilePdf(source, projectRoot, compiler);
+            const pdfPath = `/${relative(projectRoot, source).replaceAll(sep, '/').replace(/\.tex$/i, '.pdf')}`;
+            if (!resolveProjectFile(projectRoot, pdfPath)) {
+                sendJson(response, 422, { error: 'Compilation finished without a PDF at the expected path.' });
+                return true;
+            }
+            manifestCache.delete(projectRoot);
+            sendJson(response, 200, { path: pdfPath });
+        } catch (error) {
+            const message = error?.code === 'ENOENT'
+                ? String(error.message || 'No supported PDF compiler is available to the SnapTeX server account.')
+                : compilerErrorMessage(error);
+            sendJson(response, error?.code === 'ENOENT' ? 503 : 422, { error: message });
+        } finally {
+            pdfTools.compilingProjects.delete(projectRoot);
+        }
+        return true;
+    }
+
+    if (route === 'synctex' && request.method === 'POST') {
+        const query = await readJsonRequest(request);
+        if (!query || typeof query !== 'object' || Array.isArray(query)) {
+            sendJson(response, 400, { error: 'Expected a SyncTeX JSON query.' });
+            return true;
+        }
+        const pdf = typeof query?.pdfPath === 'string' && /\.pdf$/i.test(query.pdfPath)
+            ? resolveProjectFile(projectRoot, query.pdfPath)
+            : undefined;
+        if (!pdf) {
+            sendJson(response, 404, { error: 'Project PDF not found.' });
+            return true;
+        }
+        const syncFile = pdf.replace(/\.pdf$/i, '.synctex.gz');
+        if (!existsSync(syncFile) || lstatSync(syncFile).isSymbolicLink() || !lstatSync(syncFile).isFile()) {
+            sendJson(response, 409, { error: 'No SyncTeX data for this PDF. Compile the TeX root first.' });
+            return true;
+        }
+        if (pdfTools.compilingProjects.has(projectRoot)) {
+            sendJson(response, 409, { error: 'Wait for PDF compilation to finish.' });
+            return true;
+        }
+        const validNumber = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+        let args;
+        if (query.direction === 'forward') {
+            const source = typeof query.sourcePath === 'string' && /\.tex$/i.test(query.sourcePath)
+                ? resolveProjectFile(projectRoot, query.sourcePath)
+                : undefined;
+            if (source && Number.isInteger(query.line) && validNumber(query.line, 1, 10_000_000)
+                && Number.isInteger(query.column) && validNumber(query.column, 0, 100_000)) {
+                args = { direction: 'forward', pdf, source, line: query.line, column: query.column };
+            }
+        } else if (query.direction === 'inverse' && Number.isInteger(query.page)
+            && validNumber(query.page, 1, 1_000_000) && validNumber(query.x, 0, 1_000_000)
+            && validNumber(query.y, 0, 1_000_000)) {
+            args = { direction: 'inverse', pdf, page: query.page, x: query.x, y: query.y };
+        }
+        if (!args) {
+            sendJson(response, 400, { error: 'Invalid SyncTeX coordinates or source file.' });
+            return true;
+        }
+        try {
+            const result = await pdfTools.querySyncTeX(args, projectRoot);
+            if (result) sendJson(response, 200, result);
+            else sendJson(response, 404, { error: 'SyncTeX found no matching source or PDF location.' });
+        } catch (error) {
+            sendJson(response, error?.code === 'ENOENT' ? 503 : 422, {
+                error: error?.code === 'ENOENT' ? 'SyncTeX is not available to the server account.' : 'SyncTeX query failed.'
+            });
         }
         return true;
     }
@@ -530,6 +842,12 @@ export function createSnapTeXWebServer(options = {}) {
     const assetHashes = loadAssetHashes(root);
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
     const manifestCache = new Map();
+    const projectWatches = createProjectWatchRegistry();
+    const pdfTools = {
+        compilingProjects: new Set(),
+        compilePdf: options.compilePdf ?? compileProjectPdf,
+        querySyncTeX: options.querySyncTeX ?? queryProjectSyncTeX
+    };
     if (projectsRoot && !options.auth) {
         throw new Error('Remote projects require authentication.');
     }
@@ -561,7 +879,7 @@ export function createSnapTeXWebServer(options = {}) {
         if (await auth.handle(request, response, pathname)) return;
         const isProjectRequest = pathname === projectApiPrefix || pathname.startsWith(`${projectApiPrefix}/`);
         if (isProjectRequest && !auth.authorize(request, response)) return;
-        if (await handleProjectRequest(request, response, projectsRoot, manifestCache)) {
+        if (await handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, pdfTools)) {
             return;
         }
         if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -605,7 +923,10 @@ export function createSnapTeXWebServer(options = {}) {
     server.requestTimeout = 30_000;
     server.headersTimeout = 15_000;
     server.maxHeadersCount = 100;
-    server.on('close', auth.clear);
+    server.on('close', () => {
+        auth.clear();
+        projectWatches.close();
+    });
     return server;
 }
 

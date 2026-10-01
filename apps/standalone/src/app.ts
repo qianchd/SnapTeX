@@ -6,13 +6,17 @@ import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import {
     chooseRootPath,
+    isPdfFile,
     isTexFile,
     isProjectTextFile,
     normalizeBrowserPath,
     ProjectWriteConflictError,
     type BrowserProject,
     type BrowserProjectSnapshot,
-    type BrowserProjectTextChange
+    type BrowserProjectTextChange,
+    type PdfCompiler,
+    type PdfSyncQuery,
+    type PdfSyncResult
 } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
@@ -122,6 +126,7 @@ export class StandaloneHost {
     private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
+    private pdfPreviewActive = false;
     private editorVisible = true;
     private previewVisible = true;
     private pendingEditorScroll: { position: number; viewRatio: number } | undefined;
@@ -244,6 +249,81 @@ export class StandaloneHost {
 
     getProjectTextPaths(): readonly string[] {
         return this.fileProvider.getPaths().filter(isProjectTextFile);
+    }
+
+    getProjectPdfPaths(): readonly string[] {
+        return this.fileProvider.getPaths().filter(isPdfFile);
+    }
+
+    readProjectPdf(path: string): Promise<Blob> {
+        if (!isPdfFile(path)) {
+            throw new Error('Only PDF files can open in the PDF preview.');
+        }
+        return this.fileProvider.readBlob(new BrowserUri(path));
+    }
+
+    setPdfPreviewActive(active: boolean): void {
+        if (this.pdfPreviewActive === active) {return;}
+        this.pdfPreviewActive = active;
+        this.pendingPreviewSync = undefined;
+        this.cancelPendingEditorSync();
+        this.updateService.resetState();
+        if (!active) {void this.renderCurrentText();}
+    }
+
+    syncPdf(query: PdfSyncQuery): Promise<PdfSyncResult> {
+        if (!this.projectOperations?.syncPdf) {
+            throw new Error('SyncTeX is available only for server projects.');
+        }
+        return this.projectOperations.syncPdf(query);
+    }
+
+    getEditorPdfSyncLocation(): { path: string; line: number; column: number } {
+        const selection = this.editorView.state.selection.main;
+        const line = this.editorView.state.doc.lineAt(selection.head);
+        return { path: this.activeUri.path, line: line.number, column: selection.head - line.from + 1 };
+    }
+
+    async revealEditorLocation(path: string, line: number, column: number, viewRatio = 0.5): Promise<void> {
+        const targetPath = normalizeBrowserPath(path);
+        if (targetPath !== this.activeUri.path) {
+            await this.openEditorFile(targetPath);
+        }
+        const text = this.editorView.state.doc.toString();
+        const lineStart = offsetAtLine(text, Math.max(0, line - 1));
+        const lineBreak = text.indexOf('\n', lineStart);
+        const position = Math.min(lineBreak < 0 ? text.length : lineBreak, lineStart + Math.max(0, column - 1));
+        this.suppressNextSelectionSync = true;
+        this.suppressEditorToPreview();
+        this.editorView.dispatch({ selection: { anchor: position }, effects: flashEditorLineEffect.of(position) });
+        this.syncEditorPosition(position, viewRatio);
+        const token = ++this.editorFlashToken;
+        globalThis.setTimeout(() => {
+            if (token === this.editorFlashToken) {this.editorView.dispatch({ effects: flashEditorLineEffect.of(null) });}
+        }, 1200);
+    }
+
+    canCompilePdf(): boolean {
+        return this.projectOperations?.compilePdf !== undefined;
+    }
+
+    async compilePdf(compiler: PdfCompiler): Promise<string> {
+        const compile = this.projectOperations?.compilePdf;
+        if (!compile) {
+            throw new Error('PDF compilation is available only for server projects.');
+        }
+        await this.flushProjectWrites();
+        this.persistActiveEditorText();
+        if (this.isDirty(this.activeUri.path)) {
+            await this.saveCurrentText();
+        }
+        if (this.dirtyPaths.size > 0) {
+            throw new Error(`Save the other modified files before compiling: ${[...this.dirtyPaths].join(', ')}`);
+        }
+        const file = await compile(this.rootUri.path, compiler);
+        this.fileProvider.setProjectFile(file);
+        this.notifyStateChanged();
+        return file.path;
     }
 
     canModifyProject(): boolean {
@@ -488,6 +568,7 @@ export class StandaloneHost {
     }
 
     syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5, auto = true) {
+        if (this.pdfPreviewActive) {return;}
         if (!auto) { this.beginEditorInteraction(); }
         if ((auto && (!this.settings.autoScrollSync || !this.editorVisible || this.previewControlsSync)) || !this.previewReady) {
             return;
@@ -573,6 +654,7 @@ export class StandaloneHost {
     }
 
     beginPreviewScroll() {
+        if (this.pdfPreviewActive) {return;}
         this.previewControlsSync = true;
         this.suppressPreviewToEditorUntil = 0;
         this.cancelEditorToPreviewSync();
@@ -606,26 +688,11 @@ export class StandaloneHost {
         if (!target) {
             return;
         }
-
-        const { source, text } = target;
-        const position = Math.min(this.editorView.state.doc.length, offsetAtLine(text, Math.max(0, source.line)));
-        this.suppressNextSelectionSync = true;
-        this.suppressEditorToPreview();
-        this.editorView.dispatch({
-            selection: { anchor: position },
-            effects: flashEditorLineEffect.of(position)
-        });
-        this.syncEditorPosition(position, options.viewRatio ?? 0.5);
-        const token = ++this.editorFlashToken;
-        globalThis.setTimeout(() => {
-            if (token === this.editorFlashToken) {
-                this.editorView.dispatch({ effects: flashEditorLineEffect.of(null) });
-            }
-        }, 1200);
+        await this.revealEditorLocation(target.source.file, target.source.line + 1, 1, options.viewRatio);
     }
 
     async syncPreviewScroll(index: number, ratio: number, options: SourceSyncOptions = {}) {
-        if (!this.settings.autoScrollSync || Date.now() < this.suppressPreviewToEditorUntil) {
+        if (this.pdfPreviewActive || !this.settings.autoScrollSync || Date.now() < this.suppressPreviewToEditorUntil) {
             return;
         }
 
@@ -667,7 +734,7 @@ export class StandaloneHost {
                 await this.handlePdfRequest(message.id, message.path);
                 break;
             case PreviewToHostCommand.RevealLine:
-                void this.revealPreviewLocation(message.index, message.ratio, message);
+                if (!this.pdfPreviewActive) {void this.revealPreviewLocation(message.index, message.ratio, message);}
                 break;
             case PreviewToHostCommand.SyncScroll:
                 void this.syncPreviewScroll(message.index, message.ratio, message);
@@ -685,7 +752,7 @@ export class StandaloneHost {
     }
 
     async renderCurrentText() {
-        if (!this.previewReady || this.fileProvider.isEmpty()) {
+        if (!this.previewReady || this.pdfPreviewActive || this.fileProvider.isEmpty()) {
             return;
         }
 
@@ -696,6 +763,7 @@ export class StandaloneHost {
             backendMode: this.settings.backendMode,
             transformHtml: html => this.fixHtmlPaths(html)
         });
+        if (this.pdfPreviewActive) {return;}
 
         this.labels = Object.keys(payload.numbering.labels).sort((a, b) => a.localeCompare(b));
         this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));

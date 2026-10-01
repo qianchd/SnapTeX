@@ -197,6 +197,9 @@ function copyPdfAssets() {
     for (const file of ["pdf.mjs", "pdf.worker.mjs"]) {
         copyFileIfExists(path.join(pdfjsSrc, file), path.join(pdfjsDest, file), "PDF.js file");
     }
+    for (const file of ["pdf_viewer.mjs", "pdf_viewer.css"]) {
+        copyFileIfExists(path.join(ROOT, "node_modules", "pdfjs-dist", "web", file), path.join(pdfjsDest, file), "PDF.js viewer file");
+    }
 }
 
 function copyTikzAssets() {

@@ -4,6 +4,10 @@ body {
     margin: 0;
 }
 
+body[data-pdf-open="true"] {
+    overflow: hidden;
+}
+
 :root {
     --snaptex-web-editor-width: 60vw;
     --snaptex-web-min-editor-width: 280px;
@@ -13,7 +17,7 @@ body {
     --snaptex-web-collapse-distance: 120px;
     --snaptex-web-topbar-height: 30px;
     --snaptex-web-topbar-peek: 6px;
-    --snaptex-web-topbar-hover-height: 20px;
+    --snaptex-web-topbar-hover-height: 13px;
     --snaptex-editor-font-size: 14px;
     --snaptex-editor-font-family: "Source Code Pro", "Operator Mono", "Hack", "SimHei", "黑体", monospace;
     --snaptex-shell-bg: #f3f4f6;
@@ -507,6 +511,23 @@ body[data-theme="dark"] :is(#snaptex-brand img, .welcome-content > img) {
     line-height: 1.45;
 }
 
+.compile-output-dialog {
+    width: min(780px, calc(100vw - 32px));
+}
+
+#compile-output {
+    max-height: min(62vh, 560px);
+    margin: 0;
+    overflow: auto;
+    border: 1px solid var(--snaptex-border);
+    border-radius: 4px;
+    background: var(--snaptex-editor-bg);
+    color: var(--snaptex-editor-fg);
+    font: 12px/1.45 var(--snaptex-editor-font-family);
+    padding: 12px;
+    white-space: pre-wrap;
+}
+
 .remote-project-server-controls {
     display: grid;
     gap: 12px;
@@ -521,6 +542,7 @@ body[data-theme="dark"] :is(#snaptex-brand img, .welcome-content > img) {
 
 body[data-deployment-mode="static"] .remote-project-server-controls,
 body[data-deployment-mode="static"] #remote-project-connect-button,
+body[data-deployment-mode="static"] #pdf-compiler-setting,
 body[data-deployment-mode="server"] .remote-project-static-notice {
     display: none;
 }
@@ -1197,6 +1219,30 @@ body.is-resizing-split #preview-pane {
     font-family: var(--snaptex-preview-font-family);
 }
 
+#preview-pane[data-pdf-open="true"] {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#preview-pane[data-pdf-open="true"] #content-root {
+    display: none;
+}
+
+#pdf-preview:not([hidden]) {
+    display: flex;
+    height: 100%;
+    background: var(--snaptex-editor-bg);
+}
+
+#pdf-preview-host {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
 #content-root {
     --base-font-size: var(--snaptex-preview-base-font-size, 2.8cqw);
 
@@ -1331,6 +1377,12 @@ body.is-resizing-split #preview-pane {
 
     #preview-pane {
         min-height: calc(100dvh - var(--snaptex-web-topbar-height));
+    }
+
+    #preview-pane[data-pdf-open="true"] {
+        top: var(--snaptex-web-topbar-height);
+        height: calc(100dvh - var(--snaptex-web-topbar-height));
+        min-height: 0;
     }
 
     body[data-pane-layout="split"] #preview-pane {
