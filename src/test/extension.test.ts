@@ -3,7 +3,8 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { LatexDocument } from '../document';
-import { getVirtualMode, isUriWithinAllowedRoots, normalizePdfRequestPath } from '../../apps/vscode/src/panel';
+import { resolveProjectResourcePath } from '../file-provider';
+import { getVirtualMode, resolveProjectResource } from '../../apps/vscode/src/panel';
 import { SmartRenderer } from '../renderer';
 import { defineAstMathRule, defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
 import type { RuleRegistry } from '../rules';
@@ -1119,25 +1120,31 @@ suite('SmartRenderer', () => {
     });
 });
 
-suite('PDF request validation', () => {
-    test('normalizes pdf paths and checks allowed roots', () => {
-        assert.equal(normalizePdfRequestPath('figure.pdf'), 'figure.pdf');
-        assert.equal(normalizePdfRequestPath('./figures/Plot.PDF'), 'figures/Plot.PDF');
-        assert.equal(normalizePdfRequestPath('figures\\plot.pdf'), 'figures/plot.pdf');
-
-        assert.equal(normalizePdfRequestPath('../secret.pdf'), undefined);
-        assert.equal(normalizePdfRequestPath('figures/../secret.pdf'), undefined);
-        assert.equal(normalizePdfRequestPath('/tmp/secret.pdf'), undefined);
-        assert.equal(normalizePdfRequestPath('C:/tmp/secret.pdf'), undefined);
-        assert.equal(normalizePdfRequestPath('figure.png'), undefined);
-        assert.equal(normalizePdfRequestPath(42), undefined);
-
+suite('Project resource path validation', () => {
+    test('resolves any project-relative resource without escaping the root', () => {
         const root = vscode.Uri.file('/project');
-        const docDir = vscode.Uri.file('/project/chapter');
+        const source = vscode.Uri.file('/project/chapter/main.tex');
 
-        assert.equal(isUriWithinAllowedRoots(vscode.Uri.file('/project/chapter/figures/a.pdf'), [docDir, root]), true);
-        assert.equal(isUriWithinAllowedRoots(vscode.Uri.file('/project2/a.pdf'), [root]), false);
-        assert.equal(isUriWithinAllowedRoots(vscode.Uri.parse('https://example.com/a.pdf'), [root]), false);
+        const pdf = resolveProjectResource(source, root, '../figures/a.pdf');
+        const image = resolveProjectResource(source, root, '../figures/a.png');
+
+        assert.equal(pdf?.relativePath, 'figures/a.pdf');
+        assert.equal(pdf?.uri.toString(), vscode.Uri.file('/project/figures/a.pdf').toString());
+        assert.equal(image?.uri.toString(), vscode.Uri.file('/project/figures/a.png').toString());
+        assert.equal(resolveProjectResource(source, root, '../../outside.png'), undefined);
+        assert.equal(resolveProjectResource(source, root, '../../project/reentered.pdf'), undefined);
+        assert.equal(resolveProjectResource(source, root, '/tmp/secret.pdf'), undefined);
+        assert.equal(resolveProjectResource(source, root, 'C:/tmp/secret.pdf'), undefined);
+        assert.equal(resolveProjectResource(source, root, 'https://example.com/a.pdf'), undefined);
+        assert.equal(resolveProjectResource(source, root, 42), undefined);
+    });
+
+    test('resolves resource paths without crossing the opened project root', () => {
+        assert.equal(resolveProjectResourcePath('subfold', '../figures/a.pdf'), 'figures/a.pdf');
+        assert.equal(resolveProjectResourcePath('', '../figures/a.pdf'), undefined);
+        assert.equal(resolveProjectResourcePath('subfold', '../../outside.pdf'), undefined);
+        assert.equal(resolveProjectResourcePath('subfold', 'C:\\outside.pdf'), undefined);
+        assert.equal(resolveProjectResourcePath('../outside', 'a.pdf'), undefined);
     });
 
     test('uses virtual mode by default while honoring explicit settings', () => {

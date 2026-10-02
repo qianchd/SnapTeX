@@ -19,6 +19,7 @@ import {
     type PdfSyncResult
 } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
+import { resolveProjectResourcePath } from '../../../src/file-provider';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
 import { debounce, decodeHtmlAttribute, getSyncAnchorContext, offsetAtLine, replaceLocalResourceUrls } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
@@ -790,6 +791,10 @@ export class StandaloneHost {
         }
 
         const uri = this.resolveProjectResourceUri(pathText);
+        if (!uri) {
+            this.postToPreview({ command: HostToPreviewCommand.PdfUri, id, error: 'PDF path is outside the project root' });
+            return;
+        }
         const url = await this.fileProvider.getResourceUrl(uri);
         if (!url) {
             this.addDiagnostic(`Missing PDF: ${pathText}`);
@@ -801,7 +806,8 @@ export class StandaloneHost {
 
     private async fixHtmlPaths(html: string): Promise<string> {
         return replaceLocalResourceUrls(html, async (path, attribute) => {
-            const url = await this.fileProvider.getResourceUrl(this.resolveProjectResourceUri(path));
+            const uri = this.resolveProjectResourceUri(path);
+            const url = uri && await this.fileProvider.getResourceUrl(uri);
             if (!url) {
                 this.addDiagnostic(`${attribute === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
             }
@@ -809,8 +815,10 @@ export class StandaloneHost {
         });
     }
 
-    private resolveProjectResourceUri(relativePath: string): BrowserUri {
-        return this.fileProvider.resolve(this.fileProvider.dir(this.rootUri), relativePath);
+    private resolveProjectResourceUri(relativePath: string): BrowserUri | undefined {
+        const baseDirectory = this.fileProvider.dir(this.rootUri).path.replace(/^\/+/, '');
+        const path = resolveProjectResourcePath(baseDirectory, relativePath);
+        return path ? new BrowserUri(`/${path}`) : undefined;
     }
 
     private postToPreview(message: HostToPreviewMessage) {

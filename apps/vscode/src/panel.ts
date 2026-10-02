@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { IFileProvider } from '../../../src/file-provider';
+import { resolveProjectResourcePath, type IFileProvider } from '../../../src/file-provider';
 import { getBasename, normalizeUri, replaceLocalResourceUrls } from '../../../src/utils';
 import { fillPreviewHtmlTemplate } from '../../../src/preview-template';
 import type { PreviewUpdateService } from '../../../src/preview-update-service';
@@ -88,27 +88,6 @@ function getPreviewStyle(config = vscode.workspace.getConfiguration('snaptex')):
     };
 }
 
-export function normalizePdfRequestPath(input: unknown): string | undefined {
-    if (typeof input !== 'string') {
-        return undefined;
-    }
-
-    const cleanPath = input.trim().replace(/\\/g, '/').replace(/^(?:\.\/)+/, '');
-
-    if (
-        !cleanPath ||
-        cleanPath.includes('\0') ||
-        !cleanPath.toLowerCase().endsWith('.pdf') ||
-        cleanPath.startsWith('/') ||
-        /^[a-zA-Z]:\//.test(cleanPath) ||
-        cleanPath.split('/').includes('..')
-    ) {
-        return undefined;
-    }
-
-    return cleanPath;
-}
-
 function normalizeUriPathForContainment(uri: vscode.Uri): string {
     let path = uri.path.replace(/\/+/g, '/');
     if (path.length > 1) {
@@ -119,18 +98,27 @@ function normalizeUriPathForContainment(uri: vscode.Uri): string {
     return isWindowsFileUri ? path.toLowerCase() : path;
 }
 
-export function isUriWithinAllowedRoots(uri: vscode.Uri, roots: vscode.Uri[]): boolean {
+function isUriWithinRoot(uri: vscode.Uri, root: vscode.Uri): boolean {
     const childPath = normalizeUriPathForContainment(uri);
+    if (uri.scheme !== root.scheme || uri.authority !== root.authority) { return false; }
 
-    return roots.some(root => {
-        if (uri.scheme !== root.scheme || uri.authority !== root.authority) {
-            return false;
-        }
+    const rootPath = normalizeUriPathForContainment(root);
+    const rootPrefix = rootPath.endsWith('/') ? rootPath : `${rootPath}/`;
+    return childPath === rootPath || childPath.startsWith(rootPrefix);
+}
 
-        const rootPath = normalizeUriPathForContainment(root);
-        const rootPrefix = rootPath.endsWith('/') ? rootPath : `${rootPath}/`;
-        return childPath === rootPath || childPath.startsWith(rootPrefix);
-    });
+export function resolveProjectResource(sourceUri: vscode.Uri, projectRoot: vscode.Uri, input: unknown): { relativePath: string; uri: vscode.Uri } | undefined {
+    if (!isUriWithinRoot(sourceUri, projectRoot)) { return undefined; }
+
+    const sourceDir = vscode.Uri.joinPath(sourceUri, '..').path.replace(/\/+$/g, '') || '/';
+    const rootPath = projectRoot.path.replace(/\/+$/g, '') || '/';
+    const baseDirectory = (rootPath === '/' ? sourceDir.slice(1) : sourceDir.slice(rootPath.length))
+        .replace(/^\/+/, '');
+    const relativePath = resolveProjectResourcePath(baseDirectory, input);
+    if (!relativePath) { return undefined; }
+
+    const uri = vscode.Uri.joinPath(projectRoot, ...relativePath.split('/'));
+    return isUriWithinRoot(uri, projectRoot) ? { relativePath, uri } : undefined;
 }
 
 /**
@@ -272,34 +260,28 @@ export class TexPreviewPanel {
      * Resolves a validated relative PDF path to a webview URI.
      */
     private async handlePdfRequest(message: RequestPdfMessage) {
-        if (!this._sourceUri) {return;}
+        const sourceUri = this._sourceUri;
+        if (!sourceUri) {return;}
 
         const fail = (error: string) => {
             this.postMessage({ command: HostToPreviewCommand.PdfUri, id: message.id, error });
         };
 
-        const cleanPath = normalizePdfRequestPath(message.path);
-        if (!cleanPath) {
+        const resource = resolveProjectResource(sourceUri, this.getProjectResourceRoot(sourceUri), message.path);
+        if (!resource?.relativePath.toLowerCase().endsWith('.pdf')) {
             fail('Invalid PDF path');
             return;
         }
 
         try {
-            const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
-            const pdfUri = vscode.Uri.joinPath(docDir, ...cleanPath.split('/').filter(Boolean));
-            const workspaceRoots = vscode.workspace.workspaceFolders?.map(folder => folder.uri) ?? [];
-            if (!isUriWithinAllowedRoots(pdfUri, [docDir, ...workspaceRoots])) {
-                fail('PDF path is outside the allowed roots');
-                return;
-            }
-
+            const { uri: pdfUri, relativePath } = resource;
             if (await this._fileProvider.exists(pdfUri)) {
                 const webviewUri = this._panel.webview.asWebviewUri(pdfUri);
                 this.postMessage({
                     command: HostToPreviewCommand.PdfUri,
                     id: message.id,
                     uri: webviewUri.toString(),
-                    path: cleanPath
+                    path: relativePath
                 });
             } else {
                 console.warn(`[SnapTeX] PDF not found: ${pdfUri.toString()}`);
@@ -312,17 +294,18 @@ export class TexPreviewPanel {
     }
 
     private async fixHtmlPaths(html: string): Promise<string> {
-        if (!this._sourceUri) { return html; }
+        const sourceUri = this._sourceUri;
+        if (!sourceUri) { return html; }
+        const projectRoot = this.getProjectResourceRoot(sourceUri);
 
-        const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
         return replaceLocalResourceUrls(html, relPath => {
-            let normalizedPath = relPath.replace(/\\/g, '/');
-            if (normalizedPath.startsWith('./')) { normalizedPath = normalizedPath.substring(2); }
-
-            const pathSegments = normalizedPath.split('/');
-            const fullUri = vscode.Uri.joinPath(docDir, ...pathSegments);
-            return this._panel.webview.asWebviewUri(fullUri).toString();
+            const resource = resolveProjectResource(sourceUri, projectRoot, relPath);
+            return resource ? this._panel.webview.asWebviewUri(resource.uri).toString() : undefined;
         });
+    }
+
+    private getProjectResourceRoot(sourceUri: vscode.Uri): vscode.Uri {
+        return vscode.workspace.getWorkspaceFolder(sourceUri)?.uri ?? this._fileProvider.dir(sourceUri);
     }
 
     private async handleBlockHtmlRequest(message: BlockHtmlRequest) {
@@ -431,12 +414,9 @@ export class TexPreviewPanel {
             this._updateService.resetState();
         }
 
-        const docDir = vscode.Uri.joinPath(this._sourceUri, '..');
-
-        const mediaRoot = vscode.Uri.joinPath(this._extensionUri, 'media');
         this._panel.webview.options = {
             enableScripts: true,
-            localResourceRoots: [this._extensionUri, mediaRoot, docDir]
+            localResourceRoots: [this._extensionUri, this.getProjectResourceRoot(docUri)]
         };
         this.postWebviewConfig();
 

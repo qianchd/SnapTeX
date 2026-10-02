@@ -451,6 +451,50 @@ suite('StandaloneHost', () => {
         }
     });
 
+    test('resolves relative image and PDF paths inside the opened project', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+
+        try {
+            await host.loadProject({
+                rootPath: '/subfold/root.tex',
+                files: [
+                    {
+                        path: '/subfold/root.tex',
+                        text: [
+                            '\\begin{figure}',
+                            '\\includegraphics{../figures/a.png}',
+                            '\\includegraphics{../../outside.png}',
+                            '\\end{figure}'
+                        ].join('\n')
+                    },
+                    { path: '/figures/a.png', resourceUrl: 'https://assets.test/a.png' },
+                    { path: '/figures/a.pdf', resourceUrl: 'https://assets.test/a.pdf' },
+                    { path: '/outside.png', resourceUrl: 'https://assets.test/outside.png' }
+                ]
+            });
+
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            const html = await requestBlockHtml(host, messages);
+            assert.match(html, /src="https:\/\/assets\.test\/a\.png"/);
+            assert.doesNotMatch(html, /assets\.test\/outside\.png/);
+
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.RequestPdf, id: 'pdf-relative', path: '../figures/a.pdf' });
+            const pdf = messages.find(message => message.command === HostToPreviewCommand.PdfUri && message.id === 'pdf-relative');
+            assert.ok(pdf && pdf.command === HostToPreviewCommand.PdfUri);
+            assert.equal(pdf.uri, 'https://assets.test/a.pdf');
+
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.RequestPdf, id: 'pdf-outside', path: '../../outside.pdf' });
+            const outsidePdf = messages.find(message => message.command === HostToPreviewCommand.PdfUri && message.id === 'pdf-outside');
+            assert.ok(outsidePdf && outsidePdf.command === HostToPreviewCommand.PdfUri);
+            assert.match(outsidePdf.error ?? '', /outside the project root/);
+        } finally {
+            restoreWindow();
+        }
+    });
+
     test('syncs the active editor selection to the root preview', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];

@@ -13,3 +13,30 @@ export interface IFileProvider<TUri extends UriLike = UriLike> {
     resolve(base: TUri, relative: string): TUri;
     dir(uri: TUri): TUri;
 }
+
+/** Resolves a LaTeX resource relative to a directory inside the opened project. */
+export function resolveProjectResourcePath(baseDirectory: string, input: unknown): string | undefined {
+    if (typeof input !== 'string') { return undefined; }
+
+    const path = input.trim().replace(/\\/g, '/');
+    if (!path || path.includes('\0') || path.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(path)) {
+        return undefined;
+    }
+
+    const base = baseDirectory.replace(/\\/g, '/');
+    if (base.includes('\0') || base.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(base)) {
+        return undefined;
+    }
+
+    const parts: string[] = [];
+    for (const part of [...base.split('/'), ...path.split('/')]) {
+        if (!part || part === '.') { continue; }
+        if (part === '..') {
+            if (parts.length === 0) { return undefined; }
+            parts.pop();
+        } else {
+            parts.push(part);
+        }
+    }
+    return parts.length ? parts.join('/') : undefined;
+}
