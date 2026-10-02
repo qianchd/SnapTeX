@@ -7,6 +7,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 - **Added**: Configurable Web auto save for dirty writable files, using the same serialized save and external-update pipeline as manual saving.
 - **Fixed**: Preserved editor selection and undo history during saves and external text updates; retained edits typed while a save is in progress.
 - **Fixed**: Checked saved-text baselines before local-folder and IndexedDB writes, and paired remote text with its ETag to avoid stale overwrites.
+- **Fixed**: Kept PDF refresh positions scoped to the same document, ignored superseded loads, and released the link service's document reference when closing PDF preview.
 
 ## [0.8.1] - 2026-09-13
 

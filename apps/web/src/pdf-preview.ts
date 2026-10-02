@@ -23,6 +23,7 @@ export class PdfPreview {
     private loadingTask?: PDFDocumentLoadingTask;
     private generation = 0;
     private location?: PdfViewLocation;
+    private documentPath?: string;
     private restoreLocation?: PdfViewLocation;
     private pendingReveal?: PdfPosition;
     private readonly ready: Promise<void>;
@@ -199,19 +200,23 @@ export class PdfPreview {
     async open(blob: Blob, path: string): Promise<void> {
         const generation = ++this.generation;
         const viewer = await this.ensureViewer();
-        if (this.downloadUrl) {URL.revokeObjectURL(this.downloadUrl);}
-        this.downloadUrl = URL.createObjectURL(blob);
-        this.download.href = this.downloadUrl;
-        this.download.download = path.split('/').pop() || 'document.pdf';
+        if (generation !== this.generation) {return;}
+        const data = new Uint8Array(await blob.arrayBuffer());
+        if (generation !== this.generation) {return;}
         const pdfjs = this.pdfjs!;
-        const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) });
+        const task = pdfjs.getDocument({ data });
         try {
             const pdf = await task.promise;
             if (generation !== this.generation) {
                 await task.destroy();
                 return;
             }
-            this.restoreLocation = viewer.pagesCount ? this.location : undefined;
+            if (this.downloadUrl) {URL.revokeObjectURL(this.downloadUrl);}
+            this.downloadUrl = URL.createObjectURL(blob);
+            this.download.href = this.downloadUrl;
+            this.download.download = path.split('/').pop() || 'document.pdf';
+            this.restoreLocation = this.documentPath === path ? this.location : undefined;
+            this.documentPath = path;
             const previous = this.loadingTask;
             this.loadingTask = task;
             viewer.setDocument(pdf);
@@ -219,7 +224,7 @@ export class PdfPreview {
             if (previous) {void previous.destroy();}
         } catch (error) {
             await task.destroy();
-            throw error;
+            if (generation === this.generation) {throw error;}
         }
     }
 
@@ -283,11 +288,13 @@ export class PdfPreview {
     close(): void {
         this.generation++;
         this.location = undefined;
+        this.documentPath = undefined;
         this.restoreLocation = undefined;
         this.pendingReveal = undefined;
         this.highlight?.remove();
         this.highlight = undefined;
         this.viewer?.setDocument(null as never);
+        if (this.viewer) {(this.viewer.linkService as PDFLinkService).setDocument(null);}
         const task = this.loadingTask;
         this.loadingTask = undefined;
         if (task) {void task.destroy();}
