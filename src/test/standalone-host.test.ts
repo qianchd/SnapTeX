@@ -13,6 +13,7 @@ function normalizeEditorText(text: string): string {
 class TestEditorView {
     public selectionAnchor = -1;
     public lastEffects: unknown;
+    public lastChange: { from: number; to: number; insert: string } | undefined;
     public scrollDOM = { scrollTop: 0, clientHeight: 100 };
 
     constructor(private text = '') {}
@@ -29,6 +30,7 @@ class TestEditorView {
     dispatch(update: { changes?: { from: number; to: number; insert: string }; selection?: { anchor: number }; effects?: unknown }) {
         if (update.changes) {
             const { from, to, insert } = update.changes;
+            this.lastChange = update.changes;
             this.text = normalizeEditorText(`${this.text.slice(0, from)}${insert}${this.text.slice(to)}`);
         }
         if (update.selection) {
@@ -61,6 +63,8 @@ function installWindow(messages: HostToPreviewMessage[]) {
     testGlobal.window = {
         location: { origin: 'http://snaptex.test' },
         snaptexPreviewMessageQueue: [],
+        setTimeout: globalThis.setTimeout.bind(globalThis),
+        clearTimeout: globalThis.clearTimeout.bind(globalThis),
         postMessage(message: HostToPreviewMessage) {
             messages.push(message);
         }
@@ -87,11 +91,12 @@ suite('StandaloneHost', () => {
         const messages: HostToPreviewMessage[] = [];
         const restoreWindow = installWindow(messages);
         let receiveChange: ((change: BrowserProjectTextChange) => Promise<void> | void) | undefined;
+        const writes: string[] = [];
         const host = new StandaloneHost(editor as unknown as EditorView);
 
         try {
             await host.loadProject({
-                files: [{ path: '/main.tex', text: 'First\nMiddle\nLast' }],
+                files: [{ path: '/main.tex', text: 'First\nMiddle\nLast', writeText: text => { writes.push(text); } }],
                 rootPath: '/main.tex',
                 watchTextFiles: onChange => {
                     receiveChange = onChange;
@@ -99,16 +104,21 @@ suite('StandaloneHost', () => {
                 }
             });
             editor.replaceText('Local first\nMiddle\nLast');
+            editor.selectionAnchor = 'Local first\nMiddle\n'.length + 2;
             host.handleEditorUpdate();
 
             await receiveChange?.({ path: '/main.tex', text: 'First\nMiddle\nRemote last' });
             assert.equal(editor.state.doc.toString(), 'Local first\nMiddle\nRemote last');
+            assert.equal(editor.selectionAnchor, 'Local first\nMiddle\n'.length + 2);
+            assert.ok(editor.lastChange && editor.lastChange.from > 0);
             assert.equal(host.isDirty('/main.tex'), true);
             assert.deepEqual(host.getDiagnostics(), []);
 
             await receiveChange?.({ path: '/main.tex', text: 'Remote first\nMiddle\nRemote last' });
             assert.match(editor.state.doc.toString(), /<<<<<<< LOCAL[\s\S]*Remote first[\s\S]*>>>>>>> REMOTE/);
             assert.match(host.getDiagnostics().join('\n'), /conflict markers/i);
+            await assert.rejects(() => host.saveCurrentText(), /Resolve the remote edit conflict markers/);
+            assert.deepEqual(writes, []);
         } finally {
             restoreWindow();
         }
@@ -126,11 +136,13 @@ suite('StandaloneHost', () => {
             await host.loadProject({ files: [{
                 path: '/main.tex',
                 text: 'First\nMiddle\nLast',
-                writeText: async text => {
+                writeText: async (text, expectedText) => {
                     if (firstWrite) {
                         firstWrite = false;
+                        assert.equal(expectedText, 'First\nMiddle\nLast');
                         throw new ProjectWriteConflictError('/main.tex', 'First\nMiddle\nRemote last');
                     }
+                    assert.equal(expectedText, 'First\nMiddle\nRemote last');
                     writes.push(text);
                 }
             }], rootPath: '/main.tex' });
@@ -178,6 +190,90 @@ suite('StandaloneHost', () => {
             assert.ok(!host.getProjectTextPaths().includes('/sections/notes.tex'));
             await assert.rejects(() => host.deleteTextFile('/main.tex'), /preview root/i);
             await assert.rejects(() => host.createTextFile('/figure.png'), /text file/i);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('serializes saves without clearing edits made while a write is pending', async () => {
+        const editor = new TestEditorView();
+        const restoreWindow = installWindow([]);
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, { autoSave: false });
+        const writes: string[] = [];
+        let releaseWrite: () => void = () => undefined;
+        const pendingWrite = new Promise<void>(resolve => { releaseWrite = resolve; });
+        let concurrentWrites = 0;
+        let peakWrites = 0;
+        let diskText = 'Base';
+        let receiveChange: ((change: BrowserProjectTextChange) => Promise<void> | void) | undefined;
+
+        try {
+            await host.loadProject({ files: [{
+                path: '/main.tex', text: 'Base',
+                readText: async () => diskText,
+                writeText: async text => {
+                    peakWrites = Math.max(peakWrites, ++concurrentWrites);
+                    writes.push(text);
+                    if (writes.length === 1) {await pendingWrite;}
+                    await flushAsync();
+                    diskText = text;
+                    concurrentWrites--;
+                }
+            }], watchTextFiles: onChange => {
+                receiveChange = onChange;
+                return () => undefined;
+            } });
+            editor.replaceText('First edit');
+            host.handleEditorUpdate();
+            const firstSave = host.saveCurrentText();
+            await flushAsync();
+            editor.replaceText('Second edit');
+            host.handleEditorUpdate();
+            const queuedChange = receiveChange?.({ path: '/main.tex', text: 'Base' });
+            releaseWrite();
+            await firstSave;
+            await queuedChange;
+            assert.equal(host.isDirty('/main.tex'), true);
+            assert.equal(editor.state.doc.toString(), 'Second edit');
+            const saves = [host.saveCurrentText(), host.saveCurrentText()];
+            await Promise.all(saves);
+            assert.deepEqual(writes, ['First edit', 'Second edit', 'Second edit']);
+            assert.equal(peakWrites, 1);
+            assert.equal(host.isDirty('/main.tex'), false);
+            assert.equal(editor.state.doc.toString(), 'Second edit');
+        } finally {
+            releaseWrite();
+            restoreWindow();
+        }
+    });
+
+    test('autosaves dirty writable text on the configured interval only', async () => {
+        const editor = new TestEditorView();
+        const restoreWindow = installWindow([]);
+        const writes: Array<{ text: string; expectedText?: string }> = [];
+        const host = new StandaloneHost(
+            editor as unknown as EditorView,
+            '/main.tex',
+            undefined,
+            undefined,
+            { autoSaveIntervalSeconds: 0.02 }
+        );
+
+        try {
+            await host.loadProject({
+                rootPath: '/main.tex',
+                files: [{
+                    path: '/main.tex',
+                    text: 'Base',
+                    writeText: (text, expectedText) => { writes.push({ text, expectedText }); }
+                }]
+            });
+            editor.replaceText('Edited');
+            host.handleEditorUpdate();
+            await new Promise(resolve => setTimeout(resolve, 40));
+
+            assert.deepEqual(writes, [{ text: 'Edited', expectedText: 'Base' }]);
+            assert.equal(host.isDirty('/main.tex'), false);
         } finally {
             restoreWindow();
         }
@@ -698,7 +794,7 @@ suite('StandaloneHost', () => {
                     ].join('\n'),
                     writeText: () => { writes += 1; }
                 }
-            ], rootPath: '/main.tex', autosave: true });
+            ], rootPath: '/main.tex' });
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await host.openEditorFile('/chapter.tex');

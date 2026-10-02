@@ -1,4 +1,4 @@
-import { isProjectFile, isProjectTextFile, normalizeBrowserPath, type BrowserProject, type BrowserProjectFile } from '../../standalone/src/browser-project';
+import { isProjectFile, isProjectTextFile, normalizeBrowserPath, normalizeProjectText, ProjectWriteConflictError, type BrowserProject, type BrowserProjectFile } from '../../standalone/src/browser-project';
 
 export interface BrowserFileHandle {
     kind: 'file';
@@ -32,6 +32,7 @@ type BrowserFileSystemObserverConstructor = new (callback: () => void) => Browse
 interface LocalTextFile {
     handle: BrowserFileHandle;
     version: string;
+    text?: string;
 }
 
 async function ensureDirectoryPermission(directory: BrowserDirectoryHandle): Promise<void> {
@@ -67,11 +68,26 @@ function projectFileFromHandle(
             readText: async () => {
                 const file = await handle.getFile();
                 state.version = fileVersion(file);
-                return file.text();
+                return state.text = normalizeProjectText(await file.text());
             },
-            writeText: async text => {
-                await writeText(handle, text);
-                state.version = fileVersion(await handle.getFile());
+            writeText: async (text, expectedText) => {
+                const currentFile = await handle.getFile();
+                const currentText = await currentFile.text();
+                const normalizedCurrent = normalizeProjectText(currentText);
+                if (expectedText !== undefined && normalizedCurrent !== normalizeProjectText(expectedText)) {
+                    state.text = normalizedCurrent;
+                    state.version = fileVersion(currentFile);
+                    throw new ProjectWriteConflictError(path, currentText);
+                }
+                state.text = normalizeProjectText(text);
+                try {
+                    await writeText(handle, text);
+                    state.version = fileVersion(await handle.getFile());
+                } catch (error) {
+                    state.text = normalizedCurrent;
+                    state.version = fileVersion(currentFile);
+                    throw error;
+                }
             }
         };
     }
@@ -141,10 +157,16 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
                         checkAgain = false;
                         for (const [path, state] of textFiles) {
                             const file = await state.handle.getFile();
+                            if (stopped) {return;}
                             const version = fileVersion(file);
                             if (version !== state.version) {
                                 state.version = version;
-                                await onChange({ path, text: await file.text() });
+                                const text = normalizeProjectText(await file.text());
+                                if (stopped) {return;}
+                                if (text !== state.text) {
+                                    state.text = text;
+                                    await onChange({ path, text });
+                                }
                             }
                         }
                     } while (checkAgain && !stopped);
@@ -185,10 +207,9 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
             createTextFile: async (path, text) => {
                 const [parent, name] = await projectFileParent(directory, path, true);
                 const handle = await parent.getFileHandle(name, { create: true });
-                await writeText(handle, text);
                 const normalizedPath = normalizeBrowserPath(path);
                 const file = projectFileFromHandle(handle, normalizedPath, textFiles);
-                textFiles.get(normalizedPath)!.version = fileVersion(await handle.getFile());
+                await file.writeText?.(text);
                 return file;
             },
             deleteFile: async path => {

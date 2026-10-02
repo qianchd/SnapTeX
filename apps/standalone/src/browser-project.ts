@@ -5,7 +5,7 @@ export interface BrowserProjectFile {
     path: string;
     text?: string;
     readText?: () => Promise<string>;
-    writeText?: (text: string) => Promise<void> | void;
+    writeText?: (text: string, expectedText?: string) => Promise<void> | void;
     blob?: Blob;
     readBlob?: () => Promise<Blob>;
     resourceUrl?: string;
@@ -58,6 +58,10 @@ export function normalizeBrowserPath(path: string): string {
         }
     }
     return `/${parts.join('/')}`;
+}
+
+export function normalizeProjectText(text: string): string {
+    return text.replace(/\r\n?/g, '\n');
 }
 
 export interface ProjectTreeNode {
@@ -165,7 +169,6 @@ export interface BrowserProjectSnapshot {
 export interface BrowserProject {
     id?: string;
     name?: string;
-    autosave?: boolean;
     files: readonly BrowserProjectFile[];
     rootPath?: string;
     activePath?: string;

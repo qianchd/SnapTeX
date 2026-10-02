@@ -4,6 +4,10 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: Configurable Web auto save for dirty writable files, using the same serialized save and external-update pipeline as manual saving.
+- **Fixed**: Preserved editor selection and undo history during saves and external text updates; retained edits typed while a save is in progress.
+- **Fixed**: Checked saved-text baselines before local-folder and IndexedDB writes, and paired remote text with its ETag to avoid stale overwrites.
+
 ## [0.8.1] - 2026-09-13
 
 - **Highlights**: Modernized the Web workspace with persistent project history and settings, responsive mobile panes, richer search controls, remote synchronization, and optional remembered server sessions.

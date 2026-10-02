@@ -5,6 +5,8 @@ import {
     isProjectTextFile,
     isTexFile,
     normalizeBrowserPath,
+    normalizeProjectText,
+    ProjectWriteConflictError,
     type BrowserProject,
     type BrowserProjectFile
 } from '../../standalone/src/browser-project';
@@ -209,12 +211,28 @@ function createProjectFile(
         readBlob,
         readText: isProjectTextFile(record.path) ? async () => (await readBlob()).text() : undefined,
         writeText: isProjectTextFile(record.path)
-            ? async text => {
+            ? async (text, expectedText) => {
+                let expectedHash: string | undefined;
+                if (expectedText !== undefined) {
+                    const current = await readContent(db, record.key);
+                    const currentText = await current.text();
+                    if (normalizeProjectText(currentText) !== normalizeProjectText(expectedText)) {
+                        throw new ProjectWriteConflictError(record.path, currentText);
+                    }
+                    expectedHash = await contentHash(current);
+                }
                 const content = new Blob([text], { type: 'text/plain;charset=utf-8' });
                 const currentHash = await contentHash(content);
                 const transaction = db.transaction(['files', 'contents'], 'readwrite');
+                const files = transaction.objectStore('files');
+                const currentRecord = expectedHash === undefined ? record : await files.get(record.key);
+                if (expectedHash !== undefined && currentRecord?.currentHash !== expectedHash) {
+                    await transaction.done;
+                    const latest = await readContent(db, record.key);
+                    throw new ProjectWriteConflictError(record.path, await latest.text());
+                }
                 transaction.objectStore('contents').put({ key: record.key, content });
-                transaction.objectStore('files').put({ ...record, currentHash });
+                files.put({ ...(currentRecord ?? record), currentHash });
                 await transaction.done;
                 record.currentHash = currentHash;
             }
@@ -484,7 +502,6 @@ export class BrowserWorkspaceStore {
         return this.restoreProjectState(id, {
             id: project.id,
             name: project.name,
-            autosave: true,
             setRootPath: rootPath => this.validateWorkspaceRoot(id, rootPath),
             files: records.map(record => createProjectFile(db, record)),
             operations: {

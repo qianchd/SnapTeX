@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
@@ -47,7 +48,7 @@ const remoteArchive = `/tmp/snaptex-${Date.now()}.tar`;
 
 try {
     const files = (await capture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z']))
-        .toString('utf8').split('\0').filter(Boolean);
+        .toString('utf8').split('\0').filter(file => file && existsSync(join(repoRoot, file)));
     await writeFile(fileList, files.join('\n'));
     await run('tar', ['-cf', archive, '-T', fileList]);
     await run('scp', [archive, `${host}:${remoteArchive}`]);

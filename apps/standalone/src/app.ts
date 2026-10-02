@@ -10,6 +10,7 @@ import {
     isTexFile,
     isProjectTextFile,
     normalizeBrowserPath,
+    normalizeProjectText as normalizeEditorText,
     ProjectWriteConflictError,
     type BrowserProject,
     type BrowserProjectSnapshot,
@@ -50,6 +51,8 @@ interface StandaloneSaveResult {
 export interface StandalonePreviewSettings extends PreviewStyleSettings {
     livePreview: boolean;
     autoScrollSync: boolean;
+    autoSave: boolean;
+    autoSaveIntervalSeconds: number;
     renderDelayMs: number;
     autoScrollDelayMs: number;
     virtualMode: boolean;
@@ -62,6 +65,8 @@ export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     ...DEFAULT_PREVIEW_STYLE_SETTINGS,
     livePreview: true,
     autoScrollSync: true,
+    autoSave: true,
+    autoSaveIntervalSeconds: 1,
     renderDelayMs: 150,
     autoScrollDelayMs: 100,
     virtualMode: true,
@@ -69,6 +74,10 @@ export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     previewLayout: DEFAULT_PREVIEW_LAYOUT,
     debugMemory: false
 };
+
+function normalizeAutoSaveInterval(seconds: number): number {
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 60) : DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoSaveIntervalSeconds;
+}
 
 const flashEditorLineEffect = StateEffect.define<number | null>();
 const flashEditorLineField = StateField.define<DecorationSet>({
@@ -84,25 +93,6 @@ const flashEditorLineField = StateField.define<DecorationSet>({
     },
     provide: field => EditorView.decorations.from(field)
 });
-
-function normalizeEditorText(text: string): string {
-    return text.replace(/\r\n?/g, '\n');
-}
-
-async function mergeProjectText(localText: string, baseText: string, remoteText: string) {
-    if (localText === baseText || localText === remoteText) {
-        return { text: remoteText, conflict: false };
-    }
-    if (remoteText === baseText) {
-        return { text: localText, conflict: false };
-    }
-    const { mergeDiff3 } = await import('node-diff3');
-    const merged = mergeDiff3(localText.split('\n'), baseText.split('\n'), remoteText.split('\n'), {
-        excludeFalseConflicts: true,
-        label: { a: 'LOCAL', o: 'BASE', b: 'REMOTE' }
-    });
-    return { text: merged.result.join('\n'), conflict: merged.conflict };
-}
 
 /**
  * Shared browser/WebView host for the standalone SnapTeX preview.
@@ -120,10 +110,8 @@ export class StandaloneHost {
     private setProjectActivePath: BrowserProject['setActivePath'];
     private setProjectRootPath: BrowserProject['setRootPath'];
     private projectName = 'SnapTeX Project';
-    private projectAutosave = false;
     private autosaveTimer: number | undefined;
-    private autosaveQueue: Promise<void> = Promise.resolve();
-    private projectChangeQueue: Promise<void> = Promise.resolve();
+    private projectQueue: Promise<void> = Promise.resolve();
     private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
@@ -151,6 +139,7 @@ export class StandaloneHost {
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
         this.settings = { ...DEFAULT_STANDALONE_PREVIEW_SETTINGS, ...settings };
+        this.settings.autoSaveIntervalSeconds = normalizeAutoSaveInterval(this.settings.autoSaveIntervalSeconds);
     }
 
     start() {
@@ -161,17 +150,15 @@ export class StandaloneHost {
     }
 
     async loadProject(project: BrowserProject): Promise<string> {
+        await this.flushProjectWrites();
         this.stopProjectWatch?.();
         this.stopProjectWatch = undefined;
-        await this.projectChangeQueue;
-        await this.flushProjectWrites();
         const rootPath = project.rootPath ?? chooseRootPath(project.files);
         if (!rootPath) {
             throw new Error('No TeX root file found.');
         }
         this.fileProvider.setProjectFiles(project.files);
         this.projectOperations = project.operations;
-        this.projectAutosave = project.autosave === true;
         this.setProjectActivePath = project.setActivePath;
         this.setProjectRootPath = project.setRootPath;
         this.projectName = project.name ?? rootPath;
@@ -322,6 +309,9 @@ export class StandaloneHost {
             throw new Error(`Save the other modified files before compiling: ${[...this.dirtyPaths].join(', ')}`);
         }
         const file = await compile(this.rootUri.path, compiler);
+        if (compile !== this.projectOperations?.compilePdf) {
+            throw new Error('The project changed while PDF compilation was running.');
+        }
         this.fileProvider.setProjectFile(file);
         this.notifyStateChanged();
         return file.path;
@@ -350,6 +340,7 @@ export class StandaloneHost {
     }
 
     async deleteTextFile(path: string): Promise<void> {
+        await this.flushProjectWrites();
         const normalizedPath = normalizeBrowserPath(path);
         if (!this.projectOperations) {
             throw new Error('This project does not support deleting files.');
@@ -365,11 +356,14 @@ export class StandaloneHost {
         this.fileProvider.deleteProjectFile(normalizedPath);
         this.savedTexts.delete(normalizedPath);
         this.dirtyPaths.delete(normalizedPath);
+        this.conflictedPaths.delete(normalizedPath);
         this.updateService.resetState();
         if (this.activeUri.path === normalizedPath) {
             this.activeUri = this.rootUri;
             await this.setProjectActivePath?.(this.rootUri.path);
-            this.replaceEditorText(await this.fileProvider.read(this.rootUri));
+            const text = await this.fileProvider.read(this.rootUri);
+            if (!this.savedTexts.has(this.rootUri.path)) {this.markSaved(this.rootUri.path, text);}
+            this.replaceEditorText(text);
         }
         this.notifyStateChanged();
         await this.renderCurrentText();
@@ -383,7 +377,14 @@ export class StandaloneHost {
         const previousVirtualMode = this.settings.virtualMode;
         const previousLivePreview = this.settings.livePreview;
         const previousBackendMode = this.settings.backendMode;
+        const previousAutoSave = this.settings.autoSave;
+        const previousSaveInterval = this.settings.autoSaveIntervalSeconds;
         this.settings = { ...this.settings, ...settings };
+        this.settings.autoSaveIntervalSeconds = normalizeAutoSaveInterval(this.settings.autoSaveIntervalSeconds);
+        if (previousAutoSave !== this.settings.autoSave || previousSaveInterval !== this.settings.autoSaveIntervalSeconds) {
+            this.clearAutosaveTimer();
+            this.scheduleAutosave();
+        }
         const virtualModeChanged = previousVirtualMode !== this.settings.virtualMode;
         const backendModeChanged = previousBackendMode !== this.settings.backendMode;
         const shouldRender = virtualModeChanged || backendModeChanged || (!previousLivePreview && this.settings.livePreview);
@@ -421,6 +422,34 @@ export class StandaloneHost {
         }
     }
 
+    private updateEditorText(text: string) {
+        const current = this.editorView.state.doc.toString();
+        let from = 0;
+        while (from < current.length && from < text.length && current[from] === text[from]) {
+            from++;
+        }
+
+        let to = current.length;
+        let insertTo = text.length;
+        while (to > from && insertTo > from && current[to - 1] === text[insertTo - 1]) {
+            to--;
+            insertTo--;
+        }
+        if (from === to && from === insertTo) {
+            return;
+        }
+
+        this.programmaticEditorUpdate = true;
+        try {
+            this.editorView.dispatch({
+                changes: { from, to, insert: text.slice(from, insertTo) },
+                annotations: Transaction.addToHistory.of(false)
+            });
+        } finally {
+            this.programmaticEditorUpdate = false;
+        }
+    }
+
     private persistActiveEditorText(text = this.editorView.state.doc.toString()) {
         this.fileProvider.setFile(this.activeUri, text);
         this.updateDirtyState(this.activeUri.path, text);
@@ -434,7 +463,7 @@ export class StandaloneHost {
         }
         let wroteToSource: boolean;
         try {
-            wroteToSource = await this.fileProvider.write(this.activeUri, text);
+            wroteToSource = await this.fileProvider.write(this.activeUri, text, this.savedTexts.get(path));
         } catch (error) {
             if (!(error instanceof ProjectWriteConflictError)) {
                 throw error;
@@ -445,15 +474,27 @@ export class StandaloneHost {
             }
             throw new Error(`Remote edits conflict with local changes in ${path}; resolve the inserted markers before saving.`);
         }
-        this.markSaved(path, text);
+        this.markSaved(path, text, this.editorView.state.doc.toString());
         this.conflictedPaths.delete(path);
         return { path, text, wroteToSource };
     }
 
+    private queueProjectTask<T>(task: () => Promise<T>): Promise<T> {
+        const result = this.projectQueue.then(task);
+        this.projectQueue = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
     private queueProjectChange(change: BrowserProjectTextChange): Promise<void> {
-        const update = this.projectChangeQueue.then(() => this.applyProjectTextChange(change).then(() => undefined));
-        this.projectChangeQueue = update.catch(() => undefined);
-        return update;
+        const path = normalizeBrowserPath(change.path);
+        const baseText = this.savedTexts.get(path);
+        return this.queueProjectTask(async () => {
+            if (!this.fileProvider.has(path)) {return;}
+            const text = this.savedTexts.get(path) === baseText
+                ? change.text
+                : await this.fileProvider.readSourceText(new BrowserUri(path));
+            await this.applyProjectTextChange({ path, text });
+        });
     }
 
     private async applyProjectTextChange(change: BrowserProjectTextChange): Promise<boolean> {
@@ -471,14 +512,22 @@ export class StandaloneHost {
             await this.renderCurrentText();
             return false;
         }
-        const localText = path === this.activeUri.path
-            ? this.editorView.state.doc.toString()
-            : await this.fileProvider.read(uri);
         if (remoteText === baseText) {
             return false;
         }
-
-        const merged = await mergeProjectText(localText, baseText ?? localText, remoteText);
+        // Load the merge module before taking the editor snapshot; do not yield while applying it.
+        const { mergeDiff3 } = await import('node-diff3');
+        const localText = path === this.activeUri.path
+            ? this.editorView.state.doc.toString()
+            : await this.fileProvider.read(uri);
+        let merged = { text: remoteText, conflict: false };
+        if (baseText !== undefined && localText !== baseText && localText !== remoteText) {
+            const result = mergeDiff3(localText.split('\n'), baseText.split('\n'), remoteText.split('\n'), {
+                excludeFalseConflicts: true,
+                label: { a: 'LOCAL', o: 'BASE', b: 'REMOTE' }
+            });
+            merged = { text: result.result.join('\n'), conflict: result.conflict };
+        }
         this.savedTexts.set(path, remoteText);
         this.fileProvider.setFile(uri, merged.text);
         this.updateDirtyState(path, merged.text);
@@ -488,7 +537,8 @@ export class StandaloneHost {
             this.conflictedPaths.delete(path);
         }
         if (path === this.activeUri.path) {
-            this.replaceEditorText(merged.text);
+            this.updateEditorText(merged.text);
+            if (!merged.conflict && this.isDirty(path)) {this.scheduleAutosave();}
         }
         this.notifyStateChanged();
         await this.renderCurrentText();
@@ -496,24 +546,23 @@ export class StandaloneHost {
     }
 
     private scheduleAutosave(): void {
-        if (!this.projectAutosave) {
+        if (!this.settings.autoSave || !this.isDirty(this.activeUri.path) || !this.fileProvider.isWritable(this.activeUri) || this.autosaveTimer !== undefined) {
             return;
         }
-        this.clearAutosaveTimer();
         this.autosaveTimer = window.setTimeout(() => {
             this.autosaveTimer = undefined;
-            void this.queueAutosave().catch(error => this.addDiagnostic(`Autosave failed: ${error instanceof Error ? error.message : String(error)}`));
-        }, 300);
+            void this.queueAutosave().then(() => {
+                this.scheduleAutosave();
+            }).catch(error => this.addDiagnostic(`Autosave failed: ${error instanceof Error ? error.message : String(error)}`));
+        }, this.settings.autoSaveIntervalSeconds * 1000);
     }
 
     private queueAutosave(): Promise<void> {
-        const write = this.autosaveQueue.then(async () => {
-            if (this.projectAutosave && this.isDirty(this.activeUri.path)) {
+        return this.queueProjectTask(async () => {
+            if (this.settings.autoSave && this.fileProvider.isWritable(this.activeUri) && this.isDirty(this.activeUri.path)) {
                 await this.writeCurrentText();
             }
         });
-        this.autosaveQueue = write.catch(() => undefined);
-        return write;
     }
 
     private clearAutosaveTimer(): void {
@@ -523,10 +572,10 @@ export class StandaloneHost {
         }
     }
 
-    private markSaved(path: string, text: string) {
+    private markSaved(path: string, text: string, currentText = text) {
         const normalizedText = normalizeEditorText(text);
         this.savedTexts.set(path, normalizedText);
-        this.updateDirtyState(path, normalizedText);
+        this.updateDirtyState(path, normalizeEditorText(currentText));
     }
 
     private updateDirtyState(path: string, text: string) {
@@ -549,15 +598,12 @@ export class StandaloneHost {
 
     async saveCurrentText(): Promise<StandaloneSaveResult> {
         this.clearAutosaveTimer();
-        await this.autosaveQueue;
-        return this.writeCurrentText();
+        return this.queueProjectTask(() => this.writeCurrentText());
     }
 
     async flushProjectWrites(): Promise<void> {
         this.clearAutosaveTimer();
-        if (this.projectAutosave) {
-            await this.queueAutosave();
-        }
+        await this.queueAutosave();
     }
 
     async createProjectSnapshot(): Promise<BrowserProjectSnapshot> {

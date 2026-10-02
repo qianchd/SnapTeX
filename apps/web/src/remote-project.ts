@@ -4,6 +4,7 @@ import {
     isProjectTextFile,
     isTexFile,
     normalizeBrowserPath,
+    normalizeProjectText,
     ProjectWriteConflictError,
     type BrowserProject,
     type BrowserProjectFile,
@@ -117,14 +118,15 @@ function readManifest(value: unknown): RemoteProjectManifest {
 }
 
 function createRemoteProjectModel(projectName: string, baseUrl: string, manifest: RemoteProjectManifest, fetcher: typeof fetch): BrowserProject {
-    const etags = new Map<string, string>();
+    const versions = new Map<string, { etag: string | null; text: string }>();
     let currentManifest = manifest;
 
     const readText = async (path: string, conditional = false): Promise<string | undefined> => {
         const url = remoteFileUrl(baseUrl, path);
         const headers = new Headers();
-        if (conditional && etags.has(path)) {
-            headers.set('If-None-Match', etags.get(path)!);
+        const etag = versions.get(path)?.etag;
+        if (conditional && etag) {
+            headers.set('If-None-Match', etag);
         }
         const response = await fetcher(url, { credentials: 'same-origin', headers });
         if (response.status === 304) {
@@ -133,49 +135,46 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
         if (!response.ok) {
             throw requestError(response, 'GET', url);
         }
-        const etag = response.headers.get('etag');
-        if (etag) {
-            etags.set(path, etag);
-        }
-        return response.text();
+        const text = await response.text();
+        versions.set(path, { etag: response.headers.get('etag'), text });
+        return text;
     };
 
-    const createFile = (path: string, etag?: string): BrowserProjectFile => {
-        if (etag) {
-            etags.set(path, etag);
-        }
+    const createFile = (path: string): BrowserProjectFile => {
         const url = remoteFileUrl(baseUrl, path);
         return isProjectTextFile(path)
             ? {
                 path,
                 readText: async () => (await readText(path))!,
-                writeText: async text => {
-                    if (!etags.has(path)) {
+                writeText: async (text, expectedText) => {
+                    if (!versions.get(path)?.etag) {
                         await readText(path);
                     }
-                    const etag = etags.get(path);
-                    if (!etag) {
+                    const version = versions.get(path);
+                    if (!version?.etag) {
                         throw new Error(`Remote project server did not provide an ETag for ${path}.`);
+                    }
+                    if (expectedText !== undefined && normalizeProjectText(version.text) !== normalizeProjectText(expectedText)) {
+                        throw new ProjectWriteConflictError(path, version.text);
                     }
                     const response = await fetcher(url, {
                         method: 'PUT',
                         credentials: 'same-origin',
                         headers: {
                             'Content-Type': 'text/plain; charset=utf-8',
-                            'If-Match': etag
+                            'If-Match': version.etag
                         },
                         body: text
                     });
-                    const responseEtag = response.headers.get('etag');
-                    if (responseEtag) {
-                        etags.set(path, responseEtag);
-                    }
                     if (response.status === 412) {
-                        throw new ProjectWriteConflictError(path, await response.text());
+                        const remoteText = await response.text();
+                        versions.set(path, { etag: response.headers.get('etag'), text: remoteText });
+                        throw new ProjectWriteConflictError(path, remoteText);
                     }
                     if (!response.ok) {
                         throw requestError(response, 'PUT', url);
                     }
+                    versions.set(path, { etag: response.headers.get('etag'), text });
                 }
             }
             : { path, resourceUrl: url };
@@ -265,11 +264,12 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
                     body: text
                 });
-                return createFile(path, response.headers.get('etag') ?? undefined);
+                versions.set(path, { etag: response.headers.get('etag'), text });
+                return createFile(path);
             },
             deleteFile: async path => {
                 await fetchOk(fetcher, remoteFileUrl(baseUrl, path), { method: 'DELETE' });
-                etags.delete(path);
+                versions.delete(path);
             },
             syncPdf: query => postJson<PdfSyncResult>('synctex', query),
             compilePdf: async (rootPath, compiler) => {

@@ -119,6 +119,8 @@ The main contracts are:
 
 `BrowserProject` owns storage capabilities rather than UI. Writable adapters provide file operations; adapters backed by an independently editable source may additionally provide `watchTextFiles`. `StandaloneHost` consumes those changes using its saved text as the three-way merge base, while the remote Web adapter maps HTTP manifest revisions and ETags onto that host-neutral contract.
 
+Manual saving, auto save, and external text updates share one host queue. Each adapter implements `writeText(text, expectedText)`, where `expectedText` is the last saved source text, not the editor's current contents. A stale write throws `ProjectWriteConflictError` with the actual source text for merging. The host applies external edits as editor transactions rather than replacing the document; if a queued notification outlives a save, it reads the backing source again without replacing the unsaved preview cache.
+
 New hosts should implement these boundaries instead of importing another host's UI layer.
 
 ## Dependency direction

@@ -159,6 +159,7 @@ suite('RemoteProject', () => {
             events?.dispatchEvent(new MessageEvent('text', { data: JSON.stringify('/main.tex') }));
             await new Promise(resolve => setTimeout(resolve, 0));
             assert.deepEqual(changes, ['Changed externally']);
+            await assert.rejects(async () => { await file.writeText?.('Local edit', 'Base'); }, ProjectWriteConflictError);
             await assert.rejects(async () => { await file.writeText?.('Local edit'); }, ProjectWriteConflictError);
             stop?.();
         } finally {

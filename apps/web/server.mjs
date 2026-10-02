@@ -385,6 +385,16 @@ async function replaceTextFile(filePath, text) {
     }
 }
 
+async function queueFileWrite(writes, filePath, task) {
+    const pending = (writes.get(filePath) ?? Promise.resolve()).catch(() => undefined).then(task);
+    writes.set(filePath, pending);
+    try {
+        return await pending;
+    } finally {
+        if (writes.get(filePath) === pending) writes.delete(filePath);
+    }
+}
+
 function loadAssetHashes(root) {
     const manifestPath = join(root, 'asset-manifest.json');
     if (!existsSync(manifestPath)) return {};
@@ -521,7 +531,7 @@ async function sendFile(request, response, filePath, options = {}) {
     await pipeline(createReadStream(responsePath), response);
 }
 
-async function handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, pdfTools) {
+async function handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, projectTools) {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
     if (pathname !== projectApiPrefix && !pathname.startsWith(`${projectApiPrefix}/`)) {
         return false;
@@ -662,13 +672,13 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             sendJson(response, 404, { error: 'TeX root file not found.' });
             return true;
         }
-        if (pdfTools.compilingProjects.has(projectRoot)) {
+        if (projectTools.compilingProjects.has(projectRoot)) {
             sendJson(response, 409, { error: 'This project is already compiling.' });
             return true;
         }
-        pdfTools.compilingProjects.add(projectRoot);
+        projectTools.compilingProjects.add(projectRoot);
         try {
-            await pdfTools.compilePdf(source, projectRoot, compiler);
+            await projectTools.compilePdf(source, projectRoot, compiler);
             const pdfPath = `/${relative(projectRoot, source).replaceAll(sep, '/').replace(/\.tex$/i, '.pdf')}`;
             if (!resolveProjectFile(projectRoot, pdfPath)) {
                 sendJson(response, 422, { error: 'Compilation finished without a PDF at the expected path.' });
@@ -682,7 +692,7 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
                 : compilerErrorMessage(error);
             sendJson(response, error?.code === 'ENOENT' ? 503 : 422, { error: message });
         } finally {
-            pdfTools.compilingProjects.delete(projectRoot);
+            projectTools.compilingProjects.delete(projectRoot);
         }
         return true;
     }
@@ -705,7 +715,7 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             sendJson(response, 409, { error: 'No SyncTeX data for this PDF. Compile the TeX root first.' });
             return true;
         }
-        if (pdfTools.compilingProjects.has(projectRoot)) {
+        if (projectTools.compilingProjects.has(projectRoot)) {
             sendJson(response, 409, { error: 'Wait for PDF compilation to finish.' });
             return true;
         }
@@ -729,7 +739,7 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             return true;
         }
         try {
-            const result = await pdfTools.querySyncTeX(args, projectRoot);
+            const result = await projectTools.querySyncTeX(args, projectRoot);
             if (result) sendJson(response, 200, result);
             else sendJson(response, 404, { error: 'SyncTeX found no matching source or PDF location.' });
         } catch (error) {
@@ -785,27 +795,29 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
         return true;
     }
     if (request.method === 'PUT' && projectTextFilePattern.test(filePath)) {
-        const currentContent = await readFile(filePath);
-        const currentEtag = textEtag(currentContent);
         if (!request.headers['if-match']) {
             sendJson(response, 428, { error: 'If-Match is required when updating a project file.' });
             return true;
         }
-        if (!etagMatches(request.headers['if-match'], currentEtag)) {
-            response.writeHead(412, {
-                'Content-Type': 'text/plain; charset=utf-8',
-                'Cache-Control': 'no-store',
-                'Content-Length': String(currentContent.length),
-                ETag: currentEtag
-            });
-            response.end(currentContent);
-            return true;
-        }
         const text = await readRequestText(request, maxWriteBytes);
-        await replaceTextFile(filePath, text);
-        manifestCache.delete(projectRoot);
-        response.writeHead(204, { ETag: textEtag(text) });
-        response.end();
+        await queueFileWrite(projectTools.fileWrites, filePath, async () => {
+            const currentContent = await readFile(filePath);
+            const currentEtag = textEtag(currentContent);
+            if (!etagMatches(request.headers['if-match'], currentEtag)) {
+                response.writeHead(412, {
+                    'Content-Type': 'text/plain; charset=utf-8',
+                    'Cache-Control': 'no-store',
+                    'Content-Length': String(currentContent.length),
+                    ETag: currentEtag
+                });
+                response.end(currentContent);
+                return;
+            }
+            await replaceTextFile(filePath, text);
+            manifestCache.delete(projectRoot);
+            response.writeHead(204, { ETag: textEtag(text) });
+            response.end();
+        });
         return true;
     }
     if (request.method === 'DELETE' && projectTextFilePattern.test(filePath)) {
@@ -843,7 +855,8 @@ export function createSnapTeXWebServer(options = {}) {
     const projectsRoot = options.projectsRoot ? realpathSync(resolve(options.projectsRoot)) : undefined;
     const manifestCache = new Map();
     const projectWatches = createProjectWatchRegistry();
-    const pdfTools = {
+    const projectTools = {
+        fileWrites: new Map(),
         compilingProjects: new Set(),
         compilePdf: options.compilePdf ?? compileProjectPdf,
         querySyncTeX: options.querySyncTeX ?? queryProjectSyncTeX
@@ -879,7 +892,7 @@ export function createSnapTeXWebServer(options = {}) {
         if (await auth.handle(request, response, pathname)) return;
         const isProjectRequest = pathname === projectApiPrefix || pathname.startsWith(`${projectApiPrefix}/`);
         if (isProjectRequest && !auth.authorize(request, response)) return;
-        if (await handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, pdfTools)) {
+        if (await handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, projectTools)) {
             return;
         }
         if (request.method !== 'GET' && request.method !== 'HEAD') {

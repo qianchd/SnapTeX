@@ -81,11 +81,19 @@ Remote server projects require a network connection to their server even when th
 
 ## Remote changes and conflicts
 
-An open server project checks its lightweight file revisions approximately once per second. When another process changes a project text file, SnapTeX downloads only that changed file and refreshes the editor or preview.
+An open server project receives Server-Sent Events (SSE) from a shared filesystem watcher, rather than polling its manifest. SnapTeX downloads changed text files conditionally using their ETags. Local folders use a browser filesystem observer when available, or check file metadata every five seconds while the tab is visible.
 
 SnapTeX keeps the last synchronized text as a merge base. A server change replaces an unchanged browser copy directly, and edits made to different lines are merged automatically. If browser and server edits overlap, the editor displays `LOCAL`, `BASE`, and `REMOTE` conflict markers and the Diagnostics panel reports the affected path. Resolve and remove those markers before saving.
 
 Remote saves use the file's ETag as an optimistic lock. If the server changes after the latest check but before a save, the server rejects the stale write and the same merge process runs; the browser never silently overwrites the newer server text.
+
+The same saved-text baseline is checked before writing local folders and IndexedDB workspaces. External text updates apply a minimal editor change instead of reloading the file, preserving the selection and undo history.
+
+## Automatic saving
+
+**Settings > Auto save** is enabled by default. Its interval defaults to one second and is configurable in seconds. SnapTeX writes only changed, writable text files; manual `Ctrl+S` uses the same save queue. These settings are shared across projects and remembered by the browser.
+
+Non-overlapping changes merge before saving. Overlapping changes insert conflict markers and block saving until they are resolved. Local folder checks are best-effort: browser file APIs cannot atomically compare and replace a file while an unrelated disk process writes it. Imported/demo workspaces check their version in an IndexedDB transaction, and the remote API serializes version checks and writes from browser clients.
 
 ## Browser capability summary
 

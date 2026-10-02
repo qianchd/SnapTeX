@@ -155,11 +155,15 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         return files;
     }
 
-    async write(uri: BrowserUri, text: string): Promise<boolean> {
+    isWritable(uri: BrowserUri): boolean {
+        return typeof this.files.get(uri.path)?.writeText === 'function';
+    }
+
+    async write(uri: BrowserUri, text: string, expectedText?: string): Promise<boolean> {
         const file = this.files.get(uri.path);
         this.setFile(uri, text);
         if (file?.writeText) {
-            await file.writeText(text);
+            await file.writeText(text, expectedText);
             return true;
         }
         return false;
@@ -178,6 +182,12 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
         }
         file.text = await file.readText();
         return file.text;
+    }
+
+    /** Reads the backing source without replacing unsaved preview text. */
+    async readSourceText(uri: BrowserUri): Promise<string> {
+        const file = this.files.get(uri.path);
+        return file?.readText ? file.readText() : this.read(uri);
     }
 
     async exists(uri: BrowserUri): Promise<boolean> {

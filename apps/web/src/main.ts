@@ -54,11 +54,11 @@ const browserWorkspaces = new BrowserWorkspaceStore();
 let activeHistoryId: string | undefined;
 const WEB_THEMES = ['light', 'dark', 'blue', 'rose', 'solarized-light', 'skyblue', 'github-light'] as const;
 type WebTheme = typeof WEB_THEMES[number];
-type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'virtualMode' | 'debugMemory';
-type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs';
+type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'autoSave' | 'virtualMode' | 'debugMemory';
+type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs' | 'autoSaveIntervalSeconds';
 type TextPreviewSetting = keyof PreviewStyleSettings;
-type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
-type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput';
+type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'autoSaveToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
+type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput' | 'autoSaveIntervalInput';
 type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'previewContentWidthInput' | 'previewFontFamilyInput' | 'previewPageMarginInput' | 'previewContinuousMarginInput';
 type EditorStyleSetting = keyof EditorStyleSettings;
 type EditorStyleControl = 'editorFontSizeInput' | 'editorFontFamilyInput';
@@ -77,13 +77,15 @@ const DEFAULT_WEB_PREVIEW_SETTINGS: StandalonePreviewSettings = {
 const BOOLEAN_SETTING_CONTROLS: ReadonlyArray<[BooleanSettingControl, BooleanPreviewSetting]> = [
     ['livePreviewToggle', 'livePreview'],
     ['autoScrollToggle', 'autoScrollSync'],
+    ['autoSaveToggle', 'autoSave'],
     ['virtualModeToggle', 'virtualMode'],
     ['debugMemoryToggle', 'debugMemory']
 ];
 
 const NUMBER_SETTING_CONTROLS: ReadonlyArray<[NumberSettingControl, NumberPreviewSetting, number]> = [
     ['renderDelayInput', 'renderDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.renderDelayMs],
-    ['autoScrollDelayInput', 'autoScrollDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.autoScrollDelayMs]
+    ['autoScrollDelayInput', 'autoScrollDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.autoScrollDelayMs],
+    ['autoSaveIntervalInput', 'autoSaveIntervalSeconds', DEFAULT_WEB_PREVIEW_SETTINGS.autoSaveIntervalSeconds]
 ];
 
 const TEXT_SETTING_CONTROLS: ReadonlyArray<[TextSettingControl, TextPreviewSetting]> = [
@@ -227,6 +229,7 @@ function readControls() {
         showDiagnosticsToggle: requireElement<HTMLInputElement>('show-diagnostics-toggle'),
         livePreviewToggle: requireElement<HTMLInputElement>('live-preview-toggle'),
         autoScrollToggle: requireElement<HTMLInputElement>('auto-scroll-toggle'),
+        autoSaveToggle: requireElement<HTMLInputElement>('auto-save-toggle'),
         virtualModeToggle: requireElement<HTMLInputElement>('virtual-mode-toggle'),
         debugMemoryToggle: requireElement<HTMLInputElement>('debug-memory-toggle'),
         backendModeSelect: requireElement<HTMLSelectElement>('backend-mode-select'),
@@ -234,6 +237,7 @@ function readControls() {
         pdfCompilerSelect: requireElement<HTMLSelectElement>('pdf-compiler-select'),
         renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
         autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
+        autoSaveIntervalInput: requireElement<HTMLInputElement>('auto-save-interval-input'),
         previewFontSizeInput: requireElement<HTMLInputElement>('preview-font-size-input'),
         previewLineHeightInput: requireElement<HTMLInputElement>('preview-line-height-input'),
         previewContentWidthInput: requireElement<HTMLInputElement>('preview-content-width-input'),

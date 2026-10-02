@@ -221,6 +221,12 @@ test('serves a writable project through the remote project API', async () => {
         assert.equal(saved.status, 204);
         assert.ok(saved.headers.get('etag'));
         assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Updated');
+        const concurrentSaves = await Promise.all(['First writer', 'Second writer'].map(body => authenticatedFetch(
+            `${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                method: 'PUT', headers: { 'If-Match': saved.headers.get('etag') }, body
+            }
+        )));
+        assert.deepEqual(concurrentSaves.map(result => result.status).sort(), [204, 412]);
         await writeFile(join(projectRoot, 'main.tex'), 'External update');
         const conflictedSave = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
             method: 'PUT',

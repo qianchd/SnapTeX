@@ -1,7 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { chooseRootPath, createProjectTree, isProjectFile, isProjectTextFile, projectFolderPaths } from '../../apps/standalone/src/browser-project';
+import { chooseRootPath, createProjectTree, isProjectFile, isProjectTextFile, ProjectWriteConflictError, projectFolderPaths } from '../../apps/standalone/src/browser-project';
 import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
 import { BrowserWorkspaceStore } from '../../apps/web/src/indexeddb-project';
 import { createProjectZip } from '../../apps/standalone/src/project-archive';
@@ -330,6 +330,30 @@ suite('BrowserFileProvider', () => {
                     { path: '/figure.png', file: new Blob(['New image']) }
                 ]);
                 assert.deepEqual(missingLocalFile, ['/notes.tex']);
+            } finally {
+                await store.deleteDatabase();
+            }
+        });
+    });
+
+    test('rejects stale writes from another browser workspace session', async () => {
+        await withFakeIndexedDb(async () => {
+            const store = new BrowserWorkspaceStore(`snaptex-write-conflict-${Date.now()}-${Math.random()}`);
+            try {
+                const project = await store.importFiles('paper', [{ path: '/main.tex', file: new Blob(['Base']) }]);
+                const firstSession = await store.open(project.id);
+                const secondSession = await store.open(project.id);
+                const firstFile = firstSession.files[0];
+                const secondFile = secondSession.files[0];
+                assert.equal(await firstFile.readText?.(), 'Base');
+                assert.equal(await secondFile.readText?.(), 'Base');
+
+                await firstFile.writeText?.('First tab', 'Base');
+                await assert.rejects(
+                    async () => { await secondFile.writeText?.('Second tab', 'Base'); },
+                    error => error instanceof ProjectWriteConflictError && error.remoteText === 'First tab'
+                );
+                assert.equal(await (await store.open(project.id)).files[0].readText?.(), 'First tab');
             } finally {
                 await store.deleteDatabase();
             }
