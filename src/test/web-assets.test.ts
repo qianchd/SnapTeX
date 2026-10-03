@@ -1,6 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import type { Server } from 'http';
 import { basename, join, resolve } from 'path';
@@ -59,8 +60,7 @@ function repoRoot(): string {
 }
 
 suite('Standalone web assets', () => {
-    test('builds and serves the static PWA assets used by the browser host', async function() {
-        this.timeout(10000);
+    test('builds and serves the static PWA assets used by the browser host', async () => {
         const root = repoRoot();
         const outDir = join(root, 'out', 'web-assets-test');
         const outsideAsset = resolve(outDir, '..', `${basename(outDir)}-outside.txt`);
@@ -120,19 +120,6 @@ suite('Standalone web assets', () => {
             await fetchBytes(baseUrl, '/media/icon-192.png');
             await fetchBytes(baseUrl, '/media/icon-512.png');
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
-            assert.match(serviceWorker, /CACHE_PREFIX = `snaptex-web:\$\{self\.registration\.scope\}:/);
-            for (const group of ['core', 'katex', 'pdf', 'tikz', 'demo']) {
-                assert.match(serviceWorker, new RegExp(`"name": "${group}"`));
-            }
-            assert.doesNotMatch(serviceWorker, /\.nojekyll/);
-            assert.doesNotMatch(serviceWorker, /asset-manifest\.json|\.js\.br|\.js\.gz/);
-            for (const source of [
-                /\.\/index\.html\?v=[a-f0-9]{12}/, /\.\/media\/favicon\.ico\?v=[a-f0-9]{12}/,
-                /\.\/media\/icon-512\.png\?v=[a-f0-9]{12}/, /\.\/demo\/main\.tex\?v=[a-f0-9]{12}/,
-                /\.\/media\/vendor\/tikzjax\/tex\.wasm\.gz\?v=[a-f0-9]{12}/
-            ]) {
-                assert.match(serviceWorker, source);
-            }
             const mainScriptMatch = indexHtml.match(/src="(web-main\.js\?v=[a-f0-9]{12})"/);
             assert.ok(mainScriptMatch);
             const mainScript = mainScriptMatch[1];
@@ -152,13 +139,20 @@ suite('Standalone web assets', () => {
             const handlers = new Map<string, (event: ServiceWorkerTestEvent) => void>();
             const deletedCaches: string[] = [];
             const populatedCaches: string[] = [];
+            const cacheEntries = new Map<string, Map<string, ArrayBuffer>>();
+            const cacheKey = (request: unknown) => new URL(
+                typeof request === 'string' ? request : (request as { url: string }).url,
+                'https://snaptex.test/app/'
+            ).pathname;
             let networkRequests = 0;
+            let offline = false;
+            let failKatexInstall = true;
             runInNewContext(serviceWorker, {
                 Response,
                 URL,
                 fetch: () => {
                     networkRequests++;
-                    return Promise.resolve('network-response');
+                    return offline ? Promise.reject(new Error('Offline')) : Promise.resolve(new Response('network-response'));
                 },
                 caches: {
                     delete: async (name: string) => { deletedCaches.push(name); return true; },
@@ -167,13 +161,40 @@ suite('Standalone web assets', () => {
                         'snaptex-web:https://snaptex.test/other/:current',
                         'unrelated-app-cache'
                     ],
-                    open: async (name: string) => ({
-                        addAll: async () => { populatedCaches.push(name); },
-                        match: async (request: unknown) => String(request).includes('__snaptex_complete__')
-                            ? (name.includes(':core:') ? 'complete' : undefined)
-                            : 'cached-response',
-                        put: async () => undefined
-                    })
+                    open: async (name: string) => {
+                        let entries = cacheEntries.get(name);
+                        if (!entries) { entries = new Map(); cacheEntries.set(name, entries); }
+                        const store = entries;
+                        return {
+                            addAll: async (assets: string[]) => {
+                                populatedCaches.push(name);
+                                if (name.includes(':katex:') && failKatexInstall) {
+                                    failKatexInstall = false;
+                                    throw new Error('Temporary asset download failure.');
+                                }
+                                const content = new Map<string, ArrayBuffer>();
+                                for (const asset of assets) {
+                                    assert.match(asset, /\?v=[a-f0-9]{12}$/);
+                                    const url = new URL(asset, 'https://snaptex.test/app/');
+                                    const assetPath = url.pathname.slice('/app/'.length);
+                                    const filePath = join(build.outDir, assetPath);
+                                    assert.ok(existsSync(filePath), `Missing offline asset: ${asset}`);
+                                    const bytes = readFileSync(filePath);
+                                    assert.equal(url.searchParams.get('v'), createHash('sha256').update(bytes).digest('hex').slice(0, 12));
+                                    assert.doesNotMatch(asset, /\.nojekyll|asset-manifest\.json|\.(?:js|css)\.(?:br|gz)(?:\?|$)/);
+                                    content.set(cacheKey(asset), Uint8Array.from(bytes).buffer);
+                                }
+                                content.forEach((bytes, key) => store.set(key, bytes));
+                            },
+                            match: async (request: unknown) => {
+                                const bytes = store.get(cacheKey(request));
+                                return bytes ? new Response(bytes) : undefined;
+                            },
+                            put: async (request: unknown, response: Response) => {
+                                store.set(cacheKey(request), await response.arrayBuffer());
+                            }
+                        };
+                    }
                 },
                 self: {
                     addEventListener: (name: string, handler: (event: ServiceWorkerTestEvent) => void) => handlers.set(name, handler),
@@ -185,34 +206,63 @@ suite('Standalone web assets', () => {
             });
             let installation = Promise.resolve<unknown>(undefined);
             handlers.get('install')?.({ waitUntil: work => { installation = work; } });
+            await assert.rejects(installation, /Temporary asset download failure/);
+            assert.equal(populatedCaches.length, 2, 'Installation should stop when a group fails');
+            assert.ok(cacheEntries.get(populatedCaches[0])?.has('/app/__snaptex_complete__'));
+            assert.equal(cacheEntries.get(populatedCaches[1])?.has('/app/__snaptex_complete__'), false);
+
+            handlers.get('install')?.({ waitUntil: work => { installation = work; } });
             await installation;
-            assert.equal(populatedCaches.length, 4);
             assert.deepEqual(
-                populatedCaches.map(name => name.match(/:(katex|pdf|tikz|demo):/)?.[1]),
-                ['katex', 'pdf', 'tikz', 'demo']
+                populatedCaches.map(name => name.match(/:(core|katex|pdf|tikz|demo):/)?.[1]),
+                ['core', 'katex', 'katex', 'pdf', 'tikz', 'demo']
             );
+            handlers.get('install')?.({ waitUntil: work => { installation = work; } });
+            await installation;
+            assert.equal(populatedCaches.length, 6, 'Completed groups must not be downloaded again');
             let activation = Promise.resolve<unknown>(undefined);
             handlers.get('activate')?.({ waitUntil: work => { activation = work; } });
             await activation;
             assert.deepEqual(deletedCaches, ['snaptex-web:https://snaptex.test/app/:old']);
 
-            let cachedResponse: Promise<unknown> | undefined;
+            offline = true;
+            let cachedResponse: Promise<Response> | undefined;
             handlers.get('fetch')?.({
-                request: { method: 'GET', mode: 'same-origin', url: 'https://snaptex.test/web-main.js' },
-                respondWith: response => { cachedResponse = response; }
+                request: { method: 'GET', mode: 'same-origin', url: 'https://snaptex.test/app/web-main.js' },
+                respondWith: response => { cachedResponse = response as Promise<Response>; }
             });
-            assert.equal(await cachedResponse, 'cached-response');
+            assert.equal(await (await cachedResponse)?.text(), readFileSync(join(build.outDir, 'web-main.js'), 'utf8'));
             handlers.get('fetch')?.({
                 request: { method: 'GET', mode: 'navigate', url: 'https://snaptex.test/app/' },
-                respondWith: response => { cachedResponse = response; }
+                respondWith: response => { cachedResponse = response as Promise<Response>; }
             });
-            assert.equal(await cachedResponse, 'cached-response');
+            assert.equal(await (await cachedResponse)?.text(), readFileSync(join(build.outDir, 'index.html'), 'utf8'));
+            for (const asset of [tikzJaxUri, 'media/vendor/tikzjax/tex.wasm.gz', 'media/vendor/pdfjs/pdf.mjs', 'demo/main.tex']) {
+                handlers.get('fetch')?.({
+                    request: { method: 'GET', mode: 'same-origin', url: new URL(asset, 'https://snaptex.test/app/').href },
+                    respondWith: response => { cachedResponse = response as Promise<Response>; }
+                });
+                const response = await cachedResponse;
+                assert.ok(response, `Expected an offline response for ${asset}`);
+                const assetPath = new URL(asset, 'https://snaptex.test/app/').pathname.slice('/app/'.length);
+                const expected = readFileSync(join(build.outDir, assetPath));
+                assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected, asset);
+            }
             assert.equal(networkRequests, 0);
+            let intercepted = false;
+            for (const url of ['https://snaptex.test/api/projects/example/manifest', 'https://snaptex.test/web-auth/session', 'https://other.test/app/']) {
+                handlers.get('fetch')?.({
+                    request: { method: 'GET', mode: 'same-origin', url },
+                    respondWith: () => { intercepted = true; }
+                });
+            }
+            assert.equal(intercepted, false, 'Private API and other origins must bypass the PWA cache');
+            offline = false;
             handlers.get('fetch')?.({
                 request: { method: 'GET', mode: 'navigate', url: 'https://snaptex.test/docs/' },
-                respondWith: response => { cachedResponse = response; }
+                respondWith: response => { cachedResponse = response as Promise<Response>; }
             });
-            assert.equal(await cachedResponse, 'network-response');
+            assert.equal(await (await cachedResponse)?.text(), 'network-response');
             assert.equal(networkRequests, 1);
             await fetchText(baseUrl, tikzJaxUri);
             await fetchText(baseUrl, tikzCssUri);

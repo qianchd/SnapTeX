@@ -1,65 +1,90 @@
 # Testing
 
-Choose tests by observable behavior and ownership. A narrow helper test is appropriate for a parser primitive; a rendering or lifecycle change should pass through `PreviewUpdateService` so the test sees the same block, dependency, and backend behavior as a host.
-
-## Choose the verification level
-
-| Change | During development | Before completion |
-| --- | --- | --- |
-| Pure TypeScript helper/type | `npm run check-types`, targeted compiled test | `npm run lint` and relevant suite |
-| Rendering, splitting, metadata, diff, scanner, or sync map | `npm run compile-tests`, targeted Mocha test | `npm test` |
-| VS Code adapter or webview protocol | Targeted integration test and `npm run compile` | `npm test` |
-| Web UI, browser project storage, or PWA assets | Relevant browser/project test | `npm run web:build-static` |
-| Server API, authentication, or deployment | `npm run web:test-server` | `npm run web:build-server` plus security-path tests |
-| Documentation | `npm run docs:dev` while editing | `npm run docs:build` |
-
-Prefer the lowest level that proves the requirement, then run the broader command required by the affected boundary.
-
-## Core checks
+Run the complete suite after installing the locked dependencies:
 
 ```bash
-npm run check-types
-npm run lint
-npm run compile-tests
-```
-
-The test suite emphasizes rendered behavior, source mapping, block updates, metadata, tables, TikZ source preparation, Web assets, and host-neutral contracts. Avoid tests that merely assert source-code strings or preserve obsolete corner-case implementations.
-
-For a LaTeX rendering feature, assert final HTML or payload behavior in the relevant backend. For shared behavior, one parameterized test can exercise both backends without duplicating fixture setup.
-
-## VS Code tests
-
-```bash
+npm ci
 npm test
 ```
 
-`pretest` compiles tests and extension bundles, runs lint, and executes the independent server tests before launching the VS Code test host.
+`npm test` checks types, lints, compiles the tests, and then runs the four layers below. Only the VS Code layer launches an application. Tests use synthetic projects and temporary directories; they do not contact a deployed SnapTeX server or require private documents, credentials, or a TeX installation.
 
-## Web and server tests
+## Test layers
+
+| Layer | Source | What it verifies |
+| --- | --- | --- |
+| Shared and Web host | `src/test/*.test.ts`, except `web-assets.test.ts` | Rendering, source maps, incremental updates, pagination, CodeMirror state, local/IndexedDB/remote project behavior |
+| Server | `apps/web/server.test.mjs` | Real HTTP requests, session/CSRF protection, traversal restrictions, revision-checked writes, external file changes through SSE, PDF/SyncTeX API responses |
+| Production Web assets | `src/test/web-assets.test.ts` | Static build output, asset serving, hashes, PWA cache installation and offline routing, PDF/TikZ runtime asset availability |
+| VS Code integration | `src/test/vscode/*.test.ts` | Activation of the production bundle, registered commands, real file URIs, dirty editor reads, rendering and source maps through the VS Code adapter |
+
+The shared tests run in Node, not in a VS Code process. They exercise the same `PreviewUpdateService` used by both hosts. For behavior shared by legacy and AST, use one fixture with backend parameters rather than two copies of the test.
+
+## Focused runs
+
+Compile TypeScript tests once before running an individual layer:
 
 ```bash
+npm run compile-tests
+npm run test:shared
 npm run web:test-server
-npm run web:build-static
-npm run web:build-server
+npm run test:web-assets
+npm run test:vscode
 ```
 
-Server tests exercise authentication, CSRF, project manifests, constrained reads/writes, path traversal rejection, symbolic links, source-server allowlists, and deployment mode delivery.
+`test:web-assets` builds production Web bundles and vendors before checking them. `test:vscode` builds the production extension before launching the extension host. Neither command deploys anything.
 
-Static asset tests verify PWA output, required PDF/TikZ assets, service-worker routing, and static/server build markers.
-
-## Documentation
+Filter shared tests by their names:
 
 ```bash
-npm run docs:dev
+npm run test:shared -- --grep "StandaloneHost|complex booktabs"
+```
+
+Set `SNAPTEX_TEST_VSCODE_VERSION` to test a specific extension host version. The default is `stable`.
+
+```powershell
+$env:SNAPTEX_TEST_VSCODE_VERSION = '1.80.0'
+npm run test:vscode
+```
+
+On Linux without a display, use `xvfb-run -a npm run test:vscode`.
+
+## Pull request checks
+
+`.github/workflows/ci.yml` runs for pull requests, pushes to `master`, and manual dispatch:
+
+- Shared/Web-host and Server tests run on Linux, Windows, and macOS with Node 22.
+- The production extension runs in current stable VS Code on all three operating systems, plus the declared minimum VS Code 1.80.0 on Linux.
+- A Linux job builds the documentation and verifies production Web/PWA assets.
+
+Jobs have bounded timeouts, independent matrix results, and read-only repository permissions. New commits cancel obsolete runs. Deployment remains in the separate, manually triggered Pages workflow; PR tests do not use deployment secrets.
+
+To block merging failed PRs, enable required status checks in the repository's branch protection or ruleset. Adding a workflow alone does not enforce that policy.
+
+## Writing useful tests
+
+Assert the user-visible contract at the lowest level that proves it:
+
+- Render changes should check final HTML through `PreviewUpdateService`, including expected content and the absence of unexpected raw commands or KaTeX errors. Renderer-only tests remain useful for escaping and cache behavior.
+- Editor/save changes should use real CodeMirror `EditorState` transactions and history. A fake string replacement cannot prove that selection mapping or undo survives saving.
+- Server tests should make real HTTP requests against a temporary project. Compilation and SyncTeX executables are injected, so tests can check the API without requiring platform-specific TeX tools.
+- Asynchronous tests should wait for the expected event or write, not assume that sleeping for a fixed interval means an operation completed. SSE reads must account for chunk boundaries and close the stream afterward.
+- Keep security and incremental-update tests even when they resemble a happy-path test: they guard different contracts. Remove duplicate fixture/HTML checks once a shared full-pipeline test covers the same behavior.
+- Assert exact source lines, cursor positions, and scoped rendered content. Two backends returning the same wrong result, or a formula elsewhere in the document, must not make a test pass.
+- Timer behavior can be checked by advancing an injected timer callback: verify the interval, pending-save cancellation, and absence of repeated writes for clean or read-only files.
+
+Focused Mocha runs reject `.only`; zero matching shared/asset tests fail rather than producing a misleading green result.
+
+## Coverage limits
+
+Node tests verify generated HTML and logical behavior, not browser layout. The PWA tests execute the generated service worker with an in-memory Cache API model; they do not install a real PWA. PDF/SyncTeX tests check the protocol with injected tools, not actual PDF canvas pixels or a TeX compilation. TikZ tests verify prepared source, patches, and bundled assets; they do not prove that every picture compiles in TikZJax.
+
+Browser selection, touch dragging, scroll smoothness, PDF visibility, and actual offline installation still need manual checks. Do not describe an asset/source check as an end-to-end rendering test.
+
+## Documentation and fixtures
+
+```bash
 npm run docs:build
 ```
 
-VitePress reports broken internal links during production build. The static Web build also builds documentation and copies it to `dist-web/docs/`, matching GitHub Pages deployment.
-
-## TikZ smoke test
-
-The TikZ smoke path runs the bundled worker/runtime against a representative document and checks for a generated DVI/SVG result rather than merely matching prepared source text. Keep runtime assets installed before running it.
-
-## Test data
-
-Fixtures must use invented names, email addresses, institutions, URLs, and project paths. `src/localtestTeX` is reserved for local long-document profiling and is excluded from Git.
+VitePress checks internal links during the production build. Use invented names, addresses, URLs, and paths in fixtures. `src/localtestTeX` and `tex_samplecode` are local profiling/audit inputs, excluded from Git and CI.

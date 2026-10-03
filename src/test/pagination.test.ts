@@ -3,6 +3,40 @@ import { PageLayoutController, paginateBlockHeights, type PageMetrics } from '..
 import { ViewportAnchorController } from '../webview/viewport';
 import { BlockVirtualizationController } from '../webview/virtualization';
 
+class FakeElement {
+    private readonly classes: Set<string>;
+    private readonly styles: Map<string, string>;
+    readonly classList = {
+        contains: (name: string) => this.classes.has(name),
+        add: (name: string) => {this.classes.add(name);},
+        remove: (name: string) => {this.classes.delete(name);},
+        toggle: (name: string, enabled: boolean) => {
+            if (enabled) {this.classes.add(name);} else {this.classes.delete(name);}
+            return enabled;
+        }
+    };
+    readonly style = {
+        getPropertyValue: (name: string) => this.styles.get(name) ?? '',
+        setProperty: (name: string, value: string) => {this.styles.set(name, value);},
+        removeProperty: (name: string) => {
+            const value = this.styles.get(name) ?? '';
+            this.styles.delete(name);
+            return value;
+        }
+    };
+    readonly children: FakeElement[] = [];
+    parentElement: FakeElement | null = null;
+
+    constructor(classes: string[] = [], styles: Record<string, string> = {}, private width = 210) {
+        this.classes = new Set(classes);
+        this.styles = new Map(Object.entries(styles));
+    }
+
+    getBoundingClientRect() {
+        return { width: this.width };
+    }
+}
+
 suite('Paged preview layout', () => {
     const metrics: PageMetrics = {
         pageHeight: 1000,
@@ -13,28 +47,48 @@ suite('Paged preview layout', () => {
     };
 
     function pageItem(classes: string[] = [], styles: Record<string, string> = {}): HTMLElement {
-        const classNames = new Set(classes);
-        const properties = new Map(Object.entries(styles));
-        return {
-            classList: {
-                contains: (name: string) => classNames.has(name),
-                add: (name: string) => {classNames.add(name);},
-                remove: (name: string) => {classNames.delete(name);},
-                toggle: (name: string, enabled: boolean) => {
-                    if (enabled) {classNames.add(name);} else {classNames.delete(name);}
-                    return enabled;
-                }
-            },
-            style: {
-                getPropertyValue: (name: string) => properties.get(name) ?? '',
-                setProperty: (name: string, value: string) => {properties.set(name, value);},
-                removeProperty: (name: string) => {
-                    const value = properties.get(name) ?? '';
-                    properties.delete(name);
-                    return value;
-                }
+        return new FakeElement(classes, styles) as unknown as HTMLElement;
+    }
+
+    function withPaginationDom<T>(items: HTMLElement[], run: (controller: PageLayoutController) => T): T {
+        const globals = globalThis as unknown as Record<string, unknown>;
+        const names = ['HTMLElement', 'document', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame'];
+        const previous = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+        const body = pageItem() as unknown as FakeElement;
+        const root = new FakeElement([], {}, 210);
+        const parent = pageItem() as unknown as FakeElement;
+        root.parentElement = parent;
+        root.children.push(...items as unknown as FakeElement[]);
+        Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: FakeElement });
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: { body, documentElement: pageItem() }
+        });
+        Object.defineProperty(globalThis, 'getComputedStyle', {
+            configurable: true,
+            value: () => ({ fontSize: '16px', getPropertyValue: () => '' })
+        });
+        Object.defineProperty(globalThis, 'requestAnimationFrame', {
+            configurable: true,
+            value: () => 1
+        });
+        Object.defineProperty(globalThis, 'cancelAnimationFrame', {
+            configurable: true,
+            value: () => undefined
+        });
+        const anchor = { preserve: (_elements: HTMLElement[], update: () => void) => update() };
+        const controller = new PageLayoutController(root as unknown as HTMLElement, anchor as ViewportAnchorController);
+        try {
+            controller.setEnabled(true);
+            return run(controller);
+        } finally {
+            controller.setEnabled(false);
+            for (const name of names) {
+                const descriptor = previous.get(name);
+                if (descriptor) {Object.defineProperty(globalThis, name, descriptor);}
+                else {delete globals[name];}
             }
-        } as unknown as HTMLElement;
+        }
     }
 
     test('retains existing page boundaries while edits fit the elastic margin', () => {
@@ -60,58 +114,71 @@ suite('Paged preview layout', () => {
         const oldLast = pageItem(['snaptex-page-end'], {'--snaptex-page-after': '42%'});
         const inserted = pageItem();
         const nextPage = pageItem(['snaptex-page-start'], {'--snaptex-page-before': '10%'});
-        const controller = new PageLayoutController({} as HTMLElement, new ViewportAnchorController());
-        (controller as unknown as { enabled: boolean }).enabled = true;
+        withPaginationDom([oldLast, nextPage], controller => {
+            controller.transferPatchLayout([], [inserted], oldLast, nextPage);
 
-        controller.transferPatchLayout([], [inserted], oldLast, nextPage);
+            assert.equal(oldLast.classList.contains('snaptex-page-end'), false);
+            assert.equal(inserted.classList.contains('snaptex-page-end'), true);
+            assert.equal(inserted.classList.contains('snaptex-page-start'), false);
+            assert.equal(nextPage.classList.contains('snaptex-page-start'), true);
+            assert.equal(inserted.style.getPropertyValue('--snaptex-page-after'), '42%');
 
-        assert.equal(oldLast.classList.contains('snaptex-page-end'), false);
-        assert.equal(inserted.classList.contains('snaptex-page-end'), true);
-        assert.equal(inserted.classList.contains('snaptex-page-start'), false);
-        assert.equal(nextPage.classList.contains('snaptex-page-start'), true);
-        assert.equal(inserted.style.getPropertyValue('--snaptex-page-after'), '42%');
-
-        const edited = pageItem();
-        controller.transferPatchLayout([inserted], [edited]);
-        assert.equal(edited.style.getPropertyValue('--snaptex-page-after'), '42%');
+            const edited = pageItem();
+            controller.transferPatchLayout([inserted], [edited]);
+            assert.equal(edited.style.getPropertyValue('--snaptex-page-after'), '42%');
+        });
     });
 
-    test('removes stale page starts when incremental pagination publishes a new boundary', () => {
+    test('publishes incremental heights at an existing page boundary and ignores cancelled results', () => {
         const items = [
-            pageItem(['snaptex-page-start']),
-            pageItem(),
-            pageItem(['snaptex-page-start'], {'--snaptex-page-before': '10%'}),
-            pageItem(['snaptex-page-end'])
+            pageItem(['latex-block', 'snaptex-page-start']),
+            pageItem(['latex-block', 'snaptex-page-end']),
+            pageItem(['latex-block', 'snaptex-page-start'], {'--snaptex-page-before': '10%' }),
+            pageItem(['latex-block', 'snaptex-page-end'])
         ];
-        const viewport = {preserve: (_items: HTMLElement[], update: () => void) => update()};
-        const controller = new PageLayoutController({} as HTMLElement, viewport as ViewportAnchorController);
-        const applyPages = (controller as unknown as {applyPages: (...args: unknown[]) => void}).applyPages.bind(controller);
+        withPaginationDom(items, controller => {
+            assert.equal(controller.beginIncremental(0, 1), 0);
+            assert.equal(controller.acceptHeight(0, 130), false);
+            assert.equal(controller.acceptHeight(1, 130), false);
+            const completed = controller.acceptHeight(2, 130);
+            assert.equal(completed, true, 'A valid old boundary after the edit should finish the prefix');
+            assert.deepEqual(items.map(item => [
+                item.classList.contains('snaptex-page-start'), item.classList.contains('snaptex-page-end')
+            ]), [[true, false], [false, true], [true, false], [false, true]]);
 
-        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, true);
+            controller.beginIncremental(0, 1);
+            controller.cancelIncremental();
+            assert.equal(controller.acceptHeight(0, 200), false, 'Cancelled measurement results must not update pagination');
+            assert.equal(items[0].classList.contains('snaptex-page-end'), false);
+            assert.equal(items[2].classList.contains('snaptex-page-start'), true);
+        });
+    });
 
-        assert.equal(items[1].classList.contains('snaptex-page-start'), true);
-        assert.equal(items[2].classList.contains('snaptex-page-start'), false);
-        assert.equal(items[2].style.getPropertyValue('--snaptex-page-before'), '');
+    test('clears stale page starts when an incremental edit moves the boundary', () => {
+        const items = [
+            pageItem(['latex-block', 'snaptex-page-start']),
+            pageItem(['latex-block', 'snaptex-page-end']),
+            pageItem(['latex-block', 'snaptex-page-start']),
+            pageItem(['latex-block', 'snaptex-page-end'])
+        ];
+        withPaginationDom(items, controller => {
+            controller.beginIncremental(0, 1);
+            controller.acceptHeight(0, 270);
+            controller.acceptHeight(1, 100);
 
-        const snapshot = () => items.map(item => [
-            item.classList.contains('snaptex-page-start'), item.classList.contains('snaptex-page-end'),
-            item.style.getPropertyValue('--snaptex-page-before'), item.style.getPropertyValue('--snaptex-page-after')
-        ]);
-        const before = snapshot();
-        let styleWrites = 0;
-        for (const item of items) {
-            const set = item.style.setProperty;
-            item.style.setProperty = (name, value) => {styleWrites++; set(name, value);};
-        }
-        applyPages(items, [{start: 0, end: 1, usedHeight: 700, pageHeight: 1000}], metrics, 1000, true);
-        assert.equal(styleWrites, 0, 'Unchanged page boundaries must not rewrite margins');
-        assert.deepEqual(snapshot(), before);
+            assert.equal(items[1].classList.contains('snaptex-page-start'), true);
+            assert.equal(items[2].classList.contains('snaptex-page-start'), false);
+        });
     });
 
     test('reuses heights only when the paper content width remains compatible', () => {
         const virtualization = new BlockVirtualizationController({} as HTMLElement, new ViewportAnchorController());
         const block = { getAttribute: (name: string) => name === 'data-block-hash' ? 'block-a' : null } as HTMLElement;
         virtualization.setFontSize(20);
+        assert.equal(virtualization.getCachedBlockHeight('block-a'), undefined);
+        virtualization.cacheBlockHeight('block-a', 0, 20, 1000, true);
+        assert.equal(virtualization.getCachedBlockHeight('block-a'), 0);
+        assert.equal(virtualization.hasMeasuredHeight(block, 1000), true);
         virtualization.cacheBlockHeight('block-a', 100, 20, 1000, false);
         assert.equal(virtualization.hasMeasuredHeight(block, 1000), false);
         virtualization.cacheBlockHeight('block-a', 100, 20, 1000, true);

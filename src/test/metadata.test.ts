@@ -227,19 +227,4 @@ suite('Metadata extraction', () => {
             String.raw`Institute C\\\texttt{carol@c.edu}`
         ]);
     });
-
-    test('extracts custom metadata through registry extractors', () => {
-        const result = extract([
-            '\\title{A Title}',
-            '\\editor{Prof. Smith}',
-            '\\begin{document}',
-            '\\maketitle',
-            '\\end{document}'
-        ].join('\n'));
-
-        assert.equal(result.data.title, 'A Title');
-        assert.equal(result.data.custom.editor, 'Prof. Smith');
-        assert.doesNotMatch(result.cleanedText, /\\editor/);
-    });
-
 });

@@ -1,6 +1,11 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
+import type { Server } from 'http';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
+import { pathToFileURL } from 'url';
 import {
     createRemoteProject,
     loadRemoteProject,
@@ -10,75 +15,68 @@ import {
 import { ProjectWriteConflictError } from '../../apps/standalone/src/browser-project';
 
 suite('RemoteProject', () => {
-    test('loads, saves, and exposes resources through the project HTTP API', async () => {
-        const requests: Array<{ url: string; method: string; body?: string; headers: Headers }> = [];
-        let mainText = '\\documentclass{article}';
-        let mainRevision = 1;
-        const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const url = String(input);
-            const method = init?.method ?? 'GET';
-            const headers = new Headers(init?.headers);
-            requests.push({ url, method, body: typeof init?.body === 'string' ? init.body : undefined, headers });
-            if (url.endsWith('/web-auth/session')) {
-                return Response.json({ csrfToken: 'test-csrf-token' });
+    test('reads and writes through the real server using session, CSRF, and revision checks', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'snaptex-client-server-'));
+        const staticRoot = join(directory, 'static');
+        const projectsRoot = join(directory, 'projects');
+        const projectRoot = join(projectsRoot, 'paper-one');
+        let server: Server | undefined;
+        try {
+            await mkdir(staticRoot);
+            await mkdir(join(projectRoot, 'sections'), { recursive: true });
+            await writeFile(join(staticRoot, 'index.html'), '<body data-deployment-mode="static">Test</body>');
+            await writeFile(join(projectRoot, 'main.tex'), 'Original');
+            await writeFile(join(projectRoot, 'sections', 'my intro.tex'), 'Included text.');
+            await writeFile(join(projectRoot, 'figure.png'), 'image');
+            const serverModule = await import(pathToFileURL(resolve(__dirname, '../../../apps/web/server.mjs')).href);
+            const origin = 'https://snaptex.test';
+            server = serverModule.createSnapTeXWebServer({
+                root: staticRoot, projectsRoot,
+                auth: { username: 'test-user', password: 'a-secure-test-password', publicOrigin: origin }
+            }) as Server;
+            await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve));
+            const address = server.address();
+            assert.ok(address && typeof address !== 'string');
+            const baseUrl = `http://127.0.0.1:${address.port}`;
+            const login = await fetch(`${baseUrl}/web-auth/login`, {
+                method: 'POST', redirect: 'manual',
+                headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ username: 'test-user', password: 'a-secure-test-password' })
+            });
+            assert.equal(login.status, 303);
+            const cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
+            assert.ok(cookie);
+            const fetcher: typeof fetch = (input, init) => {
+                const headers = new Headers(init?.headers);
+                headers.set('Cookie', cookie);
+                headers.set('Origin', origin);
+                return fetch(input, { ...init, headers });
+            };
+            const project = await loadRemoteProject('paper-one', `${baseUrl}/api/projects/`, fetcher);
+            const main = project.files.find(file => file.path === '/main.tex');
+            assert.ok(main?.readText && main.writeText);
+            assert.equal(await main.readText(), 'Original');
+            assert.equal(await project.files.find(file => file.path.endsWith('/my intro.tex'))?.readText?.(), 'Included text.');
+            const imageUrl = project.files.find(file => file.path === '/figure.png')?.resourceUrl;
+            assert.ok(imageUrl);
+            assert.equal(await (await fetcher(imageUrl)).text(), 'image');
+            await main.writeText('Updated', 'Original');
+            assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Updated');
+            await writeFile(join(projectRoot, 'main.tex'), 'External edit');
+            await assert.rejects(async () => main.writeText!('Stale overwrite', 'Updated'), ProjectWriteConflictError);
+            assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'External edit');
+            const created = await project.operations?.createTextFile('/notes.md', 'Draft');
+            assert.equal(created?.path, '/notes.md');
+            assert.equal(await readFile(join(projectRoot, 'notes.md'), 'utf8'), 'Draft');
+            await project.operations?.deleteFile('/notes.md');
+            await assert.rejects(() => readFile(join(projectRoot, 'notes.md')));
+        } finally {
+            if (server) {
+                server.closeAllConnections();
+                await new Promise<void>(resolve => server!.close(() => resolve()));
             }
-            if (url.endsWith('/manifest')) {
-                return Response.json({
-                    rootPath: '/project/main.tex',
-                    files: [
-                        '/project/main.tex',
-                        '/project/sections/my intro.tex',
-                        '/project/figure.png'
-                    ],
-                    revisions: {
-                        '/project/main.tex': String(mainRevision),
-                        '/project/sections/my intro.tex': '1'
-                    }
-                });
-            }
-            if (url.endsWith('/files/project/main.tex')) {
-                if (method === 'PUT') {
-                    if (headers.get('if-match') !== `"${mainRevision}"`) {
-                        return new Response(mainText, { status: 412, headers: { ETag: `"${mainRevision}"` } });
-                    }
-                    mainText = String(init?.body ?? '');
-                    mainRevision += 1;
-                    return new Response(null, { status: 204, headers: { ETag: `"${mainRevision}"` } });
-                }
-                if (headers.get('if-none-match') === `"${mainRevision}"`) {
-                    return new Response(null, { status: 304, headers: { ETag: `"${mainRevision}"` } });
-                }
-                return new Response(mainText, { headers: { ETag: `"${mainRevision}"` } });
-            }
-            if (url.endsWith('/files/project/sections/my%20intro.tex')) {
-                return new Response('Included text.', { headers: { ETag: '"intro-1"' } });
-            }
-            if (url.endsWith('/files/notes.md') && (method === 'POST' || method === 'DELETE')) {
-                return new Response(null, { status: method === 'POST' ? 201 : 204 });
-            }
-            return new Response(null, { status: 404 });
-        };
-
-        const project = await loadRemoteProject('paper-one', 'https://example.test/api/projects/', fetcher);
-        const mainFile = project.files.find(file => file.path === '/project/main.tex');
-        const includedFile = project.files.find(file => file.path.endsWith('/my intro.tex'));
-        const imageFile = project.files.find(file => file.path.endsWith('/figure.png'));
-
-        assert.equal(project.rootPath, '/project/main.tex');
-        assert.equal(await mainFile?.readText?.(), '\\documentclass{article}');
-        assert.equal(await includedFile?.readText?.(), 'Included text.');
-        await mainFile?.writeText?.('Updated document.');
-        assert.equal(mainText, 'Updated document.');
-        assert.equal(imageFile?.resourceUrl, 'https://example.test/api/projects/paper-one/files/project/figure.png');
-        assert.ok(requests.some(request => request.method === 'PUT' && request.body === 'Updated document.'));
-        assert.ok(requests.some(request => request.method === 'PUT' && request.headers.has('if-match')));
-        assert.ok(requests.some(request => request.url === 'https://example.test/web-auth/session'));
-
-        const created = await project.operations?.createTextFile('/notes.md', 'Draft');
-        assert.equal(created?.path, '/notes.md');
-        await project.operations?.deleteFile('/notes.md');
-        assert.ok(requests.some(request => request.method === 'POST' && request.url.endsWith('/files/notes.md')));
-        assert.ok(requests.some(request => request.method === 'DELETE' && request.url.endsWith('/files/notes.md')));
+            await rm(directory, { recursive: true, force: true });
+        }
     });
 
     test('distinguishes missing projects and can create them', async () => {
@@ -118,17 +116,18 @@ suite('RemoteProject', () => {
         );
     });
 
-    test('watches changed files and rejects stale writes', async () => {
+    test('receives SSE changes, catches up on reconnect, and rejects stale saves', async () => {
         let text = 'Base';
         let revision = 1;
         let events: EventTarget | undefined;
+        let eventSourceClosed = false;
         const OriginalEventSource = globalThis.EventSource;
         globalThis.EventSource = class extends EventTarget {
             constructor(_url: string | URL) {
                 super();
                 events = this;
             }
-            close() {}
+            close() { eventSourceClosed = true; }
         } as unknown as typeof EventSource;
         const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             const url = String(input);
@@ -153,15 +152,28 @@ suite('RemoteProject', () => {
             const file = project.files[0];
             assert.equal(await file.readText?.(), 'Base');
             const changes: string[] = [];
-            const stop = project.watchTextFiles?.(change => { changes.push(change.text); }, error => assert.fail(String(error)));
-            text = 'Changed externally';
+            let changed: (() => void) | undefined;
+            const stop = project.watchTextFiles?.(change => {
+                changes.push(change.text);
+                changed?.();
+            }, error => assert.fail(String(error)));
+            for (const [type, content] of [['text', 'Changed externally'], ['manifest', 'Changed while disconnected']]) {
+                text = content;
+                revision += 1;
+                await new Promise<void>(resolve => {
+                    changed = resolve;
+                    events?.dispatchEvent(new MessageEvent(type, { data: JSON.stringify('/main.tex') }));
+                });
+            }
+            assert.deepEqual(changes, ['Changed externally', 'Changed while disconnected']);
+            await assert.rejects(async () => { await file.writeText?.('Local edit'); }, ProjectWriteConflictError);
+            stop?.();
+            assert.equal(eventSourceClosed, true);
+            text = 'Change after project close';
             revision += 1;
             events?.dispatchEvent(new MessageEvent('text', { data: JSON.stringify('/main.tex') }));
             await new Promise(resolve => setTimeout(resolve, 0));
-            assert.deepEqual(changes, ['Changed externally']);
-            await assert.rejects(async () => { await file.writeText?.('Local edit', 'Base'); }, ProjectWriteConflictError);
-            await assert.rejects(async () => { await file.writeText?.('Local edit'); }, ProjectWriteConflictError);
-            stop?.();
+            assert.deepEqual(changes, ['Changed externally', 'Changed while disconnected'], 'Closed projects must ignore later server events');
         } finally {
             globalThis.EventSource = OriginalEventSource;
         }

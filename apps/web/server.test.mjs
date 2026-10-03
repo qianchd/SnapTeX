@@ -6,7 +6,7 @@ import test from 'node:test';
 import { writeCompressedAssets } from './build-static.mjs';
 import { createSnapTeXWebServer } from './server.mjs';
 
-test('serves a writable project through the remote project API', async () => {
+test('serves a writable project through the remote project API', async t => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'snaptex-web-'));
     const staticRoot = join(tempRoot, 'static');
     const outsideRoot = join(tempRoot, 'outside');
@@ -20,6 +20,7 @@ test('serves a writable project through the remote project API', async () => {
     await writeFile(join(staticRoot, 'docs', 'guide', 'start.html'), 'Getting started');
     await writeFile(join(outsideRoot, 'secret.txt'), 'Secret');
     await symlink(outsideRoot, join(staticRoot, 'linked'), 'junction');
+    await symlink(outsideRoot, join(projectRoot, 'linked'), 'junction');
     await writeFile(join(projectRoot, 'main.tex'), 'Original');
     await writeFile(join(projectRoot, 'sections', 'intro.tex'), 'Intro');
     await writeFile(join(projectRoot, 'figure.png'), 'image');
@@ -101,9 +102,11 @@ test('serves a writable project through the remote project API', async () => {
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
     try {
-        assert.match(await (await fetch(`${baseUrl}/`)).text(), /data-deployment-mode="server"/);
-        assert.equal(await (await fetch(`${baseUrl}/docs/`)).text(), 'Documentation');
-        assert.equal(await (await fetch(`${baseUrl}/docs/guide/start`)).text(), 'Getting started');
+        await t.test('serves public web and documentation without authentication', async () => {
+            assert.match(await (await fetch(`${baseUrl}/`)).text(), /data-deployment-mode="server"/);
+            assert.equal(await (await fetch(`${baseUrl}/docs/`)).text(), 'Documentation');
+            assert.equal(await (await fetch(`${baseUrl}/docs/guide/start`)).text(), 'Getting started');
+        });
         const login = await fetch(`${baseUrl}/web-auth/login`, {
             method: 'POST',
             headers: { Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -120,169 +123,204 @@ test('serves a writable project through the remote project API', async () => {
             return fetch(url, { ...init, headers });
         };
 
-        assert.equal((await authenticatedFetch(`${baseUrl}/index.html`, { method: 'POST' })).status, 405);
-        assert.equal((await fetch(`${baseUrl}/healthz`, { method: 'POST' })).status, 405);
-        assert.equal((await authenticatedFetch(`${baseUrl}/linked/secret.txt`)).status, 404);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects`)).status, 200);
-        if (process.platform !== 'win32' && process.getuid?.() !== 0) {
-            const unreadableDirectory = join(projectRoot, 'unreadable');
-            await mkdir(unreadableDirectory);
-            await chmod(unreadableDirectory, 0);
+        await t.test('serves constrained project manifests and reports unreadable directories', async () => {
+            assert.equal((await authenticatedFetch(`${baseUrl}/index.html`, { method: 'POST' })).status, 405);
+            assert.equal((await fetch(`${baseUrl}/healthz`, { method: 'POST' })).status, 405);
+            assert.equal((await authenticatedFetch(`${baseUrl}/linked/secret.txt`)).status, 404);
+            for (const method of ['GET', 'PUT', 'POST', 'DELETE']) {
+                assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/linked/secret.txt`, {
+                    method, ...(method === 'PUT' || method === 'POST' ? { body: 'Rejected' } : {})
+                })).status, 404, method);
+            }
+            assert.equal(await readFile(join(outsideRoot, 'secret.txt'), 'utf8'), 'Secret');
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects`)).status, 200);
+            if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+                const unreadableDirectory = join(projectRoot, 'unreadable');
+                await mkdir(unreadableDirectory);
+                await chmod(unreadableDirectory, 0);
+                try {
+                    const unavailable = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`);
+                    assert.equal(unavailable.status, 503);
+                    assert.equal((await unavailable.json()).code, 'PROJECT_UNREADABLE');
+                } finally {
+                    await chmod(unreadableDirectory, 0o700);
+                }
+            }
+            const manifest = await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json();
+            assert.equal(manifest.rootPath, '/main.tex');
+            assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);
+            assert.deepEqual(Object.keys(manifest.revisions), ['/main.tex', '/sections/intro.tex']);
+        });
+        await t.test('notifies an external write through SSE without polling the manifest', async () => {
+            const response = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`, { signal: AbortSignal.timeout(5000) });
+            assert.equal(response.status, 200);
+            assert.match(response.headers.get('content-type'), /text\/event-stream/);
+            const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+            let pending = '';
+            const readEvent = async () => {
+                while (!pending.includes('\n\n')) {
+                    const { value, done } = await reader.read();
+                    assert.equal(done, false, 'SSE must stay open until the change arrives');
+                    pending += value;
+                }
+                const end = pending.indexOf('\n\n') + 2;
+                const event = pending.slice(0, end);
+                pending = pending.slice(end);
+                return event;
+            };
             try {
-                const unavailable = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`);
-                assert.equal(unavailable.status, 503);
-                assert.equal((await unavailable.json()).code, 'PROJECT_UNREADABLE');
+                assert.match(await readEvent(), /event: manifest/);
+                await writeFile(join(projectRoot, 'main.tex'), 'External event');
+                assert.match(await readEvent(), /event: text\ndata:"\/main\.tex"/);
             } finally {
-                await chmod(unreadableDirectory, 0o700);
+                await reader.cancel().catch(() => undefined);
+                await writeFile(join(projectRoot, 'main.tex'), 'Original');
             }
-        }
-        const manifest = await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json();
-        assert.equal(manifest.rootPath, '/main.tex');
-        assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);
-        assert.deepEqual(Object.keys(manifest.revisions), ['/main.tex', '/sections/intro.tex']);
-        const eventsResponse = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`);
-        assert.equal(eventsResponse.status, 200);
-        assert.match(eventsResponse.headers.get('content-type'), /text\/event-stream/);
-        const eventsReader = eventsResponse.body.getReader();
-        const readEvent = async () => new TextDecoder().decode((await eventsReader.read()).value);
-        assert.match(await readEvent(), /event: manifest/);
-        await writeFile(join(projectRoot, 'main.tex'), 'External event');
-        const changedEvent = await Promise.race([
-            readEvent(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for project event.')), 3000))
-        ]);
-        assert.match(changedEvent, /event: text\ndata:"\/main\.tex"/);
-        await eventsReader.cancel();
-        await writeFile(join(projectRoot, 'main.tex'), 'Original');
-        assert.equal((await fetch(`${baseUrl}/api/projects/paper-one/compile`, { method: 'POST' })).status, 401);
-        const invalidCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
-            method: 'POST', body: JSON.stringify({ rootPath: '/../outside.tex' })
         });
-        assert.equal(invalidCompile.status, 404);
-        const invalidCompiler = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
-            method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'shell' })
-        });
-        assert.equal(invalidCompiler.status, 400);
-        const compiled = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
-            method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'tinytex' })
-        });
-        assert.equal(compiled.status, 200);
-        assert.equal((await compiled.json()).path, '/main.pdf');
-        assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.pdf`)).text(), '%PDF-1.4 test');
-        assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/main.pdf'));
-        compileFailure = Object.assign(new Error('compiler exited'), {
-            snaptexCompiler: 'latexmk',
-            stdout: 'LaTeX entered extended mode',
-            stderr: '! Undefined control sequence.'
-        });
-        const failedCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
-            method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'latexmk' })
-        });
-        assert.equal(failedCompile.status, 422);
-        assert.match((await failedCompile.json()).error, /latexmk[\s\S]*extended mode[\s\S]*Undefined control sequence/);
-        compileFailure = undefined;
-        const syncUrl = `${baseUrl}/api/projects/paper-one/synctex`;
-        assert.equal((await fetch(syncUrl, { method: 'POST' })).status, 401);
-        assert.equal((await fetch(syncUrl, { method: 'POST', headers: { cookie, Origin: publicOrigin } })).status, 403);
-        assert.equal((await authenticatedFetch(syncUrl, {
-            method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/../outside.tex', line: 1, column: 1 })
-        })).status, 400);
-        const forward = await authenticatedFetch(syncUrl, {
-            method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/main.tex', line: 12, column: 1 })
-        });
-        assert.equal(forward.status, 200);
-        assert.deepEqual(await forward.json(), { page: 3, x: 42, y: 120 });
-        const inverse = await authenticatedFetch(syncUrl, {
-            method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
-        });
-        assert.equal(inverse.status, 200);
-        assert.deepEqual(await inverse.json(), { path: '/sections/intro.tex', line: 8, column: 2 });
-        await rm(join(projectRoot, 'main.synctex.gz'));
-        assert.equal((await authenticatedFetch(syncUrl, {
-            method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
-        })).status, 409);
-        const projectFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`);
-        assert.equal(projectFile.headers.get('cache-control'), 'no-store');
-        const originalEtag = projectFile.headers.get('etag');
-        assert.ok(originalEtag);
-        assert.equal(projectFile.headers.get('vary'), null);
-        assert.equal(await projectFile.text(), 'Original');
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
-            headers: { 'If-None-Match': originalEtag }
-        })).status, 304);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
-            method: 'PUT', body: 'Unsafe update'
-        })).status, 428);
-        const saved = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8', 'If-Match': originalEtag },
-            body: 'Updated'
-        });
-        assert.equal(saved.status, 204);
-        assert.ok(saved.headers.get('etag'));
-        assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Updated');
-        const concurrentSaves = await Promise.all(['First writer', 'Second writer'].map(body => authenticatedFetch(
-            `${baseUrl}/api/projects/paper-one/files/main.tex`, {
-                method: 'PUT', headers: { 'If-Match': saved.headers.get('etag') }, body
+        await t.test('compiles PDFs and exposes authenticated SyncTeX queries', async () => {
+            for (const route of ['compile', 'synctex']) {
+                for (const body of ['{', '[]', 'null']) {
+                    assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/${route}`, {
+                        method: 'POST', body
+                    })).status, 400, route + ': ' + body);
+                }
             }
-        )));
-        assert.deepEqual(concurrentSaves.map(result => result.status).sort(), [204, 412]);
-        await writeFile(join(projectRoot, 'main.tex'), 'External update');
-        const conflictedSave = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
-            method: 'PUT',
-            headers: { 'If-Match': saved.headers.get('etag') },
-            body: 'Overwritten update'
+            assert.equal((await fetch(`${baseUrl}/api/projects/paper-one/compile`, { method: 'POST' })).status, 401);
+            const invalidCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+                method: 'POST', body: JSON.stringify({ rootPath: '/../outside.tex' })
+            });
+            assert.equal(invalidCompile.status, 404);
+            const invalidCompiler = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+                method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'shell' })
+            });
+            assert.equal(invalidCompiler.status, 400);
+            const compiled = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+                method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'tinytex' })
+            });
+            assert.equal(compiled.status, 200);
+            assert.equal((await compiled.json()).path, '/main.pdf');
+            assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.pdf`)).text(), '%PDF-1.4 test');
+            assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/main.pdf'));
+            compileFailure = Object.assign(new Error('compiler exited'), {
+                snaptexCompiler: 'latexmk',
+                stdout: 'LaTeX entered extended mode',
+                stderr: '! Undefined control sequence.'
+            });
+            const failedCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+                method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'latexmk' })
+            });
+            assert.equal(failedCompile.status, 422);
+            assert.match((await failedCompile.json()).error, /latexmk[\s\S]*extended mode[\s\S]*Undefined control sequence/);
+            compileFailure = undefined;
+            const syncUrl = `${baseUrl}/api/projects/paper-one/synctex`;
+            assert.equal((await fetch(syncUrl, { method: 'POST' })).status, 401);
+            assert.equal((await fetch(syncUrl, { method: 'POST', headers: { cookie, Origin: publicOrigin } })).status, 403);
+            assert.equal((await authenticatedFetch(syncUrl, {
+                method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/../outside.tex', line: 1, column: 1 })
+            })).status, 400);
+            const forward = await authenticatedFetch(syncUrl, {
+                method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/main.tex', line: 12, column: 1 })
+            });
+            assert.equal(forward.status, 200);
+            assert.deepEqual(await forward.json(), { page: 3, x: 42, y: 120 });
+            const inverse = await authenticatedFetch(syncUrl, {
+                method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
+            });
+            assert.equal(inverse.status, 200);
+            assert.deepEqual(await inverse.json(), { path: '/sections/intro.tex', line: 8, column: 2 });
+            await rm(join(projectRoot, 'main.synctex.gz'));
+            assert.equal((await authenticatedFetch(syncUrl, {
+                method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
+            })).status, 409);
         });
-        assert.equal(conflictedSave.status, 412);
-        assert.equal(await conflictedSave.text(), 'External update');
-        assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'External update');
-        const createdFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/notes.md`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-            body: 'Notes'
+        await t.test('rejects stale and concurrent file writes without losing disk edits', async () => {
+            const projectFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`);
+            assert.equal(projectFile.headers.get('cache-control'), 'no-store');
+            const originalEtag = projectFile.headers.get('etag');
+            assert.ok(originalEtag);
+            assert.equal(projectFile.headers.get('vary'), null);
+            assert.equal(await projectFile.text(), 'Original');
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                headers: { 'If-None-Match': originalEtag }
+            })).status, 304);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                method: 'PUT', body: 'Unsafe update'
+            })).status, 428);
+            const saved = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'text/plain; charset=utf-8', 'If-Match': originalEtag },
+                body: 'Updated'
+            });
+            assert.equal(saved.status, 204);
+            assert.ok(saved.headers.get('etag'));
+            assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Updated');
+            const concurrentSaves = await Promise.all(['First writer', 'Second writer'].map(body => authenticatedFetch(
+                `${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                    method: 'PUT', headers: { 'If-Match': saved.headers.get('etag') }, body
+                }
+            )));
+            assert.deepEqual(concurrentSaves.map(result => result.status).sort(), [204, 412]);
+            await writeFile(join(projectRoot, 'main.tex'), 'External update');
+            const conflictedSave = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                method: 'PUT',
+                headers: { 'If-Match': saved.headers.get('etag') },
+                body: 'Overwritten update'
+            });
+            assert.equal(conflictedSave.status, 412);
+            assert.equal(await conflictedSave.text(), 'External update');
+            assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'External update');
         });
-        assert.equal(createdFile.status, 201);
-        assert.equal(await readFile(join(projectRoot, 'notes.md'), 'utf8'), 'Notes');
-        assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/notes.md'));
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/notes.md`, { method: 'DELETE' })).status, 204);
-        await assert.rejects(() => access(join(projectRoot, 'notes.md')));
-        assert.ok(!(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/notes.md'));
-        const deleteRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'DELETE' });
-        assert.equal(deleteRoot.status, 204);
-        await assert.rejects(() => access(join(projectRoot, 'main.tex')));
-        const restoreRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
-            method: 'POST',
-            body: 'Restored'
-        });
-        assert.equal(restoreRoot.status, 201);
-        const deleteOtherRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/sections/intro.tex`, { method: 'DELETE' });
-        assert.equal(deleteOtherRoot.status, 204);
-        const deleteLastRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'DELETE' });
-        assert.equal(deleteLastRoot.status, 409);
-        await assert.doesNotReject(() => access(join(projectRoot, 'main.tex')));
+        await t.test('creates and deletes only permitted project files', async () => {
+            const createdFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/notes.md`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: 'Notes'
+            });
+            assert.equal(createdFile.status, 201);
+            assert.equal(await readFile(join(projectRoot, 'notes.md'), 'utf8'), 'Notes');
+            assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/notes.md'));
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/notes.md`, { method: 'DELETE' })).status, 204);
+            await assert.rejects(() => access(join(projectRoot, 'notes.md')));
+            assert.ok(!(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/notes.md'));
+            const deleteRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'DELETE' });
+            assert.equal(deleteRoot.status, 204);
+            await assert.rejects(() => access(join(projectRoot, 'main.tex')));
+            const restoreRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
+                method: 'POST',
+                body: 'Restored'
+            });
+            assert.equal(restoreRoot.status, 201);
+            const deleteOtherRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/sections/intro.tex`, { method: 'DELETE' });
+            assert.equal(deleteOtherRoot.status, 204);
+            const deleteLastRoot = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'DELETE' });
+            assert.equal(deleteLastRoot.status, 409);
+            await assert.doesNotReject(() => access(join(projectRoot, 'main.tex')));
 
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/build.aux`)).status, 404);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/%2e%2e%2Foutside.tex`)).status, 404);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/line%0Abreak.tex`, {
-            method: 'POST', body: 'x'
-        })).status, 404);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/image.png`, { method: 'POST', body: 'x' })).status, 415);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'POST', body: 'x' })).status, 409);
-
-        const missing = await authenticatedFetch(`${baseUrl}/api/projects/demo/manifest`);
-        assert.equal(missing.status, 404);
-        assert.equal((await missing.json()).code, 'PROJECT_NOT_FOUND');
-        const createdProject = await authenticatedFetch(`${baseUrl}/api/projects/demo`, { method: 'POST' });
-        assert.equal(createdProject.status, 201);
-        const createdManifest = await createdProject.json();
-        assert.equal(createdManifest.rootPath, '/main.tex');
-        assert.deepEqual(createdManifest.files, ['/main.tex']);
-        assert.deepEqual(Object.keys(createdManifest.revisions), ['/main.tex']);
-        assert.match(await readFile(join(projectsRoot, 'demo', 'main.tex'), 'utf8'), /begin\{document\}/);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/demo`, { method: 'POST' })).status, 409);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/%252e%252e/manifest`)).status, 404);
-        assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/%252e%252e`, { method: 'POST' })).status, 404);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/build.aux`)).status, 404);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/%2e%2e%2Foutside.tex`)).status, 404);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/line%0Abreak.tex`, {
+                method: 'POST', body: 'x'
+            })).status, 404);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/image.png`, { method: 'POST', body: 'x' })).status, 415);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, { method: 'POST', body: 'x' })).status, 409);
+        });
+        await t.test('creates named projects and rejects encoded traversal', async () => {
+            const missing = await authenticatedFetch(`${baseUrl}/api/projects/demo/manifest`);
+            assert.equal(missing.status, 404);
+            assert.equal((await missing.json()).code, 'PROJECT_NOT_FOUND');
+            const createdProject = await authenticatedFetch(`${baseUrl}/api/projects/demo`, { method: 'POST' });
+            assert.equal(createdProject.status, 201);
+            const createdManifest = await createdProject.json();
+            assert.equal(createdManifest.rootPath, '/main.tex');
+            assert.deepEqual(createdManifest.files, ['/main.tex']);
+            assert.deepEqual(Object.keys(createdManifest.revisions), ['/main.tex']);
+            assert.match(await readFile(join(projectsRoot, 'demo', 'main.tex'), 'utf8'), /begin\{document\}/);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/demo`, { method: 'POST' })).status, 409);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/%252e%252e/manifest`)).status, 404);
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/%252e%252e`, { method: 'POST' })).status, 404);
+        });
     } finally {
+        server.closeAllConnections();
         await new Promise(resolve => server.close(resolve));
         await rm(tempRoot, { recursive: true, force: true });
     }
@@ -388,10 +426,14 @@ test('protects remote projects with an independent web session', async () => {
         assert.equal(wrongOrigin.status, 403);
         assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Original');
 
-        const missingCsrf = await fetch(`${baseUrl}/api/projects/paper/files/main.tex`, {
-            method: 'PUT', headers: { cookie, Origin: publicOrigin }, body: 'Rejected'
-        });
-        assert.equal(missingCsrf.status, 403);
+        for (const [method, route] of [
+            ['PUT', 'files/main.tex'], ['POST', 'files/notes.txt'], ['DELETE', 'files/main.tex'], ['POST', 'compile']
+        ]) {
+            const missingCsrf = await fetch(`${baseUrl}/api/projects/paper/${route}`, {
+                method, headers: { cookie, Origin: publicOrigin }
+            });
+            assert.equal(missingCsrf.status, 403, method + ' ' + route);
+        }
 
         const currentFile = await fetch(`${baseUrl}/api/projects/paper/files/main.tex`, { headers: { cookie } });
         const saved = await fetch(`${baseUrl}/api/projects/paper/files/main.tex`, {

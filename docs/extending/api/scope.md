@@ -96,21 +96,32 @@ Do not return source-controlled text inside HTML without escaping it. Do not cal
 Use `PreviewUpdateService` to test the same parse, scan, dependency, and rendering path used by hosts:
 
 ```ts
+/// <reference types="mocha" />
+import * as assert from 'assert';
+import { BrowserUri } from '../../apps/standalone/src/browser-file-provider';
+import { MemoryFileProvider } from './test-helpers';
+import { PreviewUpdateService } from '../preview-update-service';
+import { SNAP_TEX_RULES } from '../rules';
+
+const uri = new BrowserUri('/main.tex');
+const source = '\\begin{document}\nExpected output.\n\\end{document}';
 const service = new PreviewUpdateService(
     new MemoryFileProvider(),
     SNAP_TEX_RULES
 );
 
-const payload = await service.render(uri, source, {
-    backendMode: 'legacy',
-    deferFullHtml: false
-});
+test('renders expected output', async () => {
+    const payload = await service.render(uri, source, {
+        backendMode: 'legacy',
+        deferFullHtml: false
+    });
 
-const html = payload.htmls?.join('') ?? '';
-assert.match(html, /expected output/);
+    const html = payload.htmls?.join('') ?? '';
+    assert.match(html, /Expected output/);
+});
 ```
 
-`MemoryFileProvider` is the repository test helper from `src/test/test-helpers.ts`; production hosts supply their own `IFileProvider`. The `uri` and `source` values in this snippet are test inputs.
+The relative imports above assume a test file directly under `src/test/`; adjust them to your file location. `MemoryFileProvider` is the repository test helper from `src/test/test-helpers.ts`, using `BrowserUri` so tests need no VS Code process. Production hosts supply their own `IFileProvider`.
 
 Select only the backend containing the rule you changed. Assert final HTML or payload behavior rather than the existence of a declaration.
 

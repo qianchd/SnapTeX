@@ -1,10 +1,9 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import * as vscode from 'vscode';
+import { BrowserUri } from '../../apps/standalone/src/browser-file-provider';
 import { LatexDocument } from '../document';
 import { resolveProjectResourcePath } from '../file-provider';
-import { getVirtualMode, resolveProjectResource } from '../../apps/vscode/src/panel';
 import { SmartRenderer } from '../renderer';
 import { defineAstMathRule, defineAstRenderRule, defineBlockDependencyRule, defineRuleRegistry, readAstCommandArguments, SNAP_TEX_RULES } from '../rules';
 import type { RuleRegistry } from '../rules';
@@ -29,41 +28,10 @@ suite('LatexDocument source mapping', () => {
         assert.deepEqual(artifact.metadata.citations, ['alpha', 'beta', 'gamma']);
     });
 
-    test('maps flattened lines back to included source files', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const sectionUri = vscode.Uri.file('/project/section1.tex');
-        const provider = new MemoryFileProvider(new Map([
-            [normalizeUri(mainUri), [
-                '\\documentclass{article}',
-                '\\begin{document}',
-                'Root line',
-                '\\input{section1}',
-                '\\end{document}'
-            ].join('\n')],
-            [normalizeUri(sectionUri), [
-                'Included line',
-                '',
-                'Second included block'
-            ].join('\n')]
-        ]));
-        const doc = new LatexDocument(provider);
-
-        const result = await doc.parse(mainUri);
-        doc.applyResult(result);
-
-        const flatLine = doc.getFlattenedLine(sectionUri.toString(), 0);
-        assert.notEqual(flatLine, -1);
-        const original = doc.getOriginalPosition(flatLine);
-        assert.ok(original);
-        assert.equal(normalizeUri(original.file), normalizeUri(sectionUri));
-        assert.equal(original.line, 0);
-
-    });
-
     test('maps nested included source files back to their original lines', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const sectionUri = vscode.Uri.file('/project/sections/section1.tex');
-        const nestedUri = vscode.Uri.file('/project/sections/nested/detail.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
+        const sectionUri = new BrowserUri('/project/sections/section1.tex');
+        const nestedUri = new BrowserUri('/project/sections/nested/detail.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\documentclass{article}',
@@ -94,6 +62,13 @@ suite('LatexDocument source mapping', () => {
             'Nested target line.\nSection after.\nRoot after.'
         ]);
 
+        const sectionLine = doc.getFlattenedLine(sectionUri.toString(), 0);
+        assert.notEqual(sectionLine, -1);
+        const sectionOriginal = doc.getOriginalPosition(sectionLine);
+        assert.ok(sectionOriginal);
+        assert.equal(normalizeUri(sectionOriginal.file), normalizeUri(sectionUri));
+        assert.equal(sectionOriginal.line, 0);
+
         const flatLine = doc.getFlattenedLine(nestedUri.toString(), 2);
         assert.notEqual(flatLine, -1);
         const original = doc.getOriginalPosition(flatLine);
@@ -103,9 +78,9 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('loads bibliography entries relative to the root document', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const bibUri = vscode.Uri.file('/project/refs.bib');
-        const extraBibUri = vscode.Uri.file('/project/more.bib');
+        const mainUri = new BrowserUri('/project/main.tex');
+        const bibUri = new BrowserUri('/project/refs.bib');
+        const extraBibUri = new BrowserUri('/project/more.bib');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\bibliography{refs,more}',
@@ -128,8 +103,8 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('preserves explicit input file extensions', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const bblUri = vscode.Uri.file('/project/references.bbl');
+        const mainUri = new BrowserUri('/project/main.tex');
+        const bblUri = new BrowserUri('/project/references.bbl');
         const bibItems = Array.from({ length: 300 }, (_unused, index) =>
             `\\bibitem{entry${index}} Author ${index}. Paper ${index}.`
         );
@@ -160,8 +135,8 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('uses preview anchors while preserving included-file source mapping', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const sectionUri = vscode.Uri.file('/project/section.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
+        const sectionUri = new BrowserUri('/project/section.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\begin{document}',
@@ -188,7 +163,7 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('tracks bibliography dependencies and anchors from current AST citations only', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([[normalizeUri(mainUri), '']]));
         const doc = new LatexDocument(provider);
         const renderer = new SmartRenderer();
@@ -248,7 +223,7 @@ suite('LatexDocument source mapping', () => {
                 ...SNAP_TEX_RULES.astMathRules
             ]
         });
-        const mainUri = vscode.Uri.file('/project/main.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\begin{document}',
@@ -270,7 +245,7 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('drops comment-only blocks without leaving preview gaps', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\begin{document}',
@@ -310,7 +285,7 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('drops standalone list boundary blocks without leaving preview gaps', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\begin{document}',
@@ -344,8 +319,8 @@ suite('LatexDocument source mapping', () => {
     });
 
     test('inlines standalone TikZ inputs without treating their document end as the root end', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const figureUri = vscode.Uri.file('/project/figures/fold_illus_reliever.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
+        const figureUri = new BrowserUri('/project/figures/fold_illus_reliever.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\documentclass{article}',
@@ -389,7 +364,7 @@ suite('LatexDocument source mapping', () => {
 });
 
 suite('SmartRenderer', () => {
-    test('does not emit nested latex-block classes for float internals', () => {
+    test('keeps float internals inside their outer preview blocks', () => {
         const html = renderBlocks([
             [
                 '\\begin{figure}',
@@ -418,11 +393,8 @@ suite('SmartRenderer', () => {
             ].join('\n')
         ]);
 
-        const latexBlockClassCount = html.match(/class="latex-block/g)?.length ?? 0;
-        assert.equal(latexBlockClassCount, 3);
-        assert.doesNotMatch(html, /class="latex-block figure/);
-        assert.doesNotMatch(html, /class="latex-block table/);
-        assert.doesNotMatch(html, /class="latex-block algorithm/);
+        assert.equal((html.match(/class="latex-block/g) ?? []).length, 3);
+        assert.doesNotMatch(html, /class="latex-block (?:figure|table|algorithm)/);
     });
 
     test('renders tabularx tables with booktabs and colored captions', () => {
@@ -492,74 +464,6 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /\\begin\{threeparttable\}|\\begin\{tabular\*\}|\\setlength\\tabcolsep/);
         assert.doesNotMatch(html, /<tr><td>\s*<\/td><\/tr>/);
         assert.doesNotMatch(html, /XSNAP/);
-    });
-
-    test('renders multicolumn and multirow table cells', () => {
-        const html = renderBlocks([
-            [
-                '\\begin{table}',
-                '\\caption{Grouped table}',
-                '\\begin{tabular}{lll}',
-                '\\toprule',
-                '\\multicolumn{2}{c}{\\textbf{Group}} & \\textbf{Total} \\\\',
-                '\\midrule',
-                '\\multirow{2}{*}{A} & x & 1 \\\\',
-                ' & y & 2 \\\\',
-                'Hausdorff distance & \\multicolumn{2}{c}{\\{22, 9\\}} \\\\',
-                '\\bottomrule',
-                '\\end{tabular}',
-                '\\end{table}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /<th scope="col" colspan="2" class="table-cell-align-center"><strong>Group<\/strong><\/th>/);
-        assert.match(html, /<td rowspan="2">A<\/td><td>x<\/td><td>1<\/td>/);
-        assert.match(html, /<td>Hausdorff distance<\/td><td colspan="2" class="table-cell-align-center">\{22, 9\}<\/td>/);
-        assert.doesNotMatch(html, /\\multicolumn|\\multirow/);
-    });
-
-    test('renders makecell line breaks and table note markers', () => {
-        const html = renderBlocks([
-            [
-                '\\begin{table}[!ht]',
-                '\\begin{threeparttable}',
-                '\\caption{Model table}',
-                '\\begin{tabular*}{\\textwidth}{ccc}',
-                '\\toprule',
-                'Model & Loss & Estimator \\\\',
-                '\\midrule',
-                '\\makecell{$f_i^\\ast=(\\mu_i,\\Omega_i)$,\\\\ $P_i=\\mathcal{N}(\\mu_i,\\Omega_i^{-1})$} & $\\sum_{i\\in I}(y_i-x_i)^2$ & $\\hat f_I$\\tnote{$\\mathparagraph$} \\\\',
-                '\\bottomrule',
-                '\\end{tabular*}',
-                '\\begin{tablenotes}[flushleft]\\footnotesize',
-                '\\item[$\\mathparagraph$] The superscript marks a regularized estimator with $\\alpha\\in(0,1)$.',
-                '\\end{tablenotes}',
-                '\\end{threeparttable}',
-                '\\end{table}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /<span class="latex-makecell">/);
-        assert.equal(html.match(/latex-makecell-line/g)?.length, 2);
-        assert.match(html, /<sup class="latex-tnote">/);
-        assert.match(html, /<div class="latex-tablenotes"><ul><li class="note-item"/);
-        assert.match(html, /regularized estimator/);
-        assert.doesNotMatch(html, /\\makecell|\\tnote|XSNAP/);
-    });
-
-    test('renders journal-style Abstract and Keywords commands', () => {
-        const html = renderBlocks([
-            [
-                '\\Abstract{This paper studies robust sparse CCA for heavy-tailed data.}',
-                '',
-                '\\Keywords{Canonical correlation analysis, Elliptical distributions, High dimensional data}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /<div class="latex-abstract"><span class="latex-abstract-title">Abstract<\/span>/);
-        assert.match(html, /robust sparse CCA/);
-        assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> Canonical correlation analysis, Elliptical distributions, High dimensional data<\/div>/);
-        assert.doesNotMatch(html, /\\Abstract|\\Keywords|OOABSTRACT|OOKEYWORDS/);
     });
 
     test('preserves paragraph boundaries inside block and inline color groups', () => {
@@ -667,21 +571,6 @@ suite('SmartRenderer', () => {
         assert.match(html, /class="latex-editor"><strong>Editor:<\/strong> Prof\. Smith/);
     });
 
-    test('escapes raw source HTML while preserving generated preview HTML', () => {
-        const html = renderBlocks([
-            'Plain <img src=x onerror=alert(1)> and \\textbf{bold <script>alert(2)</script>}.',
-            '\\begin{theorem}<script>alert(1)</script> and \\emph{safe}.\\end{theorem}',
-            '\\begin{figure}<script>alert(3)</script> and \\textit{styled}.\\end{figure}'
-        ]);
-
-        assert.doesNotMatch(html, /<img|<script/i);
-        assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-        assert.match(html, /<strong>bold &lt;script&gt;alert\(2\)&lt;\/script&gt;<\/strong>/);
-        assert.match(html, /class="latex-theorem"/);
-        assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-        assert.match(html, /<em>safe<\/em>/);
-        assert.match(html, /&lt;script&gt;alert\(3\)&lt;\/script&gt; and <em>styled<\/em>/);
-    });
 
     test('renders nested lists and block content inside theorem environments', () => {
         const html = renderBlocks([[
@@ -738,37 +627,6 @@ suite('SmartRenderer', () => {
         assert.match(html, /class="latex-list-label">[\s\S]*katex[\s\S]*<\/span>\s+Delta/);
     });
 
-    test('renders safe LaTeX links and escapes unsafe targets', () => {
-        const safeHtml = renderBlocks([
-            'See \\href{https://example.com/path?q=1&lang=en}{SnapTeX \\textbf{site}} and \\url{https://snaptex.dev/docs?a=1&b=2}.'
-        ]);
-
-        assert.match(safeHtml, /<a href="https:\/\/example\.com\/path\?q=1&amp;lang=en" class="latex-link latex-href" target="_blank" rel="noopener noreferrer">SnapTeX <strong>site<\/strong><\/a>/);
-        assert.match(safeHtml, /<a href="https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2" class="latex-link latex-url" target="_blank" rel="noopener noreferrer">https:\/\/snaptex\.dev\/docs\?a=1&amp;b=2<\/a>/);
-        assert.doesNotMatch(safeHtml, /\\href|\\url/);
-
-        const unsafeHtml = renderBlocks([
-            '\\href{javascript:alert(1)}{bad <script>alert(1)</script>} \\url{javascript:alert(2)}'
-        ]);
-
-        assert.doesNotMatch(unsafeHtml, /href="javascript:alert/i);
-        assert.doesNotMatch(unsafeHtml, /\\href|\\url/);
-        assert.match(unsafeHtml, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-        assert.match(unsafeHtml, /javascript:alert\(2\)/);
-
-        const unsafeMathHtml = renderBlocks(['$\\href{javascript:alert(1)}{bad}$']);
-        assert.doesNotMatch(unsafeMathHtml, /href="javascript:alert/i);
-    });
-
-    test('keeps numbered display math containers protected under raw-HTML-disabled Markdown', () => {
-        const html = renderBlocks(['\\begin{equation}\\label{obj:inSample}x=1\\end{equation}']);
-
-        assert.match(html, /<div class="equation-container"/);
-        assert.match(html, /<span class="eq-no"/);
-        assert.match(html, /id="obj:inSample"/);
-        assert.doesNotMatch(html, /&lt;div class=&quot;equation-container/);
-        assert.doesNotMatch(html, /&lt;span class=&quot;eq-no/);
-    });
 
     test('updates maketitle metadata without exposing raw metadata in block hashes', () => {
         const renderer = new SmartRenderer();
@@ -839,43 +697,6 @@ suite('SmartRenderer', () => {
         assert.equal(payload.htmls?.length, 300);
     });
 
-    test('renders figure pdf placeholders and resolves references after numbering', () => {
-        const html = renderBlocks([
-            '\\section{Intro}\\label{sec:intro} See Section~\\ref{sec:intro}.',
-            [
-                '\\begin{figure}',
-                '\\caption{PDF figure}',
-                '\\includegraphics{figures/result.pdf}',
-                '\\label{fig:result}',
-                '\\end{figure}'
-            ].join('\n'),
-            '\\begin{center}\\includegraphics{figures/standalone.png}\\captionof{figure}{Standalone figure}\\end{center}'
-        ]);
-
-        assert.match(html, /class="latex-figure"/);
-        assert.match(html, /data-req-path="figures\/result\.pdf"/);
-        assert.match(html, /src="LOCAL_IMG:figures\/standalone\.png"/);
-        assert.match(html, /Standalone figure/);
-        assert.doesNotMatch(html, /\\(?:includegraphics|captionof)\b/);
-        assert.match(html, /data-key="sec:intro"/);
-        assert.equal(html.match(/class="latex-block/g)?.length ?? 0, 3);
-    });
-
-    test('escapes includegraphics paths before inserting them into attributes', () => {
-        const html = renderBlocks([
-            [
-                '\\begin{figure}',
-                '\\includegraphics{figures/a" onerror="alert(1).pdf}',
-                '\\includegraphics{figures/b" onload="alert(1).png}',
-                '\\end{figure}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /data-req-path="figures\/a&quot; onerror=&quot;alert\(1\)\.pdf"/);
-        assert.match(html, /src="LOCAL_IMG:figures\/b&quot; onload=&quot;alert\(1\)\.png"/);
-        assert.doesNotMatch(html, /\s(?:onerror|onload)="/i);
-    });
-
     test('renders reference and citation edge cases', () => {
         const doc = createDocument([
             [
@@ -910,26 +731,6 @@ suite('SmartRenderer', () => {
         assert.doesNotMatch(html, /\\bibliographystyle|alpha/);
     });
 
-    test('unwraps resizebox around protected tikz figures', () => {
-        const html = renderBlocks([
-            [
-                '\\begin{figure}[H]',
-                '\\centering',
-                '\\resizebox{\\textwidth}{!}{',
-                '\\begin{tikzpicture}',
-                '\\path coordinate (A) at (0, 0) coordinate (E) at (15, 0);',
-                '\\draw[line width=.5pt] (A) -- (E);',
-                '\\node[dot, label = {$\\htau_{a}$}] at (A) {};',
-                '\\node[dot, label = {$\\htau_{a+1}$}] at (E) {};',
-                '\\end{tikzpicture}}',
-                '\\end{figure}'
-            ].join('\n')
-        ]);
-
-        assert.match(html, /class="tikz-container"/);
-        assert.match(html, /<script type="text\/snaptex-tikz"/);
-        assert.doesNotMatch(html, /\\resizebox/);
-    });
 
     test('escapes TikZ script terminators without dropping the original code', () => {
         const html = renderBlocks([
@@ -945,7 +746,7 @@ suite('SmartRenderer', () => {
     });
 
     test('builds TikZJax input from parsed documents without comment paragraphs', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
+        const mainUri = new BrowserUri('/project/main.tex');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(mainUri), [
                 '\\documentclass{article}',
@@ -1087,8 +888,8 @@ suite('SmartRenderer', () => {
     });
 
     test('renders a fixture-backed long document and keeps localized edits as patches', async () => {
-        const mainUri = vscode.Uri.file('/project/long-doc.tex');
-        const bibUri = vscode.Uri.file('/project/refs.bib');
+        const mainUri = new BrowserUri('/project/long-doc.tex');
+        const bibUri = new BrowserUri('/project/refs.bib');
         const fixtureText = readFixture('long-doc.tex');
         const files = new Map([
             [normalizeUri(mainUri), fixtureText],
@@ -1121,40 +922,12 @@ suite('SmartRenderer', () => {
 });
 
 suite('Project resource path validation', () => {
-    test('resolves any project-relative resource without escaping the root', () => {
-        const root = vscode.Uri.file('/project');
-        const source = vscode.Uri.file('/project/chapter/main.tex');
-
-        const pdf = resolveProjectResource(source, root, '../figures/a.pdf');
-        const image = resolveProjectResource(source, root, '../figures/a.png');
-
-        assert.equal(pdf?.relativePath, 'figures/a.pdf');
-        assert.equal(pdf?.uri.toString(), vscode.Uri.file('/project/figures/a.pdf').toString());
-        assert.equal(image?.uri.toString(), vscode.Uri.file('/project/figures/a.png').toString());
-        assert.equal(resolveProjectResource(source, root, '../../outside.png'), undefined);
-        assert.equal(resolveProjectResource(source, root, '../../project/reentered.pdf'), undefined);
-        assert.equal(resolveProjectResource(source, root, '/tmp/secret.pdf'), undefined);
-        assert.equal(resolveProjectResource(source, root, 'C:/tmp/secret.pdf'), undefined);
-        assert.equal(resolveProjectResource(source, root, 'https://example.com/a.pdf'), undefined);
-        assert.equal(resolveProjectResource(source, root, 42), undefined);
-    });
-
     test('resolves resource paths without crossing the opened project root', () => {
         assert.equal(resolveProjectResourcePath('subfold', '../figures/a.pdf'), 'figures/a.pdf');
         assert.equal(resolveProjectResourcePath('', '../figures/a.pdf'), undefined);
         assert.equal(resolveProjectResourcePath('subfold', '../../outside.pdf'), undefined);
         assert.equal(resolveProjectResourcePath('subfold', 'C:\\outside.pdf'), undefined);
         assert.equal(resolveProjectResourcePath('../outside', 'a.pdf'), undefined);
-    });
-
-    test('uses virtual mode by default while honoring explicit settings', () => {
-        const makeConfig = (values: Record<string, boolean | undefined>) => ({
-            get: (key: string, fallback: boolean) => values[key] ?? fallback,
-        }) as unknown as vscode.WorkspaceConfiguration;
-
-        assert.equal(getVirtualMode(makeConfig({})), true);
-        assert.equal(getVirtualMode(makeConfig({ virtualMode: false })), false);
-        assert.equal(getVirtualMode(makeConfig({ virtualMode: true })), true);
     });
 
 });

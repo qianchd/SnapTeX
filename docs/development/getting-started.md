@@ -6,7 +6,7 @@ This page takes a new contributor from a clean clone to one running development 
 
 - Node.js 22 or later for the current development and deployment scripts;
 - npm;
-- VS Code when running the extension integration tests;
+- A graphical environment (or Xvfb on Linux) for extension integration tests; the test runner downloads VS Code automatically;
 - Git.
 
 The extension manifest remains compatible with VS Code 1.80 and later. The Node.js requirement above is for building the repository, not for the VS Code extension host itself.
@@ -45,7 +45,7 @@ Edit source in the original repository window. The watch tasks rebuild code, but
 npm test
 ```
 
-The test lifecycle compiles tests and production bundles, lints source, runs server tests, and launches the VS Code test host.
+The test lifecycle checks types and lint, compiles tests, runs shared/Web-host and Server tests directly in Node, verifies production Web/PWA assets, and launches VS Code for the extension integration tests. See [Testing Changes](./testing.md) for focused commands and the PR CI matrix.
 
 For faster targeted checks:
 

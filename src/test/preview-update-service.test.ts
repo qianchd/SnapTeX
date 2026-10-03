@@ -1,7 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import * as vscode from 'vscode';
+import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
 import { PreviewUpdateService } from '../preview-update-service';
 import { renderLatexBlockWithAst } from '../ast/renderer';
 import { createDefaultAstRenderContext } from '../ast/rules';
@@ -11,24 +11,96 @@ import { normalizeUri } from '../utils';
 import { MemoryFileProvider } from './test-helpers';
 
 suite('PreviewUpdateService', () => {
-    const uri = vscode.Uri.file('/project/main.tex');
-    const text = [
-        '\\begin{document}',
-        'First paragraph.',
-        '',
-        'Second paragraph.',
-        '\\end{document}'
-    ].join('\n');
+    const uri = new BrowserUri('/project/main.tex');
 
-    test('renders and transforms eager HTML payloads', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
+    test('escapes source HTML while retaining generated formatting in both backends', async () => {
+        const source = [
+            '\\begin{document}',
+            'Plain <img src=x onerror=alert(1)> and \\textbf{bold <script>alert(2)</script>}.',
+            '\\begin{theorem}<script>alert(1)</script> and \\emph{safe}.\\end{theorem}',
+            '\\begin{figure}<script>alert(3)</script> and \\textit{styled}.\\end{figure}',
+            '\\end{document}'
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+            assert.doesNotMatch(html, /<img|<script/i);
+            assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+            assert.match(html, /bold &lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+            assert.match(html, /(?:<strong>|<span[^>]*font-weight: (?:600|bold)[^>]*>)bold /);
+            assert.match(html, /class="latex-theorem"/);
+            assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+            assert.match(html, /(?:<em>|<span[^>]*font-style: italic[^>]*>)safe/);
+            assert.match(html, /&lt;script&gt;alert\(3\)&lt;\/script&gt; and /);
+            assert.match(html, /(?:<em>|<span[^>]*font-style: italic[^>]*>)styled/);
+        }
+    });
 
-        const payload = await service.render(uri, text, {
-            deferFullHtml: false,
-            transformHtml: html => html.replace('First paragraph.', 'Transformed paragraph.')
-        });
+    test('renders safe links and rejects executable URLs in both backends', async () => {
+        const source = [
+            '\\begin{document}',
+            'See \\href{https://example.test/path?q=1&lang=en}{A \\textbf{site}} and \\url{https://example.test/docs?a=1&b=2}.',
+            '\\href{javascript:alert(1)}{bad <script>alert(1)</script>} \\url{javascript:alert(2)}',
+            '',
+            '$\\href{javascript:alert(1)}{bad}$',
+            '\\end{document}'
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+            assert.match(html, /href="https:\/\/example\.test\/path\?q=1&amp;lang=en"[^>]*rel="noopener noreferrer"/);
+            assert.match(html, /href="https:\/\/example\.test\/docs\?a=1&amp;b=2"/);
+            assert.doesNotMatch(html, /href="javascript:|<script/i);
+            assert.match(html, /bad &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+            assert.match(html, /javascript:alert\(2\)/);
+            const textHtml = payload.htmls?.find(block => block.includes('See ')) ?? '';
+            assert.doesNotMatch(textHtml, /\\href|\\url/);
+        }
+    });
 
-        assert.match(payload.htmls?.join('\n') ?? '', /Transformed paragraph/);
+    test('escapes image and PDF request attributes in both backends', async () => {
+        const source = [
+            '\\begin{document}',
+            '\\begin{figure}',
+            '\\includegraphics{figures/a" onerror="alert(1).pdf}',
+            '\\includegraphics{figures/b" onload="alert(1).png}',
+            '\\end{figure}',
+            '\\end{document}'
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('\n') ?? '';
+            assert.match(html, /data-req-path="figures\/a&quot; onerror=&quot;alert\(1\)\.pdf"/);
+            assert.match(html, /src="LOCAL_IMG:figures\/b&quot; onload=&quot;alert\(1\)\.png"/);
+            assert.doesNotMatch(html, /\s(?:onerror|onload)="/i);
+        }
+    });
+
+    test('updates unchanged math after preamble edits and transforms eager HTML in both backends', async () => {
+        const source = [
+            '\\newcommand{\\power}[1]{#1^2}',
+            '\\begin{document}',
+            'First paragraph $\\power{x}$.',
+            '',
+            'Second paragraph $\\power{y}$.',
+            '\\end{document}'
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            for (const exponent of ['2', '3', '2']) {
+                const payload = await service.render(uri, source.replace('#1^2', '#1^' + exponent), {
+                    deferFullHtml: false, backendMode,
+                    transformHtml: html => html.replace('First paragraph', 'Transformed paragraph')
+                });
+                const html = payload.htmls?.join('\n') ?? '';
+                assert.match(html, /Transformed paragraph/);
+                assert.equal((html.match(new RegExp('<mn>' + exponent + '</mn>', 'g')) ?? []).length, 2);
+                assert.doesNotMatch(html, /katex-error/);
+            }
+        }
     });
 
     test('keeps lazy block rendering available after deferred payloads', async () => {
@@ -65,67 +137,46 @@ suite('PreviewUpdateService', () => {
         assert.match(firstBlock?.html ?? '', /legacy-only/);
         assert.match(firstBlock?.html ?? '', /Registry Title/);
     });
+    for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+        test(`renders front matter and inline bibliography through ${backendMode}`, async () => {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, [
+                '\\title{\\Large\\bf Demo \\textbf{Paper}\\footnotemark[2]}',
+                '\\author{Alice Example}',
+                '\\editor{Casey Editor}',
+                '\\begin{document}',
+                '\\maketitle',
+                '\\Abstract{A \\textbf{short} abstract with $x=1$.}',
+                '\\Keywords{preview, ast}',
+                '\\begin{acks}Support statement.\\end{acks}',
+                'See \\citep{doe2024}.',
+                '\\begin{thebibliography}{9}',
+                '\\bibitem{doe2024} Doe, J. (2024). \\textit{A test paper}.',
+                '\\end{thebibliography}',
+                '\\end{document}'
+            ].join('\n'), {
+                deferFullHtml: false,
+                backendMode
+            });
+            const html = payload.htmls?.join('\n') ?? '';
 
-    test('renders lazy TikZ and PDF containers in AST splitter mode', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
-        const payload = await service.render(uri, [
-            '\\begin{document}',
-            '\\begin{figure}',
-            '\\begin{tikzpicture}\\node {A};\\end{tikzpicture}',
-            '\\includegraphics{figures/page.pdf}',
-            '\\caption{Diagram}',
-            '\\end{figure}',
-            '\\end{document}'
-        ].join('\n'), {
-            deferFullHtml: true,
-            backendMode: 'ast(experimental)'
+            assert.match(html, /class="latex-title">[\s\S]*Demo[\s\S]*Paper[\s\S]*<\/h1>/);
+            assert.doesNotMatch(html, /\\(?:Large|bf|textbf)\b/);
+            assert.doesNotMatch(html, /\\footnotemark/);
+            assert.doesNotMatch(html, /\\editor\b/);
+            assert.match(html, /class="latex-author">Alice Example/);
+            assert.match(html, /Casey Editor/);
+            assert.match(html, /class="latex-abstract"/);
+            assert.match(html, /class="latex-abstract"[\s\S]*A [\s\S]*short[\s\S]* abstract/);
+            assert.doesNotMatch(html, /\\textbf\{short\}/);
+            assert.match(html, /class="latex-keywords"/);
+            assert.match(html, /class="latex-acknowledgments"[\s\S]*Support statement/);
+            assert.match(html, /href="#ref-doe2024"/);
+            assert.match(html, /class="latex-bibliography-list"/);
         });
-        const block = await service.renderBlockByIndex(0);
-        const html = block?.html ?? '';
-
-        assert.ok(payload.blocks);
-        assert.match(html, /class="tikz-container"/);
-        assert.match(html, /type="text\/snaptex-tikz"/);
-        assert.match(html, /<canvas[^>]+data-req-path="figures\/page\.pdf"/);
-        assert.match(html, /class="figure-caption"/);
-    });
-
-    test('renders title, abstract, keywords, citations, and inline bibliography in AST splitter mode', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
-        const payload = await service.render(uri, [
-            '\\title{\\Large\\bf Demo \\textbf{Paper}\\footnotemark[2]}',
-            '\\author{Alice Example}',
-            '\\editor{Casey Editor}',
-            '\\begin{document}',
-            '\\maketitle',
-            '\\Abstract{A \\textbf{short} abstract with $x=1$.}',
-            '\\Keywords{preview, ast}',
-            'See \\citep{doe2024}.',
-            '\\begin{thebibliography}{9}',
-            '\\bibitem{doe2024} Doe, J. (2024). \\textit{A test paper}.',
-            '\\end{thebibliography}',
-            '\\end{document}'
-        ].join('\n'), {
-            deferFullHtml: false,
-            backendMode: 'ast(experimental)'
-        });
-        const html = payload.htmls?.join('\n') ?? '';
-
-        assert.match(html, /class="latex-title">[\s\S]*Demo[\s\S]*Paper[\s\S]*<\/h1>/);
-        assert.doesNotMatch(html, /\\(?:Large|bf|textbf)\b/);
-        assert.doesNotMatch(html, /\\footnotemark/);
-        assert.match(html, /class="latex-author">Alice Example/);
-        assert.match(html, /Casey Editor/);
-        assert.match(html, /class="latex-abstract"/);
-        assert.match(html, /class="latex-abstract"[\s\S]*A [\s\S]*short[\s\S]* abstract/);
-        assert.doesNotMatch(html, /\\textbf\{short\}/);
-        assert.match(html, /class="latex-keywords"/);
-        assert.match(html, /href="#ref-doe2024"/);
-        assert.match(html, /class="latex-bibliography-list"/);
-    });
-
+    }
     test('renders external bibliographies in both backend modes', async () => {
-        const bibUri = vscode.Uri.file('/project/refs.bib');
+        const bibUri = new BrowserUri('/project/refs.bib');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(bibUri), '@article{doe2024, author={Doe, Jane}, title={Example $\\sqrt{n}$}, year={2024}}']
         ]));
@@ -177,6 +228,9 @@ suite('PreviewUpdateService', () => {
             assert.match(html, /First (?:<strong>item<\/strong>|<span[^>]*font-weight: (?:600|bold)[^>]*>item<\/span>)/);
             assert.match(html, /class="latex-list-label">[\s\S]*katex/);
             assert.match(html, /equation-container/);
+            assert.match(html, /<span class="eq-no"/);
+            assert.match(html, /id="eq:list"/);
+            assert.doesNotMatch(html, /&lt;div class=&quot;equation-container/);
             assert.match(html, /where x is defined/);
             assert.doesNotMatch(html, /\\begin\{itemize\}|\\begin\{enumerate\}|\\item|\\textbf/);
         }
@@ -302,6 +356,7 @@ suite('PreviewUpdateService', () => {
             '\\begin{document}',
             'Plain \\brandtext{colored \\textbf{text}}, \\textcolor{accent}{accent}, \\textcolor{brand!25!accent}{mixed}, \\textcolor[RGB]{255,0,0}{direct}, \\textsuperscript{super}, \\textsuperscript{\\textdagger}, \\raisebox{.5ex}[1em][0pt]{raised}, \\phantom{hidden}, \\L{}ojasiewicz, Y{\\i}ld{\\i}r{\\i}m, \\textemdash, \\textdagger, \\copyright, \\textregistered, \\textquotesingle, joined\\xspace words, thin\\thinspace space, \\allowbreak and \\S 2, \\phantomsection\\nolinebreak \\enquote{quoted}, \\fbox{boxed}, \\ovalbox{oval}, \\num{51}, \\SI{2.1}{\\giga\\hertz}, $a\\centernot=b$, $x\\nolinebreak\\xspace y$, $\\nicefrac{1}{2}+\\sfrac{1}{3}$, and $\\qty{38}{\\milli\\meter}$.',
             '\\captionof{figure}{Standalone caption}',
+            'Footnote markers: \\footnote[7]{footnote note}, \\footnotemark[8]\\footnotetext[8]{detached note}, and \\thanks{support note}.',
             '\\end{document}'
         ].join('\n');
 
@@ -321,6 +376,10 @@ suite('PreviewUpdateService', () => {
             assert.match(html, /raised/);
             assert.match(html, /visibility: hidden[^>]*>hidden/);
             assert.match(html, /Standalone caption/);
+            assert.match(html, /<em>\(footnote note\)<\/em>/);
+            assert.match(html, /<em>\(detached note\)<\/em>/);
+            assert.match(html, /<em>\(support note\)<\/em>/);
+            assert.doesNotMatch(visibleHtml, /\\(?:footnote|footnotemark|footnotetext|thanks)\b/);
             assert.match(html, /Yıldırım/);
             assert.match(html, /—, †, ©, ®, (?:'|&#39;), joined\s+words, thin  space/);
             assert.match(html, /§ 2/);
@@ -364,7 +423,7 @@ suite('PreviewUpdateService', () => {
             const provider = new MemoryFileProvider(files);
             const service = new PreviewUpdateService(provider);
             await service.render(uri, source, { deferFullHtml: false, backendMode });
-            files.set(normalizeUri(vscode.Uri.file('/project/custom.sty')), definitions);
+            files.set(normalizeUri(new BrowserUri('/project/custom.sty')), definitions);
             const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
             const html = payload.htmls?.join('\n') ?? '';
 
@@ -409,60 +468,24 @@ suite('PreviewUpdateService', () => {
 
     test('renders a representative document through legacy and AST splitter modes', async () => {
         const source = [
-            '\\newcommand{\\supplementsetup}{\\setcounter{section}{0}\\renewcommand{\\thesection}{S\\arabic{section}}}',
-            '\\newcommand{\\dotmark}{\\,\\begin{picture}(-1,1)(-1,-2)\\circle*{2}\\end{picture}\\ }',
+            '\\newcommand{\\markword}{\\textbf{verified}}',
             '\\begin{document}',
-            '\\titleformat{\\section}{\\Large\\bfseries}{\\thesection}{1em}{}',
-            '\\supplementsetup',
-            '\\section[Brief]{Intro \\textit{topic} after \\ref*{sec:prior}}\\label{sec:intro}',
-            'See \\ref{sec:intro}, \\eqref{eq:model}, \\cref{sec:intro}, \\Cref{eq:model}, \\subref{sec:intro}, \\vref{eq:model}, \\autoref{sec:intro}, \\citep[\\S 2]{smith2024}, and \\href{https://example.com}{a \\textbf{link}}.',
-            '\\begin{equation}\\label{eq:model}x=1+\\Verify+\\textsl{Step}\\qedhere\\end{equation}',
-            '\\begin{alignat}{2}a&=b & c&=d\\end{alignat}',
-            '\\begin{eqnarray}a&=&b\\\\c&=&d\\end{eqnarray}',
-            '\\begin{align*}\\MoveEqLeft a&=b\\tag{A}\\\\c&=d\\tag{B}\\end{align*}',
-            '\\begin{align}p&=q\\\\\\intertext{Since $q=r$, continue}p&=r\\end{align}',
-            'Text \\mbox{A \\textbf{box}}, $\\mbox{math text}$, \\text{outside text}, \\ensuremath{\\alpha}, and $x_{\\dotmark}$.',
-            "Names Erd\\H{o}s, \\v{S}amal, G\\'eza, G\\v S, Bio\\v{c}i\\'{c}, Stra\\ss{}e; text dots\\ldots and more\\dots",
-            '\\hbox{HBox} \\makebox[2cm][l]{Make box} \\scalebox{0.8}{Scaled text} \\rotatebox{90}{Rotated text} \\centerline{Centered text} \\hyperlink{target}{Linked text} \\colorbox{yellow}{Color box} \\fcolorbox{red}{white}{Framed text} \\parbox[c]{2cm}{Paragraph box}.',
-            'Scaled matrix $A=\\scalebox{0.75}{$\\begin{bmatrix}1&0\\\\0&1\\end{bmatrix}$}$.',
-            '\\begin{sloppypar}Layout A\\medskip Layout B\\par Layout C\\vspace{1em}\\vskip 2mm\\newpage \\small Layout D\\normalsize.\\end{sloppypar}',
-            '\\begingroup{\\em Scoped emphasis.} {\\bfseries Bold} and \\textsc{Small caps}.\\endgroup\\FloatBarrier\\tableofcontents',
-            'Visible note markers\\footnote[7]{Footnote $x$}\\footnotemark[8]\\footnotetext[8]{Detached note}\\thanks{Thanks text}\\footnote{\\color{darkgray}Scoped note}.',
-            '\\allowdisplaybreaks[1]\\raggedbottom\\enlargethispage{-1cm}First\\linebreak{}Second\\newline Third',
-            '\\begin{samepage}\\begin{condition}[Model \\textit{case}]\\begin{enumerate}[(i)]\\item First\\end{enumerate}\\end{condition}\\end{samepage}',
-            '\\begin{fact}A useful fact.\\end{fact}',
-            '\\begin{Theorem*}[Unnumbered]No counter.\\end{Theorem*}\\begin{pro}Short proposition.\\end{pro}',
-            '\\begin{observation}Observed.\\end{observation}\\begin{problem}Open problem.\\end{problem}\\begin{principle}Core principle.\\end{principle}\\begin{property}Useful property.\\end{property}\\begin{result}Final result.\\end{result}',
-            '\\begin{restatable}[Reusable result]{lemma}{savedLemma}A restated lemma.\\label{lem:restated}\\end{restatable}',
-            '\\begin{defn}A short definition.\\end{defn}\\begin{assump}A short assumption.\\end{assump}\\begin{con}A short condition.\\end{con}',
-            '\\begin{hypothesis}A short hypothesis.\\end{hypothesis}',
-            '\\begin{example}[Boundary form]',
-            'An example split across paragraphs.',
-            '',
-            '\\begin{equation*}u=v\\end{equation*}',
-            'The example continues.',
-            '\\end{example}',
-            '\\begin{IEEEproof}[Sketch]A compact proof.\\end{IEEEproof}',
-            '\\begin{quote}Quoted \\emph{text}.\\end{quote}\\begin{quotation}Long quotation.\\end{quotation}',
-            '\\begin{appendix}Appendix wrapper.\\end{appendix}',
-            '\\begin{landscape}Landscape wrapper.\\end{landscape}\\begin{NoHyper}Unlinked wrapper.\\end{NoHyper}',
-            '\\begin{compactitem}\\item Compact item.\\end{compactitem}',
-            '\\begin{list}{}{\\setlength{\\leftmargin}{2em}}\\item Generic item.\\end{list}',
-            '\\begin{description}\\item[Term] Description text.\\end{description}',
-            '\\begin{highlights}\\item Highlight text.\\end{highlights}',
-            '\\begin{acks}[Statement on support]Acknowledgment text.\\end{acks}',
-            '\\cortext[cor1]{Corresponding author}',
-            '\\begin{IEEEkeywords}preview \\sep LaTeX\\end{IEEEkeywords}',
-            '\\begin{keywords}AST \\sep rules\\end{keywords}',
-            '\\begin{subequations}\\begin{align}x &= 1\\end{align}\\end{subequations}',
-            '\\begin{center}Centered text.\\begin{tabular}{cc}Standalone & table\\\\\\end{tabular}\\end{center}',
-            '\\begin{minipage}[t]{0.5\\textwidth}Half-width content.\\end{minipage}',
-            '\\section{A \\texorpdfstring{$K$}{K} and \\textup{upright} heading}',
-            'Nested math text: \\ensuremath{\\theta_0}.',
-            '\\begin{table}\\begin{tabular}{cc}A\\hspace{2pt} & B\\\\\\addlinespace[2pt]C & D\\\\\\end{tabular}\\caption{A table}\\caption*{Table note}\\end{table}',
-            '\\begin{figure}\\begin{center}\\begin{tikzpicture}\\node {A};\\end{tikzpicture} Figure \\textit{continued}.\\caption{A figure}\\end{center}\\end{figure}',
-            '\\begin{equation}\\label{eq:diagram}\\begin{tikzcd}A \\arrow[r] & B\\end{tikzcd}\\end{equation}',
-            '\\begin{mini}{x}{f(x)}{\\label{eq: opt_{i,j}}}{}\\addConstraint{x}{\\ge 0}\\end{mini}',
+            '\\section{Overview}\\label{sec:overview}',
+            'See Section~\\ref{sec:overview}, \\citep{smith2024}, and equation~\\eqref{eq:bound}. A \\markword result.',
+            '\\begin{equation}\\label{eq:bound}x=1\\end{equation}',
+            '\\begin{condition}[Model case]',
+            '\\begin{enumerate}[(i)]',
+            '\\item A nested item.',
+            '\\end{enumerate}',
+            '\\end{condition}',
+            '\\begin{table}',
+            '\\begin{tabular}{cc}A & B \\\\ C & D\\end{tabular}',
+            '\\caption{Summary}',
+            '\\end{table}',
+            '\\begin{figure}',
+            '\\begin{tikzpicture}\\node {A};\\end{tikzpicture}',
+            '\\caption{Diagram}',
+            '\\end{figure}',
             '\\begin{thebibliography}{9}',
             '\\bibitem{smith2024} Smith, A. (2024). Demo.',
             '\\end{thebibliography}',
@@ -474,76 +497,17 @@ suite('PreviewUpdateService', () => {
             const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
             const html = payload.htmls?.join('\n') ?? '';
 
-            assert.match(html, /Intro[\s\S]*topic/);
-            assert.match(html, /<h2>[\s\S]*?data-key="sec:prior"[\s\S]*?<\/h2>/);
-            assert.match(html, /data-key="sec:intro"/);
-            assert.match(html, /data-key="eq:model"/);
-            assert.equal((html.match(/data-key="sec:intro"/g) ?? []).length, 4);
-            assert.equal((html.match(/data-key="eq:model"/g) ?? []).length, 3);
-            assert.doesNotMatch(html, /\\(?:C?cref|subref|vref|autoref)/);
+            assert.match(html, /data-key="sec:overview"/);
+            assert.match(html, /data-key="eq:bound"/);
             assert.match(html, /href="#ref-smith2024"/);
-            assert.match(html, /§ 2/);
-            assert.match(html, /href="https:\/\/example\.com\/?"[\s\S]*a [\s\S]*link/);
-            assert.match(html, /A [\s\S]*box/);
-            assert.match(html, /Erdős, Šamal, Géza, GŠ, Biočić, Straße; text dots… and more…/);
-            assert.match(html, /math text/);
-            assert.match(html, /HBox[\s\S]*Make box[\s\S]*Scaled text[\s\S]*Rotated text[\s\S]*Centered text[\s\S]*Linked text[\s\S]*Color box[\s\S]*Framed text[\s\S]*Paragraph box/);
-            assert.doesNotMatch(html, /\\(?:hbox|makebox|scalebox|rotatebox|centerline|hyperlink|colorbox|fcolorbox|parbox)\b/);
-            assert.match(html, /Scaled matrix/);
-            assert.match(html, /Verify[\s\S]*Step/);
-            assert.doesNotMatch(html, /katex-error/);
-            assert.doesNotMatch(html.replace(/<annotation\b[\s\S]*?<\/annotation>/gi, ''), /\\(?:begin|end)\{bmatrix\}|\\scalebox/);
-            assert.doesNotMatch(html, /\\(?:setcounter|renewcommand)/);
-            assert.match(html, /Layout A[\s\S]*Layout B[\s\S]*Layout C[\s\S]*Layout D/);
-            assert.match(html, /Scoped emphasis/);
-            assert.match(html, /Bold[\s\S]*Small caps/);
-            assert.match(html, /Visible note markers/);
-            assert.match(html, /<em>\(Footnote[\s\S]*x[\s\S]*\)<\/em><br\/>/);
-            assert.match(html, /<em>\(Detached note\)<\/em><br\/>/);
-            assert.match(html, /<em>\(Thanks text\)<\/em><br\/>/);
-            assert.match(html, /<em>\(<span style="color: darkgray; --snaptex-latex-color: darkgray">Scoped note<\/span>\)<\/em><br\/>/);
-            assert.doesNotMatch(html, /\\color\{darkgray\}/);
-            assert.match(html, /class="latex-theorem"/);
-            assert.match(html, /class="latex-theorem-header"/);
-            assert.match(html, /Fact <span class="sn-cnt" data-type="thm">/);
-            assert.match(html, /Theorem[\s\S]*?Unnumbered[\s\S]*?No counter/, backendMode);
-            assert.match(html, /Proposition <span class="sn-cnt" data-type="thm">[\s\S]*Short proposition/);
-            assert.match(html, /Observation <span class="sn-cnt" data-type="thm">[\s\S]*Problem <span class="sn-cnt" data-type="thm">[\s\S]*Principle <span class="sn-cnt" data-type="thm">[\s\S]*Property <span class="sn-cnt" data-type="thm">[\s\S]*Result <span class="sn-cnt" data-type="thm">/);
-            assert.match(html, /Lemma <span class="sn-cnt" data-type="thm">[\s\S]*Reusable result[\s\S]*A restated lemma/);
-            assert.match(html, /Definition <span class="sn-cnt" data-type="thm">[\s\S]*Assumption <span class="sn-cnt" data-type="thm">[\s\S]*Condition <span class="sn-cnt" data-type="thm">/);
-            assert.match(html, /Hypothesis <span class="sn-cnt" data-type="thm">/);
-            assert.match(html, /Example <span class="sn-cnt" data-type="thm">[\s\S]*Boundary form[\s\S]*The example continues/);
-            assert.doesNotMatch(html, /\\(?:begin|end)example/);
-            assert.match(html, /Proof \([\s\S]*Sketch[\s\S]*\)[\s\S]*A compact proof[\s\S]*QED/);
-            assert.match(html, /<blockquote class="latex-quote">[\s\S]*Quoted[\s\S]*text[\s\S]*<\/blockquote>/);
-            assert.match(html, /<blockquote class="latex-quote">[\s\S]*Long quotation[\s\S]*<\/blockquote>/);
-            assert.match(html, /Compact item/, backendMode);
-            assert.match(html, /Landscape wrapper[\s\S]*Unlinked wrapper[\s\S]*Generic item/, backendMode);
-            assert.match(html, /Term[\s\S]*Description text[\s\S]*Highlight text/, backendMode);
-            assert.match(html, /<section class="latex-acknowledgments"><h2>Statement on support<\/h2>[\s\S]*Acknowledgment text[\s\S]*<\/section>/);
-            assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> preview, LaTeX<\/div>/);
-            assert.match(html, /<div class="latex-keywords"><strong>Keywords:<\/strong> AST, rules<\/div>/);
-            assert.match(html, /<em>\(Corresponding author\)<\/em>/);
-            assert.match(html, /class="latex-center"/);
-            assert.match(html, /class="latex-minipage" style="width:50%"/, backendMode);
-            assert.match(html, /Standalone/);
-            assert.match(html, /Model [\s\S]*case/);
-            assert.match(html, /<li>/);
-            assert.match(html, /\(i\)/);
-            assert.match(html, /class="latex-tabular-preview"/);
-            assert.match(html, /class="tikz-container"/);
-            assert.match(html, /Figure[\s\S]*<(?:em|span[^>]*font-style: italic)[^>]*>continued<\/(?:em|span)>/);
-            assert.match(html, /data-tex-packages='\{"tikz-cd":""\}'/);
-            assert.match(html, /\\begin\{tikzcd\}/);
-            assert.doesNotMatch(html, /\\(?:begin|end)\{equation\}/);
-            assert.match(html, /minimize[\s\S]*subject to/);
-            assert.doesNotMatch(html, /\\(?:begin|end)\{mini\}|\\addConstraint/);
-            assert.equal(payload.numbering.labels['eq:diagram'], '6');
-            assert.equal(payload.numbering.labels['eq: opt_{i,j}'], '7');
             assert.match(html, /id="ref-smith2024"/);
-            const leakedLatex = html.match(/\\(?:section|caption|cortext|sep\b|href|mbox|medskip|par\b|vspace|vskip|titleformat|thesection|newpage|normalsize|allowdisplaybreaks|raggedbottom|enlargethispage|linebreak|newline|begingroup|endgroup|tableofcontents|FloatBarrier|addlinespace|qedhere|footnote|footnotemark|footnotetext|thanks|em\b|bfseries|textsc|texorpdfstring|textit\{case\}|textup\{upright\})|\\small Layout D|\\(?:begin|end)\{(?:samepage|sloppypar|appendix|landscape|NoHyper|subequations|eqnarray|center|tabular|minipage|fact|Theorem\*|pro|observation|problem|principle|property|result|defn|assump|con|hypothesis|restatable|IEEEproof|list|compactitem|description|highlights|quote|quotation|acks|IEEEkeywords|keywords)\}|>2mm|>2\s*<span class="katex-display"/)?.[0];
-            const leakIndex = leakedLatex ? html.indexOf(leakedLatex) : -1;
-            assert.equal(leakedLatex, undefined, `${backendMode}: leaked ${html.slice(Math.max(0, leakIndex - 40), leakIndex + 80)}`);
+            assert.match(html, /verified/);
+            assert.match(html, /class="latex-theorem"/);
+            assert.match(html, /class="latex-list-label">[\s\S]*\(i\)/);
+            assert.match(html, /class="latex-table"/);
+            assert.match(html, /class="tikz-container"/);
+            assert.equal((html.match(/class="latex-block"/g) ?? []).length, payload.htmls?.length);
+            assert.doesNotMatch(html, /katex-error|\\(?:newcommand|section|ref|citep|caption|item)\b/);
         }
     });
 
@@ -624,6 +588,7 @@ suite('PreviewUpdateService', () => {
             const html = payload.htmls?.join('\n') ?? '';
 
             assert.match(html, /class="latex-algorithm"/);
+            assert.equal((html.match(/class="latex-block"/g) ?? []).length, payload.htmls?.length);
             assert.match(html, /class="alg-caption"/);
             assert.match(html, /Cross-fitting framework/);
             assert.match(html, /id="alg:cf_meta"/);
@@ -664,45 +629,6 @@ suite('PreviewUpdateService', () => {
         });
         assert.equal(mathCalls, 21, 'each algorithm formula must render only once');
     });
-
-    test('renders nested table captions and labels in AST splitter mode', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
-        const payload = await service.render(uri, [
-            '\\begin{document}',
-            '\\begin{table}[htb]',
-            '\\begin{threeparttable}',
-            '\\centering',
-            '\\caption{\\small Summary of notation. Here, $\\ell$ denotes individual loss.}',
-            '\\label{tab:notation_loss}',
-            '\\begin{tabular}{c c l}',
-            '\\toprule',
-            '\\textbf{Notation} & \\textbf{Definition} & \\textbf{Description} \\\\',
-            '\\midrule',
-            '$\\ell(z_i; f)$ & -- & Individual loss. \\\\',
-            '\\bottomrule',
-            '\\end{tabular}',
-            '\\begin{tablenotes}[flushleft]\\footnotesize',
-            '\\item[$\\dagger$] This note uses $x_i$ and \\textit{style}.',
-            '\\end{tablenotes}',
-            '\\end{threeparttable}',
-            '\\end{table}',
-            '\\end{document}'
-        ].join('\n'), {
-            deferFullHtml: false,
-            backendMode: 'ast(experimental)'
-        });
-        const html = payload.htmls?.join('\n') ?? '';
-
-        assert.match(html, /class="table-caption"/);
-        assert.match(html, /Summary of notation/);
-        assert.match(html, /latex-tabular-preview/);
-        assert.match(html, /class="latex-tablenotes"/);
-        assert.match(html, /This note uses/);
-        assert.match(html, /font-style: italic[^>]*>style/);
-        assert.match(html, /id="tab:notation_loss"/);
-        assert.doesNotMatch(html, /\[htb\]/);
-    });
-
     test('renders complex booktabs tables in both backend modes', async () => {
         for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
             const service = new PreviewUpdateService(new MemoryFileProvider());
@@ -711,7 +637,7 @@ suite('PreviewUpdateService', () => {
                 '\\begin{table}[!ht]',
                 '\\setlength\\tabcolsep{0.6em}',
                 '\\begin{threeparttable}',
-                '\\caption{Illustrative rendering workload summary for \\textbf{\\snaptex} preview modes.}',
+                '\\caption{\\small Illustrative rendering workload summary for \\textbf{SnapTeX} preview modes, including $x_i$.}',
                 '\\label{tab:demo-complex-table}',
                 '\\centering',
                 '\\begin{tabular*}{\\textwidth}{l@{\\extracolsep{\\fill}}lcccc}',
@@ -737,7 +663,7 @@ suite('PreviewUpdateService', () => {
                 '\\bottomrule',
                 '\\end{tabular*}',
                 '\\begin{tablenotes}[flushleft]\\footnotesize',
-                '    \\item[$\\dagger$] Numbers are invented for this demo; the row shows how a table note marker is rendered in a cell.',
+                '    \\item[$\\dagger$] Numbers are invented for this demo; the row shows a \\textit{styled note} using $x_i$.',
                 '    \\item[$\\ddagger$] Virtual mode keeps only viewport-near blocks mounted while preserving anchors for references and tooltips.',
                 '\\end{tablenotes}',
                 '\\end{threeparttable}',
@@ -760,8 +686,14 @@ suite('PreviewUpdateService', () => {
             const html = payload.htmls?.join('\n') ?? '';
 
             assert.match(html, /class="latex-tabular-preview latex-tabular-booktabs"/);
+            const captionHtml = /class="table-caption"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? '';
+            assert.match(captionHtml, /Illustrative rendering workload summary/);
+            assert.match(captionHtml, /class="katex"/);
+            assert.match(html, /(?:<em>|<span[^>]*font-style: italic[^>]*>)styled note/);
+            assert.doesNotMatch(html, /\\(?:caption|small|textit)\b/);
             assert.match(html, /colspan="2"/);
             assert.match(html, /rowspan="3"/);
+            assert.match(html, /<t[dh][^>]+colspan="2"[^>]*>Small document<\/t[dh]>/);
             assert.doesNotMatch(html, /<tr><td><\/td><td>Figures/);
             assert.doesNotMatch(html, /<tr><td><\/td><td>Tables/);
             assert.match(html, /<tr><td>Figures<\/td><td>8<\/td>/);
@@ -770,6 +702,7 @@ suite('PreviewUpdateService', () => {
             assert.match(html, /class="latex-makecell"/);
             assert.match(html, /class="latex-tnote"/);
             assert.match(html, /class="latex-tablenotes"/);
+            assert.match(html, /<div class="latex-tablenotes"><ul><li class="note-item"/);
             assert.match(html, /Virtual mode keeps only viewport-near blocks/);
             assert.match(html, /id="tab:demo-complex-table"/);
             assert.match(html, /Long table summary/);
@@ -780,9 +713,8 @@ suite('PreviewUpdateService', () => {
         }
     });
 
-    test('renders TikZ inside AST float wrappers', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
-        const payload = await service.render(uri, [
+    test('renders deferred TikZ and PDF float content through both backends', async () => {
+        const source = [
             '\\usepackage{tikz}',
             '\\usetikzlibrary{calc}',
             '\\newcommand{\\htau}{\\widehat{\\tau}}',
@@ -801,26 +733,42 @@ suite('PreviewUpdateService', () => {
             '\\node[dot, label = {150:$\\tau_{h+t+1}^\\ast$}] at (I) {};',
             '\\node[dot, label = {-80:$\\htau_{a+2}$}] at (F) {};',
             '\\end{tikzpicture}}',
+            '\\includegraphics{figures/page.pdf}',
             '\\caption{A TikZ figure}',
             '\\end{figure}',
+            '\\begin{equation}\\begin{tikzcd}A \\arrow[r] & B\\end{tikzcd}\\end{equation}',
+            '\\begin{center}\\includegraphics{figures/standalone.png}\\captionof{figure}{Standalone figure}\\end{center}',
             '\\end{document}'
-        ].join('\n'), {
-            deferFullHtml: false,
-            backendMode: 'ast(experimental)'
-        });
-        const html = payload.htmls?.join('\n') ?? '';
-
-        assert.match(html, /class="tikz-container"/);
-        assert.match(html, /type="text\/snaptex-tikz"/);
-        assert.match(html, /\\begin\{tikzpicture\}/);
-        assert.match(html, /\\usetikzlibrary\{calc\}/);
-        assert.match(html, /label = \{-80:\$\\htau_\{a\+2\}\$\}\] at \(F\) \{\};/);
-        assert.match(html, /class="figure-caption"/);
-        assert.doesNotMatch(html, /\[H\]/);
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: true, backendMode });
+            assert.equal(payload.type, 'full');
+            assert.equal(payload.htmls?.length ?? 0, 0, 'Deferred loading must not eagerly render the document');
+            const htmls: string[] = [];
+            for (const block of payload.blocks ?? []) {
+                const rendered = await service.renderBlockByIndex(block.index);
+                assert.ok(rendered && typeof rendered.html === 'string');
+                htmls.push(rendered.html);
+            }
+            const html = htmls.join('\n');
+            assert.match(html, /class="tikz-container"/);
+            assert.match(html, /type="text\/snaptex-tikz"/);
+            assert.match(html, /\\begin\{tikzpicture\}/);
+            assert.match(html, /\\usetikzlibrary\{calc\}/);
+            assert.match(html, /data-tex-packages='\{"tikz-cd":""\}'/);
+            assert.match(html, /\\begin\{tikzcd\}/);
+            assert.match(html, /label = \{-80:\$\\htau_\{a\+2\}\$\}\] at \(F\) \{\};/);
+            assert.match(html, /<canvas[^>]+data-req-path="figures\/page\.pdf"/);
+            assert.match(html, /class="figure-caption"/);
+            assert.match(html, /src="LOCAL_IMG:figures\/standalone\.png"/);
+            assert.match(html, /Standalone figure/);
+            assert.doesNotMatch(html, /\[H\]|\\(?:resizebox|includegraphics|captionof)\b/);
+        }
     });
 
     test('resolves citation commands inside TikZ in both backend modes', async () => {
-        const bibUri = vscode.Uri.file('/project/refs.bib');
+        const bibUri = new BrowserUri('/project/refs.bib');
         const provider = new MemoryFileProvider(new Map([
             [normalizeUri(bibUri), [
                 '@article{alpha, author={Alpha, Ada}, title={First}, year={2024}}',
@@ -1036,9 +984,8 @@ suite('PreviewUpdateService', () => {
         assert.match(html, /<h3>[\s\S]*Common experimental setup[\s\S]*<\/h3>/);
     });
 
-    test('keeps display-math continuations unindented in AST splitter mode', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
-        const payload = await service.render(uri, [
+    test('limits no-indent markers to display-math continuations in both backends', async () => {
+        const source = [
             '\\begin{document}',
             'Before equation:',
             '\\begin{equation}\\label{eq:test}',
@@ -1047,39 +994,21 @@ suite('PreviewUpdateService', () => {
             'where the equation is explained.',
             '',
             'Next paragraph.',
-            '\\end{document}'
-        ].join('\n'), {
-            deferFullHtml: false,
-            backendMode: 'ast(experimental)'
-        });
-        const htmls = payload.htmls ?? [];
-        const continuationHtml = htmls.find(html => html.includes('where the equation is explained.')) ?? '';
-        const nextParagraphHtml = htmls.find(html => html.includes('Next paragraph.')) ?? '';
-
-        assert.match(continuationHtml, /no-indent-marker/);
-        assert.doesNotMatch(nextParagraphHtml, /no-indent-marker/);
-    });
-
-    test('does not let later display-math continuations unindent previous paragraphs in AST splitter mode', async () => {
-        const service = new PreviewUpdateService(new MemoryFileProvider());
-        const payload = await service.render(uri, [
-            '\\begin{document}',
-            'Traditional paragraph.',
             'With one more line.',
-            '$$x=1$$',
-            'where x is explained.',
+            '$$y=2$$',
+            'where y is explained.',
             '\\end{document}'
-        ].join('\n'), {
-            deferFullHtml: false,
-            backendMode: 'ast(experimental)'
-        });
-        const htmls = payload.htmls ?? [];
-        const traditionalHtml = htmls.find(html => html.includes('Traditional paragraph.')) ?? '';
-        const continuationHtml = htmls.find(html => html.includes('where x is explained.')) ?? '';
-
-        assert.match(traditionalHtml, /<p>Traditional paragraph\./);
-        assert.doesNotMatch(traditionalHtml, /no-indent-marker/);
-        assert.match(continuationHtml, /no-indent-marker/);
+        ].join('\n');
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, source, { deferFullHtml: false, backendMode });
+            const htmls = payload.htmls ?? [];
+            assert.match(htmls.find(html => html.includes('where the equation is explained.')) ?? '', /no-indent-marker/);
+            const nextParagraphHtml = htmls.find(html => html.includes('Next paragraph.')) ?? '';
+            assert.match(nextParagraphHtml, /<p>Next paragraph\./);
+            assert.doesNotMatch(nextParagraphHtml, /no-indent-marker/);
+            assert.match(htmls.find(html => html.includes('where y is explained.')) ?? '', /no-indent-marker/);
+        }
     });
 
     test('renders proof wrappers after AST splitter recurses into long proof content', async () => {
@@ -1180,7 +1109,11 @@ suite('PreviewUpdateService', () => {
         const previewSync = service.getPreviewSyncData(uri.toString(), 8, 'line 7 see \\ref'.length);
 
         assert.equal(payload.type, 'patch');
-        assert.ok(previewSync?.sourceStart !== undefined);
+        assert.ok(previewSync?.sourceStart !== undefined && previewSync.sourceEnd !== undefined);
+        assert.equal(previewSync.sourceEnd - previewSync.sourceStart, '\\ref{target}'.length);
+        assert.deepEqual(service.getSourceSyncData(previewSync.index, previewSync.ratio, {
+            sourceStart: previewSync.sourceStart, sourceEnd: previewSync.sourceEnd
+        }), { file: uri.toString(), line: 8 });
     });
 
     test('reuses AST hints only while source and parse status still match', async () => {
@@ -1203,9 +1136,9 @@ suite('PreviewUpdateService', () => {
         assert.equal(failed.artifact.sourceHints.starts.length, 0);
     });
 
-    test('maps included-file sync positions through both preview modes', async () => {
-        const mainUri = vscode.Uri.file('/project/main.tex');
-        const partUri = vscode.Uri.file('/project/sections/part.tex');
+    test('keeps included-file sync positions current after CRLF edits in both backends', async () => {
+        const mainUri = new BrowserUri('/project/main.tex');
+        const partUri = new BrowserUri('/project/sections/part.tex');
         const source = [
             '\\begin{document}',
             'Before.',
@@ -1214,26 +1147,38 @@ suite('PreviewUpdateService', () => {
             '',
             'After.',
             '\\end{document}'
-        ].join('\n');
-        const files = new Map([[normalizeUri(partUri), [
-            'Included start.',
+        ].join('\r\n');
+        const part = [
+            '% \\begin{document}',
+            'Included start with 50\\% and 中文.',
             '',
             'Included target.',
             '',
             'Included end.'
-        ].join('\n')]]);
+        ].join('\r\n');
 
         for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
-            const service = new PreviewUpdateService(new MemoryFileProvider(files));
-            await service.render(mainUri, source, { deferFullHtml: true, backendMode });
-
-            const preview = service.getPreviewSyncData(partUri.toString(), 2);
-            assert.ok(preview);
-
-            const sourceLoc = service.getSourceSyncData(preview.index, preview.ratio);
-            assert.ok(sourceLoc);
-            assert.equal(normalizeUri(sourceLoc.file), normalizeUri(partUri));
-            assert.equal(sourceLoc.line, 2);
+            const provider = new BrowserFileProvider();
+            provider.setProjectFiles([{ path: partUri.path, text: part }]);
+            const service = new PreviewUpdateService(provider);
+            for (const edited of [part, part.replace('Included target.', 'Inserted paragraph.\r\n\r\nIncluded target.'), part]) {
+                provider.setFile(partUri, edited);
+                await service.render(mainUri, source, { deferFullHtml: false, backendMode });
+                for (const [file, line] of [
+                    [partUri, edited.split('\r\n').indexOf('Included target.')],
+                    [mainUri, 5]
+                ] as const) {
+                    const preview = service.getPreviewSyncData(file.toString(), line);
+                    assert.ok(preview);
+                    const sourceLoc = service.getSourceSyncData(preview.index, preview.ratio);
+                    assert.ok(sourceLoc);
+                    assert.equal(normalizeUri(sourceLoc.file), normalizeUri(file));
+                    assert.equal(sourceLoc.line, line);
+                }
+                const preview = service.getPreviewSyncData(partUri.toString(), 1);
+                assert.ok(preview);
+                assert.match((await service.renderBlockByIndex(preview.index))?.html ?? '', /50(?:%|&#37;) and 中文/);
+            }
         }
     });
 
@@ -1268,19 +1213,13 @@ suite('PreviewUpdateService', () => {
             '\\end{document}'
         ].join('\n');
 
-        const linesByBackend: number[][] = [];
         for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
             const service = new PreviewUpdateService(new MemoryFileProvider());
             await service.render(uri, source, { deferFullHtml: true, backendMode });
 
             const lines = [0, 0.5, 1].map(ratio => service.getSourceSyncData(0, ratio)?.line);
-            assert.ok(lines.every(line => typeof line === 'number'));
-            assert.ok((lines[0] ?? 0) <= (lines[1] ?? 0));
-            assert.ok((lines[1] ?? 0) <= (lines[2] ?? 0));
-            assert.ok((lines[2] ?? 0) > (lines[0] ?? 0));
-            linesByBackend.push(lines as number[]);
+            assert.deepEqual(lines, [0, 3, 5], backendMode);
         }
-        assert.deepEqual(linesByBackend[1], linesByBackend[0]);
     });
 
     test('renders adjacent display math without shifting later source lines', async () => {

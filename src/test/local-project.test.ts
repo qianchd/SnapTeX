@@ -59,6 +59,14 @@ suite('Local browser project', () => {
             notifyObserver();
             await new Promise(resolve => setTimeout(resolve, 0));
             assert.deepEqual(changes, ['Changed outside SnapTeX']);
+
+            stop?.();
+            stop = undefined;
+            file.content = 'Change after project close';
+            file.modified++;
+            notifyObserver();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            assert.deepEqual(changes, ['Changed outside SnapTeX'], 'Closed projects must ignore later filesystem notifications');
         } finally {
             stop?.();
             if (previousDocument === undefined) {delete globals.document;}

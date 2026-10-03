@@ -1,38 +1,29 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as vscode from 'vscode';
+import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
 import { DocumentParseResult, LatexDocument } from '../document';
-import type { IFileProvider } from '../file-provider';
 import { SmartRenderer } from '../renderer';
 import { AffiliationMetadata, AuthorMetadata, BlockTextSpan, PreambleData } from '../types';
 import { getBlockSpanText, normalizeUri, stableHash } from '../utils';
 
-export class MemoryFileProvider implements IFileProvider<vscode.Uri> {
-    constructor(private readonly files: Map<string, string> = new Map()) {}
+export class MemoryFileProvider extends BrowserFileProvider {
+    constructor(private readonly contents: Map<string, string> = new Map()) { super(); }
 
-    async read(uri: vscode.Uri): Promise<string> {
-        const content = this.files.get(normalizeUri(uri));
+    override async read(uri: BrowserUri): Promise<string> {
+        const content = this.contents.get(normalizeUri(uri));
         if (content === undefined) {
             throw new Error(`Missing test file: ${uri.toString()}`);
         }
         return content;
     }
 
-    async exists(uri: vscode.Uri): Promise<boolean> {
-        return this.files.has(normalizeUri(uri));
+    override async exists(uri: BrowserUri): Promise<boolean> {
+        return this.contents.has(normalizeUri(uri));
     }
 
-    async stat(uri: vscode.Uri): Promise<{ mtime: number }> {
-        return { mtime: this.files.has(normalizeUri(uri)) ? 1 : 0 };
-    }
-
-    resolve(base: vscode.Uri, relative: string): vscode.Uri {
-        return vscode.Uri.joinPath(base, relative);
-    }
-
-    dir(uri: vscode.Uri): vscode.Uri {
-        return vscode.Uri.joinPath(uri, '..');
+    override async stat(uri: BrowserUri): Promise<{ mtime: number }> {
+        return { mtime: this.contents.has(normalizeUri(uri)) ? 1 : 0 };
     }
 }
 
@@ -71,7 +62,7 @@ export function createDocument(
         bodyText += text;
         blockSpans.push({ start, end, line, lineCount });
         offset = end;
-        line += lineCount;
+        line += lineCount - 1;
     }
 
     doc.applyResult({

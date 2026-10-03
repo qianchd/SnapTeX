@@ -61,32 +61,15 @@ suite('CodeMirror LaTeX assistance', () => {
         assert.ok(endEnvironmentLabels.includes('theorem'));
     });
 
-    test('keeps normal paragraphs flush-left when pressing Enter', () => {
-        assert.equal(
-            applyNewline('\\section{Intro}\nA paragraph.|'),
-            '\\section{Intro}\nA paragraph.\n'
-        );
-    });
-
-    test('auto-closes selected begin environments on Enter', () => {
-        assert.equal(
-            applyNewline('\\begin{itemize}|'),
-            '\\begin{itemize}\n  \n\\end{itemize}'
-        );
-        assert.equal(
-            applyNewline('\\begin{align*}|'),
-            '\\begin{align*}\n  \n\\end{align*}'
-        );
-    });
-
-    test('keeps outer wrapper environments flush-left on Enter', () => {
-        assert.equal(
-            applyNewline('\\begin{document}|'),
-            '\\begin{document}\n'
-        );
-        assert.equal(
-            applyNewline('\\begin{figure}[H]|'),
-            '\\begin{figure}[H]\n'
-        );
+    test('indents and closes list/math environments but keeps paragraphs and outer wrappers flush-left', () => {
+        for (const [before, after] of [
+            ['\\section{Intro}\nA paragraph.|', '\\section{Intro}\nA paragraph.\n'],
+            ['\\begin{itemize}|', '\\begin{itemize}\n  \n\\end{itemize}'],
+            ['\\begin{align*}|', '\\begin{align*}\n  \n\\end{align*}'],
+            ['\\begin{document}|', '\\begin{document}\n'],
+            ['\\begin{figure}[H]|', '\\begin{figure}[H]\n']
+        ]) {
+            assert.equal(applyNewline(before), after, before);
+        }
     });
 });

@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared-and-server:
+    name: Shared + server (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check-types
+      - run: npm run lint
+      - run: npm run compile-tests
+      - run: npm run test:shared
+      - run: npm run web:test-server
+
+  vscode:
+    name: VS Code (${{ matrix.os }}, ${{ matrix.version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        version: [stable]
+        include:
+          - os: ubuntu-latest
+            version: '1.80.0'
+    env:
+      SNAPTEX_TEST_VSCODE_VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run compile-tests
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:vscode
+      - if: runner.os != 'Linux'
+        run: npm run test:vscode
+
+  web-assets:
+    name: Production web + PWA + docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run compile-tests
+      - run: npm run docs:build
+        env:
+          SNAPTEX_DOCS_BASE: /SnapTeX/docs/
+      - run: npm run test:web-assets

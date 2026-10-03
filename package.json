@@ -198,7 +198,7 @@
     "vscode:check": "tsc --noEmit -p tsconfig.vscode.json && eslint src apps/vscode/src --ignore-pattern \"src/test/**\"",
     "compile-tests": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint && npm run web:test-server",
+    "pretest": "npm run check-types && npm run lint && npm run compile-tests",
     "check-types": "tsc --noEmit",
     "lint": "eslint src apps/vscode/src apps/standalone/src apps/web/src",
     "web:build": "node esbuild.js --target=web",
@@ -215,7 +215,10 @@
     "web:serve-source": "npm run web:build && node apps/web/server.mjs .",
     "audit:arxiv:fetch": "node tools/arxiv-audit/fetch.mjs",
     "audit:arxiv": "node tools/arxiv-audit/run.mjs",
-    "test": "vscode-test"
+    "test": "npm run test:shared && npm run web:test-server && npm run test:web-assets && npm run test:vscode",
+    "test:shared": "mocha --ui tdd --timeout 10000 --forbid-only --fail-zero --ignore out/src/test/web-assets.test.js \"out/src/test/*.test.js\"",
+    "test:web-assets": "npm run web:build-production && mocha --ui tdd --timeout 20000 --forbid-only --fail-zero out/src/test/web-assets.test.js",
+    "test:vscode": "npm run package && vscode-test"
   },
   "devDependencies": {
     "@types/katex": "^0.16.7",
@@ -229,6 +232,7 @@
     "eslint": "^9.39.1",
     "fake-indexeddb": "^6.2.5",
     "mermaid": "^11.16.1",
+    "mocha": "^11.8.0",
     "npm-run-all": "^4.1.5",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.1",

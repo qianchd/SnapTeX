@@ -1,48 +1,36 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import { EditorState, type StateEffect, type Transaction, type TransactionSpec } from '@codemirror/state';
+import { history, undo, undoDepth } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
 import { ProjectWriteConflictError, type BrowserProjectTextChange } from '../../apps/standalone/src/browser-project';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage } from '../preview-messages';
 
-function normalizeEditorText(text: string): string {
-    return text.replace(/\r\n?/g, '\n');
-}
-
 class TestEditorView {
-    public selectionAnchor = -1;
-    public lastEffects: unknown;
+    public state: EditorState;
+    public lastEffects: readonly StateEffect<unknown>[] = [];
     public lastChange: { from: number; to: number; insert: string } | undefined;
     public scrollDOM = { scrollTop: 0, clientHeight: 100 };
 
-    constructor(private text = '') {}
-
-    get state() {
-        return {
-            doc: {
-                length: this.text.length,
-                toString: () => this.text
-            }
-        };
+    constructor(text = '') {
+        this.state = EditorState.create({ doc: text, extensions: history() });
     }
+    get selectionAnchor() { return this.state.selection.main.anchor; }
+    set selectionAnchor(anchor: number) { this.dispatch({ selection: { anchor } }); }
 
-    dispatch(update: { changes?: { from: number; to: number; insert: string }; selection?: { anchor: number }; effects?: unknown }) {
-        if (update.changes) {
-            const { from, to, insert } = update.changes;
-            this.lastChange = update.changes;
-            this.text = normalizeEditorText(`${this.text.slice(0, from)}${insert}${this.text.slice(to)}`);
-        }
-        if (update.selection) {
-            this.selectionAnchor = update.selection.anchor;
-        }
-        if (update.effects) {
-            this.lastEffects = update.effects;
-        }
+    dispatch(update: TransactionSpec | Transaction) {
+        const transaction = 'startState' in update ? update : this.state.update(update);
+        transaction.changes.iterChanges((from, to, _newFrom, _newTo, insert) => {
+            this.lastChange = { from, to, insert: insert.toString() };
+        });
+        this.lastEffects = transaction.effects;
+        this.state = transaction.state;
     }
 
     replaceText(text: string) {
-        this.text = normalizeEditorText(text);
+        this.dispatch({ changes: { from: 0, to: this.state.doc.length, insert: text } });
     }
 
     lineBlockAt(position: number) {
@@ -86,6 +74,65 @@ async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMes
 }
 
 suite('StandaloneHost', () => {
+    test('saving and receiving a self-write preserve the editor selection and undo history', async () => {
+        const editor = new TestEditorView();
+        const restoreWindow = installWindow([]);
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, { autoSave: false });
+        let diskText = 'First\nMiddle\nLast';
+        let receiveChange: ((change: BrowserProjectTextChange) => Promise<void> | void) | undefined;
+        try {
+            await host.loadProject({ files: [{
+                path: '/main.tex', text: diskText,
+                readText: async () => diskText,
+                writeText: text => { diskText = text; }
+            }], watchTextFiles: callback => { receiveChange = callback; return () => undefined; } });
+            const anchor = editor.state.doc.line(2).to;
+            editor.dispatch({ changes: { from: anchor, insert: ' edited' }, selection: { anchor: anchor + 7 } });
+            host.handleEditorUpdate();
+            const state = editor.state;
+            const depth = undoDepth(state);
+            assert.ok(depth > 0);
+            await host.saveCurrentText();
+            assert.ok(receiveChange);
+            await receiveChange({ path: '/main.tex', text: diskText });
+            assert.equal(editor.state, state, 'A save must not dispatch an editor replacement');
+            assert.equal(undoDepth(editor.state), depth);
+            assert.equal(undo({ state: editor.state, dispatch: transaction => editor.dispatch(transaction) }), true);
+            assert.equal(editor.state.doc.toString(), 'First\nMiddle\nLast');
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('maps the cursor and undo history across an external insertion', async () => {
+        const editor = new TestEditorView();
+        const restoreWindow = installWindow([]);
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, { autoSave: false });
+        let receiveChange: ((change: BrowserProjectTextChange) => Promise<void> | void) | undefined;
+        try {
+            await host.loadProject({
+                files: [{ path: '/main.tex', text: 'First\nMiddle\nLast' }],
+                watchTextFiles: callback => { receiveChange = callback; return () => undefined; }
+            });
+            const anchor = editor.state.doc.line(2).to;
+            editor.dispatch({ changes: { from: anchor, insert: ' edited' }, selection: { anchor: anchor + 7 } });
+            host.handleEditorUpdate();
+            editor.scrollDOM.scrollTop = 75;
+            const depth = undoDepth(editor.state);
+
+            await receiveChange?.({ path: '/main.tex', text: 'External heading\nFirst\nMiddle\nLast' });
+
+            assert.equal(editor.state.doc.toString(), 'External heading\nFirst\nMiddle edited\nLast');
+            assert.equal(editor.selectionAnchor, anchor + 7 + 'External heading\n'.length);
+            assert.equal(editor.scrollDOM.scrollTop, 75);
+            assert.equal(undoDepth(editor.state), depth, 'External updates must not become user undo steps');
+            assert.equal(undo({ state: editor.state, dispatch: transaction => editor.dispatch(transaction) }), true);
+            assert.equal(editor.state.doc.toString(), 'External heading\nFirst\nMiddle\nLast');
+        } finally {
+            restoreWindow();
+        }
+    });
+
     test('merges remote edits against the saved text and reports overlapping changes', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];
@@ -104,12 +151,12 @@ suite('StandaloneHost', () => {
                 }
             });
             editor.replaceText('Local first\nMiddle\nLast');
-            editor.selectionAnchor = 'Local first\nMiddle\n'.length + 2;
+            editor.selectionAnchor = 'Local first\n'.length + 2;
             host.handleEditorUpdate();
 
             await receiveChange?.({ path: '/main.tex', text: 'First\nMiddle\nRemote last' });
             assert.equal(editor.state.doc.toString(), 'Local first\nMiddle\nRemote last');
-            assert.equal(editor.selectionAnchor, 'Local first\nMiddle\n'.length + 2);
+            assert.equal(editor.selectionAnchor, 'Local first\n'.length + 2);
             assert.ok(editor.lastChange && editor.lastChange.from > 0);
             assert.equal(host.isDirty('/main.tex'), true);
             assert.deepEqual(host.getDiagnostics(), []);
@@ -247,33 +294,96 @@ suite('StandaloneHost', () => {
         }
     });
 
-    test('autosaves dirty writable text on the configured interval only', async () => {
+    test('keeps failed saves dirty and allows the project write queue to recover', async () => {
         const editor = new TestEditorView();
         const restoreWindow = installWindow([]);
-        const writes: Array<{ text: string; expectedText?: string }> = [];
-        const host = new StandaloneHost(
-            editor as unknown as EditorView,
-            '/main.tex',
-            undefined,
-            undefined,
-            { autoSaveIntervalSeconds: 0.02 }
-        );
-
+        const writes: string[] = [];
+        let failNextWrite = true;
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, { autoSave: false });
         try {
             await host.loadProject({
-                rootPath: '/main.tex',
                 files: [{
                     path: '/main.tex',
                     text: 'Base',
-                    writeText: (text, expectedText) => { writes.push({ text, expectedText }); }
+                    writeText: async text => {
+                        writes.push(text);
+                        if (failNextWrite) {
+                            failNextWrite = false;
+                            throw new Error('Disk is temporarily unavailable.');
+                        }
+                    }
                 }]
             });
             editor.replaceText('Edited');
             host.handleEditorUpdate();
-            await new Promise(resolve => setTimeout(resolve, 40));
 
+            await assert.rejects(host.saveCurrentText(), /temporarily unavailable/);
+            assert.equal(host.isDirty('/main.tex'), true);
+            assert.equal(editor.state.doc.toString(), 'Edited');
+
+            await host.saveCurrentText();
+            assert.deepEqual(writes, ['Edited', 'Edited']);
+            assert.equal(host.isDirty('/main.tex'), false);
+        } finally {
+            restoreWindow();
+        }
+    });
+
+    test('autosaves only dirty writable files and cancels disabled saves', async () => {
+        const editor = new TestEditorView();
+        const restoreWindow = installWindow([]);
+        const writes: Array<{ text: string; expectedText?: string }> = [];
+        let resolveSaved: () => void = () => undefined;
+        const saved = new Promise<void>(resolve => { resolveSaved = resolve; });
+        let timer: (() => void) | undefined;
+        let scheduled = 0;
+        window.setTimeout = ((callback: () => void, delay: number) => {
+            assert.equal(delay, 2000, 'Autosave must honor the configured interval');
+            timer = callback;
+            return ++scheduled;
+        }) as typeof window.setTimeout;
+        window.clearTimeout = () => { timer = undefined; };
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, {
+            autoSave: false, autoSaveIntervalSeconds: 2
+        });
+        try {
+            await host.loadProject({ files: [
+                { path: '/main.tex', text: 'Base', writeText: (text, expectedText) => { writes.push({ text, expectedText }); resolveSaved(); } },
+                { path: '/readonly.tex', text: 'Read only' }
+            ] });
+            editor.replaceText('Edited');
+            host.handleEditorUpdate();
+            assert.equal(timer, undefined, 'Disabled autosave must not schedule writes');
+
+            await host.updateSettings({ autoSave: true });
+            assert.ok(timer);
+            const fire = timer;
+            timer = undefined;
+            fire();
+            await saved;
+            await flushAsync();
             assert.deepEqual(writes, [{ text: 'Edited', expectedText: 'Base' }]);
             assert.equal(host.isDirty('/main.tex'), false);
+            host.handleEditorUpdate();
+            assert.equal(timer, undefined, 'Clean files must not schedule another save');
+            assert.equal(scheduled, 1);
+
+            editor.replaceText('Second edit');
+            host.handleEditorUpdate();
+            assert.ok(timer);
+            await host.updateSettings({ autoSave: false });
+            assert.equal(timer, undefined, 'Disabling autosave must cancel a pending write');
+            await host.flushProjectWrites();
+            assert.equal(writes.length, 1);
+            assert.equal(host.isDirty('/main.tex'), true);
+
+            await host.openEditorFile('/readonly.tex');
+            await host.updateSettings({ autoSave: true });
+            editor.replaceText('Read-only edit');
+            host.handleEditorUpdate();
+            assert.equal(timer, undefined, 'A read-only project file must not schedule writes');
+            await host.flushProjectWrites();
+            assert.equal(writes.length, 1);
         } finally {
             restoreWindow();
         }
@@ -309,12 +419,14 @@ suite('StandaloneHost', () => {
                 }
             ]});
             assert.equal(host.getRootPath(), '/main.tex');
+            assert.equal(host.isDirty('/main.tex'), false);
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
             await assert.rejects(() => host.openEditorFile('/unreadable.tex'), /Permission denied/);
             assert.equal(host.getActivePath(), '/main.tex');
             await host.openEditorFile('/chapter.tex');
             host.handleEditorUpdate();
+            assert.equal(host.isDirty('/chapter.tex'), false);
             editor.replaceText('Updated included paragraph.');
             host.handleEditorUpdate();
             assert.equal(host.isDirty('/chapter.tex'), true);
@@ -361,41 +473,6 @@ suite('StandaloneHost', () => {
             assert.deepEqual(responses.map(response => response.id), ['batch-0', 'batch-1']);
             assert.match(responses[0]?.html ?? '', /First paragraph/);
             assert.match(responses[1]?.html ?? '', /Second paragraph/);
-        } finally {
-            restoreWindow();
-        }
-    });
-
-    test('keeps opened files clean until the editor content changes', async () => {
-        const editor = new TestEditorView();
-        const messages: HostToPreviewMessage[] = [];
-        const restoreWindow = installWindow(messages);
-        const host = new StandaloneHost(editor as unknown as EditorView);
-        let persistedText = '';
-
-        try {
-            await host.loadProject({ files: [
-                { path: '/main.tex', readText: async () => '\\input{chapter}\r\n' },
-                {
-                    path: '/chapter.tex',
-                    readText: async () => 'Original\r\nchapter.',
-                    writeText: text => { persistedText = text; }
-                }
-            ], rootPath: '/main.tex' });
-            assert.equal(host.isDirty('/main.tex'), false);
-
-            await host.openEditorFile('/chapter.tex');
-            host.handleEditorUpdate();
-            assert.equal(host.isDirty('/chapter.tex'), false);
-
-            editor.replaceText('Changed chapter.');
-            host.handleEditorUpdate();
-            assert.equal(host.isDirty('/chapter.tex'), true);
-
-            const result = await host.saveCurrentText();
-            assert.equal(result.wroteToSource, true);
-            assert.equal(persistedText, 'Changed chapter.');
-            assert.equal(host.isDirty('/chapter.tex'), false);
         } finally {
             restoreWindow();
         }
@@ -636,11 +713,14 @@ suite('StandaloneHost', () => {
 
             host.setPaneVisibility(true, false);
             const messageCount = messages.length;
+            host.syncEditorSelection(1, 0, 'Included first paragraph.');
             host.syncEditorSelection(2, 28, 'Included second paragraph with \\textbf{sync anchor}.');
             assert.equal(messages.length, messageCount);
             host.setPaneVisibility(true, true);
             assert.equal(messages.length, messageCount + 1);
-            assert.equal(messages.at(-1)?.command, HostToPreviewCommand.ScrollToBlock);
+            const resumedSync = messages.at(-1);
+            assert.ok(resumedSync && resumedSync.command === HostToPreviewCommand.ScrollToBlock);
+            assert.match(resumedSync.anchor ?? '', /sync anchor/, 'Only the latest hidden-panel target should be applied');
         } finally {
             restoreWindow();
         }
@@ -902,7 +982,7 @@ suite('StandaloneHost', () => {
             assert.equal(host.getActivePath(), '/chapter.tex');
             assert.equal(editor.selectionAnchor, chapterText.indexOf('Included second paragraph'));
             assert.equal(editor.scrollDOM.scrollTop, editor.selectionAnchor + 175);
-            assert.ok(editor.lastEffects);
+            assert.ok(editor.lastEffects.length > 0, 'A preview jump should emit an editor highlight effect');
         } finally {
             restoreWindow();
         }
