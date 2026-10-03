@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { realpathSync } from 'node:fs';
 import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +8,7 @@ import { writeCompressedAssets } from './build-static.mjs';
 import { createSnapTeXWebServer } from './server.mjs';
 
 test('serves a writable project through the remote project API', async t => {
-    const tempRoot = await mkdtemp(join(tmpdir(), 'snaptex-web-'));
+    const tempRoot = realpathSync(await mkdtemp(join(tmpdir(), 'snaptex-web-')));
     const staticRoot = join(tempRoot, 'static');
     const outsideRoot = join(tempRoot, 'outside');
     const projectsRoot = join(tempRoot, 'projects');
@@ -197,8 +198,9 @@ test('serves a writable project through the remote project API', async t => {
             const compiled = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
                 method: 'POST', body: JSON.stringify({ rootPath: '/main.tex', compiler: 'tinytex' })
             });
-            assert.equal(compiled.status, 200);
-            assert.equal((await compiled.json()).path, '/main.pdf');
+            const result = await compiled.json();
+            assert.equal(compiled.status, 200, result.error);
+            assert.equal(result.path, '/main.pdf');
             assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.pdf`)).text(), '%PDF-1.4 test');
             assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/main.pdf'));
             compileFailure = Object.assign(new Error('compiler exited'), {

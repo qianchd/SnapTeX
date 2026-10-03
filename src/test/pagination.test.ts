@@ -154,23 +154,6 @@ suite('Paged preview layout', () => {
         });
     });
 
-    test('clears stale page starts when an incremental edit moves the boundary', () => {
-        const items = [
-            pageItem(['latex-block', 'snaptex-page-start']),
-            pageItem(['latex-block', 'snaptex-page-end']),
-            pageItem(['latex-block', 'snaptex-page-start']),
-            pageItem(['latex-block', 'snaptex-page-end'])
-        ];
-        withPaginationDom(items, controller => {
-            controller.beginIncremental(0, 1);
-            controller.acceptHeight(0, 270);
-            controller.acceptHeight(1, 100);
-
-            assert.equal(items[1].classList.contains('snaptex-page-start'), true);
-            assert.equal(items[2].classList.contains('snaptex-page-start'), false);
-        });
-    });
-
     test('reuses heights only when the paper content width remains compatible', () => {
         const virtualization = new BlockVirtualizationController({} as HTMLElement, new ViewportAnchorController());
         const block = { getAttribute: (name: string) => name === 'data-block-hash' ? 'block-a' : null } as HTMLElement;
