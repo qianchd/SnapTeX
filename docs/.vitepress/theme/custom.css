@@ -16,6 +16,10 @@
     height: 28px;
 }
 
+.dark .VPNavBarTitle .logo {
+    filter: brightness(0) invert(1);
+}
+
 .VPNavBarMenuLink.active {
     box-shadow: inset 0 -2px var(--vp-c-brand-1);
     font-weight: 700;

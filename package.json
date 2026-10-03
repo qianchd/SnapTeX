@@ -3,7 +3,7 @@
   "displayName": "SnapTeX",
   "description": "A Snappy, Smooth, and Feasible Previewer for LaTeX",
   "version": "0.8.1",
-  "icon": "media/icon.png",
+  "icon": "media/icon-512.png",
   "publisher": "qstatsite",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -32,7 +32,8 @@
   "main": "./dist/extension.js",
   "browser": "./dist/extension.js",
   "vsce": {
-    "dependencies": false
+    "dependencies": false,
+    "readmePath": "dist/README.md"
   },
   "contributes": {
     "languages": [
@@ -194,7 +195,7 @@
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch --target=vscode",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run vscode:check && node esbuild.js --production --target=vscode",
+    "package": "npm run vscode:check && node esbuild.js --production --target=vscode && node tools/icons/prepare-assets.mjs --vscode",
     "vscode:check": "tsc --noEmit -p tsconfig.vscode.json && eslint src apps/vscode/src --ignore-pattern \"src/test/**\"",
     "compile-tests": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
@@ -203,8 +204,8 @@
     "lint": "eslint src apps/vscode/src apps/standalone/src apps/web/src",
     "web:build": "node esbuild.js --target=web",
     "web:build-production": "node esbuild.js --production --target=web",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
+    "docs:dev": "node tools/icons/prepare-assets.mjs --docs && vitepress dev docs",
+    "docs:build": "node tools/icons/prepare-assets.mjs --docs && vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "web:build-static": "npm run web:build-production && npm run docs:build && node apps/web/build-static.mjs",
     "web:build-server": "npm run web:build-production && node apps/web/build-static.mjs --server",

@@ -3,6 +3,7 @@ dist
 dist-web
 docs/.vitepress/cache
 docs/.vitepress/dist
+docs/public/icon.svg
 node_modules
 media/vendor/
 media/webview-main.js

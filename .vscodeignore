@@ -22,6 +22,8 @@ demo/**
 docs/**
 tools/**
 todo.md
-media/favicon.ico
-media/icon-*.png
+README.md
+media/icon.png
+media/icon - *.png
+media/icon.svg
 tex_samplecode

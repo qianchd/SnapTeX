@@ -14,11 +14,7 @@ const serviceWorkerGroupNames = ['core', 'katex', 'pdf', 'tikz', 'demo'];
 const staticFiles = [
     ['demo', 'demo'],
     ['media/vendor', 'media/vendor'],
-    ['media/favicon.ico', 'media/favicon.ico'],
-    ['media/icon-32.png', 'media/icon-32.png'],
-    ['media/icon.png', 'media/icon.png'],
-    ['media/icon-192.png', 'media/icon-192.png'],
-    ['media/icon-512.png', 'media/icon-512.png'],
+    ['media/icon.svg', 'media/icon.svg'],
     ['media/preview-style.css', 'media/preview-style.css'],
     ['media/webview-main.js', 'media/webview-main.js'],
     ['media/webview-pdf.js', 'media/webview-pdf.js'],

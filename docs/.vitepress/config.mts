@@ -207,11 +207,11 @@ export default withMermaid(defineConfig({
     cleanUrls: true,
     lastUpdated: true,
     head: [
-        ['link', { rel: 'icon', href: `${docsBase}icon.png` }],
+        ['link', { rel: 'icon', type: 'image/svg+xml', sizes: 'any', href: `${docsBase}icon.svg` }],
         ['meta', { name: 'theme-color', content: '#0f766e' }]
     ],
     themeConfig: {
-        logo: '/icon.png',
+        logo: '/icon.svg',
         siteTitle: 'SnapTeX Docs',
         nav: [
             { text: 'User Guide', link: '/guide/', activeMatch: '^/(guide|features|reference)/' },

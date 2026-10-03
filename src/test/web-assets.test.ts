@@ -81,19 +81,21 @@ suite('Standalone web assets', () => {
             for (const asset of [
                 'index.html', 'manifest.webmanifest',
                 'demo/main.tex', 'demo/sections/project-editing.tex', 'demo/sample.bib', 'demo/frog.jpg',
-                'media/favicon.ico', 'media/icon-32.png', 'media/icon.png', 'media/icon-192.png', 'media/icon-512.png',
+                'media/icon.svg',
                 'media/vendor/tikzjax/tex.wasm.gz'
             ]) {
                 assert.ok(existsSync(join(build.outDir, asset)), `Missing static asset: ${asset}`);
             }
             assert.match(indexHtml, /href="manifest\.webmanifest\?v=[a-f0-9]{12}"/);
-            assert.match(indexHtml, /href="media\/favicon\.ico\?v=[a-f0-9]{12}"/);
-            assert.match(indexHtml, /href="media\/icon-32\.png\?v=[a-f0-9]{12}"/);
-            assert.match(indexHtml, /href="media\/icon-192\.png\?v=[a-f0-9]{12}"/);
-            assert.match(indexHtml, /src="media\/icon\.png\?v=[a-f0-9]{12}"/);
+            assert.match(indexHtml, /href="media\/icon\.svg\?v=[a-f0-9]{12}"/);
+            assert.equal(indexHtml.match(/src="media\/icon\.svg\?v=[a-f0-9]{12}"/g)?.length, 2);
+            assert.doesNotMatch(indexHtml, /media\/(?:icon[^"?]*\.png|favicon\.ico)/);
+            for (const rasterIcon of ['media/favicon.ico', 'media/icon.png', 'media/icon-32.png', 'media/icon-192.png', 'media/icon-512.png']) {
+                assert.equal(existsSync(join(build.outDir, rasterIcon)), false, `${rasterIcon} must not ship with the Web app`);
+            }
             assert.match(indexHtml, /src="web-main\.js\?v=[a-f0-9]{12}"/);
             assert.match(indexHtml, /connect-src 'self' blob:/);
-            assert.doesNotMatch(indexHtml, /\b(?:href|src|data-[\w-]+)="\//);
+            assert.doesNotMatch(indexHtml, /\b(?:href|src|srcset|data-[\w-]+)="\//);
             const rejectedAsset = await fetch(new URL(`/%2e%2e/${basename(outsideAsset)}`, baseUrl));
             assert.equal(rejectedAsset.status, 404);
             await rejectedAsset.arrayBuffer();
@@ -105,21 +107,17 @@ suite('Standalone web assets', () => {
             const manifest = JSON.parse(await fetchText(baseUrl, '/manifest.webmanifest'));
             assert.equal(manifest.theme_color, '#000000');
             assert.deepEqual(
-                manifest.icons.map((icon: { sizes: string; purpose: string }) => [icon.sizes, icon.purpose]),
+                manifest.icons.map((icon: { sizes: string; type: string; purpose: string }) => [icon.sizes, icon.type, icon.purpose]),
                 [
-                    ['192x192', 'any'],
-                    ['512x512', 'any']
+                    ['any', 'image/svg+xml', 'any']
                 ]
             );
-            assert.match(manifest.icons[0].src, /^media\/icon-192\.png\?v=[a-f0-9]{12}$/);
-            assert.match(manifest.icons[1].src, /^media\/icon-512\.png\?v=[a-f0-9]{12}$/);
-            const favicon = await fetchOk(baseUrl, '/media/favicon.ico');
-            assert.match(favicon.headers.get('content-type') ?? '', /image\/x-icon/);
-            await favicon.arrayBuffer();
-            await fetchBytes(baseUrl, '/media/icon-32.png');
-            await fetchBytes(baseUrl, '/media/icon-192.png');
-            await fetchBytes(baseUrl, '/media/icon-512.png');
+            assert.match(manifest.icons[0].src, /^media\/icon\.svg\?v=[a-f0-9]{12}$/);
+            const svgIcon = await fetchOk(baseUrl, '/media/icon.svg');
+            assert.match(svgIcon.headers.get('content-type') ?? '', /image\/svg\+xml/);
+            assert.match(await svgIcon.text(), /<svg\b/);
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
+            assert.doesNotMatch(serviceWorker, /media\/(?:icon[^"?]*\.png|favicon\.ico)/);
             const mainScriptMatch = indexHtml.match(/src="(web-main\.js\?v=[a-f0-9]{12})"/);
             assert.ok(mainScriptMatch);
             const mainScript = mainScriptMatch[1];
@@ -237,7 +235,7 @@ suite('Standalone web assets', () => {
                 respondWith: response => { cachedResponse = response as Promise<Response>; }
             });
             assert.equal(await (await cachedResponse)?.text(), readFileSync(join(build.outDir, 'index.html'), 'utf8'));
-            for (const asset of [tikzJaxUri, 'media/vendor/tikzjax/tex.wasm.gz', 'media/vendor/pdfjs/pdf.mjs', 'demo/main.tex']) {
+            for (const asset of ['media/icon.svg', tikzJaxUri, 'media/vendor/tikzjax/tex.wasm.gz', 'media/vendor/pdfjs/pdf.mjs', 'demo/main.tex']) {
                 handlers.get('fetch')?.({
                     request: { method: 'GET', mode: 'same-origin', url: new URL(asset, 'https://snaptex.test/app/').href },
                     respondWith: response => { cachedResponse = response as Promise<Response>; }

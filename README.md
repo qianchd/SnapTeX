@@ -7,7 +7,7 @@ Fast, local-first LaTeX editing and structural preview for VS Code and the brows
 > **What's new in 0.8.1:** Faster, steadier elastic paged preview with configurable margins, broader LaTeX rendering across both backends, and more reliable bidirectional scrolling. Continuous preview remains available in settings. Contributors can use the new [arXiv source audit](tools/arxiv-audit/README.md) to check real papers against both backends.
 
 <p align="center">
-  <img src="media/icon.png" alt="SnapTeX logo" width="150">
+  <img src="media/icon.svg" alt="SnapTeX logo" width="150">
 </p>
 
 SnapTeX renders prose, math, references, citations, figures, PDFs, tables, algorithms, theorem-like environments, and TikZ without requiring a local TeX distribution. It is designed for responsive writing and navigation; use a full TeX toolchain for final pagination and publication output.
