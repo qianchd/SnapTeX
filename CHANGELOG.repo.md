@@ -4,10 +4,18 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
-- **Added**: Configurable Web auto save for dirty writable files, using the same serialized save and external-update pipeline as manual saving.
+- **Fixed**: Preserved intermediate `\hline`, `\cline`, and booktabs rules in both rendering backends, including adjacent column ranges across spanning cells.
+- **Changed**: Simplified shared AST/rendering dispatch and released stale virtual-shell observers, tooltip timers, and embedded PDF loading tasks.
+- **Added**: Offline PDF/source synchronization for local folders, browser workspaces, and server projects using the bundled official SyncTeX parser in a Worker; supports double-click, `Ctrl+Alt+M`, and the existing auto-scroll setting without per-query server requests.
+- **Changed**: Refreshed open PDFs and their SyncTeX indexes through existing project file watchers; removed the server-side SyncTeX query endpoint and CLI requirement.
+- **Added**: Configurable Web auto save for dirty writable files after a quiet edit delay (default one second), using the same serialized save and external-update pipeline as manual saving without periodic polling.
 - **Fixed**: Preserved editor selection and undo history during saves and external text updates; retained edits typed while a save is in progress.
 - **Fixed**: Checked saved-text baselines before local-folder and IndexedDB writes, and paired remote text with its ETag to avoid stale overwrites.
 - **Fixed**: Kept PDF refresh positions scoped to the same document, ignored superseded loads, and released the link service's document reference when closing PDF preview.
+- **Changed**: Disabled automatic scroll sync and diagnostic-panel visibility by default on the Web without overriding saved preferences.
+- **Changed**: Updated the SVG artwork and raster exports, made Web branding follow the selected theme, and generated a fixed high-contrast PWA icon for installed applications.
+- **Fixed**: Matched the browser/PWA theme color and document background to the selected editor theme.
+- **Maintenance**: Updated the VS Code test runner to remove deprecated `inflight` and `glob@7` installation dependencies.
 
 ## [0.8.1] - 2026-09-13
 
