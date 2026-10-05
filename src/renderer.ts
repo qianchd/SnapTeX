@@ -528,20 +528,6 @@ export class SmartRenderer {
         };
     }
 
-    private getInsertedBlockIndices(prepared: RenderPreparation): number[] {
-        return Array.from(
-            { length: prepared.diff.insertCount },
-            (_unused, offset) => prepared.diff.start + offset
-        );
-    }
-
-    private getDirtyBlockRenderJobs(indices: readonly number[]): Array<[index: number, text: string]> {
-        return indices.flatMap(index => {
-            const text = this.getSnapshotBlockText(this.lastTextSnapshot, index);
-            return text === undefined ? [] : [[index, text]];
-        });
-    }
-
     /**
      * Renders a parsed document and returns the minimal webview update payload.
      *
@@ -560,15 +546,17 @@ export class SmartRenderer {
                 : Array.from({ length: prepared.blockAccess.count }, (_unused, index) => this.renderBlockToHtml(prepared.blockAccess.getText(index), index, prepared.blockMeta[index]));
             payload = this.buildFullPayload(prepared, options, htmls);
         } else {
-            const insertedHtmls = this.getInsertedBlockIndices(prepared)
-                .map(index => this.renderBlockToHtml(prepared.blockAccess.getText(index), index, prepared.blockMeta[index]));
+            const insertedHtmls = Array.from({ length: prepared.diff.insertCount }, (_unused, offset) => {
+                const index = prepared.diff.start + offset;
+                return this.renderBlockToHtml(prepared.blockAccess.getText(index), index, prepared.blockMeta[index]);
+            });
 
             this.commitRenderState(prepared);
 
             let dirtyBlocks: { [index: number]: string } | undefined;
-            for (const [index, text] of this.getDirtyBlockRenderJobs(prepared.dirtyBlockIndices)) {
+            for (const index of prepared.dirtyBlockIndices) {
                 dirtyBlocks ??= {};
-                dirtyBlocks[index] = this.renderBlockToHtml(text, index);
+                dirtyBlocks[index] = this.renderBlockToHtml(prepared.blockAccess.getText(index), index);
             }
 
             payload = this.buildPatchPayload(prepared, insertedHtmls, dirtyBlocks);
@@ -597,7 +585,7 @@ export class SmartRenderer {
             payload = this.buildFullPayload(prepared, options, htmls);
         } else {
             const insertedHtmls: string[] = [];
-            for (const index of this.getInsertedBlockIndices(prepared)) {
+            for (let index = prepared.diff.start; index < prepared.diff.start + prepared.diff.insertCount; index++) {
                 insertedHtmls.push(await this.renderBlockToHtmlAsync(
                     prepared.blockAccess.getText(index),
                     index,
@@ -608,9 +596,9 @@ export class SmartRenderer {
             this.commitRenderState(prepared);
 
             let dirtyBlocks: { [index: number]: string } | undefined;
-            for (const [index, text] of this.getDirtyBlockRenderJobs(prepared.dirtyBlockIndices)) {
+            for (const index of prepared.dirtyBlockIndices) {
                 dirtyBlocks ??= {};
-                dirtyBlocks[index] = await this.renderBlockToHtmlAsync(text, index);
+                dirtyBlocks[index] = await this.renderBlockToHtmlAsync(prepared.blockAccess.getText(index), index);
             }
 
             payload = this.buildPatchPayload(prepared, insertedHtmls, dirtyBlocks);

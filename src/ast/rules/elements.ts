@@ -1,6 +1,6 @@
 import { BibTexParser } from '../../bib';
 import { ACKNOWLEDGMENT_ENVS, QUOTE_ENVS } from '../../patterns';
-import { latexRelativeWidthPercent, normalizeLatexKeywordSeparators, renderBibliographyItemsHtml, renderCitedBibliographyHtml, renderExternalLinkHtml, renderInlineLatexHtml, renderMaketitleAuthorsHtml } from '../../rule-helpers';
+import { latexRelativeWidthPercent, normalizeLatexKeywordSeparators, renderBibliographyItemsHtml, renderCitedBibliographyHtml, renderExternalLinkHtml, renderMaketitleAuthorsHtml } from '../../rule-helpers';
 import { astNodesToLatex, astNodesToText, environmentName, isCommentNode, isEnvironmentNode, isMacroNode, readNodeArgument, splitLeadingBracketNodes, stringNodeContent } from '../visit-utils';
 import { readAstCommandArguments, readAstCommandNodeArguments, renderInlineLatexSource, type AstRenderRule } from './index';
 
@@ -134,11 +134,7 @@ export const AST_ABSTRACT_KEYWORDS_RULE: AstRenderRule = (input, context) => {
 };
 
 export const AST_BIBLIOGRAPHY_RULE: AstRenderRule = (input, context) => {
-    const renderText = (value: string) => renderInlineLatexHtml(
-        value,
-        tex => context.renderMath(tex, false),
-        context.metadata?.colors
-    );
+    const renderText = (value: string) => renderInlineLatexSource(value, context);
     if (isMacroNode(input.node) && ['bibliographystyle', 'addbibresource'].includes(input.node.content)) {
         return { html: '', consumedNodes: readAstCommandArguments(input).consumedNodes };
     }

@@ -501,8 +501,9 @@ body:is(.vscode-dark, [data-theme="dark"]) .tikz-container svg text {
     border-bottom: 1px solid var(--vscode-editor-foreground);
 }
 
-.latex-table tr.table-row-rule-above td,
-.latex-table tr.table-row-rule-above th {
+.latex-table tr.table-row-rule-above > td,
+.latex-table tr.table-row-rule-above > th,
+.latex-table [data-rule-above] {
     border-top: 1px solid var(--vscode-editor-foreground);
 }
 

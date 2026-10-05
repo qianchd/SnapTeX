@@ -269,9 +269,13 @@ function renderAstNodes(
                 ? renderAstSource(source, rules, context, generatedSourceDepth + 1)
                 : renderInlineLatexSource(source, context)
         };
-        const result = renderAstNodeWithRules(input, rules, context, generatedSourceDepth);
-        html += result.html;
-        index += Math.max(1, result.consumedNodes ?? 1) - 1;
+        let result: AstRenderResult | undefined;
+        for (const rule of rules) {
+            result = rule(input, context);
+            if (result) { break; }
+        }
+        html += result?.html ?? renderFallbackNode(input, context);
+        index += Math.max(1, result?.consumedNodes ?? 1) - 1;
     }
 
     return html;
@@ -292,27 +296,9 @@ function renderAstSource(
     return renderAstNodes(parsed.ast.content, rules, sourceContext, generatedSourceDepth);
 }
 
-function renderAstNodeWithRules(
-    input: AstRenderInput,
-    rules: readonly AstRenderRule[],
-    context: AstRenderContext,
-    generatedSourceDepth: number
-): AstRenderResult {
-    for (const rule of rules) {
-        const result = rule(input, context);
-        if (result) {
-            return result;
-        }
-    }
-
-    return { html: renderFallbackNode(input.node, rules, context, generatedSourceDepth) };
-}
-
 function renderFallbackNode(
-    node: SnaptexAstNode,
-    rules: readonly AstRenderRule[],
-    context: AstRenderContext,
-    generatedSourceDepth: number
+    { node, renderChildren }: AstRenderInput,
+    context: AstRenderContext
 ): string {
     if (isCommentNode(node)) {
         return '';
@@ -336,7 +322,7 @@ function renderFallbackNode(
         return context.escapeHtml(node.content).replace(/~/g, '&nbsp;');
     }
     if (Array.isArray(node.content)) {
-        return renderAstNodes(node.content, rules, context, generatedSourceDepth);
+        return renderChildren(node.content);
     }
     return '';
 }

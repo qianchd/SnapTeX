@@ -4,9 +4,15 @@ import { createStyleHtmlProtector, renderIncludeGraphicsHtml, renderMath, stripL
 
 type TableRuleKind = 'top' | 'mid' | 'bottom' | 'hline';
 
+export interface LatexTableRule {
+    kind: TableRuleKind;
+    startColumn?: number;
+    endColumn?: number;
+}
+
 interface LatexTableRow {
     cells: string[];
-    rulesBefore: TableRuleKind[];
+    rulesBefore: LatexTableRule[];
 }
 
 interface LatexTableModel {
@@ -26,7 +32,7 @@ interface TabularEnvironment {
 
 interface TableBoundary {
     kind: 'row' | 'rule';
-    rule?: TableRuleKind;
+    rule?: LatexTableRule;
     end: number;
 }
 
@@ -117,12 +123,15 @@ export function findFirstTabularEnvironment(text: string): TabularEnvironment | 
     return undefined;
 }
 
-function classifyTableRule(token: string): TableRuleKind | undefined {
-    if (token.startsWith('\\toprule')) { return 'top'; }
-    if (token.startsWith('\\midrule') || token.startsWith('\\cmidrule')) { return 'mid'; }
-    if (token.startsWith('\\bottomrule')) { return 'bottom'; }
-    if (token.startsWith('\\hline') || token.startsWith('\\hhline')) { return 'hline'; }
-    return undefined;
+export function createTableRule(command: string, range?: string): LatexTableRule | undefined {
+    const kind = command === 'toprule' ? 'top' : command === 'bottomrule' ? 'bottom'
+        : command === 'midrule' || command === 'cmidrule' ? 'mid'
+        : command === 'hline' || command === 'hhline' || command === 'cline' ? 'hline' : undefined;
+    if (!kind) { return undefined; }
+    if (command !== 'cline' && command !== 'cmidrule') { return { kind }; }
+    const columns = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(range ?? '');
+    if (!columns || Number(columns[1]) < 1 || Number(columns[2]) < Number(columns[1])) { return undefined; }
+    return { kind, startColumn: Number(columns[1]), endColumn: Number(columns[2]) };
 }
 
 function matchTableBoundaryAt(text: string, index: number): TableBoundary | undefined {
@@ -132,11 +141,12 @@ function matchTableBoundaryAt(text: string, index: number): TableBoundary | unde
         return { kind: 'row', end: index + rowMatch[0].length };
     }
 
-    const ruleMatch = /^(\\toprule(?:\[.*?\])?|\\midrule(?:\[.*?\])?|\\bottomrule(?:\[.*?\])?|\\cmidrule(?:\[.*?\])?(?:\(.*?\))?\{[^}]+\}|\\hhline\{[^}]+\}|\\hline)/.exec(slice);
+    const ruleMatch = /^\\(toprule|midrule|bottomrule|hline)\b(?:\[[^\]]*\])?/.exec(slice)
+        ?? /^\\(cmidrule|cline|hhline)\b(?:\[[^\]]*\])?(?:\([^)]*\))?\{([^}]+)\}/.exec(slice);
     if (ruleMatch) {
         return {
             kind: 'rule',
-            rule: classifyTableRule(ruleMatch[0]),
+            rule: createTableRule(ruleMatch[1], ruleMatch[2]),
             end: index + ruleMatch[0].length
         };
     }
@@ -209,7 +219,7 @@ function splitLatexTableCells(rowText: string): string[] {
 function parseLatexTableRows(rawContent: string): LatexTableModel {
     const tableContent = normalizeLatexTableBody(rawContent);
     const rows: LatexTableRow[] = [];
-    const pendingRules: TableRuleKind[] = [];
+    const pendingRules: LatexTableRule[] = [];
     let hasBooktabs = false;
     let hasRules = false;
     let current = '';
@@ -235,7 +245,7 @@ function parseLatexTableRows(rawContent: string): LatexTableModel {
                 pushRow();
                 if (boundary.rule) {
                     hasRules = true;
-                    hasBooktabs ||= boundary.rule === 'top' || boundary.rule === 'mid' || boundary.rule === 'bottom';
+                    hasBooktabs ||= boundary.rule.kind !== 'hline';
                     pendingRules.push(boundary.rule);
                 }
             }
@@ -256,7 +266,6 @@ function parseLatexTableRows(rawContent: string): LatexTableModel {
 
 function normalizeLatexTableBody(rawContent: string): string {
     return stripLatexTablePresentationCommands(rawContent)
-        .replace(/\\cline\{[^}]+\}/g, '\\hline')
         .replace(/\\addlinespace(?:\[.*?\])?/g, '')
         .replace(/\\vspace\*?\{[^}]+\}/g, '')
         .replace(/\\setlength\s*\\[a-zA-Z]+\s*\{[^}]+\}/g, '');
@@ -463,9 +472,12 @@ function renderLatexTableCell(cellText: string, renderer: RenderContext, tagName
 export function renderTableRowCells<T>(
     cells: readonly T[],
     activeRowspans: number[],
-    renderCell: (cell: T) => { html: string; colspan: number; rowspan: number; empty: boolean }
+    renderCell: (cell: T) => { html: string; colspan: number; rowspan: number; empty: boolean },
+    rules: readonly LatexTableRule[] = []
 ): string {
     let columnIndex = 0;
+    const ranges = rules.filter(rule => rule.startColumn !== undefined)
+        .sort((a, b) => a.startColumn! - b.startColumn!);
     return cells.flatMap(cell => {
         const rendered = renderCell(cell);
         while ((activeRowspans[columnIndex] ?? 0) > 0) {
@@ -479,21 +491,29 @@ export function renderTableRowCells<T>(
                 activeRowspans[columnIndex + offset] = Math.max(activeRowspans[columnIndex + offset] ?? 0, rendered.rowspan - 1);
             }
         }
+        const startColumn = columnIndex + 1;
         columnIndex += rendered.colspan;
-        return rendered.html;
+        let coveredEnd = startColumn - 1;
+        for (const rule of ranges) {
+            if (rule.startColumn! > coveredEnd + 1) { break; }
+            coveredEnd = Math.max(coveredEnd, rule.endColumn!);
+        }
+        const ruled = coveredEnd >= columnIndex;
+        return ruled ? rendered.html.replace(/^<(td|th)\b/, '<$1 data-rule-above') : rendered.html;
     }).join('');
 }
 
-function renderLatexTableRows(rows: LatexTableRow[], renderer: RenderContext, tagName: 'td' | 'th', suppressFirstRule: boolean): string {
+function renderLatexTableRows(rows: LatexTableRow[], renderer: RenderContext, tagName: 'td' | 'th'): string {
     const activeRowspans: number[] = [];
 
-    return rows.map((row, rowIndex) => {
-        const hasRuleAbove = row.rulesBefore.some(rule => rule === 'mid' || rule === 'hline') && !(suppressFirstRule && rowIndex === 0);
+    return rows.map(row => {
+        const hasRuleAbove = row.rulesBefore.some(rule => rule.startColumn === undefined);
         const classAttr = hasRuleAbove ? ' class="table-row-rule-above"' : '';
         return `<tr${classAttr}>${renderTableRowCells(
             row.cells,
             activeRowspans,
-            cell => renderLatexTableCell(cell, renderer, tagName)
+            cell => renderLatexTableCell(cell, renderer, tagName),
+            row.rulesBefore
         )}</tr>`;
     }).join('');
 }
@@ -502,13 +522,14 @@ export function renderLatexTabular(rawContent: string, renderer: RenderContext):
     const model = parseLatexTableRows(rawContent.replace(/\\(?:endfirsthead|endhead|endfoot|endlastfoot)\b/g, ''));
     if (model.rows.length === 0) { return ''; }
 
-    const firstBodyRowIndex = model.rows.findIndex((row, index) => index > 0 && row.rulesBefore.some(rule => rule === 'mid' || rule === 'hline'));
+    const firstBodyRowIndex = model.rows.findIndex((row, index) => index > 0 && row.rulesBefore.some(rule =>
+        rule.startColumn === undefined && (rule.kind === 'mid' || rule.kind === 'hline')));
     const hasHeader = firstBodyRowIndex > 0;
     const headerRows = hasHeader ? model.rows.slice(0, firstBodyRowIndex) : [];
     const bodyRows = hasHeader ? model.rows.slice(firstBodyRowIndex) : model.rows;
     const classNames = ['latex-tabular-preview', model.hasBooktabs ? 'latex-tabular-booktabs' : model.hasRules ? 'latex-tabular-ruled' : ''];
 
-    const theadHtml = hasHeader ? `<thead>${renderLatexTableRows(headerRows, renderer, 'th', true)}</thead>` : '';
-    const tbodyHtml = `<tbody>${renderLatexTableRows(bodyRows, renderer, 'td', hasHeader)}</tbody>`;
+    const theadHtml = hasHeader ? `<thead>${renderLatexTableRows(headerRows, renderer, 'th')}</thead>` : '';
+    const tbodyHtml = `<tbody>${renderLatexTableRows(bodyRows, renderer, 'td')}</tbody>`;
     return `<table class="${classNames.filter(Boolean).join(' ')}">${theadHtml}${tbodyHtml}</table>`;
 }

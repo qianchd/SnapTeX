@@ -420,8 +420,8 @@ suite('SmartRenderer', () => {
         assert.match(html, /id="tab:notation_loss"/);
         assert.match(html, /<span style="color: red; --snaptex-latex-color: red">Summary of loss notation/);
         assert.match(html, /<table class="latex-tabular-preview latex-tabular-booktabs">/);
-        assert.match(html, /<thead><tr><th scope="col"><strong>Notation<\/strong><\/th>/);
-        assert.match(html, /<tbody><tr><td>.*Expected individual loss of <em>fixed<\/em> model/s);
+        assert.match(html, /<thead><tr class="table-row-rule-above"><th scope="col"><strong>Notation<\/strong><\/th>/);
+        assert.match(html, /<tbody><tr class="table-row-rule-above"><td>.*Expected individual loss of <em>fixed<\/em> model/s);
         assert.doesNotMatch(html, /border: 1px solid/);
         assert.doesNotMatch(html, /\\begin\{tabularx\}|\\toprule|\\bottomrule/);
     });

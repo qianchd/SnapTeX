@@ -26,7 +26,7 @@ import {
     isAlgorithm2eSource,
     renderAlgorithm2eList
 } from '../../latex-algorithm';
-import { renderLatexMakecellHtml, renderTableRowCells } from '../../latex-table';
+import { createTableRule, renderLatexMakecellHtml, renderTableRowCells, type LatexTableRule } from '../../latex-table';
 import { SUBCAPTIONBOX_ARGUMENT_ORDER, SUBFIGURE_MACRO_COMMANDS } from '../../patterns';
 import { renderCaptionHtml, renderNumberedCaptionPrefix, renderSubfigureHtml } from '../../rule-helpers';
 import { expandLatexTextMacros, extractAndHideLabels } from '../../utils';
@@ -38,7 +38,7 @@ const TABLENOTES_ENVS = new Set(['tablenotes']);
 const ALGORITHMIC_ENVS = new Set(['algorithmic']);
 const BOOKTABS_TABLE_MACROS = new Set(['toprule', 'midrule', 'bottomrule', 'cmidrule']);
 const RULE_TABLE_MACROS = new Set(['hline', 'hhline', 'cline']);
-const IGNORED_TABLE_MACROS = new Set([...BOOKTABS_TABLE_MACROS, ...RULE_TABLE_MACROS]);
+const TABLE_RULE_MACROS = new Set([...BOOKTABS_TABLE_MACROS, ...RULE_TABLE_MACROS]);
 const TABLE_NOTE_LAYOUT_MACROS = new Set(['footnotesize', 'small', 'scriptsize', 'tiny']);
 const FLOAT_LAYOUT_MACROS = new Set(['centering', 'hfill', 'small', 'footnotesize']);
 const TABLE_CELL_MACROS = new Set(['multicolumn', 'multirow', 'makecell', 'tnote']);
@@ -197,8 +197,13 @@ interface TableCell {
     rowspan?: number;
 }
 
-function flushCell(rows: TableCell[][], cellNodes: SnaptexAstNode[], input: AstRenderInput) {
-    rows[rows.length - 1].push(renderTableCell(cellNodes, input));
+interface TableRow {
+    cells: TableCell[];
+    rulesBefore: LatexTableRule[];
+}
+
+function flushCell(rows: TableRow[], cellNodes: SnaptexAstNode[], input: AstRenderInput) {
+    rows[rows.length - 1].cells.push(renderTableCell(cellNodes, input));
     cellNodes.length = 0;
 }
 
@@ -246,23 +251,29 @@ function skipParenthesizedTableModifier(nodes: readonly SnaptexAstNode[], index:
     return cursor < nodes.length ? cursor + 1 : index;
 }
 
-function tableRuleConsumedNodes(nodes: readonly SnaptexAstNode[], index: number): number {
+function readAstTableRule(nodes: readonly SnaptexAstNode[], index: number) {
     const macro = nodes[index];
     if (!isMacroNode(macro)) {
-        return 1;
+        return { consumedNodes: 1 };
     }
 
     let cursor = index + 1;
+    const optional = readBracketNodes(nodes, skipWhitespaceOrComments(nodes, cursor));
+    if (optional) { cursor = optional.nextIndex; }
     if (macro.content === 'cmidrule') {
         cursor = skipParenthesizedTableModifier(nodes, cursor);
     }
+    let rangeNodes = readNodeArgument(macro, '{', 0)?.content;
     if (macro.content === 'cmidrule' || macro.content === 'cline' || macro.content === 'hhline') {
         cursor = skipWhitespaceOrComments(nodes, cursor);
-        if (isGroupNode(nodes[cursor])) {
+        const group = nodes[cursor];
+        if (!rangeNodes && isGroupNode(group)) {
+            rangeNodes = group.content;
             cursor++;
         }
     }
-    return Math.max(1, cursor - index);
+    return { rule: createTableRule(macro.content, rangeNodes ? astNodesToText(rangeNodes) : undefined),
+        consumedNodes: Math.max(1, cursor - index) };
 }
 
 function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode, omitted?: ReadonlySet<SnaptexAstNode>): string {
@@ -280,7 +291,7 @@ function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode, omitte
         bodyStart++;
     }
 
-    const rows: TableCell[][] = [[]];
+    const rows: TableRow[] = [{ cells: [], rulesBefore: [] }];
     const cellNodes: SnaptexAstNode[] = [];
     let hasBooktabs = false;
     let hasRules = false;
@@ -295,13 +306,15 @@ function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode, omitte
         }
         if (isMacroNode(node) && (node.content === '\\' || node.content === 'tabularnewline')) {
             flushCell(rows, cellNodes, input);
-            rows.push([]);
+            rows.push({ cells: [], rulesBefore: [] });
             continue;
         }
-        if (isMacroNode(node) && IGNORED_TABLE_MACROS.has(node.content)) {
+        if (isMacroNode(node) && TABLE_RULE_MACROS.has(node.content)) {
             hasBooktabs = hasBooktabs || BOOKTABS_TABLE_MACROS.has(node.content);
             hasRules = hasRules || RULE_TABLE_MACROS.has(node.content);
-            index += tableRuleConsumedNodes(tabular.content, index) - 1;
+            const { rule, consumedNodes } = readAstTableRule(tabular.content, index);
+            if (rule) { rows[rows.length - 1].rulesBefore.push(rule); }
+            index += consumedNodes - 1;
             continue;
         }
         cellNodes.push(node);
@@ -310,9 +323,9 @@ function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode, omitte
 
     const activeRowspans: number[] = [];
     const rowHtml = rows
-        .filter(row => row.some(cell => cell.html.trim().length > 0))
+        .filter(row => row.cells.some(cell => cell.html.trim().length > 0))
         .map(row => {
-            const cells = renderTableRowCells(row, activeRowspans, cell => {
+            const cells = renderTableRowCells(row.cells, activeRowspans, cell => {
                 const colspan = cell.colspan ?? 1;
                 const rowspan = cell.rowspan ?? 1;
                 const attrs = [
@@ -325,8 +338,10 @@ function renderAstTabular(input: AstRenderInput, tabular: SnaptexAstNode, omitte
                     rowspan,
                     empty: !cell.html.trim()
                 };
-            });
-            return `<tr>${cells}</tr>`;
+            }, row.rulesBefore);
+            const classAttr = row.rulesBefore.some(rule => rule.startColumn === undefined)
+                ? ' class="table-row-rule-above"' : '';
+            return `<tr${classAttr}>${cells}</tr>`;
         })
         .join('');
     const className = [

@@ -69,6 +69,7 @@ export class BlockVirtualizationController {
         }
 
         resetCaches() {
+            this.disconnectShellObservers();
             this.resetHeightCache();
             this.blockHtmlByShell = new WeakMap();
         }

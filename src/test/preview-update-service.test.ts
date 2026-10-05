@@ -706,10 +706,49 @@ suite('PreviewUpdateService', () => {
             assert.match(html, /Virtual mode keeps only viewport-near blocks/);
             assert.match(html, /id="tab:demo-complex-table"/);
             assert.match(html, /Long table summary/);
-            assert.match(html, /<tr><td>Alpha<\/td><td>.*1.*<\/td><td>First<\/td><\/tr>/s);
+            assert.match(html, /<tr class="table-row-rule-above"><td>Alpha<\/td><td>.*1.*<\/td><td>First<\/td><\/tr>/s);
             assert.match(html, /id="tab:long"/);
             assert.doesNotMatch(html, /\\(?:cmidrule|cline|hhline|multirow|multicolumn|makecell|tnote|includegraphics|textwidth|columnwidth|hsize|arraybackslash|newcolumntype|noalign)\b/);
             assert.doesNotMatch(html, /\[!ht\]|\\(?:begin|end)\{(?:threeparttable|tabular\*|longtable)\}|\\(?:tabularnewline|endhead)\b/);
+        }
+    });
+
+    test('preserves full and column-range table rules in both backends', async () => {
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const service = new PreviewUpdateService(new MemoryFileProvider());
+            const payload = await service.render(uri, [
+                '\\begin{document}',
+                '\\begin{table}\\begin{tabular}{lcccccccc}',
+                '\\hline',
+                '& \\multicolumn{4}{c}{Small} & \\multicolumn{4}{c}{Large} \\\\',
+                '\\cline{2-5}\\cline{6-9}',
+                '& \\multicolumn{2}{c}{A} & \\multicolumn{2}{c}{B} & \\multicolumn{2}{c}{C} & \\multicolumn{2}{c}{D} \\\\',
+                '\\cmidrule[1pt](lr){2-3}\\cline{4-5}\\cline{6-7}\\cline{8-9}',
+                'Method & Size & Power & Size & Power & Size & Power & Size & Power \\\\',
+                '\\hline',
+                'PL-SS & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 \\\\',
+                '\\midrule[1pt]',
+                'SM-SS & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 \\\\',
+                '\\cline{2-3}\\cline{4-5}',
+                'Joined & \\multicolumn{4}{c}{Whole span} & & & & \\\\',
+                '\\bottomrule[1.5pt]',
+                '\\end{tabular}\\end{table}',
+                '\\end{document}'
+            ].join('\n'), { deferFullHtml: false, backendMode });
+            const html = payload.htmls?.join('') ?? '';
+            const rows = [...html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/g)];
+            assert.equal(rows.length, 6);
+            for (const index of [0, 3, 4]) {
+                assert.match(rows[index][1], /table-row-rule-above/, `${backendMode}: full rule at row ${index}`);
+            }
+            for (const [index, count] of [[1, 4], [2, 8]]) {
+                assert.doesNotMatch(rows[index][1], /table-row-rule-above/);
+                assert.equal((rows[index][2].match(/data-rule-above/g) ?? []).length, count);
+                assert.match(rows[index][2], /^<t[dh](?: scope="col")?>/, 'The first column is outside the partial rules');
+            }
+            assert.match(rows[5][2], /<t[dh] data-rule-above[^>]*colspan="4"[^>]*>Whole span<\/t[dh]>/,
+                'Adjacent ranges together cover a spanning cell');
+            assert.doesNotMatch(html, /\\(?:hline|cline|cmidrule|midrule|bottomrule)\b|\[1(?:\.5)?pt\]|\(lr\)/);
         }
     });
 

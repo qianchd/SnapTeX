@@ -4,6 +4,9 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Fixed**: Preserved intermediate `\hline`, `\cline`, and booktabs rules in legacy and AST table previews, including adjacent column ranges across spanning cells.
+- **Changed**: Released stale virtual-shell observers, tooltip timers, and embedded PDF loading tasks when preview content is replaced or closed.
+
 ## [0.8.1] - 2026-09-13
 
 - **Highlights**: Made the elastic paged preview faster and more stable for long documents while retaining continuous preview as an option.

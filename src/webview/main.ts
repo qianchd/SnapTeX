@@ -175,9 +175,10 @@ const previewBridge = getPreviewBridge();
         }
 
         dispose() {
-            if (this.element && this.element.parentNode) {
-                this.element.parentNode.removeChild(this.element);
-            }
+            this.cancelShow();
+            this.clearHideTimer();
+            this.currentLink = null;
+            this.element.remove();
             window.removeEventListener('mousemove', this._onWindowMouseMove);
             window.removeEventListener('mouseup', this._onWindowMouseUp);
 
@@ -339,11 +340,9 @@ const previewBridge = getPreviewBridge();
             this.refreshPDFs();
             this.positionTooltip(linkElement, this.anchorY);
 
-            setTimeout(() => {
-                 this.triggerTikzRendering();
-            }, 10);
-
             requestAnimationFrame(() => {
+                if (this.currentLink !== linkElement) return;
+                this.triggerTikzRendering();
                 this.element.classList.add('visible');
             });
         }

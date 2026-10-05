@@ -174,12 +174,18 @@ suite('Paged preview layout', () => {
         assert.equal(virtualization.getCachedBlockHeight('block-a'), 125);
     });
 
-    test('keeps identical block HTML scoped to each virtual shell', () => {
+    test('scopes cached HTML to each shell and releases observers on reset', () => {
         const shells = new Map<string, HTMLElement>();
         const contentRoot = {
             querySelector: (selector: string) => shells.get(selector.match(/data-index="(\d+)"/)?.[1] ?? '')
         } as HTMLElement;
         const virtualization = new BlockVirtualizationController(contentRoot, new ViewportAnchorController());
+        let disconnects = 0;
+        let observations = 0;
+        Object.assign(virtualization, { resizeObserver: {
+            observe: () => {observations++;},
+            disconnect: () => {disconnects++;}
+        } });
         const shell = (index: string) => ({
             getAttribute: (name: string) => name === 'data-index' ? index : name === 'data-block-hash' ? 'same-hash' : null
         }) as HTMLElement;
@@ -191,6 +197,13 @@ suite('Paged preview layout', () => {
 
         assert.match(virtualization.getBlockHtml(shells.get('1')), /first/);
         assert.match(virtualization.getBlockHtml(shells.get('2')), /second/);
+        virtualization.observeShell(shells.get('1'));
+        virtualization.observeShell(shells.get('2'));
+        virtualization.resetCaches();
+        assert.equal(disconnects, 1);
+        virtualization.observeShell(shells.get('1'));
+        assert.equal(observations, 3, 'Reset must release shells so they can be observed again');
+        assert.equal(virtualization.getBlockHtml(shells.get('1')), undefined);
     });
 
     test('preserves a mid-document anchor without scanning the offscreen prefix', () => {

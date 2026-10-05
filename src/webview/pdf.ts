@@ -89,9 +89,8 @@ const previewBridge = getPreviewBridge();
     }
 
     async function renderPdfDocument(canvas, loadingTask) {
-        let pdfDocument = null;
         try {
-            pdfDocument = await loadingTask.promise;
+            const pdfDocument = await loadingTask.promise;
 
             const page = await pdfDocument.getPage(1);
             const scale = 2;
@@ -110,9 +109,7 @@ const previewBridge = getPreviewBridge();
 
             page.cleanup();
         } finally {
-            if (pdfDocument) {
-                pdfDocument.destroy();
-            }
+            await loadingTask.destroy();
         }
     }
 
