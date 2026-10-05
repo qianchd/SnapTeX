@@ -77,7 +77,9 @@ Focused Mocha runs reject `.only`; zero matching shared/asset tests fail rather 
 
 ## Coverage limits
 
-Node tests verify generated HTML and logical behavior, not browser layout. The PWA tests execute the generated service worker with an in-memory Cache API model; they do not install a real PWA. PDF/SyncTeX tests check the protocol with injected tools, not actual PDF canvas pixels or a TeX compilation. TikZ tests verify prepared source, patches, and bundled assets; they do not prove that every picture compiles in TikZJax.
+Node tests verify generated HTML and logical behavior, not browser layout. The PWA tests execute the generated service worker with an in-memory Cache API model; they do not install a real PWA. PDF/SyncTeX tests query the official WASM parser using a real compiled fixture and native CLI reference coordinates, and separately verify authenticated sidecar delivery. They do not check PDF canvas pixels or require TeX in CI. TikZ tests verify prepared source, patches, and bundled assets; they do not prove that every picture compiles in TikZJax.
+
+After `npm run compile-tests`, run `node tools/synctex/benchmark.mjs /path/to/project/main.pdf /path/to/project` to measure startup and forward/inverse Worker round-trip latency through the production SyncTeX client, using a locally compiled PDF's sidecar. It does not copy the project into the repository or require the native `synctex` CLI. Correctness checks use the compiled test fixture and CLI reference coordinates above. These are Node/Worker measurements, not browser rendering timings. Rebuilding the committed parser assets requires Emscripten 4.0.20 and `node tools/synctex/build.mjs`; normal builds do not require Emscripten.
 
 Browser selection, touch dragging, scroll smoothness, PDF visibility, and actual offline installation still need manual checks. Do not describe an asset/source check as an end-to-end rendering test.
 

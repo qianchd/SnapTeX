@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, watch } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -14,7 +14,7 @@ const repoRoot = realpathSync(resolve(fileURLToPath(new URL('../..', import.meta
 const defaultRoot = resolve(process.argv[2] ?? join(repoRoot, 'dist-web'));
 const defaultPort = Number(process.env.PORT || 3000);
 const defaultHost = process.env.HOST || 'localhost';
-const projectFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt|pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
+const projectFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt|pdf|synctex(?:\.gz)?|png|jpe?g|gif|svg|webp|bmp)$/i;
 const projectTextFilePattern = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
 const projectApiPrefix = '/api/projects';
 const projectNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -57,6 +57,7 @@ const contentTypes = new Map([
     ['.mjs', 'text/javascript; charset=utf-8'],
     ['.wasm', 'application/wasm'],
     ['.gz', 'application/gzip'],
+    ['.synctex', 'text/plain; charset=utf-8'],
     ['.tex', 'text/plain; charset=utf-8'],
     ['.bib', 'text/plain; charset=utf-8'],
     ['.sty', 'text/plain; charset=utf-8'],
@@ -75,8 +76,9 @@ function texProcessEnv() {
         .map(name => [name, process.env[name]]));
 }
 
-async function compileProjectPdf(filePath, projectRoot, requestedMode) {
-    const source = relative(projectRoot, filePath);
+async function compileProjectPdf(filePath, _projectRoot, requestedMode) {
+    const source = `./${basename(filePath)}`;
+    const cwd = dirname(filePath);
     const mode = String(requestedMode || process.env.SNAPTEX_PDF_COMPILER || 'tinytex').toLowerCase();
     if (!pdfCompilerModes.has(mode)) {
         throw new Error(`Invalid SNAPTEX_PDF_COMPILER: ${mode}`);
@@ -93,8 +95,8 @@ async function compileProjectPdf(filePath, projectRoot, requestedMode) {
             id: 'latexmk',
             name: 'latexmk',
             command: process.env.SNAPTEX_LATEXMK || 'latexmk',
-            probeArgs: ['-v'],
-            args: ['-pdf', '-synctex=1', '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', source]
+            probeArgs: ['-norc', '-v'],
+            args: ['-norc', '-pdf', '-synctex=1', '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', source]
         }
     ].filter(compiler => mode === 'auto' || compiler.id === mode);
     const baseEnv = { ...texProcessEnv(), SNAPTEX_TEX_FILE: source };
@@ -105,7 +107,7 @@ async function compileProjectPdf(filePath, projectRoot, requestedMode) {
         if (mode === 'auto') {
             try {
                 await execFileAsync(compiler.command, compiler.probeArgs, {
-                    cwd: projectRoot, env, timeout: 10_000, maxBuffer: 1024 * 1024, windowsHide: true
+                    cwd, env, timeout: 10_000, maxBuffer: 1024 * 1024, windowsHide: true
                 });
             } catch {
                 continue;
@@ -113,7 +115,7 @@ async function compileProjectPdf(filePath, projectRoot, requestedMode) {
         }
         try {
             await execFileAsync(compiler.command, compiler.args, {
-                cwd: projectRoot, env, timeout: 300_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true
+                cwd, env, timeout: 300_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true
             });
             return;
         } catch (error) {
@@ -134,35 +136,6 @@ function compilerErrorMessage(error) {
         .filter(Boolean)
         .join('\n\n') || String(error?.message || error);
     return `PDF compilation failed${compiler}:\n${output.slice(-16_000)}`;
-}
-
-async function queryProjectSyncTeX(args, projectRoot) {
-    const command = args.direction === 'forward' ? 'view' : 'edit';
-    const location = args.direction === 'forward'
-        ? `${args.line}:${args.column}:${args.source}`
-        : `${args.page}:${args.x}:${args.y}:${args.pdf}`;
-    const { stdout } = await execFileAsync(process.env.SNAPTEX_SYNCTEX || 'synctex', [
-        command, args.direction === 'forward' ? '-i' : '-o', location,
-        ...(args.direction === 'forward' ? ['-o', args.pdf] : [])
-    ], { cwd: projectRoot, env: texProcessEnv(), timeout: 5000, maxBuffer: 256 * 1024, windowsHide: true });
-    if (args.direction === 'forward') {
-        const match = /(?:^|\n)Page:(\d+)\r?\nx:([\d.]+)\r?\ny:([\d.]+)([\s\S]*?)(?=\r?\nPage:|$)/.exec(stdout);
-        if (!match) return undefined;
-        const dimension = name => Number(new RegExp(`(?:^|\\n)${name}:([\\d.]+)`).exec(match[4])?.[1]) || undefined;
-        return { page: Number(match[1]), x: Number(match[2]), y: Number(match[3]),
-            boxX: dimension('h'), baseline: dimension('v'), width: dimension('W'),
-            height: dimension('H'), depth: dimension('D') };
-    }
-    const match = [...stdout.matchAll(/(?:^|\n)Input:([^\r\n]+)\r?\nLine:(\d+)\r?\nColumn:(-?\d+)/g)]
-        .find(result => Number(result[2]) > 0);
-    if (!match) return undefined;
-    const source = [resolve(dirname(args.pdf), match[1]), resolve(projectRoot, match[1])]
-        .find(path => isWithin(projectRoot, path) && resolveProjectFile(projectRoot, `/${relative(projectRoot, path)}`) === path);
-    return source && {
-        path: `/${relative(projectRoot, source).split(sep).join('/')}`,
-        line: Number(match[2]),
-        column: Math.max(1, Number(match[3]))
-    };
 }
 
 function defaultIndexPath(root) {
@@ -237,7 +210,6 @@ function projectManifest(projectRoot) {
         rootPath: chooseProjectRootPath(files),
         files,
         revisions: Object.fromEntries(files
-            .filter(path => projectTextFilePattern.test(path))
             .map(path => {
                 const stats = statSync(join(projectRoot, path.slice(1)), { bigint: true });
                 return [path, `${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`];
@@ -280,16 +252,19 @@ function createProjectWatchRegistry() {
                 notifyTimer = setTimeout(() => {
                     try {
                         const textPaths = [];
+                        const resourcePaths = [];
                         let manifestChanged = unknownChange;
                         for (const path of pendingPaths) {
                             const exists = resolveProjectFile(projectRoot, path) !== undefined;
-                            if (exists !== knownFiles.has(path) || !projectTextFilePattern.test(path)) {
+                            if (exists !== knownFiles.has(path)) {
                                 manifestChanged = true;
-                            } else if (exists) {
+                            } else if (exists && projectTextFilePattern.test(path)) {
                                 textPaths.push(path);
+                            } else if (exists) {
+                                resourcePaths.push(path);
                             }
                         }
-                        const event = manifestChanged ? { kind: 'manifest' } : { kind: 'text', paths: textPaths };
+                        const event = manifestChanged ? { kind: 'manifest' } : { kind: 'files', textPaths, resourcePaths };
                         if (manifestChanged) knownFiles = new Set(listProjectFiles(projectRoot));
                         unknownChange = false;
                         pendingPaths.clear();
@@ -611,7 +586,8 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
                 if (event.kind === 'manifest') {
                     sendSseEvent(response, 'manifest');
                 } else {
-                    event.paths.forEach(path => sendSseEvent(response, 'text', JSON.stringify(path)));
+                    event.textPaths.forEach(path => sendSseEvent(response, 'text', JSON.stringify(path)));
+                    event.resourcePaths.forEach(path => sendSseEvent(response, 'resource', JSON.stringify(path)));
                 }
             });
         } catch {
@@ -685,7 +661,9 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
                 return true;
             }
             manifestCache.delete(projectRoot);
-            sendJson(response, 200, { path: pdfPath });
+            const syncPath = ['.synctex.gz', '.synctex'].map(extension => pdfPath.replace(/\.pdf$/i, extension))
+                .find(path => resolveProjectFile(projectRoot, path));
+            sendJson(response, 200, { path: pdfPath, ...(syncPath ? { syncPath } : {}) });
         } catch (error) {
             const message = error?.code === 'ENOENT'
                 ? String(error.message || 'No supported PDF compiler is available to the SnapTeX server account.')
@@ -693,59 +671,6 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             sendJson(response, error?.code === 'ENOENT' ? 503 : 422, { error: message });
         } finally {
             projectTools.compilingProjects.delete(projectRoot);
-        }
-        return true;
-    }
-
-    if (route === 'synctex' && request.method === 'POST') {
-        const query = await readJsonRequest(request);
-        if (!query || typeof query !== 'object' || Array.isArray(query)) {
-            sendJson(response, 400, { error: 'Expected a SyncTeX JSON query.' });
-            return true;
-        }
-        const pdf = typeof query?.pdfPath === 'string' && /\.pdf$/i.test(query.pdfPath)
-            ? resolveProjectFile(projectRoot, query.pdfPath)
-            : undefined;
-        if (!pdf) {
-            sendJson(response, 404, { error: 'Project PDF not found.' });
-            return true;
-        }
-        const syncFile = pdf.replace(/\.pdf$/i, '.synctex.gz');
-        if (!existsSync(syncFile) || lstatSync(syncFile).isSymbolicLink() || !lstatSync(syncFile).isFile()) {
-            sendJson(response, 409, { error: 'No SyncTeX data for this PDF. Compile the TeX root first.' });
-            return true;
-        }
-        if (projectTools.compilingProjects.has(projectRoot)) {
-            sendJson(response, 409, { error: 'Wait for PDF compilation to finish.' });
-            return true;
-        }
-        const validNumber = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
-        let args;
-        if (query.direction === 'forward') {
-            const source = typeof query.sourcePath === 'string' && /\.tex$/i.test(query.sourcePath)
-                ? resolveProjectFile(projectRoot, query.sourcePath)
-                : undefined;
-            if (source && Number.isInteger(query.line) && validNumber(query.line, 1, 10_000_000)
-                && Number.isInteger(query.column) && validNumber(query.column, 0, 100_000)) {
-                args = { direction: 'forward', pdf, source, line: query.line, column: query.column };
-            }
-        } else if (query.direction === 'inverse' && Number.isInteger(query.page)
-            && validNumber(query.page, 1, 1_000_000) && validNumber(query.x, 0, 1_000_000)
-            && validNumber(query.y, 0, 1_000_000)) {
-            args = { direction: 'inverse', pdf, page: query.page, x: query.x, y: query.y };
-        }
-        if (!args) {
-            sendJson(response, 400, { error: 'Invalid SyncTeX coordinates or source file.' });
-            return true;
-        }
-        try {
-            const result = await projectTools.querySyncTeX(args, projectRoot);
-            if (result) sendJson(response, 200, result);
-            else sendJson(response, 404, { error: 'SyncTeX found no matching source or PDF location.' });
-        } catch (error) {
-            sendJson(response, error?.code === 'ENOENT' ? 503 : 422, {
-                error: error?.code === 'ENOENT' ? 'SyncTeX is not available to the server account.' : 'SyncTeX query failed.'
-            });
         }
         return true;
     }
@@ -859,7 +784,6 @@ export function createSnapTeXWebServer(options = {}) {
         fileWrites: new Map(),
         compilingProjects: new Set(),
         compilePdf: options.compilePdf ?? compileProjectPdf,
-        querySyncTeX: options.querySyncTeX ?? queryProjectSyncTeX
     };
     if (projectsRoot && !options.auth) {
         throw new Error('Remote projects require authentication.');

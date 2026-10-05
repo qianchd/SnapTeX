@@ -4,6 +4,7 @@ import type { PDFLinkService } from 'pdfjs-dist/types/web/pdf_link_service';
 import type { PDFViewer } from 'pdfjs-dist/types/web/pdf_viewer';
 import { ChevronLeft, ChevronRight, createElement, Download, Maximize2, Minus, Plus } from 'lucide';
 import type { PdfPosition } from '../../standalone/src/browser-project';
+import { debounce } from '../../../src/utils';
 
 interface PdfViewLocation {
     pageNumber: number;
@@ -20,17 +21,20 @@ export class PdfPreview {
     private viewer?: PDFViewer;
     private viewerPromise?: Promise<PDFViewer>;
     private pdfjs?: typeof import('pdfjs-dist');
-    private loadingTask?: PDFDocumentLoadingTask;
+    private documentTask?: PDFDocumentLoadingTask;
+    private pendingTask?: PDFDocumentLoadingTask;
     private generation = 0;
     private location?: PdfViewLocation;
     private documentPath?: string;
     private restoreLocation?: PdfViewLocation;
-    private pendingReveal?: PdfPosition;
+    private pendingReveal?: { point: PdfPosition; viewRatio: number; highlight: boolean };
     private readonly ready: Promise<void>;
     private downloadUrl?: string;
     private highlight?: HTMLDivElement;
+    private readonly syncScroll: ReturnType<typeof debounce<[]>>;
 
-    constructor(host: HTMLElement, onDoubleClick: (point: PdfPosition) => void) {
+    constructor(host: HTMLElement, onSync: (point: PdfPosition, viewRatio: number, auto: boolean) => void,
+        onInteraction: () => void, scrollDelay: () => number) {
         const shadow = host.attachShadow({ mode: 'open' });
         const stylesheet = document.createElement('link');
         stylesheet.rel = 'stylesheet';
@@ -119,9 +123,10 @@ export class PdfPreview {
             this.download
         );
         shadow.append(stylesheet, style, this.scroll, toolbar);
-        this.scroll.addEventListener('dblclick', event => {
-            const target = event.target;
-            const page = target instanceof Element ? target.closest<HTMLElement>('.page[data-page-number]') : null;
+        toolbar.addEventListener('pointerdown', onInteraction, { passive: true });
+        const syncAt = (clientX: number, clientY: number, auto: boolean) => {
+            if (host.clientHeight <= 0 || host.clientWidth <= 0) {return;}
+            const page = shadow.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('.page[data-page-number]');
             if (!page || !this.viewer) {return;}
             const pageNumber = Number(page.dataset.pageNumber);
             const pageView = this.viewer.getPageView(pageNumber - 1);
@@ -129,18 +134,30 @@ export class PdfPreview {
             const rect = page.querySelector('.canvasWrapper')?.getBoundingClientRect() ?? page.getBoundingClientRect();
             if (!viewport || rect.width <= 0 || rect.height <= 0) {return;}
             const [pdfX, pdfY] = viewport.convertToPdfPoint(
-                (event.clientX - rect.left) * viewport.width / rect.width,
-                (event.clientY - rect.top) * viewport.height / rect.height
+                (clientX - rect.left) * viewport.width / rect.width,
+                (clientY - rect.top) * viewport.height / rect.height
             );
-            onDoubleClick({ page: pageNumber, x: pdfX - viewport.viewBox[0], y: viewport.viewBox[3] - pdfY });
+            const scrollRect = this.scroll.getBoundingClientRect();
+            onSync({ page: pageNumber, x: pdfX - viewport.viewBox[0], y: viewport.viewBox[3] - pdfY },
+                (clientY - scrollRect.top) / scrollRect.height, auto);
+        };
+        this.scroll.addEventListener('dblclick', event => {
+            onInteraction();
+            syncAt(event.clientX, event.clientY, false);
         });
+        for (const event of ['wheel', 'pointerdown', 'touchstart']) {
+            this.scroll.addEventListener(event, onInteraction, { passive: true });
+        }
+        this.syncScroll = debounce(() => {
+            const rect = this.scroll.getBoundingClientRect();
+            syncAt(rect.left + rect.width / 2, rect.top + rect.height / 2, true);
+        }, scrollDelay);
+        this.scroll.addEventListener('scroll', this.syncScroll, { passive: true });
         new ResizeObserver(() => {
-            if (this.viewer?.pagesCount) {this.viewer.currentScaleValue = 'page-width';}
+            if (host.clientWidth > 0 && host.clientHeight > 0 && this.viewer?.pagesCount) {
+                this.viewer.currentScaleValue = 'page-width';
+            }
         }).observe(host);
-    }
-
-    private ensureViewer(): Promise<PDFViewer> {
-        return this.viewerPromise ??= this.createViewer();
     }
 
     private async createViewer(): Promise<PDFViewer> {
@@ -199,12 +216,14 @@ export class PdfPreview {
 
     async open(blob: Blob, path: string): Promise<void> {
         const generation = ++this.generation;
-        const viewer = await this.ensureViewer();
+        if (this.pendingTask) {void this.pendingTask.destroy(); this.pendingTask = undefined;}
+        const viewer = await (this.viewerPromise ??= this.createViewer());
         if (generation !== this.generation) {return;}
         const data = new Uint8Array(await blob.arrayBuffer());
         if (generation !== this.generation) {return;}
         const pdfjs = this.pdfjs!;
         const task = pdfjs.getDocument({ data });
+        this.pendingTask = task;
         try {
             const pdf = await task.promise;
             if (generation !== this.generation) {
@@ -217,19 +236,24 @@ export class PdfPreview {
             this.download.download = path.split('/').pop() || 'document.pdf';
             this.restoreLocation = this.documentPath === path ? this.location : undefined;
             this.documentPath = path;
-            const previous = this.loadingTask;
-            this.loadingTask = task;
+            const previous = this.documentTask;
+            this.documentTask = task;
+            this.pendingTask = undefined;
             viewer.setDocument(pdf);
             (viewer.linkService as PDFLinkService).setDocument(pdf);
             if (previous) {void previous.destroy();}
         } catch (error) {
             await task.destroy();
             if (generation === this.generation) {throw error;}
+        } finally {
+            if (this.pendingTask === task) {this.pendingTask = undefined;}
         }
     }
 
-    reveal(point: PdfPosition): void {
-        this.pendingReveal = point;
+    get currentPage(): number {return this.viewer?.currentPageNumber ?? 0;}
+
+    reveal(point: PdfPosition, viewRatio = 0.5, highlight = true): void {
+        this.pendingReveal = { point, viewRatio, highlight };
         void this.applyPendingReveal();
     }
 
@@ -244,14 +268,16 @@ export class PdfPreview {
     }
 
     private async applyPendingReveal(): Promise<void> {
-        const point = this.pendingReveal;
+        const request = this.pendingReveal;
         const viewer = this.viewer;
-        if (!point || !viewer || point.page < 1 || point.page > viewer.pagesCount || !viewer.pdfDocument) {return;}
+        if (!request || !viewer || this.pendingTask || !viewer.pdfDocument) {return;}
+        const { point, viewRatio, highlight: showHighlight } = request;
+        if (point.page < 1 || point.page > viewer.pagesCount) {return;}
         const generation = this.generation;
         const page = viewer.getPageView(point.page - 1);
         if (!page.pdfPage) {
             const pdfPage = await viewer.pdfDocument.getPage(point.page);
-            if (generation !== this.generation || this.pendingReveal !== point) {return;}
+            if (generation !== this.generation || this.pendingReveal !== request) {return;}
             if (!page.pdfPage) {page.setPdfPage(pdfPage);}
         }
         const viewport = page.viewport;
@@ -259,8 +285,13 @@ export class PdfPreview {
             pageNumber: point.page,
             destArray: [null, { name: 'XYZ' }, viewport.viewBox[0] + point.x, viewport.viewBox[3] - point.y, null],
             ignoreDestinationZoom: true,
-            center: 'vertical'
+            allowNegativeOffset: true
         });
+        const [, targetY] = viewport.convertToViewportPoint(viewport.viewBox[0] + point.x, viewport.viewBox[3] - point.y);
+        const pageTop = page.div.offsetTop;
+        this.scroll.scrollTop = pageTop + targetY - this.scroll.clientHeight * viewRatio;
+        this.pendingReveal = undefined;
+        if (!showHighlight) {return;}
         const boxX = point.boxX ?? point.x;
         const top = (point.baseline ?? point.y) - (point.height ?? 5);
         const bottom = (point.baseline ?? point.y) + (point.depth ?? 5);
@@ -282,11 +313,11 @@ export class PdfPreview {
             highlight.remove();
             if (this.highlight === highlight) {this.highlight = undefined;}
         }, { once: true });
-        this.pendingReveal = undefined;
     }
 
     close(): void {
         this.generation++;
+        this.syncScroll.cancel();
         this.location = undefined;
         this.documentPath = undefined;
         this.restoreLocation = undefined;
@@ -295,9 +326,10 @@ export class PdfPreview {
         this.highlight = undefined;
         this.viewer?.setDocument(null as never);
         if (this.viewer) {(this.viewer.linkService as PDFLinkService).setDocument(null);}
-        const task = this.loadingTask;
-        this.loadingTask = undefined;
+        const task = this.documentTask;
+        this.documentTask = undefined;
         if (task) {void task.destroy();}
+        if (this.pendingTask) {void this.pendingTask.destroy(); this.pendingTask = undefined;}
         if (this.downloadUrl) {
             URL.revokeObjectURL(this.downloadUrl);
             this.downloadUrl = undefined;

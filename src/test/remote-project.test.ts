@@ -119,6 +119,7 @@ suite('RemoteProject', () => {
     test('receives SSE changes, catches up on reconnect, and rejects stale saves', async () => {
         let text = 'Base';
         let revision = 1;
+        let pendingManifest: Promise<Response> | undefined;
         let events: EventTarget | undefined;
         let eventSourceClosed = false;
         const OriginalEventSource = globalThis.EventSource;
@@ -136,7 +137,9 @@ suite('RemoteProject', () => {
                 return Response.json({ csrfToken: 'test-csrf-token' });
             }
             if (url.endsWith('/manifest')) {
-                return Response.json({ rootPath: '/main.tex', files: ['/main.tex'], revisions: { '/main.tex': String(revision) } });
+                if (pendingManifest) {return pendingManifest;}
+                return Response.json({ rootPath: '/main.tex', files: ['/main.tex', '/main.pdf'],
+                    revisions: { '/main.tex': String(revision), '/main.pdf': String(revision) } });
             }
             if (init?.method === 'PUT') {
                 return new Response(text, { status: 412, headers: { ETag: `"${revision}"` } });
@@ -152,11 +155,12 @@ suite('RemoteProject', () => {
             const file = project.files[0];
             assert.equal(await file.readText?.(), 'Base');
             const changes: string[] = [];
+            const resources: string[] = [];
             let changed: (() => void) | undefined;
-            const stop = project.watchTextFiles?.(change => {
+            const stop = project.watchFiles?.(change => {
                 changes.push(change.text);
                 changed?.();
-            }, error => assert.fail(String(error)));
+            }, error => assert.fail(String(error)), file => resources.push(file.path));
             for (const [type, content] of [['text', 'Changed externally'], ['manifest', 'Changed while disconnected']]) {
                 text = content;
                 revision += 1;
@@ -166,14 +170,23 @@ suite('RemoteProject', () => {
                 });
             }
             assert.deepEqual(changes, ['Changed externally', 'Changed while disconnected']);
+            assert.deepEqual(resources, ['/main.pdf']);
+            events?.dispatchEvent(new MessageEvent('resource', { data: JSON.stringify('/main.pdf') }));
+            assert.deepEqual(resources, ['/main.pdf', '/main.pdf']);
             await assert.rejects(async () => { await file.writeText?.('Local edit'); }, ProjectWriteConflictError);
+            let finishManifest!: (response: Response) => void;
+            pendingManifest = new Promise(resolve => {finishManifest = resolve;});
+            events?.dispatchEvent(new MessageEvent('manifest'));
             stop?.();
+            finishManifest(Response.json({ rootPath: '/main.tex', files: ['/main.tex', '/main.pdf'],
+                revisions: { '/main.tex': 'closed', '/main.pdf': 'closed' } }));
             assert.equal(eventSourceClosed, true);
             text = 'Change after project close';
             revision += 1;
             events?.dispatchEvent(new MessageEvent('text', { data: JSON.stringify('/main.tex') }));
             await new Promise(resolve => setTimeout(resolve, 0));
             assert.deepEqual(changes, ['Changed externally', 'Changed while disconnected'], 'Closed projects must ignore later server events');
+            assert.deepEqual(resources, ['/main.pdf', '/main.pdf'], 'An in-flight manifest must not update a closed project');
         } finally {
             globalThis.EventSource = OriginalEventSource;
         }

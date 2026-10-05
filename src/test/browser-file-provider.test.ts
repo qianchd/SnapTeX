@@ -168,6 +168,13 @@ suite('BrowserFileProvider', () => {
             assert.equal(await provider.getResourceUrl(other, () => 'blob:other'), 'blob:other');
             provider.deleteProjectFile('/other.png');
             assert.deepEqual(revoked, ['blob:first', 'blob:replacement', 'blob:other']);
+
+            let finishRead!: (blob: Blob) => void;
+            provider.setProjectFile({ path: '/pending.png', readBlob: () => new Promise(resolve => { finishRead = resolve; }) });
+            const pending = provider.getResourceUrl(new BrowserUri('/pending.png'), () => assert.fail('A removed file must not create a Blob URL'));
+            provider.setProjectFiles([]);
+            finishRead(new Blob(['removed project']));
+            assert.equal(await pending, undefined);
         } finally {
             URL.revokeObjectURL = originalRevoke;
         }

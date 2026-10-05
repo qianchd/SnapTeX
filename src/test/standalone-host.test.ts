@@ -85,7 +85,7 @@ suite('StandaloneHost', () => {
                 path: '/main.tex', text: diskText,
                 readText: async () => diskText,
                 writeText: text => { diskText = text; }
-            }], watchTextFiles: callback => { receiveChange = callback; return () => undefined; } });
+            }], watchFiles: callback => { receiveChange = callback; return () => undefined; } });
             const anchor = editor.state.doc.line(2).to;
             editor.dispatch({ changes: { from: anchor, insert: ' edited' }, selection: { anchor: anchor + 7 } });
             host.handleEditorUpdate();
@@ -112,7 +112,7 @@ suite('StandaloneHost', () => {
         try {
             await host.loadProject({
                 files: [{ path: '/main.tex', text: 'First\nMiddle\nLast' }],
-                watchTextFiles: callback => { receiveChange = callback; return () => undefined; }
+                watchFiles: callback => { receiveChange = callback; return () => undefined; }
             });
             const anchor = editor.state.doc.line(2).to;
             editor.dispatch({ changes: { from: anchor, insert: ' edited' }, selection: { anchor: anchor + 7 } });
@@ -128,6 +128,13 @@ suite('StandaloneHost', () => {
             assert.equal(undoDepth(editor.state), depth, 'External updates must not become user undo steps');
             assert.equal(undo({ state: editor.state, dispatch: transaction => editor.dispatch(transaction) }), true);
             assert.equal(editor.state.doc.toString(), 'External heading\nFirst\nMiddle\nLast');
+
+            const middle = editor.state.doc.line(3).to;
+            editor.selectionAnchor = middle;
+            await receiveChange?.({ path: '/main.tex', text: 'New heading\nFirst\nMiddle\nUpdated last' });
+            assert.equal(editor.state.doc.toString(), 'New heading\nFirst\nMiddle\nUpdated last');
+            assert.equal(editor.selectionAnchor, middle - 'External heading'.length + 'New heading'.length,
+                'Separate external changes must not replace the unchanged text around the cursor');
         } finally {
             restoreWindow();
         }
@@ -145,7 +152,7 @@ suite('StandaloneHost', () => {
             await host.loadProject({
                 files: [{ path: '/main.tex', text: 'First\nMiddle\nLast', writeText: text => { writes.push(text); } }],
                 rootPath: '/main.tex',
-                watchTextFiles: onChange => {
+                watchFiles: onChange => {
                     receiveChange = onChange;
                     return () => undefined;
                 }
@@ -266,7 +273,7 @@ suite('StandaloneHost', () => {
                     diskText = text;
                     concurrentWrites--;
                 }
-            }], watchTextFiles: onChange => {
+            }], watchFiles: onChange => {
                 receiveChange = onChange;
                 return () => undefined;
             } });
@@ -329,26 +336,35 @@ suite('StandaloneHost', () => {
         }
     });
 
-    test('autosaves only dirty writable files and cancels disabled saves', async () => {
+    test('debounces edits and autosaves only dirty writable files', async () => {
         const editor = new TestEditorView();
         const restoreWindow = installWindow([]);
         const writes: Array<{ text: string; expectedText?: string }> = [];
-        let resolveSaved: () => void = () => undefined;
-        const saved = new Promise<void>(resolve => { resolveSaved = resolve; });
+        let pendingWrite: Promise<void> | undefined;
+        let releaseWrite: (() => void) | undefined;
         let timer: (() => void) | undefined;
         let scheduled = 0;
         window.setTimeout = ((callback: () => void, delay: number) => {
-            assert.equal(delay, 2000, 'Autosave must honor the configured interval');
+            assert.equal(delay, 2000, 'Autosave must honor the configured delay');
             timer = callback;
             return ++scheduled;
         }) as typeof window.setTimeout;
         window.clearTimeout = () => { timer = undefined; };
+        const expireDelay = () => {
+            const callback = timer;
+            assert.ok(callback);
+            timer = undefined;
+            callback();
+        };
         const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, {
-            autoSave: false, autoSaveIntervalSeconds: 2
+            autoSave: false, autoSaveDelaySeconds: 2
         });
         try {
             await host.loadProject({ files: [
-                { path: '/main.tex', text: 'Base', writeText: (text, expectedText) => { writes.push({ text, expectedText }); resolveSaved(); } },
+                { path: '/main.tex', text: 'Base', writeText: async (text, expectedText) => {
+                    writes.push({ text, expectedText });
+                    await pendingWrite;
+                } },
                 { path: '/readonly.tex', text: 'Read only' }
             ] });
             editor.replaceText('Edited');
@@ -357,16 +373,41 @@ suite('StandaloneHost', () => {
 
             await host.updateSettings({ autoSave: true });
             assert.ok(timer);
-            const fire = timer;
-            timer = undefined;
-            fire();
-            await saved;
+            const firstTimer = timer;
+            editor.replaceText('Latest edit');
+            host.handleEditorUpdate();
+            assert.ok(timer);
+            assert.notEqual(timer, firstTimer, 'Each edit must restart the quiet period');
+            assert.deepEqual(writes, [], 'Typing must not save before the delay expires');
+            expireDelay();
             await flushAsync();
-            assert.deepEqual(writes, [{ text: 'Edited', expectedText: 'Base' }]);
+            assert.deepEqual(writes, [{ text: 'Latest edit', expectedText: 'Base' }]);
             assert.equal(host.isDirty('/main.tex'), false);
             host.handleEditorUpdate();
             assert.equal(timer, undefined, 'Clean files must not schedule another save');
-            assert.equal(scheduled, 1);
+
+            editor.replaceText('Starting save');
+            host.handleEditorUpdate();
+            pendingWrite = new Promise<void>(resolve => {releaseWrite = resolve;});
+            const saving = host.saveCurrentText();
+            await flushAsync();
+            editor.replaceText('Queued edit');
+            host.handleEditorUpdate();
+            assert.ok(timer);
+            expireDelay();
+            editor.replaceText('Newer edit');
+            host.handleEditorUpdate();
+            releaseWrite!();
+            await saving;
+            await flushAsync();
+            assert.deepEqual(writes.map(write => write.text), ['Latest edit', 'Starting save'],
+                'New typing must postpone an autosave waiting behind another write');
+            assert.ok(timer);
+            expireDelay();
+            await flushAsync();
+            assert.deepEqual(writes.at(-1), { text: 'Newer edit', expectedText: 'Starting save' });
+            assert.equal(timer, undefined, 'A completed save must not start polling');
+            const savedWriteCount = writes.length;
 
             editor.replaceText('Second edit');
             host.handleEditorUpdate();
@@ -374,7 +415,7 @@ suite('StandaloneHost', () => {
             await host.updateSettings({ autoSave: false });
             assert.equal(timer, undefined, 'Disabling autosave must cancel a pending write');
             await host.flushProjectWrites();
-            assert.equal(writes.length, 1);
+            assert.equal(writes.length, savedWriteCount);
             assert.equal(host.isDirty('/main.tex'), true);
 
             await host.openEditorFile('/readonly.tex');
@@ -383,8 +424,9 @@ suite('StandaloneHost', () => {
             host.handleEditorUpdate();
             assert.equal(timer, undefined, 'A read-only project file must not schedule writes');
             await host.flushProjectWrites();
-            assert.equal(writes.length, 1);
+            assert.equal(writes.length, savedWriteCount);
         } finally {
+            releaseWrite?.();
             restoreWindow();
         }
     });
@@ -939,6 +981,57 @@ suite('StandaloneHost', () => {
         }
     });
 
+    test('shares sync ownership and hidden-pane behavior between PDF and TeX preview', async () => {
+        const editor = new TestEditorView();
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const host = new StandaloneHost(editor as unknown as EditorView);
+        const calls: unknown[][] = [];
+        let finishRead!: (text: string) => void;
+        const chapter = new Promise<string>(resolve => {finishRead = resolve;});
+        try {
+            await host.loadProject({ files: [
+                { path: '/main.tex', text: '\\begin{document}\nFirst\nSecond\n\\end{document}' },
+                { path: '/main.pdf', blob: new Blob(['PDF']) },
+                { path: '/main.synctex.gz', blob: new Blob(['sync']) },
+                { path: '/chapter.tex', readText: () => chapter }
+            ] });
+            await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+            assert.equal((await host.readPdfSyncData('/main.pdf'))?.compressed, true);
+            assert.equal(await host.readPdfSyncData('/missing.pdf'), undefined);
+            host.setPdfPreview((...args) => calls.push(args));
+            host.syncEditorSelection(1, 2, undefined, 0.25);
+            assert.deepEqual(calls, [['/main.tex', 2, 3, 0.25, true]]);
+            host.beginPreviewScroll();
+            host.syncEditorSelection(2);
+            assert.equal(calls.length, 1, 'PDF-driven scrolling must not rebound through the editor');
+            host.setPaneVisibility(false, true);
+            const oldScroll = editor.scrollDOM.scrollTop;
+            await host.revealEditorLocation('/main.tex', 3, 1, 0.75, true);
+            assert.equal(editor.scrollDOM.scrollTop, oldScroll);
+            host.setPaneVisibility(true, true);
+            assert.notEqual(editor.scrollDOM.scrollTop, oldScroll);
+            host.beginEditorInteraction();
+            host.setPaneVisibility(true, false);
+            host.syncEditorSelection(2);
+            assert.equal(calls.length, 1);
+            host.setPaneVisibility(true, true);
+            assert.equal(calls.length, 2);
+            let current = true;
+            const reveal = host.revealEditorLocation('/chapter.tex', 1, 1, 0.5, false, () => current);
+            await flushAsync();
+            current = false;
+            finishRead('Late chapter');
+            await reveal;
+            assert.equal(host.getActivePath(), '/main.tex', 'An obsolete query must not switch source files');
+            host.setPdfPreview();
+            await host.renderCurrentText();
+            host.syncEditorSelection(1);
+            assert.ok(messages.some(message => message.command === HostToPreviewCommand.ScrollToBlock));
+            assert.equal(calls.length, 2);
+        } finally {restoreWindow();}
+    });
+
     test('reveals preview double-click locations in the active editor', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];
@@ -983,6 +1076,11 @@ suite('StandaloneHost', () => {
             assert.equal(editor.selectionAnchor, chapterText.indexOf('Included second paragraph'));
             assert.equal(editor.scrollDOM.scrollTop, editor.selectionAnchor + 175);
             assert.ok(editor.lastEffects.length > 0, 'A preview jump should emit an editor highlight effect');
+
+            await host.revealEditorLocation('/chapter.tex', 1, 10_000);
+            assert.equal(editor.selectionAnchor, editor.state.doc.line(1).to, 'Columns must stay within their source line');
+            await host.revealEditorLocation('/chapter.tex', 10_000, 1);
+            assert.equal(editor.selectionAnchor, editor.state.doc.line(editor.state.doc.lines).from);
         } finally {
             restoreWindow();
         }

@@ -2,6 +2,7 @@ import { basicSetup, EditorView } from 'codemirror';
 import { EditorState, StateEffect, StateField, Transaction } from '@codemirror/state';
 import { Decoration, type DecorationSet, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
+import type { diffPatch } from 'node-diff3' with { 'resolution-mode': 'import' };
 import { BrowserFileProvider, BrowserUri } from './browser-file-provider';
 import { createLatexEditorExtensions, type LatexCompletionData } from './editor-assistance';
 import {
@@ -15,14 +16,12 @@ import {
     type BrowserProject,
     type BrowserProjectSnapshot,
     type BrowserProjectTextChange,
-    type PdfCompiler,
-    type PdfSyncQuery,
-    type PdfSyncResult
+    type PdfCompiler
 } from './browser-project';
 import { PreviewUpdateService } from '../../../src/preview-update-service';
 import { resolveProjectResourcePath } from '../../../src/file-provider';
 import { DEFAULT_PREVIEW_LAYOUT, DEFAULT_PREVIEW_STYLE_SETTINGS, type BackendMode, type PreviewLayoutMode, type PreviewStyleSettings, type SourceSyncOptions } from '../../../src/types';
-import { debounce, decodeHtmlAttribute, getSyncAnchorContext, offsetAtLine, replaceLocalResourceUrls } from '../../../src/utils';
+import { debounce, decodeHtmlAttribute, getSyncAnchorContext, replaceLocalResourceUrls } from '../../../src/utils';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage, type PreviewToHostMessage } from '../../../src/preview-messages';
 
 declare global {
@@ -33,6 +32,7 @@ declare global {
 }
 
 type PreviewRevealOptions = SourceSyncOptions & { viewRatio?: number };
+type PdfSyncHandler = (path: string, line: number, column: number, viewRatio: number, auto: boolean) => void;
 
 interface StandaloneAppOptions {
     editorParent: HTMLElement;
@@ -40,6 +40,7 @@ interface StandaloneAppOptions {
     rootPath?: string;
     settings?: Partial<StandalonePreviewSettings>;
     onStateChange?: (host: StandaloneHost) => void;
+    onResourceChange?: (path: string) => void;
 }
 
 interface StandaloneSaveResult {
@@ -52,7 +53,7 @@ export interface StandalonePreviewSettings extends PreviewStyleSettings {
     livePreview: boolean;
     autoScrollSync: boolean;
     autoSave: boolean;
-    autoSaveIntervalSeconds: number;
+    autoSaveDelaySeconds: number;
     renderDelayMs: number;
     autoScrollDelayMs: number;
     virtualMode: boolean;
@@ -66,7 +67,7 @@ export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     livePreview: true,
     autoScrollSync: true,
     autoSave: true,
-    autoSaveIntervalSeconds: 1,
+    autoSaveDelaySeconds: 1,
     renderDelayMs: 150,
     autoScrollDelayMs: 100,
     virtualMode: true,
@@ -75,8 +76,8 @@ export const DEFAULT_STANDALONE_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     debugMemory: false
 };
 
-function normalizeAutoSaveInterval(seconds: number): number {
-    return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 60) : DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoSaveIntervalSeconds;
+function normalizeAutoSaveDelay(seconds: number): number {
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 60) : DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoSaveDelaySeconds;
 }
 
 const flashEditorLineEffect = StateEffect.define<number | null>();
@@ -115,7 +116,7 @@ export class StandaloneHost {
     private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
-    private pdfPreviewActive = false;
+    private pdfSyncHandler?: PdfSyncHandler;
     private editorVisible = true;
     private previewVisible = true;
     private pendingEditorScroll: { position: number; viewRatio: number } | undefined;
@@ -134,12 +135,13 @@ export class StandaloneHost {
         private readonly scheduleRender: () => void = () => undefined,
         private readonly onStateChange: () => void = () => undefined,
         settings: Partial<StandalonePreviewSettings> = {},
-        private readonly cancelPendingEditorSync: () => void = () => undefined
+        private readonly cancelPendingEditorSync: () => void = () => undefined,
+        private readonly onResourceChange: (path: string) => void = () => undefined
     ) {
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
         this.settings = { ...DEFAULT_STANDALONE_PREVIEW_SETTINGS, ...settings };
-        this.settings.autoSaveIntervalSeconds = normalizeAutoSaveInterval(this.settings.autoSaveIntervalSeconds);
+        this.settings.autoSaveDelaySeconds = normalizeAutoSaveDelay(this.settings.autoSaveDelaySeconds);
     }
 
     start() {
@@ -179,27 +181,34 @@ export class StandaloneHost {
         this.markSaved(this.activeUri.path, text);
         this.replaceEditorText(text);
         this.updateService.resetState();
-        this.notifyStateChanged();
+        this.onStateChange();
         await this.renderCurrentText();
-        this.stopProjectWatch = project.watchTextFiles?.(
+        this.stopProjectWatch = project.watchFiles?.(
             change => this.queueProjectChange(change),
-            error => this.addDiagnostic(`Remote sync failed: ${error instanceof Error ? error.message : String(error)}`)
+            error => this.addDiagnostic(`Project sync failed: ${error instanceof Error ? error.message : String(error)}`),
+            file => {
+                this.fileProvider.setProjectFile(file);
+                this.onResourceChange(file.path);
+            }
         );
         return rootPath;
     }
 
-    async openEditorFile(path: string) {
+    async openEditorFile(path: string, isCurrent: () => boolean = () => true) {
         await this.flushProjectWrites();
+        if (!isCurrent()) {return;}
         this.persistActiveEditorText();
         const targetUri = new BrowserUri(path);
         const text = await this.fileProvider.read(targetUri);
+        if (!isCurrent()) {return;}
         await this.setProjectActivePath?.(targetUri.path);
+        if (!isCurrent()) {return;}
         this.activeUri = targetUri;
         if (!this.savedTexts.has(targetUri.path)) {
             this.markSaved(targetUri.path, text);
         }
         this.replaceEditorText(text);
-        this.notifyStateChanged();
+        this.onStateChange();
     }
 
     async setPreviewRoot(path: string) {
@@ -212,7 +221,7 @@ export class StandaloneHost {
         await this.setProjectRootPath?.(rootUri.path);
         this.rootUri = rootUri;
         this.updateService.resetState();
-        this.notifyStateChanged();
+        this.onStateChange();
         await this.renderCurrentText();
     }
 
@@ -250,39 +259,42 @@ export class StandaloneHost {
         return this.fileProvider.readBlob(new BrowserUri(path));
     }
 
-    setPdfPreviewActive(active: boolean): void {
-        if (this.pdfPreviewActive === active) {return;}
-        this.pdfPreviewActive = active;
+    setPdfPreview(sync?: PdfSyncHandler): void {
+        const changed = !!this.pdfSyncHandler !== !!sync;
+        this.pdfSyncHandler = sync;
+        if (!changed) {return;}
         this.pendingPreviewSync = undefined;
         this.cancelPendingEditorSync();
         this.updateService.resetState();
-        if (!active) {void this.renderCurrentText();}
+        if (!sync) {void this.renderCurrentText();}
     }
 
-    syncPdf(query: PdfSyncQuery): Promise<PdfSyncResult> {
-        if (!this.projectOperations?.syncPdf) {
-            throw new Error('SyncTeX is available only for server projects.');
+    async readPdfSyncData(pdfPath: string): Promise<{ blob: Blob; compressed: boolean } | undefined> {
+        for (const extension of ['.synctex.gz', '.synctex']) {
+            const path = pdfPath.replace(/\.pdf$/i, extension);
+            if (this.fileProvider.has(path)) {
+                return { blob: await this.fileProvider.readBlob(new BrowserUri(path)), compressed: extension.endsWith('.gz') };
+            }
         }
-        return this.projectOperations.syncPdf(query);
+        return undefined;
     }
 
-    getEditorPdfSyncLocation(): { path: string; line: number; column: number } {
-        const selection = this.editorView.state.selection.main;
-        const line = this.editorView.state.doc.lineAt(selection.head);
-        return { path: this.activeUri.path, line: line.number, column: selection.head - line.from + 1 };
-    }
-
-    async revealEditorLocation(path: string, line: number, column: number, viewRatio = 0.5): Promise<void> {
+    async revealEditorLocation(path: string, line: number, column: number, viewRatio = 0.5, auto = false,
+        isCurrent: () => boolean = () => true): Promise<void> {
+        if (!isCurrent()) {return;}
+        if (auto && (!this.settings.autoScrollSync || !this.previewControlsSync)) {return;}
         const targetPath = normalizeBrowserPath(path);
         if (targetPath !== this.activeUri.path) {
-            await this.openEditorFile(targetPath);
+            await this.openEditorFile(targetPath, isCurrent);
         }
-        const text = this.editorView.state.doc.toString();
-        const lineStart = offsetAtLine(text, Math.max(0, line - 1));
-        const lineBreak = text.indexOf('\n', lineStart);
-        const position = Math.min(lineBreak < 0 ? text.length : lineBreak, lineStart + Math.max(0, column - 1));
-        this.suppressNextSelectionSync = true;
+        if (!isCurrent()) {return;}
+        if (auto && (!this.pdfSyncHandler || !this.previewControlsSync)) {return;}
+        const doc = this.editorView.state.doc;
+        const targetLine = doc.line(Math.max(1, Math.min(doc.lines, line)));
+        const position = Math.min(targetLine.to, targetLine.from + Math.max(0, column - 1));
         this.suppressEditorToPreview();
+        if (auto) {this.syncEditorPosition(position, viewRatio); return;}
+        this.suppressNextSelectionSync = true;
         this.editorView.dispatch({ selection: { anchor: position }, effects: flashEditorLineEffect.of(position) });
         this.syncEditorPosition(position, viewRatio);
         const token = ++this.editorFlashToken;
@@ -308,13 +320,15 @@ export class StandaloneHost {
         if (this.dirtyPaths.size > 0) {
             throw new Error(`Save the other modified files before compiling: ${[...this.dirtyPaths].join(', ')}`);
         }
-        const file = await compile(this.rootUri.path, compiler);
+        const files = await compile(this.rootUri.path, compiler);
         if (compile !== this.projectOperations?.compilePdf) {
             throw new Error('The project changed while PDF compilation was running.');
         }
-        this.fileProvider.setProjectFile(file);
-        this.notifyStateChanged();
-        return file.path;
+        for (const file of files) {this.fileProvider.setProjectFile(file);}
+        this.onStateChange();
+        const pdf = files.find(file => isPdfFile(file.path));
+        if (!pdf) {throw new Error('Compilation finished without a PDF.');}
+        return pdf.path;
     }
 
     canModifyProject(): boolean {
@@ -365,7 +379,7 @@ export class StandaloneHost {
             if (!this.savedTexts.has(this.rootUri.path)) {this.markSaved(this.rootUri.path, text);}
             this.replaceEditorText(text);
         }
-        this.notifyStateChanged();
+        this.onStateChange();
         await this.renderCurrentText();
     }
 
@@ -378,11 +392,10 @@ export class StandaloneHost {
         const previousLivePreview = this.settings.livePreview;
         const previousBackendMode = this.settings.backendMode;
         const previousAutoSave = this.settings.autoSave;
-        const previousSaveInterval = this.settings.autoSaveIntervalSeconds;
+        const previousSaveDelay = this.settings.autoSaveDelaySeconds;
         this.settings = { ...this.settings, ...settings };
-        this.settings.autoSaveIntervalSeconds = normalizeAutoSaveInterval(this.settings.autoSaveIntervalSeconds);
-        if (previousAutoSave !== this.settings.autoSave || previousSaveInterval !== this.settings.autoSaveIntervalSeconds) {
-            this.clearAutosaveTimer();
+        this.settings.autoSaveDelaySeconds = normalizeAutoSaveDelay(this.settings.autoSaveDelaySeconds);
+        if (previousAutoSave !== this.settings.autoSave || previousSaveDelay !== this.settings.autoSaveDelaySeconds) {
             this.scheduleAutosave();
         }
         const virtualModeChanged = previousVirtualMode !== this.settings.virtualMode;
@@ -394,7 +407,7 @@ export class StandaloneHost {
                 this.updateService.resetState();
             }
         }
-        this.notifyStateChanged();
+        this.onStateChange();
         if (this.previewReady && shouldRender) {
             await this.renderCurrentText();
         }
@@ -422,27 +435,28 @@ export class StandaloneHost {
         }
     }
 
-    private updateEditorText(text: string) {
-        const current = this.editorView.state.doc.toString();
-        let from = 0;
-        while (from < current.length && from < text.length && current[from] === text[from]) {
-            from++;
-        }
-
-        let to = current.length;
-        let insertTo = text.length;
-        while (to > from && insertTo > from && current[to - 1] === text[insertTo - 1]) {
-            to--;
-            insertTo--;
-        }
-        if (from === to && from === insertTo) {
-            return;
-        }
+    private updateEditorText(text: string, buildPatch: typeof diffPatch) {
+        const document = this.editorView.state.doc;
+        const current = document.toString();
+        const changes = buildPatch(current.match(/[^\n]*\n|[^\n]+/g) ?? [], text.match(/[^\n]*\n|[^\n]+/g) ?? [])
+            .map(({ buffer1, buffer2 }) => {
+                let from = buffer1.offset < document.lines ? document.line(buffer1.offset + 1).from : current.length;
+                const endLine = buffer1.offset + buffer1.length;
+                let to = endLine < document.lines ? document.line(endLine + 1).from : current.length;
+                let insert = buffer2.chunk.join('');
+                let start = 0;
+                while (from < to && start < insert.length && current[from] === insert[start]) {from++; start++;}
+                let end = insert.length;
+                while (to > from && end > start && current[to - 1] === insert[end - 1]) {to--; end--;}
+                insert = insert.slice(start, end);
+                return { from, to, insert };
+            });
+        if (!changes.length) {return;}
 
         this.programmaticEditorUpdate = true;
         try {
             this.editorView.dispatch({
-                changes: { from, to, insert: text.slice(from, insertTo) },
+                changes,
                 annotations: Transaction.addToHistory.of(false)
             });
         } finally {
@@ -515,8 +529,8 @@ export class StandaloneHost {
         if (remoteText === baseText) {
             return false;
         }
-        // Load the merge module before taking the editor snapshot; do not yield while applying it.
-        const { mergeDiff3 } = await import('node-diff3');
+        // Snapshot the editor after the async module load, then merge and apply without yielding.
+        const { diffPatch, mergeDiff3 } = await import('node-diff3');
         const localText = path === this.activeUri.path
             ? this.editorView.state.doc.toString()
             : await this.fileProvider.read(uri);
@@ -537,29 +551,29 @@ export class StandaloneHost {
             this.conflictedPaths.delete(path);
         }
         if (path === this.activeUri.path) {
-            this.updateEditorText(merged.text);
+            this.updateEditorText(merged.text, diffPatch);
             if (!merged.conflict && this.isDirty(path)) {this.scheduleAutosave();}
         }
-        this.notifyStateChanged();
+        this.onStateChange();
         await this.renderCurrentText();
         return merged.conflict;
     }
 
     private scheduleAutosave(): void {
-        if (!this.settings.autoSave || !this.isDirty(this.activeUri.path) || !this.fileProvider.isWritable(this.activeUri) || this.autosaveTimer !== undefined) {
+        this.clearAutosaveTimer();
+        if (!this.settings.autoSave || !this.isDirty(this.activeUri.path) || !this.fileProvider.isWritable(this.activeUri)) {
             return;
         }
         this.autosaveTimer = window.setTimeout(() => {
             this.autosaveTimer = undefined;
-            void this.queueAutosave().then(() => {
-                this.scheduleAutosave();
-            }).catch(error => this.addDiagnostic(`Autosave failed: ${error instanceof Error ? error.message : String(error)}`));
-        }, this.settings.autoSaveIntervalSeconds * 1000);
+            void this.queueAutosave().catch(error => this.addDiagnostic(`Autosave failed: ${error instanceof Error ? error.message : String(error)}`));
+        }, this.settings.autoSaveDelaySeconds * 1000);
     }
 
     private queueAutosave(): Promise<void> {
         return this.queueProjectTask(async () => {
-            if (this.settings.autoSave && this.fileProvider.isWritable(this.activeUri) && this.isDirty(this.activeUri.path)) {
+            // An edit while this task waited in the queue starts a new quiet period.
+            if (this.autosaveTimer === undefined && this.settings.autoSave && this.fileProvider.isWritable(this.activeUri) && this.isDirty(this.activeUri.path)) {
                 await this.writeCurrentText();
             }
         });
@@ -588,12 +602,8 @@ export class StandaloneHost {
             this.dirtyPaths.delete(path);
         }
         if (wasDirty !== isDirty) {
-            this.notifyStateChanged();
+            this.onStateChange();
         }
-    }
-
-    private notifyStateChanged() {
-        this.onStateChange();
     }
 
     async saveCurrentText(): Promise<StandaloneSaveResult> {
@@ -615,9 +625,8 @@ export class StandaloneHost {
     }
 
     syncEditorSelection(line: number, character = 0, lineText?: string, viewRatio = 0.5, auto = true) {
-        if (this.pdfPreviewActive) {return;}
         if (!auto) { this.beginEditorInteraction(); }
-        if ((auto && (!this.settings.autoScrollSync || !this.editorVisible || this.previewControlsSync)) || !this.previewReady) {
+        if ((auto && (!this.settings.autoScrollSync || !this.editorVisible || this.previewControlsSync)) || (!this.previewReady && !this.pdfSyncHandler)) {
             return;
         }
         if (!this.previewVisible) {
@@ -628,6 +637,10 @@ export class StandaloneHost {
             return;
         }
         this.pendingPreviewSync = undefined;
+        if (this.pdfSyncHandler) {
+            this.pdfSyncHandler(this.activeUri.path, line + 1, character + 1, viewRatio, auto);
+            return;
+        }
 
         const syncData = this.updateService.getPreviewSyncData(this.activeUri.toString(), line, character);
         if (!syncData) {
@@ -701,7 +714,6 @@ export class StandaloneHost {
     }
 
     beginPreviewScroll() {
-        if (this.pdfPreviewActive) {return;}
         this.previewControlsSync = true;
         this.suppressPreviewToEditorUntil = 0;
         this.cancelEditorToPreviewSync();
@@ -710,6 +722,11 @@ export class StandaloneHost {
     beginEditorInteraction() {
         this.previewControlsSync = false;
         this.suppressEditorToPreviewUntil = 0;
+    }
+
+    canAutoSyncPdf(direction: 'forward' | 'inverse'): boolean {
+        return !!this.pdfSyncHandler && this.settings.autoScrollSync && this.previewVisible &&
+            (direction === 'forward' ? !this.previewControlsSync : this.previewControlsSync);
     }
 
     private async openSourceForPreview(index: number, ratio: number, options: SourceSyncOptions = {}) {
@@ -723,10 +740,7 @@ export class StandaloneHost {
             await this.openEditorFile(targetPath);
         }
 
-        return {
-            source,
-            text: this.editorView.state.doc.toString()
-        };
+        return source;
     }
 
     async revealPreviewLocation(index: number, ratio: number, options: PreviewRevealOptions = {}) {
@@ -735,11 +749,11 @@ export class StandaloneHost {
         if (!target) {
             return;
         }
-        await this.revealEditorLocation(target.source.file, target.source.line + 1, 1, options.viewRatio);
+        await this.revealEditorLocation(target.file, target.line + 1, 1, options.viewRatio);
     }
 
     async syncPreviewScroll(index: number, ratio: number, options: SourceSyncOptions = {}) {
-        if (this.pdfPreviewActive || !this.settings.autoScrollSync || Date.now() < this.suppressPreviewToEditorUntil) {
+        if (this.pdfSyncHandler || !this.settings.autoScrollSync || Date.now() < this.suppressPreviewToEditorUntil) {
             return;
         }
 
@@ -749,7 +763,8 @@ export class StandaloneHost {
             return;
         }
 
-        const position = Math.min(this.editorView.state.doc.length, offsetAtLine(target.text, Math.max(0, target.source.line)));
+        const doc = this.editorView.state.doc;
+        const position = doc.line(Math.max(1, Math.min(doc.lines, target.line + 1))).from;
         this.suppressEditorToPreview();
         this.syncEditorPosition(position, 0.5);
     }
@@ -781,7 +796,7 @@ export class StandaloneHost {
                 await this.handlePdfRequest(message.id, message.path);
                 break;
             case PreviewToHostCommand.RevealLine:
-                if (!this.pdfPreviewActive) {void this.revealPreviewLocation(message.index, message.ratio, message);}
+                if (!this.pdfSyncHandler) {void this.revealPreviewLocation(message.index, message.ratio, message);}
                 break;
             case PreviewToHostCommand.SyncScroll:
                 void this.syncPreviewScroll(message.index, message.ratio, message);
@@ -799,7 +814,7 @@ export class StandaloneHost {
     }
 
     async renderCurrentText() {
-        if (!this.previewReady || this.pdfPreviewActive || this.fileProvider.isEmpty()) {
+        if (!this.previewReady || this.pdfSyncHandler || this.fileProvider.isEmpty()) {
             return;
         }
 
@@ -810,7 +825,7 @@ export class StandaloneHost {
             backendMode: this.settings.backendMode,
             transformHtml: html => this.fixHtmlPaths(html)
         });
-        if (this.pdfPreviewActive) {return;}
+        if (this.pdfSyncHandler) {return;}
 
         this.labels = Object.keys(payload.numbering.labels).sort((a, b) => a.localeCompare(b));
         this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));
@@ -896,7 +911,7 @@ export class StandaloneHost {
         this.diagnostics.clear();
         messages.forEach(message => this.diagnostics.add(message));
         if (previous !== [...this.diagnostics].join('\n')) {
-            this.notifyStateChanged();
+            this.onStateChange();
         }
     }
 
@@ -904,7 +919,7 @@ export class StandaloneHost {
         const size = this.diagnostics.size;
         this.diagnostics.add(message);
         if (this.diagnostics.size !== size) {
-            this.notifyStateChanged();
+            this.onStateChange();
         }
     }
 }
@@ -1024,7 +1039,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
     }, options.settings, () => {
         pendingSelection = undefined;
         scheduleSelectionSync.cancel();
-    });
+    }, options.onResourceChange);
     host.start();
     return host;
 }

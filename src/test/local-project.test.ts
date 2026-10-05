@@ -31,6 +31,8 @@ suite('Local browser project', () => {
         const previousObserver = globals.FileSystemObserver;
         let notifyObserver: () => void = () => {};
         const file = new TestFileHandle();
+        const pdf = new TestFileHandle();
+        pdf.name = 'main.pdf';
         file.onWrite = () => notifyObserver();
         globals.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
         globals.FileSystemObserver = class {
@@ -42,14 +44,15 @@ suite('Local browser project', () => {
         const directory = {
             kind: 'directory',
             name: 'project',
-            async *values() { yield file; }
+            async *values() { yield file; yield pdf; }
         } as unknown as BrowserDirectoryHandle;
         const changes: string[] = [];
         let stop: (() => void) | undefined;
 
         try {
             const project = await createDirectoryProject(directory);
-            stop = project.watchTextFiles!(change => { changes.push(change.text); }, error => { throw error; });
+            const resources: string[] = [];
+            stop = project.watchFiles!(change => { changes.push(change.text); }, error => { throw error; }, file => resources.push(file.path));
             await project.files[0].writeText?.('Saved locally');
             await new Promise(resolve => setTimeout(resolve, 0));
             assert.deepEqual(changes, []);
@@ -59,6 +62,15 @@ suite('Local browser project', () => {
             notifyObserver();
             await new Promise(resolve => setTimeout(resolve, 0));
             assert.deepEqual(changes, ['Changed outside SnapTeX']);
+            pdf.modified++;
+            notifyObserver();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            assert.deepEqual(resources, [], 'Unopened resources must not be polled');
+            await project.files.find(file => file.path === '/main.pdf')?.readBlob?.();
+            pdf.modified++;
+            notifyObserver();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            assert.deepEqual(resources, ['/main.pdf']);
 
             stop?.();
             stop = undefined;

@@ -1,4 +1,6 @@
 import { createStandaloneSnapTeXApp, DEFAULT_STANDALONE_PREVIEW_SETTINGS, type StandaloneHost, type StandalonePreviewSettings } from '../../standalone/src/app';
+import { PdfSync } from '../../standalone/src/pdf-sync';
+import type { PdfSyncQuery } from '../../standalone/src/browser-project';
 import { createProjectZip } from '../../standalone/src/project-archive';
 import type { BackendMode, PreviewLayoutMode, PreviewStyleSettings } from '../../../src/types';
 import { ChevronDown, ChevronLeft, ChevronRight, createElement } from 'lucide';
@@ -55,10 +57,10 @@ let activeHistoryId: string | undefined;
 const WEB_THEMES = ['light', 'dark', 'blue', 'rose', 'solarized-light', 'skyblue', 'github-light'] as const;
 type WebTheme = typeof WEB_THEMES[number];
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'autoSave' | 'virtualMode' | 'debugMemory';
-type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs' | 'autoSaveIntervalSeconds';
+type NumberPreviewSetting = 'renderDelayMs' | 'autoScrollDelayMs' | 'autoSaveDelaySeconds';
 type TextPreviewSetting = keyof PreviewStyleSettings;
 type BooleanSettingControl = 'livePreviewToggle' | 'autoScrollToggle' | 'autoSaveToggle' | 'virtualModeToggle' | 'debugMemoryToggle';
-type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput' | 'autoSaveIntervalInput';
+type NumberSettingControl = 'renderDelayInput' | 'autoScrollDelayInput' | 'autoSaveDelayInput';
 type TextSettingControl = 'previewFontSizeInput' | 'previewLineHeightInput' | 'previewContentWidthInput' | 'previewFontFamilyInput' | 'previewPageMarginInput' | 'previewContinuousMarginInput';
 type EditorStyleSetting = keyof EditorStyleSettings;
 type EditorStyleControl = 'editorFontSizeInput' | 'editorFontFamilyInput';
@@ -70,6 +72,7 @@ interface EditorStyleSettings {
 
 const DEFAULT_WEB_PREVIEW_SETTINGS: StandalonePreviewSettings = {
     ...DEFAULT_STANDALONE_PREVIEW_SETTINGS,
+    autoScrollSync: false,
     fontSize: '2.8cqw',
     contentMaxWidth: '920px'
 };
@@ -85,7 +88,7 @@ const BOOLEAN_SETTING_CONTROLS: ReadonlyArray<[BooleanSettingControl, BooleanPre
 const NUMBER_SETTING_CONTROLS: ReadonlyArray<[NumberSettingControl, NumberPreviewSetting, number]> = [
     ['renderDelayInput', 'renderDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.renderDelayMs],
     ['autoScrollDelayInput', 'autoScrollDelayMs', DEFAULT_WEB_PREVIEW_SETTINGS.autoScrollDelayMs],
-    ['autoSaveIntervalInput', 'autoSaveIntervalSeconds', DEFAULT_WEB_PREVIEW_SETTINGS.autoSaveIntervalSeconds]
+    ['autoSaveDelayInput', 'autoSaveDelaySeconds', DEFAULT_WEB_PREVIEW_SETTINGS.autoSaveDelaySeconds]
 ];
 
 const TEXT_SETTING_CONTROLS: ReadonlyArray<[TextSettingControl, TextPreviewSetting]> = [
@@ -157,7 +160,7 @@ function loadWebPreferences() {
             theme,
             pdfCompiler,
             explorerCollapsed: stored.explorerCollapsed !== false,
-            diagnosticsVisible: stored.diagnosticsVisible !== false
+            diagnosticsVisible: stored.diagnosticsVisible === true
         };
     } catch {
         return {
@@ -166,7 +169,7 @@ function loadWebPreferences() {
             theme: 'light' as WebTheme,
             pdfCompiler: DEFAULT_PDF_COMPILER,
             explorerCollapsed: true,
-            diagnosticsVisible: true
+            diagnosticsVisible: false
         };
     }
 }
@@ -237,7 +240,7 @@ function readControls() {
         pdfCompilerSelect: requireElement<HTMLSelectElement>('pdf-compiler-select'),
         renderDelayInput: requireElement<HTMLInputElement>('render-delay-input'),
         autoScrollDelayInput: requireElement<HTMLInputElement>('auto-scroll-delay-input'),
-        autoSaveIntervalInput: requireElement<HTMLInputElement>('auto-save-interval-input'),
+        autoSaveDelayInput: requireElement<HTMLInputElement>('auto-save-delay-input'),
         previewFontSizeInput: requireElement<HTMLInputElement>('preview-font-size-input'),
         previewLineHeightInput: requireElement<HTMLInputElement>('preview-line-height-input'),
         previewContentWidthInput: requireElement<HTMLInputElement>('preview-content-width-input'),
@@ -276,19 +279,26 @@ const webControls = readControls();
 let openPdfPath: string | undefined;
 let pdfRequestId = 0;
 let pdfViewer: PdfPreview | undefined;
+let pdfSync: PdfSync | undefined;
+let pdfSyncQueryId = 0;
+let pdfRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 function closePdfPreview(): void {
+    clearTimeout(pdfRefreshTimer);
     pdfRequestId++;
     openPdfPath = undefined;
-    window.snaptexStandaloneHost?.setPdfPreviewActive(false);
+    window.snaptexStandaloneHost?.setPdfPreview();
     document.body.dataset.pdfOpen = 'false';
     webControls.pdfPreview.hidden = true;
     webControls.closePdfPreviewButton.hidden = true;
     webControls.previewPane.dataset.pdfOpen = 'false';
     pdfViewer?.close();
+    pdfSync?.close();
+    pdfSync = undefined;
 }
 
 async function openPdfPreview(host: StandaloneHost, path: string): Promise<void> {
+    const refreshing = openPdfPath === path;
     const requestId = ++pdfRequestId;
     const blob = await host.readProjectPdf(path);
     if (requestId !== pdfRequestId) {return;}
@@ -298,23 +308,56 @@ async function openPdfPreview(host: StandaloneHost, path: string): Promise<void>
     document.body.dataset.pdfOpen = 'true';
     webControls.pdfPreview.hidden = false;
     webControls.closePdfPreviewButton.hidden = false;
-    host.setPdfPreviewActive(true);
-    getPreviewController()?.clearPreview();
-    pdfViewer ??= new PdfPreview(webControls.pdfPreviewHost, point => {
-        if (!openPdfPath) {return;}
-        host.syncPdf({ direction: 'inverse', pdfPath: openPdfPath, ...point })
-            .then(result => {
-                if ('path' in result) {return host.revealEditorLocation(result.path, result.line, result.column);}
-                throw new Error('The server returned an invalid SyncTeX source location.');
-            })
-            .catch(error => reportFailure('PDF to source', error));
+    host.setPdfPreview((sourcePath, line, column, viewRatio, auto) => {
+        if (openPdfPath) {void syncPdf(host, { direction: 'forward', sourcePath, line, column }, viewRatio, auto);}
     });
+    if (!refreshing) {getPreviewController()?.clearPreview();}
+    pdfViewer ??= new PdfPreview(webControls.pdfPreviewHost,
+        (point, viewRatio, auto) => {
+            if (openPdfPath) {void syncPdf(host, { direction: 'inverse', ...point }, viewRatio, auto);}
+        }, () => host.beginPreviewScroll(), () => host.getSettings().autoScrollDelayMs);
+    const pdfReady = pdfViewer.open(blob, path);
+    pdfSync?.close();
+    pdfSync = new PdfSync(new URL('media/vendor/synctex/worker.js', document.baseURI), pdfReady.then(async () => {
+        if (requestId !== pdfRequestId) {throw new Error('PDF was closed.');}
+        const data = await host.readPdfSyncData(path);
+        if (!data) {throw new Error('No SyncTeX data for this PDF. Compile it with -synctex=1.');}
+        const bytes = new Uint8Array(await data.blob.arrayBuffer());
+        return { runtimeUrl: new URL('media/vendor/synctex/synctex.mjs', document.baseURI).toString(),
+            data: bytes, compressed: data.compressed, pdfPath: path, rootPath: host.getRootPath(), paths: host.getProjectTextPaths() };
+    }));
     try {
-        await pdfViewer.open(blob, path);
+        await pdfReady;
         if (requestId === pdfRequestId) {setStatus(`Viewing ${path}`);}
     } catch (error) {
-        if (requestId === pdfRequestId) {closePdfPreview();}
+        if (requestId === pdfRequestId) {
+            if (!refreshing) {closePdfPreview();}
+            else {
+                pdfRequestId++;
+                pdfSync?.close();
+            }
+        }
         throw error;
+    }
+}
+
+async function syncPdf(host: StandaloneHost, query: PdfSyncQuery, viewRatio: number, auto: boolean): Promise<void> {
+    if (auto && !host.canAutoSyncPdf(query.direction)) {return;}
+    const requestId = pdfRequestId;
+    const queryId = ++pdfSyncQueryId;
+    const current = () => requestId === pdfRequestId && queryId === pdfSyncQueryId &&
+        (!auto || host.canAutoSyncPdf(query.direction));
+    try {
+        if (!pdfSync) {return;}
+        const result = await pdfSync.query(query, pdfViewer?.currentPage);
+        if (!current()) {return;}
+        if (query.direction === 'forward' && result && 'page' in result) {
+            pdfViewer?.reveal(result, viewRatio, !auto);
+        } else if (query.direction === 'inverse' && result && 'path' in result) {
+            await host.revealEditorLocation(result.path, result.line, result.column, viewRatio, auto, current);
+        } else {throw new Error('SyncTeX found no matching location.');}
+    } catch (error) {
+        if (!auto && current()) {reportFailure(query.direction === 'forward' ? 'Source to PDF' : 'PDF to source', error);}
     }
 }
 
@@ -547,8 +590,8 @@ function reportCompileFailure(error: unknown): void {
 }
 
 async function loadProject(host: StandaloneHost, project: BrowserProject, historyId = project.id): Promise<void> {
-    const rootPath = await host.loadProject(project);
     closePdfPreview();
+    const rootPath = await host.loadProject(project);
     activeHistoryId = historyId;
 
     expandedFolders.clear();
@@ -1140,23 +1183,6 @@ function bindProjectControls(host: StandaloneHost): void {
     });
     controls.closePdfPreviewButton.addEventListener('click', closePdfPreview);
     document.addEventListener('keydown', event => {
-        if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey
-            && (event.code === 'KeyM' || event.key.toLowerCase() === 'm') && openPdfPath) {
-            event.preventDefault();
-            event.stopPropagation();
-            const location = host.getEditorPdfSyncLocation();
-            host.syncPdf({ direction: 'forward', pdfPath: openPdfPath, sourcePath: location.path,
-                line: location.line, column: location.column })
-                .then(result => {
-                    if ('page' in result) {
-                        pdfViewer?.reveal(result);
-                        setStatus(`PDF page ${result.page}`);
-                    }
-                    else {throw new Error('The server returned an invalid SyncTeX PDF location.');}
-                })
-                .catch(error => reportFailure('Source to PDF', error));
-            return;
-        }
         if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
             && event.key.toLowerCase() === 'b' && host.canCompilePdf()) {
             event.preventDefault();
@@ -1307,7 +1333,17 @@ host = createStandaloneSnapTeXApp({
     editorParent,
     initialText: '',
     settings: webPreferences.settings,
-    onStateChange: renderProjectState
+    onStateChange: renderProjectState,
+    onResourceChange: path => {
+        if (!openPdfPath || ![openPdfPath, openPdfPath.replace(/\.pdf$/i, '.synctex'),
+            openPdfPath.replace(/\.pdf$/i, '.synctex.gz')].includes(path)) {return;}
+        clearTimeout(pdfRefreshTimer);
+        pdfRefreshTimer = setTimeout(() => {
+            if (openPdfPath && !webControls.compilePdfButton.disabled) {
+                void openPdfPreview(host, openPdfPath).catch(error => reportFailure('Refresh PDF', error));
+            }
+        }, 200);
+    }
 });
 const splitter = getElement('splitter');
 if (splitter) {

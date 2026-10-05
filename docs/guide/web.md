@@ -91,7 +91,7 @@ The same saved-text baseline is checked before writing local folders and Indexed
 
 ## Automatic saving
 
-**Settings > Auto save** is enabled by default. Its interval defaults to one second and is configurable in seconds. SnapTeX writes only changed, writable text files; manual `Ctrl+S` uses the same save queue. These settings are shared across projects and remembered by the browser.
+**Settings > Auto save** is enabled by default. **Save delay (s)** defaults to one second: every edit restarts the delay, and saving happens only after you stop typing for that long. This is event-driven, not periodic polling. SnapTeX writes only changed, writable text files to their source: the server's disk for server projects, the local directory for local folders, or IndexedDB for browser workspaces. Manual `Ctrl+S` saves immediately through the same queue. These settings are shared across projects and remembered by the browser.
 
 Non-overlapping changes merge before saving. Overlapping changes insert conflict markers and block saving until they are resolved. Local folder checks are best-effort: browser file APIs cannot atomically compare and replace a file while an unrelated disk process writes it. Imported/demo workspaces check their version in an IndexedDB transaction, and the remote API serializes version checks and writes from browser clients.
 

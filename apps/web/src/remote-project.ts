@@ -7,8 +7,7 @@ import {
     normalizeProjectText,
     ProjectWriteConflictError,
     type BrowserProject,
-    type BrowserProjectFile,
-    type PdfSyncResult
+    type BrowserProjectFile
 } from '../../standalone/src/browser-project';
 
 interface RemoteProjectManifest {
@@ -99,21 +98,21 @@ function readManifest(value: unknown): RemoteProjectManifest {
     const { rootPath, files, revisions } = value as Partial<RemoteProjectManifest>;
     if (typeof rootPath !== 'string' || !Array.isArray(files) || files.some(path => typeof path !== 'string') ||
         !revisions || typeof revisions !== 'object' || Array.isArray(revisions) ||
-        Object.entries(revisions).some(([path, revision]) => typeof path !== 'string' || typeof revision !== 'string')) {
+        Object.values(revisions).some(revision => typeof revision !== 'string')) {
         throw new Error('Remote project manifest requires rootPath, files, and revisions.');
     }
 
-    const normalizedFiles = [...new Set(files.map(normalizeBrowserPath).filter(isProjectFile))];
+    const normalizedFiles = new Set(files.map(normalizeBrowserPath).filter(isProjectFile));
     const normalizedRoot = normalizeBrowserPath(rootPath);
-    if (!isTexFile(normalizedRoot) || !normalizedFiles.includes(normalizedRoot)) {
+    if (!isTexFile(normalizedRoot) || !normalizedFiles.has(normalizedRoot)) {
         throw new Error('Remote project rootPath must name a TeX file in files.');
     }
     return {
         rootPath: normalizedRoot,
-        files: normalizedFiles,
+        files: [...normalizedFiles],
         revisions: Object.fromEntries(Object.entries(revisions)
             .map(([path, revision]) => [normalizeBrowserPath(path), revision])
-            .filter(([path]) => normalizedFiles.includes(path)))
+            .filter(([path]) => normalizedFiles.has(path)))
     };
 }
 
@@ -199,7 +198,7 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
         name: projectName,
         rootPath: manifest.rootPath,
         files: manifest.files.map(path => createFile(path)),
-        watchTextFiles: (onChange, onError) => {
+        watchFiles: (onChange, onError, onResourceChange) => {
             const pendingText = new Set<string>();
             let manifestPending = false;
             let syncing = false;
@@ -213,10 +212,14 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                             manifestPending = false;
                             const previousManifest = currentManifest;
                             const response = await fetchOk(fetcher, new URL('manifest', baseUrl).toString());
-                            currentManifest = readManifest(await response.json());
-                            Object.entries(currentManifest.revisions)
-                                .filter(([path, revision]) => revision !== previousManifest.revisions[path])
-                                .forEach(([path]) => pendingText.add(path));
+                            const manifest = readManifest(await response.json());
+                            if (stopped) {return;}
+                            currentManifest = manifest;
+                            for (const [path, revision] of Object.entries(manifest.revisions)) {
+                                if (revision === previousManifest.revisions[path]) {continue;}
+                                if (isProjectTextFile(path)) {pendingText.add(path);}
+                                else {onResourceChange?.(createFile(path));}
+                            }
                         }
                         const paths = [...pendingText];
                         pendingText.clear();
@@ -229,7 +232,7 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                 } catch (error) {
                     manifestPending = false;
                     pendingText.clear();
-                    onError(error);
+                    if (!stopped) {onError(error);}
                 } finally {
                     syncing = false;
                 }
@@ -239,19 +242,21 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                 manifestPending = true;
                 void sync();
             });
-            events.addEventListener('text', event => {
-                try {
-                    const path = JSON.parse((event as MessageEvent<string>).data);
-                    if (typeof path === 'string') {
+            for (const type of ['text', 'resource']) {
+                events.addEventListener(type, event => {
+                    try {
+                        const path = JSON.parse((event as MessageEvent<string>).data);
+                        if (stopped || typeof path !== 'string') {return;}
                         const normalizedPath = normalizeBrowserPath(path);
-                        if (currentManifest.files.includes(normalizedPath)) {pendingText.add(normalizedPath);}
+                        if (currentManifest.files.includes(normalizedPath)) {
+                            if (type === 'text') {pendingText.add(normalizedPath);}
+                            else {onResourceChange?.(createFile(normalizedPath));}
+                        }
                         else {manifestPending = true;}
                         void sync();
-                    }
-                } catch (error) {
-                    onError(error);
-                }
-            });
+                    } catch (error) {onError(error);}
+                });
+            }
             return () => {
                 stopped = true;
                 events.close();
@@ -271,13 +276,13 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                 await fetchOk(fetcher, remoteFileUrl(baseUrl, path), { method: 'DELETE' });
                 versions.delete(path);
             },
-            syncPdf: query => postJson<PdfSyncResult>('synctex', query),
             compilePdf: async (rootPath, compiler) => {
-                const { path } = await postJson<{ path: string }>('compile', { rootPath, compiler });
+                const { path, syncPath } = await postJson<{ path: string; syncPath?: string }>('compile', { rootPath, compiler });
                 if (!isPdfFile(path)) {
                     throw new Error('The server returned an invalid PDF path.');
                 }
-                return createFile(normalizeBrowserPath(path));
+                if (syncPath && !/\.synctex(?:\.gz)?$/i.test(syncPath)) {throw new Error('Invalid SyncTeX path.');}
+                return [path, ...(syncPath ? [syncPath] : [])].map(path => createFile(normalizeBrowserPath(path)));
             }
         }
     };

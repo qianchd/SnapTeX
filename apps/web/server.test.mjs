@@ -80,13 +80,6 @@ test('serves a writable project through the remote project API', async t => {
             await writeFile(join(projectRoot, 'main.pdf'), '%PDF-1.4 test');
             await writeFile(join(projectRoot, 'main.synctex.gz'), 'sync data');
         },
-        querySyncTeX: async (query, root) => {
-            assert.equal(root, projectRoot);
-            assert.equal(query.pdf, join(projectRoot, 'main.pdf'));
-            return query.direction === 'forward'
-                ? { page: 3, x: 42, y: 120 }
-                : { path: '/sections/intro.tex', line: 8, column: 2 };
-        },
         auth: {
             username: 'test-user',
             password: 'a-secure-test-password',
@@ -150,7 +143,7 @@ test('serves a writable project through the remote project API', async t => {
             const manifest = await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json();
             assert.equal(manifest.rootPath, '/main.tex');
             assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);
-            assert.deepEqual(Object.keys(manifest.revisions), ['/main.tex', '/sections/intro.tex']);
+            assert.deepEqual(Object.keys(manifest.revisions), ['/figure.png', '/main.tex', '/sections/intro.tex']);
         });
         await t.test('notifies an external write through SSE without polling the manifest', async () => {
             const response = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`, { signal: AbortSignal.timeout(5000) });
@@ -173,18 +166,18 @@ test('serves a writable project through the remote project API', async t => {
                 assert.match(await readEvent(), /event: manifest/);
                 await writeFile(join(projectRoot, 'main.tex'), 'External event');
                 assert.match(await readEvent(), /event: text\ndata:"\/main\.tex"/);
+                await writeFile(join(projectRoot, 'figure.png'), 'Updated image');
+                assert.match(await readEvent(), /event: resource\ndata:"\/figure\.png"/);
             } finally {
                 await reader.cancel().catch(() => undefined);
                 await writeFile(join(projectRoot, 'main.tex'), 'Original');
             }
         });
-        await t.test('compiles PDFs and exposes authenticated SyncTeX queries', async () => {
-            for (const route of ['compile', 'synctex']) {
-                for (const body of ['{', '[]', 'null']) {
-                    assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/${route}`, {
-                        method: 'POST', body
-                    })).status, 400, route + ': ' + body);
-                }
+        await t.test('compiles PDFs and serves SyncTeX only inside the authenticated project', async () => {
+            for (const body of ['{', '[]', 'null']) {
+                assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
+                    method: 'POST', body
+                })).status, 400, 'compile: ' + body);
             }
             assert.equal((await fetch(`${baseUrl}/api/projects/paper-one/compile`, { method: 'POST' })).status, 401);
             const invalidCompile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/compile`, {
@@ -201,8 +194,15 @@ test('serves a writable project through the remote project API', async t => {
             const result = await compiled.json();
             assert.equal(compiled.status, 200, result.error);
             assert.equal(result.path, '/main.pdf');
+            assert.equal(result.syncPath, '/main.synctex.gz');
             assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.pdf`)).text(), '%PDF-1.4 test');
-            assert.ok((await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files.includes('/main.pdf'));
+            const syncUrl = `${baseUrl}/api/projects/paper-one/files/main.synctex.gz`;
+            assert.equal((await fetch(syncUrl)).status, 401);
+            assert.equal(await (await authenticatedFetch(syncUrl)).text(), 'sync data');
+            assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/../outside.synctex.gz`)).status, 404);
+            const files = (await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/manifest`)).json()).files;
+            assert.ok(files.includes('/main.synctex.gz'));
+            assert.ok(files.includes('/main.pdf'));
             compileFailure = Object.assign(new Error('compiler exited'), {
                 snaptexCompiler: 'latexmk',
                 stdout: 'LaTeX entered extended mode',
@@ -214,26 +214,6 @@ test('serves a writable project through the remote project API', async t => {
             assert.equal(failedCompile.status, 422);
             assert.match((await failedCompile.json()).error, /latexmk[\s\S]*extended mode[\s\S]*Undefined control sequence/);
             compileFailure = undefined;
-            const syncUrl = `${baseUrl}/api/projects/paper-one/synctex`;
-            assert.equal((await fetch(syncUrl, { method: 'POST' })).status, 401);
-            assert.equal((await fetch(syncUrl, { method: 'POST', headers: { cookie, Origin: publicOrigin } })).status, 403);
-            assert.equal((await authenticatedFetch(syncUrl, {
-                method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/../outside.tex', line: 1, column: 1 })
-            })).status, 400);
-            const forward = await authenticatedFetch(syncUrl, {
-                method: 'POST', body: JSON.stringify({ direction: 'forward', pdfPath: '/main.pdf', sourcePath: '/main.tex', line: 12, column: 1 })
-            });
-            assert.equal(forward.status, 200);
-            assert.deepEqual(await forward.json(), { page: 3, x: 42, y: 120 });
-            const inverse = await authenticatedFetch(syncUrl, {
-                method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
-            });
-            assert.equal(inverse.status, 200);
-            assert.deepEqual(await inverse.json(), { path: '/sections/intro.tex', line: 8, column: 2 });
-            await rm(join(projectRoot, 'main.synctex.gz'));
-            assert.equal((await authenticatedFetch(syncUrl, {
-                method: 'POST', body: JSON.stringify({ direction: 'inverse', pdfPath: '/main.pdf', page: 3, x: 42, y: 120 })
-            })).status, 409);
         });
         await t.test('rejects stale and concurrent file writes without losing disk edits', async () => {
             const projectFile = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`);

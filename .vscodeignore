@@ -24,6 +24,8 @@ tools/**
 todo.md
 README.md
 media/icon.png
-media/icon - *.png
+media/icon-32.png
+media/icon-pwa.svg
 media/icon.svg
 tex_samplecode
+media/vendor/synctex/**

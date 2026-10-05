@@ -200,6 +200,9 @@ function copyPdfAssets() {
     for (const file of ["pdf_viewer.mjs", "pdf_viewer.css"]) {
         copyFileIfExists(path.join(ROOT, "node_modules", "pdfjs-dist", "web", file), path.join(pdfjsDest, file), "PDF.js viewer file");
     }
+    if (buildTarget !== 'vscode') {
+        copyDirectoryFiles(path.join(ROOT, 'apps/standalone/vendor/synctex'), path.join(MEDIA_VENDOR, 'synctex'));
+    }
 }
 
 function copyTikzAssets() {
@@ -318,6 +321,7 @@ function buildOptions() {
             options.push(browserBuildOptions("src/webview/pdf.ts", "media/webview-pdf.js", "SnapTeXPdfRuntime", problemMatcher));
         }
         options.push(browserBuildOptions("apps/web/src/main.ts", "apps/web/dist/web-main.js", "SnapTeXStandaloneWeb", problemMatcher));
+        options.push(browserBuildOptions("apps/standalone/src/pdf-sync-worker.ts", "media/vendor/synctex/worker.js", "SnapTeXSyncTeX", problemMatcher));
     }
     return options;
 }

@@ -89,7 +89,7 @@ function assetHashesFor(outDir, assets) {
 function assetGroup(asset) {
     if (asset.startsWith('media/vendor/katex/')) return 'katex';
     if (asset.startsWith('media/vendor/tikzjax/')) return 'tikz';
-    if (asset.startsWith('media/vendor/pdfjs/')) return 'pdf';
+    if (asset.startsWith('media/vendor/pdfjs/') || asset.startsWith('media/vendor/synctex/')) return 'pdf';
     if (asset.startsWith('demo/')) return 'demo';
     return 'core';
 }

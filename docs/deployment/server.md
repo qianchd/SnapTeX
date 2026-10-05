@@ -11,7 +11,7 @@ Use this edition only when project files must stay on the server. For GitHub Pag
 - a complete SnapTeX source tree;
 - a projects directory whose direct children are named LaTeX projects;
 - a dedicated HTTPS origin such as `https://snaptex.example.com`.
-- for PDF compilation and source mapping, either `latexmk` or `Rscript` with the R package `tinytex`, plus the `synctex` CLI available to the dedicated service account.
+- for PDF compilation, either `latexmk` or `Rscript` with the R package `tinytex`. SyncTeX queries run locally in the browser and do not require the `synctex` CLI on the server.
 
 ## Configure
 
@@ -51,7 +51,6 @@ SNAPTEX_PUBLIC_PATH=/
 | `SNAPTEX_RSCRIPT` | Optional path to `Rscript` when it is not on the service account's `PATH`. |
 | `SNAPTEX_PDF_COMPILER` | Server default: `tinytex` (default), `latexmk`, or `auto`. The web setting can override it per compilation; Auto probes Rscript with TinyTeX before direct `latexmk`. |
 | `SNAPTEX_LATEXMK` | Optional path to `latexmk` when it is not on the service account's `PATH`. |
-| `SNAPTEX_SYNCTEX` | Optional path to `synctex` when it is not on the service account's `PATH`. |
 
 `apps/web/server.env` is ignored by Git. Protect the source checkout and configuration so only administrators can read the credentials.
 
@@ -108,7 +107,11 @@ The API exposes only allowlisted project files and rejects hidden paths, travers
 
 The Explorer lists project PDFs alongside text files. Click a PDF to view it in the preview panel; use **TeX Preview** to return. In a server project, **File > Compile PDF** or `Ctrl+B` saves the active edited file and compiles the current TeX root. Choose TinyTeX, direct `latexmk`, or Auto under **Settings > PDF compiler**; Auto probes TinyTeX first. If its generated PDF is already open, the preview refreshes after compilation; compilation does not open the PDF automatically. Other modified files must be saved first. Compilation failures open a dialog containing the compiler output.
 
-PDF mode does not auto-sync scrolling with the editor. Server-compiled PDFs with a `.synctex.gz` file support `Ctrl+Alt+M` from the editor to the PDF and double-clicking the PDF to locate its TeX source. Imported or static-project PDFs remain viewable, but do not have server-side SyncTeX lookup.
+PDFs with a same-name `.synctex.gz` or `.synctex` file support `Ctrl+Alt+M` from the editor to the PDF, double-clicking the PDF to locate its TeX source, and the existing **Auto scroll sync** setting. This works with local folders, imported workspaces, and server projects. Both files are loaded once when opening or refreshing the PDF; the bundled official SyncTeX parser performs queries in a browser Worker without contacting the server. Missing or invalid SyncTeX data does not prevent viewing the PDF. SyncTeX describes the last compilation, so recompile after editing to update its line mapping.
+
+Server compilation refreshes an already open PDF and its SyncTeX index while retaining its PDF view location. External resource changes are delivered by the existing project file watcher. Local folders use `FileSystemObserver` when available, otherwise the existing five-second check while the tab is visible; unread binary files are not polled. Imported workspaces are snapshots and need re-importing to receive outside changes.
+
+PDF/source queries remain available offline after the PDF, sidecar, and application assets have loaded. A server project's source file that has not yet been opened may still require a network read; importing the project into a browser workspace makes those source files available offline too. Closing the PDF releases the parser Worker and restores a full TeX preview load.
 
 Compilation runs under the dedicated service account, not as root, with shell escape and automatic package installation disabled. Only give remote-project access to users trusted to submit TeX source: TeX compilation can still read files accessible to that account. `Ctrl+B` is intentionally limited to server projects; local and imported browser projects can open existing PDFs but cannot execute local programs.
 

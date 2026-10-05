@@ -1,5 +1,5 @@
 const PROJECT_TEXT_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|md|txt)$/i;
-const PROJECT_RESOURCE_FILE_PATTERN = /\.(?:pdf|png|jpe?g|gif|svg|webp|bmp)$/i;
+const PROJECT_RESOURCE_FILE_PATTERN = /\.(?:pdf|synctex(?:\.gz)?|png|jpe?g|gif|svg|webp|bmp)$/i;
 
 export interface BrowserProjectFile {
     path: string;
@@ -17,8 +17,8 @@ export interface BrowserProjectTextChange {
 }
 
 export type PdfSyncQuery =
-    | { direction: 'forward'; pdfPath: string; sourcePath: string; line: number; column: number }
-    | { direction: 'inverse'; pdfPath: string; page: number; x: number; y: number };
+    | { direction: 'forward'; sourcePath: string; line: number; column: number }
+    | { direction: 'inverse'; page: number; x: number; y: number };
 
 export interface PdfPosition {
     page: number;
@@ -152,8 +152,7 @@ export type PdfCompiler = typeof PDF_COMPILERS[number];
 interface BrowserProjectOperations {
     createTextFile(path: string, text: string): Promise<BrowserProjectFile>;
     deleteFile(path: string): Promise<void>;
-    compilePdf?: (rootPath: string, compiler: PdfCompiler) => Promise<BrowserProjectFile>;
-    syncPdf?: (query: PdfSyncQuery) => Promise<PdfSyncResult>;
+    compilePdf?: (rootPath: string, compiler: PdfCompiler) => Promise<readonly BrowserProjectFile[]>;
 }
 
 export interface BrowserProjectSnapshotFile {
@@ -174,9 +173,10 @@ export interface BrowserProject {
     activePath?: string;
     setActivePath?: (path: string) => Promise<void>;
     setRootPath?: (path: string) => Promise<void>;
-    watchTextFiles?: (
+    watchFiles?: (
         onChange: (change: BrowserProjectTextChange) => Promise<void> | void,
-        onError: (error: unknown) => void
+        onError: (error: unknown) => void,
+        onResourceChange?: (file: BrowserProjectFile) => void
     ) => () => void;
     operations?: BrowserProjectOperations;
 }

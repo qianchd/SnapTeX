@@ -98,7 +98,7 @@ export class BrowserFileProvider implements IFileProvider<BrowserUri> {
             return undefined;
         }
         const blob = await this.loadBlob(file);
-        if (!blob) {
+        if (!blob || this.files.get(uri.path) !== file) {
             return undefined;
         }
         if (!file.objectUrl) {

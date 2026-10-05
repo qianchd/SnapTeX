@@ -181,7 +181,6 @@ SNAPTEX_PUBLIC_PATH="$(systemd_quote "$SNAPTEX_PUBLIC_PATH")"
 SNAPTEX_PDF_COMPILER="$(systemd_quote "$SNAPTEX_PDF_COMPILER")"
 SNAPTEX_LATEXMK="$(systemd_quote "${SNAPTEX_LATEXMK:-latexmk}")"
 SNAPTEX_RSCRIPT="$(systemd_quote "${SNAPTEX_RSCRIPT:-Rscript}")"
-SNAPTEX_SYNCTEX="$(systemd_quote "${SNAPTEX_SYNCTEX:-synctex}")"
 EOF
 
 echo "[SnapTeX] Installing runtime files in $SNAPTEX_INSTALL_DIR..."
