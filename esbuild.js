@@ -1,6 +1,7 @@
 const esbuild = require("esbuild");
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("node:child_process");
 
 const ROOT = __dirname;
 const MEDIA_VENDOR = path.join(ROOT, "media", "vendor");
@@ -239,6 +240,9 @@ function copyTikzAssets() {
 
 function copyRuntimeAssets() {
     console.log("[build] Copying assets...");
+    if (buildTarget !== 'vscode') {
+        execFileSync(process.execPath, [path.join(ROOT, 'tools/icons/prepare-assets.mjs'), '--web']);
+    }
     copyKatexAssets();
     copyPdfAssets();
     copyTikzAssets();

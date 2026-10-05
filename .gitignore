@@ -6,6 +6,7 @@ docs/.vitepress/dist
 docs/public/icon.svg
 node_modules
 media/vendor/
+media/icon-pwa.svg
 media/webview-main.js
 media/webview-pdf.js
 media/webview-*.js.map

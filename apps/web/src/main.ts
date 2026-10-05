@@ -1070,8 +1070,12 @@ function readClampedNumber(input: HTMLInputElement, fallback: number): number {
 function setTheme(theme: WebTheme): void {
     document.body.dataset.theme = theme;
     webControls.themeSelect.value = theme;
+    const style = getComputedStyle(document.body);
+    const background = style.getPropertyValue('--snaptex-editor-bg').trim();
+    document.documentElement.style.backgroundColor = background;
+    document.documentElement.style.colorScheme = style.colorScheme;
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-        ?.setAttribute('content', theme === 'dark' ? '#000000' : getComputedStyle(document.body).getPropertyValue('--snaptex-toolbar-bg').trim());
+        ?.setAttribute('content', background);
 }
 
 function applyEditorStyle(): void {
@@ -1325,6 +1329,8 @@ const editorParent = requireElement('editor');
 
 setExplorerCollapsed(webPreferences.explorerCollapsed);
 setDiagnosticsVisible(webPreferences.diagnosticsVisible);
+const logoUri = document.querySelector<HTMLLinkElement>('link[rel="icon"]')!.href;
+document.documentElement.style.setProperty('--snaptex-logo-mask', `url("${logoUri}")`);
 setTheme(webPreferences.theme);
 applyEditorStyle();
 

@@ -15,6 +15,7 @@ const staticFiles = [
     ['demo', 'demo'],
     ['media/vendor', 'media/vendor'],
     ['media/icon.svg', 'media/icon.svg'],
+    ['media/icon-pwa.svg', 'media/icon-pwa.svg'],
     ['media/preview-style.css', 'media/preview-style.css'],
     ['media/webview-main.js', 'media/webview-main.js'],
     ['media/webview-pdf.js', 'media/webview-pdf.js'],

@@ -81,14 +81,17 @@ suite('Standalone web assets', () => {
             for (const asset of [
                 'index.html', 'manifest.webmanifest',
                 'demo/main.tex', 'demo/sections/project-editing.tex', 'demo/sample.bib', 'demo/frog.jpg',
-                'media/icon.svg',
-                'media/vendor/tikzjax/tex.wasm.gz'
+                'media/icon.svg', 'media/icon-pwa.svg',
+                'media/vendor/tikzjax/tex.wasm.gz',
+                'media/vendor/synctex/synctex.mjs', 'media/vendor/synctex/synctex.wasm', 'media/vendor/synctex/worker.js'
             ]) {
                 assert.ok(existsSync(join(build.outDir, asset)), `Missing static asset: ${asset}`);
             }
             assert.match(indexHtml, /href="manifest\.webmanifest\?v=[a-f0-9]{12}"/);
             assert.match(indexHtml, /href="media\/icon\.svg\?v=[a-f0-9]{12}"/);
-            assert.equal(indexHtml.match(/src="media\/icon\.svg\?v=[a-f0-9]{12}"/g)?.length, 2);
+            assert.equal(indexHtml.match(/class="snaptex-logo"/g)?.length, 2);
+            const webCss = await fetchText(baseUrl, '/web.css');
+            assert.match(webCss, /\.snaptex-logo\s*\{[^}]*background-color: currentColor;[^}]*mask: var\(--snaptex-logo-mask\)/);
             assert.doesNotMatch(indexHtml, /media\/(?:icon[^"?]*\.png|favicon\.ico)/);
             for (const rasterIcon of ['media/favicon.ico', 'media/icon.png', 'media/icon-32.png', 'media/icon-192.png', 'media/icon-512.png']) {
                 assert.equal(existsSync(join(build.outDir, rasterIcon)), false, `${rasterIcon} must not ship with the Web app`);
@@ -105,18 +108,26 @@ suite('Standalone web assets', () => {
             await fetchText(baseUrl, '/demo/sample.bib');
             await fetchBytes(baseUrl, '/demo/frog.jpg');
             const manifest = JSON.parse(await fetchText(baseUrl, '/manifest.webmanifest'));
-            assert.equal(manifest.theme_color, '#000000');
+            assert.equal(manifest.theme_color, indexHtml.match(/<meta name="theme-color" content="([^"]+)"/)?.[1]);
+            assert.equal(manifest.background_color, manifest.theme_color);
             assert.deepEqual(
                 manifest.icons.map((icon: { sizes: string; type: string; purpose: string }) => [icon.sizes, icon.type, icon.purpose]),
                 [
                     ['any', 'image/svg+xml', 'any']
                 ]
             );
-            assert.match(manifest.icons[0].src, /^media\/icon\.svg\?v=[a-f0-9]{12}$/);
+            assert.match(manifest.icons[0].src, /^media\/icon-pwa\.svg\?v=[a-f0-9]{12}$/);
+            const pwaIcon = await fetchText(baseUrl, manifest.icons[0].src);
+            assert.match(pwaIcon, /<rect\b[^>]*rx="192"[^>]*fill="#fff"/);
+            assert.match(pwaIcon, /<g transform="scale\(\.8\)">/);
+            assert.match(pwaIcon, /stroke="#000"/);
+            assert.match(pwaIcon, /fill="#000"/);
+            assert.doesNotMatch(pwaIcon, /prefers-color-scheme|currentColor|<style>|#888888/);
             const svgIcon = await fetchOk(baseUrl, '/media/icon.svg');
             assert.match(svgIcon.headers.get('content-type') ?? '', /image\/svg\+xml/);
             assert.match(await svgIcon.text(), /<svg\b/);
             const serviceWorker = await fetchText(baseUrl, '/service-worker.js');
+            assert.match(serviceWorker, /media\/icon-pwa\.svg\?v=[a-f0-9]{12}/);
             assert.doesNotMatch(serviceWorker, /media\/(?:icon[^"?]*\.png|favicon\.ico)/);
             const mainScriptMatch = indexHtml.match(/src="(web-main\.js\?v=[a-f0-9]{12})"/);
             assert.ok(mainScriptMatch);

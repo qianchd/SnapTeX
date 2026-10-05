@@ -343,14 +343,20 @@ body[data-explorer-collapsed="true"] {
     white-space: nowrap;
 }
 
-#snaptex-brand img {
-    width: 22px;
-    height: 22px;
-    object-fit: contain;
+.snaptex-logo {
+    display: inline-block;
+    visibility: hidden;
+    background-color: currentColor;
+    mask: var(--snaptex-logo-mask) center / contain no-repeat;
 }
 
-body[data-theme="dark"] :is(#snaptex-brand img, .welcome-content > img) {
-    filter: brightness(0) invert(1);
+body[data-theme] .snaptex-logo {
+    visibility: visible;
+}
+
+#snaptex-brand .snaptex-logo {
+    width: 22px;
+    height: 22px;
 }
 
 .toolbar-actions {
@@ -719,10 +725,9 @@ body[data-deployment-mode="server"] .remote-project-static-notice {
     text-align: center;
 }
 
-.welcome-content > img {
+.welcome-content > .snaptex-logo {
     width: 72px;
     height: 72px;
-    object-fit: contain;
 }
 
 .welcome-kicker {
@@ -1284,7 +1289,7 @@ body.is-resizing-split #preview-pane {
         padding-top: var(--snaptex-web-topbar-height);
     }
 
-    #snaptex-brand span {
+    #snaptex-brand span:not(.snaptex-logo) {
         display: none;
     }
 

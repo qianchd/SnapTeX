@@ -1,18 +1,37 @@
 # Icon assets
 
-Keep three canonical assets in `media/`:
+Keep the source SVG and three black-on-transparent PNG exports in `media/`:
 
 | Asset | Purpose |
 | --- | --- |
-| `icon.svg` | Web toolbar, welcome page, favicon, GitHub README, docs, and SVG-capable PWA installers |
+| `icon.svg` | Source artwork; Web toolbar, welcome page, favicon, GitHub README, and docs |
+| `icon-32.png` (32 × 32) | Small raster export; not shipped in Web or VSIX builds |
 | `icon.png` (192 × 192) | Small raster export retained at the user's request; not shipped in Web or VSIX builds |
 | `icon-512.png` (512 × 512) | VS Code extension icon and Marketplace README logo |
 
 `icon.png` is the former `icon-192.png`, renamed rather than duplicated.
-There is no separate 32px PNG or ICO. The original 2152px source is unnecessary
-for these distributions. Web builds ship only the SVG icon, declared with
-`sizes: "any"` in the PWA manifest, and precache it for offline use. Its URL
-includes a content hash, so unchanged icons remain reusable from cache.
+There is no ICO or 2152px export. Web builds generate `icon-pwa.svg` from
+the source SVG with a fixed black logo on a white rounded-square background,
+with no color-scheme media query. The original artwork is scaled to 80% of
+the canvas to leave padding inside the white tile; its paths are unchanged.
+The background has a corner radius of 192 in the 1024-unit viewBox. This
+keeps the logo's contrast independent of the system background, even when
+the installer rasterizes the SVG once. Do not edit the generated file;
+it is ignored by Git and excluded from the VSIX.
+
+Web builds ship both SVGs, precache them for offline use, and include a content
+hash in their URLs so unchanged icons remain reusable from cache. The PWA
+manifest selects `icon-pwa.svg` with `sizes: "any"`.
+
+The toolbar and welcome logo use the SVG as a CSS mask, colored with the
+page's `currentColor`, so they follow the selected Web theme rather than the
+operating system's theme. The favicon follows the system color scheme.
+An installed PWA's system icon is a snapshot chosen by the browser; changing
+the Web theme cannot reliably recolor its Windows taskbar or Start Menu icon.
+
+To regenerate the black-on-transparent PNG exports after editing the SVG,
+install ImageMagick and run `node tools/icons/prepare-assets.mjs --png`.
+This optional export command is not needed for normal builds.
 
 The Web app targets browsers with SVG icon support. Chromium supports SVG
 manifest icons; Safari 26 adds SVG favicons and Home Screen/Dock icons. Older
