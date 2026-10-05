@@ -29,3 +29,5 @@ media/icon-pwa.svg
 media/icon.svg
 tex_samplecode
 media/vendor/synctex/**
+media/vendor/pdfjs/pdf_viewer.mjs
+media/vendor/pdfjs/pdf_viewer.css

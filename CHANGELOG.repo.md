@@ -4,17 +4,25 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
-- **Fixed**: Preserved intermediate `\hline`, `\cline`, and booktabs rules in both rendering backends, including adjacent column ranges across spanning cells.
-- **Changed**: Simplified shared AST/rendering dispatch and released stale virtual-shell observers, tooltip timers, and embedded PDF loading tasks.
-- **Added**: Offline PDF/source synchronization for local folders, browser workspaces, and server projects using the bundled official SyncTeX parser in a Worker; supports double-click, `Ctrl+Alt+M`, and the existing auto-scroll setting without per-query server requests.
-- **Changed**: Refreshed open PDFs and their SyncTeX indexes through existing project file watchers; removed the server-side SyncTeX query endpoint and CLI requirement.
-- **Added**: Configurable Web auto save for dirty writable files after a quiet edit delay (default one second), using the same serialized save and external-update pipeline as manual saving without periodic polling.
-- **Fixed**: Preserved editor selection and undo history during saves and external text updates; retained edits typed while a save is in progress.
-- **Fixed**: Checked saved-text baselines before local-folder and IndexedDB writes, and paired remote text with its ETag to avoid stale overwrites.
-- **Fixed**: Kept PDF refresh positions scoped to the same document, ignored superseded loads, and released the link service's document reference when closing PDF preview.
+## [0.8.2] - 2026-10-05
+
+- **Highlights**: Added Web PDF viewing with offline SyncTeX navigation, server-side PDF compilation, and event-driven automatic saving that preserves editor position and undo history.
+- **Added**: Opened project PDFs directly from Explorer in a dedicated PDF.js viewer with page navigation, zoom, downloads, an auto-hidden toolbar, and a return to TeX preview.
+- **Added**: Bound `Ctrl+B` to authenticated server-project compilation with TinyTeX, `latexmk`, or automatic compiler detection; enabled SyncTeX output, surfaced compilation errors, and refreshed already-open PDFs without changing their view location.
+- **Added**: Offline PDF/source synchronization for local folders, browser workspaces, and server projects using the bundled official SyncTeX parser in a Worker; supports double-click, `Ctrl+Alt+M`, and the existing auto-scroll setting without per-query server requests. Source files not yet loaded from a server still require a network connection.
+- **Changed**: Replaced remote manifest polling with filesystem-watcher SSE notifications and conditional text reads. Refreshed open PDFs and their SyncTeX indexes through project file watchers; removed the server-side SyncTeX query endpoint and CLI requirement.
+- **Added**: Configurable Web auto save, enabled by default for dirty writable files after a one-second quiet edit delay, using the same serialized save and external-update pipeline as manual saving without periodic polling.
+- **Fixed**: Preserved editor selection and undo history during saves and external text updates; retained edits typed while a save is in progress and merged non-overlapping external changes before saving.
+- **Fixed**: Checked saved-text baselines before local-folder and IndexedDB writes, paired remote text with its ETag, and serialized server writes to reject stale browser saves without silently replacing newer text.
+- **Fixed**: Kept PDF refresh positions scoped to the same document, ignored superseded loads, and released the viewer and SyncTeX Worker when closing PDF preview.
+- **Added**: Added Solarized Light, Skyblue, and GitHub Light Web themes with theme-aware branding and browser/PWA window colors.
 - **Changed**: Disabled automatic scroll sync and diagnostic-panel visibility by default on the Web without overriding saved preferences.
-- **Changed**: Updated the SVG artwork and raster exports, made Web branding follow the selected theme, and generated a fixed high-contrast PWA icon for installed applications.
-- **Fixed**: Matched the browser/PWA theme color and document background to the selected editor theme.
+- **Fixed**: Unified project-relative image and PDF path resolution across VS Code and Web, including parent-directory references inside the opened project while rejecting paths that escape it.
+- **Fixed**: Preserved intermediate `\hline`, `\cline`, and booktabs rules in both rendering backends, including adjacent column ranges across spanning cells.
+- **Changed**: Separated AST element rules from text/layout compatibility rules, simplified shared rendering dispatch, and released stale virtual-shell observers, tooltip timers, and embedded PDF loading tasks.
+- **Changed**: Updated SVG branding and raster exports, generated a high-contrast installed-PWA icon, and kept Web/server-only assets out of VSIX packages.
+- **Added**: Added a reusable SSH deployment command that invokes the existing server installer while keeping deployment addresses and credentials out of tracked configuration.
+- **Testing**: Streamlined behavior-level tests and added GitHub Actions coverage for shared/server code and VS Code on Linux, Windows, and macOS, including the minimum supported VS Code version and production Web/PWA/documentation assets.
 - **Maintenance**: Updated the VS Code test runner to remove deprecated `inflight` and `glob@7` installation dependencies.
 
 ## [0.8.1] - 2026-09-13

@@ -4,8 +4,12 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+## [0.8.2] - 2026-10-05
+
+- **Fixed**: Resolved project-relative image and PDF paths such as `../figures/a.pdf` from nested TeX roots while keeping resource access inside the opened workspace.
 - **Fixed**: Preserved intermediate `\hline`, `\cline`, and booktabs rules in legacy and AST table previews, including adjacent column ranges across spanning cells.
 - **Changed**: Released stale virtual-shell observers, tooltip timers, and embedded PDF loading tasks when preview content is replaced or closed.
+- **Packaging**: Excluded Web-only PDF viewer and SyncTeX assets from VSIX packages while retaining embedded PDF rendering.
 
 ## [0.8.1] - 2026-09-13
 

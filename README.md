@@ -4,7 +4,7 @@ Fast, local-first LaTeX editing and structural preview for VS Code and the brows
 
 **[Open SnapTeX Web](https://qianchd.github.io/SnapTeX/)** · **[Read the documentation](https://qianchd.github.io/SnapTeX/docs/)** · **[Install the VS Code extension](https://marketplace.visualstudio.com/items?itemName=qstatsite.snaptex)**
 
-> **What's new in 0.8.1:** Faster, steadier elastic paged preview with configurable margins, broader LaTeX rendering across both backends, and more reliable bidirectional scrolling. Continuous preview remains available in settings. Contributors can use the new [arXiv source audit](tools/arxiv-audit/README.md) to check real papers against both backends.
+> **What's new in 0.8.2:** Open PDFs in the Web preview and navigate between PDF and source with offline SyncTeX. Web editing now auto-saves after a quiet delay while preserving cursor position and undo history; server projects also support `Ctrl+B` compilation. This release adds more Web themes and fixes table rules and project-relative graphics paths in both preview backends.
 
 <p align="center">
   <img src="media/icon.svg" alt="SnapTeX logo" width="150">
@@ -50,8 +50,11 @@ Use `Ctrl+Alt+M` (`Cmd+Alt+M`) to reveal the editor cursor in the preview. Doubl
 
 Open [SnapTeX Web](https://qianchd.github.io/SnapTeX/) and choose **Open Folder**, **Import Folder**, or **Open Demo**. **History** reopens recent browser workspaces and supported local folders; imported projects and the demo persist in browser storage and can be exported as ZIP.
 
+Auto save is enabled by default after one second without edits; `Ctrl+S` saves immediately. Click a PDF in Explorer to view it, and use **TeX Preview** to return. A matching `.synctex.gz` or `.synctex` file enables double-click and `Ctrl+Alt+M` source navigation without per-query server requests. Generate it by compiling with `-synctex=1`; server projects can compile with `Ctrl+B`. See the [Web guide](https://qianchd.github.io/SnapTeX/docs/guide/web) and [server setup](https://qianchd.github.io/SnapTeX/docs/deployment/server) for storage, compilation, and offline limits.
+
 ## Highlights
 
+- Elastic paged preview with flexible page-bottom space, alongside optional continuous mode.
 - KaTeX math, PDF.js figures, and bundled TikZJax rendering.
 - Block hashes, incremental patches, and dependency-aware refreshes.
 - Default virtual mode for lower DOM and heavy-resource memory use on long documents.
@@ -59,6 +62,7 @@ Open [SnapTeX Web](https://qianchd.github.io/SnapTeX/) and choose **Open Folder*
 - External BibTeX and inline `thebibliography` previews.
 - Structured metadata for titles, authors, affiliations, email addresses, abstracts, and keywords.
 - Shared rendering core across VS Code, standalone Web, PWA, and server hosts.
+- Web PDF viewer with local SyncTeX queries, automatic saving, and conflict-aware external updates.
 - Extensible render, metadata, dependency, AST, and splitter rules assembled in [`src/rules.ts`](src/rules.ts).
 
 See [Rendering Support](https://qianchd.github.io/SnapTeX/docs/features/rendering) for details and intentional compatibility boundaries.

@@ -53,7 +53,8 @@ The Web settings menu exposes the host-independent subset:
 - render and sync delays;
 - preview font size, line height, content width, font family, page margins, and continuous margins;
 - editor font size and font family;
-- light, dark, blue, and rose themes.
+- PDF compiler for server projects: TinyTeX (default), `latexmk`, or Auto;
+- light, dark, blue, rose, Solarized Light, Skyblue, and GitHub Light themes.
 
 All Web settings listed above are stored for the current Web origin and reused across projects and browser restarts. This includes behavior switches, delays, backend and layout mode, theme, panel and diagnostics visibility, and editor and preview typography. The same saved values therefore apply on mobile and desktop when they use the same browser profile and origin.
 
