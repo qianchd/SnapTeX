@@ -19,25 +19,15 @@ function run(command, args, options = {}) {
     return new Promise((resolvePromise, reject) => {
         const child = spawn(command, args, {
             cwd: repoRoot,
-            stdio: [options.input === undefined ? 'inherit' : 'pipe', 'inherit', 'inherit']
+            stdio: [options.input === undefined ? 'inherit' : 'pipe', options.capture ? 'pipe' : 'inherit', 'inherit']
         });
-        child.once('error', reject);
-        child.once('exit', code => code === 0
-            ? resolvePromise()
-            : reject(new Error(`${command} exited with code ${code}`)));
-        if (options.input !== undefined) {child.stdin.end(options.input);}
-    });
-}
-
-function capture(command, args) {
-    return new Promise((resolvePromise, reject) => {
-        const child = spawn(command, args, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
         const chunks = [];
-        child.stdout.on('data', chunk => chunks.push(chunk));
+        child.stdout?.on('data', chunk => chunks.push(chunk));
         child.once('error', reject);
-        child.once('exit', code => code === 0
+        child.once('close', code => code === 0
             ? resolvePromise(Buffer.concat(chunks))
             : reject(new Error(`${command} exited with code ${code}`)));
+        if (options.input !== undefined) {child.stdin.end(options.input);}
     });
 }
 
@@ -48,10 +38,10 @@ const remoteArchive = `/tmp/snaptex-${Date.now()}.tar.gz`;
 
 try {
     // Upload build inputs, not repository documentation, recordings, or other hosts.
-    const files = (await capture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--',
+    const files = (await run('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--',
         'package.json', 'package-lock.json', 'esbuild.js', 'tsconfig.json', 'LICENSE',
         'src', 'apps/standalone', 'apps/web', 'demo', 'tools/icons/prepare-assets.mjs',
-        'media/icon.svg', 'media/preview-style.css', ':(exclude)src/test']))
+        'media/icon.svg', 'media/preview-style.css', ':(exclude)src/test'], { capture: true }))
         .toString('utf8').split('\0').filter(file => file && existsSync(join(repoRoot, file)));
     await writeFile(fileList, files.join('\n'));
     await run('tar', ['-czf', archive, '-T', fileList]);
