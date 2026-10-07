@@ -1,6 +1,8 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
+import { mock } from 'node:test';
+import { setImmediate as settle } from 'node:timers/promises';
 import { ProjectWriteConflictError } from '../../apps/standalone/src/browser-project';
 import { createDirectoryProject, type BrowserDirectoryHandle, type BrowserFileHandle } from '../../apps/web/src/local-project';
 
@@ -10,10 +12,18 @@ class TestFileHandle implements BrowserFileHandle {
     content = 'Original';
     modified = 1;
     onWrite?: () => void;
+    failNextRead = false;
+    readGate?: Promise<void>;
 
     async getFile(): Promise<File> {
         const content = this.content;
-        return { size: content.length, lastModified: this.modified, text: async () => content } as File;
+        const gate = this.readGate;
+        this.readGate = undefined;
+        return { size: content.length, lastModified: this.modified, text: async () => {
+            if (this.failNextRead) { this.failNextRead = false; throw new Error('Temporary read failure'); }
+            await gate;
+            return content;
+        } } as File;
     }
 
     async createWritable() {
@@ -25,7 +35,7 @@ class TestFileHandle implements BrowserFileHandle {
 }
 
 suite('Local browser project', () => {
-    test('does not report its own save as an external file change', async () => {
+    test('observes external edits, recovers from failures, and ignores its own saves', async () => {
         const globals = globalThis as unknown as Record<string, unknown>;
         const previousDocument = globals.document;
         const previousObserver = globals.FileSystemObserver;
@@ -33,6 +43,8 @@ suite('Local browser project', () => {
         const file = new TestFileHandle();
         const pdf = new TestFileHandle();
         pdf.name = 'main.pdf';
+        const notes = new TestFileHandle();
+        notes.name = 'notes.tex';
         file.onWrite = () => notifyObserver();
         globals.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
         globals.FileSystemObserver = class {
@@ -44,43 +56,93 @@ suite('Local browser project', () => {
         const directory = {
             kind: 'directory',
             name: 'project',
-            async *values() { yield file; yield pdf; }
+            async *values() { yield file; yield pdf; yield notes; }
         } as unknown as BrowserDirectoryHandle;
         const changes: string[] = [];
+        const errors: unknown[] = [];
+        let failUpdate = false;
+        let finishRead: (() => void) | undefined;
         let stop: (() => void) | undefined;
 
         try {
             const project = await createDirectoryProject(directory);
+            file.content = 'Edited before watching'; file.modified++;
             const resources: string[] = [];
-            stop = project.watchFiles!(change => { changes.push(change.text); }, error => { throw error; }, file => resources.push(file.path));
+            stop = project.watchFiles!(change => {
+                if (failUpdate) { failUpdate = false; throw new Error('Temporary update failure'); }
+                changes.push(change.text);
+            }, error => errors.push(error), file => {resources.push(file.path);});
+            await settle();
+            assert.deepEqual(changes, ['Edited before watching'], 'Starting the observer must catch edits made during project loading');
             await project.files[0].writeText?.('Saved locally');
-            await new Promise(resolve => setTimeout(resolve, 0));
-            assert.deepEqual(changes, []);
+            await settle();
+            assert.deepEqual(changes, ['Edited before watching']);
 
             file.content = 'Changed outside SnapTeX';
             file.modified++;
-            notifyObserver();
-            await new Promise(resolve => setTimeout(resolve, 0));
-            assert.deepEqual(changes, ['Changed outside SnapTeX']);
             pdf.modified++;
             notifyObserver();
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await settle();
+            assert.deepEqual(changes, ['Edited before watching', 'Changed outside SnapTeX']);
             assert.deepEqual(resources, [], 'Unopened resources must not be polled');
             await project.files.find(file => file.path === '/main.pdf')?.readBlob?.();
             pdf.modified++;
             notifyObserver();
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await settle();
             assert.deepEqual(resources, ['/main.pdf']);
 
+            const appliedChanges = changes.length;
+            file.content = 'Snapshot before save'; file.modified++;
+            file.readGate = new Promise(resolve => {finishRead = resolve;});
+            notifyObserver();
+            await settle();
+            await project.files[0].writeText?.('Saved while reading');
+            finishRead!();
+            await settle();
+            assert.equal(changes.length, appliedChanges, 'An older in-flight read must not undo a successful save');
+
+            file.onWrite = () => {file.content = 'External during save'; file.modified++;};
+            await project.files[0].writeText?.('Saved before external change');
+            file.onWrite = () => notifyObserver();
+            notifyObserver();
+            await settle();
+            assert.equal(changes.at(-1), 'External during save', 'Post-save metadata must not mark an external edit as already applied');
+
+            mock.timers.enable({ apis: ['setTimeout'] });
+            for (const stage of ['read', 'apply']) {
+                file.content = `Recovered ${stage}`;
+                file.modified++;
+                file.failNextRead = stage === 'read';
+                failUpdate = stage === 'apply';
+                if (stage === 'read') { notes.content = 'Updated notes'; notes.modified++; }
+                notifyObserver();
+                await settle();
+                assert.equal(changes.includes(file.content), false);
+                if (stage === 'read') {
+                    assert.equal(changes.at(-1), notes.content, 'One failed file must not block other changed files');
+                }
+                const failedText = file.content;
+                file.content = `Newest ${stage}`;
+                file.modified++;
+                mock.timers.tick(5000);
+                await settle();
+                assert.equal(changes.at(-1), file.content, 'Retry must read the latest disk content even without another notification');
+                assert.equal(changes.includes(failedText), false, 'Retry must not replay the failed snapshot');
+            }
+            assert.equal(errors.length, 2);
+
+            const stoppedChanges = [...changes];
             stop?.();
             stop = undefined;
             file.content = 'Change after project close';
             file.modified++;
             notifyObserver();
-            await new Promise(resolve => setTimeout(resolve, 0));
-            assert.deepEqual(changes, ['Changed outside SnapTeX'], 'Closed projects must ignore later filesystem notifications');
+            await settle();
+            assert.deepEqual(changes, stoppedChanges, 'Closed projects must ignore later filesystem notifications');
         } finally {
+            finishRead?.();
             stop?.();
+            mock.timers.reset();
             if (previousDocument === undefined) {delete globals.document;}
             else {globals.document = previousDocument;}
             if (previousObserver === undefined) {delete globals.FileSystemObserver;}

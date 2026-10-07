@@ -600,6 +600,8 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             Connection: 'keep-alive',
             'X-Accel-Buffering': 'no'
         });
+        // Reconnecting clients must see edits made while no watcher was subscribed.
+        manifestCache.delete(projectRoot);
         sendSseEvent(response, 'manifest');
         const heartbeat = setInterval(() => response.write(': keepalive\n\n'), 25_000);
         response.once('close', () => {

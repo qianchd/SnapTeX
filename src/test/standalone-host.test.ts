@@ -140,6 +140,39 @@ suite('StandaloneHost', () => {
         }
     });
 
+    test('retries a failed preview refresh without reapplying the external editor change', async () => {
+        for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+            const editor = new TestEditorView();
+            const messages: HostToPreviewMessage[] = [];
+            const restoreWindow = installWindow(messages);
+            const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined,
+                { autoSave: false, virtualMode: false, backendMode });
+            let receiveChange!: (change: BrowserProjectTextChange) => Promise<void> | void;
+            let failRead = true;
+            const text = '\\begin{document}\nUpdated text.\n\\includegraphics{image.png}\n\\end{document}';
+            try {
+                await host.loadProject({ files: [
+                    { path: '/main.tex', text: '\\begin{document}\nOriginal text.\n\\end{document}' },
+                    { path: '/image.png', readBlob: async () => {
+                        if (failRead) {failRead = false; throw new Error('Temporary image read failure');}
+                        return new Blob(['image']);
+                    } }
+                ], watchFiles: callback => {receiveChange = callback; return () => undefined;} });
+                await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+                const previousUpdates = messages.length;
+                await assert.rejects(async () => receiveChange({ path: '/main.tex', text }), /Temporary image read failure/);
+                assert.equal(messages.length, previousUpdates, 'A failed render must not publish an incomplete payload');
+                const appliedState = editor.state;
+                await receiveChange({ path: '/main.tex', text });
+                const update = messages.at(-1);
+                assert.ok(update?.command === HostToPreviewCommand.Update && update.payload.type === 'full');
+                assert.match(update.payload.htmls?.join('') ?? '', /Updated text/);
+                assert.match(update.payload.htmls?.join('') ?? '', /src="blob:/);
+                assert.equal(editor.state, appliedState, 'Retrying the preview must not replace the editor again');
+            } finally {restoreWindow();}
+        }
+    });
+
     test('merges remote edits against the saved text and reports overlapping changes', async () => {
         const editor = new TestEditorView();
         const messages: HostToPreviewMessage[] = [];

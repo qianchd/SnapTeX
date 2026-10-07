@@ -116,6 +116,7 @@ export class StandaloneHost {
     private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
+    private previewRefreshPending = false;
     private pdfSyncHandler?: PdfSyncHandler;
     private editorVisible = true;
     private previewVisible = true;
@@ -527,6 +528,7 @@ export class StandaloneHost {
             return false;
         }
         if (remoteText === baseText) {
+            if (this.previewRefreshPending) {await this.renderCurrentText();}
             return false;
         }
         // Snapshot the editor after the async module load, then merge and apply without yielding.
@@ -819,17 +821,22 @@ export class StandaloneHost {
         }
 
         this.persistActiveEditorText();
-        const rootText = await this.fileProvider.read(this.rootUri);
-        const payload = await this.updateService.render(this.rootUri, rootText, {
+        const payload = await this.fileProvider.read(this.rootUri).then(rootText => this.updateService.render(this.rootUri, rootText, {
             deferFullHtml: this.settings.virtualMode,
             backendMode: this.settings.backendMode,
             transformHtml: html => this.fixHtmlPaths(html)
+        })).catch(error => {
+            // No payload was delivered; the next attempt must rebuild the preview, not diff against it.
+            this.updateService.resetState();
+            this.previewRefreshPending = true;
+            throw error;
         });
         if (this.pdfSyncHandler) {return;}
 
         this.labels = Object.keys(payload.numbering.labels).sort((a, b) => a.localeCompare(b));
         this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));
         this.postToPreview({ command: HostToPreviewCommand.Update, payload });
+        this.previewRefreshPending = false;
     }
 
     private async handleBlockHtmlRequest(id: string, index: number, hash: string) {

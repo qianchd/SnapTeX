@@ -4,6 +4,9 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Fixed**: Retained and retried external project updates after temporary network, file-read, or delivery failures instead of marking them as handled. Server projects catch up after reconnection or returning to the tab without restoring continuous manifest polling.
+- **Fixed**: Prevented stale reads and post-save metadata from hiding newer edits, caught changes made while local monitoring starts, and kept failed files from blocking other updates. Failed preview refreshes rebuild on retry without replacing the editor again; stalled remote sync reads time out and pending watcher requests are cancelled when closing a project.
+
 ## [0.8.2] - 2026-10-05
 
 - **Highlights**: Added Web PDF viewing with offline SyncTeX navigation, server-side PDF compilation, and event-driven automatic saving that preserves editor position and undo history.

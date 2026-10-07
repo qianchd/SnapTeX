@@ -83,6 +83,10 @@ Remote server projects require a network connection to their server even when th
 
 An open server project receives Server-Sent Events (SSE) from a shared filesystem watcher, rather than polling its manifest. SnapTeX downloads changed text files conditionally using their ETags. Local folders use a browser filesystem observer when available, or check file metadata every five seconds while the tab is visible.
 
+Temporary failures do not discard pending changes: server reads retry with increasing delays, and local observer failures are retried while the tab is visible. Each retry reads the latest file content rather than replaying the failed snapshot. Server reconnection, restored connectivity, or returning to the tab triggers a fresh revision check to catch up missed updates. Successful recovery stops retries; normal server synchronization remains notification-driven.
+
+Local monitoring also checks once after starting, to catch edits made during project loading. A failed file does not prevent other changed files from updating. Remote text and manifest reads have a 30-second timeout, and closing the project cancels outstanding watcher requests and retries. If text reached the editor but preview rendering failed, the retry rebuilds the preview without reapplying the editor change.
+
 SnapTeX keeps the last synchronized text as a merge base. A server change replaces an unchanged browser copy directly, and edits made to different lines are merged automatically. If browser and server edits overlap, the editor displays `LOCAL`, `BASE`, and `REMOTE` conflict markers and the Diagnostics panel reports the affected path. Resolve and remove those markers before saving.
 
 Remote saves use the file's ETag as an optimistic lock. If the server changes after the latest check but before a save, the server rejects the stale write and the same merge process runs; the browser never silently overwrites the newer server text.

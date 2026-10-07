@@ -176,7 +176,7 @@ export interface BrowserProject {
     watchFiles?: (
         onChange: (change: BrowserProjectTextChange) => Promise<void> | void,
         onError: (error: unknown) => void,
-        onResourceChange?: (file: BrowserProjectFile) => void
+        onResourceChange?: (file: BrowserProjectFile) => Promise<void> | void
     ) => () => void;
     operations?: BrowserProjectOperations;
 }

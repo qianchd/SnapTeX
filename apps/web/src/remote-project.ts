@@ -16,6 +16,8 @@ interface RemoteProjectManifest {
     revisions: Record<string, string>;
 }
 
+const PROJECT_SYNC_REQUEST_TIMEOUT_MS = 30_000;
+
 export class RemoteProjectNotFoundError extends Error {
     constructor(projectName: string) {
         super(`Project does not exist: ${projectName}`);
@@ -120,23 +122,25 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
     const versions = new Map<string, { etag: string | null; text: string }>();
     let currentManifest = manifest;
 
-    const readText = async (path: string, conditional = false): Promise<string | undefined> => {
+    const readText = async (path: string, conditional = false, signal?: AbortSignal): Promise<string | undefined> => {
         const url = remoteFileUrl(baseUrl, path);
-        const headers = new Headers();
-        const etag = versions.get(path)?.etag;
-        if (conditional && etag) {
-            headers.set('If-None-Match', etag);
+        while (true) {
+            const version = versions.get(path);
+            const headers = new Headers();
+            if (conditional && version?.etag) {
+                headers.set('If-None-Match', version.etag);
+            }
+            const timeout = AbortSignal.timeout(PROJECT_SYNC_REQUEST_TIMEOUT_MS);
+            const response = await fetcher(url, { credentials: 'same-origin', headers,
+                signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+            if (response.status === 304) {return undefined;}
+            if (!response.ok) {throw requestError(response, 'GET', url);}
+            const text = await response.text();
+            // A save or another read may have completed while this response was in flight.
+            if (versions.get(path) !== version) {continue;}
+            versions.set(path, { etag: response.headers.get('etag'), text });
+            return text;
         }
-        const response = await fetcher(url, { credentials: 'same-origin', headers });
-        if (response.status === 304) {
-            return undefined;
-        }
-        if (!response.ok) {
-            throw requestError(response, 'GET', url);
-        }
-        const text = await response.text();
-        versions.set(path, { etag: response.headers.get('etag'), text });
-        return text;
     };
 
     const createFile = (path: string): BrowserProjectFile => {
@@ -199,49 +203,85 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
         rootPath: manifest.rootPath,
         files: manifest.files.map(path => createFile(path)),
         watchFiles: (onChange, onError, onResourceChange) => {
-            const pendingText = new Set<string>();
+            const pendingPaths = new Set<string>();
+            const controller = new AbortController();
             let manifestPending = false;
             let syncing = false;
             let stopped = false;
+            let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+            let retryDelayMs = 1000;
             const sync = async () => {
-                if (syncing || stopped) {return;}
+                if (syncing || stopped || retryTimer !== undefined) {return;}
                 syncing = true;
                 try {
-                    while (!stopped && (manifestPending || pendingText.size > 0)) {
+                    while (!stopped && (manifestPending || pendingPaths.size > 0)) {
                         if (manifestPending) {
                             manifestPending = false;
                             const previousManifest = currentManifest;
-                            const response = await fetchOk(fetcher, new URL('manifest', baseUrl).toString());
+                            const response = await fetchOk(fetcher, new URL('manifest', baseUrl).toString(), {
+                                signal: AbortSignal.any([controller.signal, AbortSignal.timeout(PROJECT_SYNC_REQUEST_TIMEOUT_MS)])
+                            });
                             const manifest = readManifest(await response.json());
                             if (stopped) {return;}
                             currentManifest = manifest;
                             for (const [path, revision] of Object.entries(manifest.revisions)) {
                                 if (revision === previousManifest.revisions[path]) {continue;}
-                                if (isProjectTextFile(path)) {pendingText.add(path);}
-                                else {onResourceChange?.(createFile(path));}
+                                pendingPaths.add(path);
                             }
                         }
-                        const paths = [...pendingText];
-                        pendingText.clear();
-                        for (const path of paths) {
-                            if (!currentManifest.files.includes(path)) {continue;}
-                            const text = await readText(path, true);
-                            if (!stopped && text !== undefined) {await onChange({ path, text });}
+                        let failure: unknown;
+                        for (const path of [...pendingPaths]) {
+                            if (stopped) {return;}
+                            pendingPaths.delete(path);
+                            try {
+                                if (!currentManifest.files.includes(path)) {continue;}
+                                if (isProjectTextFile(path)) {
+                                    const text = await readText(path, true, controller.signal);
+                                    if (pendingPaths.has(path)) {versions.delete(path); continue;}
+                                    if (!stopped && text !== undefined) {await onChange({ path, text });}
+                                } else {
+                                    await onResourceChange?.(createFile(path));
+                                }
+                            } catch (error) {
+                                pendingPaths.add(path);
+                                // A received ETag is not proof that the editor applied the update.
+                                versions.delete(path);
+                                failure ??= error;
+                            }
                         }
+                        if (failure !== undefined) {throw failure;}
                     }
+                    retryDelayMs = 1000;
                 } catch (error) {
-                    manifestPending = false;
-                    pendingText.clear();
-                    if (!stopped) {onError(error);}
+                    manifestPending = true;
+                    if (!stopped) {
+                        if (!(error instanceof RemoteProjectAuthenticationError)) {
+                            retryTimer = globalThis.setTimeout(() => {
+                                retryTimer = undefined;
+                                void sync();
+                            }, retryDelayMs);
+                            retryDelayMs = Math.min(30_000, retryDelayMs * 2);
+                        }
+                        onError(error);
+                    }
                 } finally {
                     syncing = false;
                 }
             };
-            const events = new EventSource(new URL('events', baseUrl), { withCredentials: true });
-            events.addEventListener('manifest', () => {
+            const resume = () => {
+                if (stopped) {return;}
+                globalThis.clearTimeout(retryTimer);
+                retryTimer = undefined;
                 manifestPending = true;
                 void sync();
-            });
+            };
+            const checkWhenVisible = () => {
+                if (!globalThis.document?.hidden) {resume();}
+            };
+            globalThis.addEventListener?.('online', resume);
+            globalThis.document?.addEventListener('visibilitychange', checkWhenVisible);
+            const events = new EventSource(new URL('events', baseUrl), { withCredentials: true });
+            events.addEventListener('manifest', resume);
             for (const type of ['text', 'resource']) {
                 events.addEventListener(type, event => {
                     try {
@@ -249,8 +289,7 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                         if (stopped || typeof path !== 'string') {return;}
                         const normalizedPath = normalizeBrowserPath(path);
                         if (currentManifest.files.includes(normalizedPath)) {
-                            if (type === 'text') {pendingText.add(normalizedPath);}
-                            else {onResourceChange?.(createFile(normalizedPath));}
+                            pendingPaths.add(normalizedPath);
                         }
                         else {manifestPending = true;}
                         void sync();
@@ -259,6 +298,10 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
             }
             return () => {
                 stopped = true;
+                controller.abort();
+                globalThis.clearTimeout(retryTimer);
+                globalThis.removeEventListener?.('online', resume);
+                globalThis.document?.removeEventListener('visibilitychange', checkWhenVisible);
                 events.close();
             };
         },

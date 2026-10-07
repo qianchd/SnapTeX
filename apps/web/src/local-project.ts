@@ -67,8 +67,9 @@ function projectFileFromHandle(
             path,
             readText: async () => {
                 const file = await handle.getFile();
+                const text = normalizeProjectText(await file.text());
                 state.version = fileVersion(file);
-                return state.text = normalizeProjectText(await file.text());
+                return state.text = text;
             },
             writeText: async (text, expectedText) => {
                 const currentFile = await handle.getFile();
@@ -82,7 +83,8 @@ function projectFileFromHandle(
                 state.text = normalizeProjectText(text);
                 try {
                     await writeText(handle, text);
-                    state.version = fileVersion(await handle.getFile());
+                    // Post-write metadata may already describe a newer external edit.
+                    state.version = '';
                 } catch (error) {
                     state.text = normalizedCurrent;
                     state.version = fileVersion(currentFile);
@@ -147,10 +149,12 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
             let checkAgain = false;
             let stopped = false;
             let pollTimer: ReturnType<typeof globalThis.setInterval> | undefined;
+            let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+            const checkWhenVisible = () => {
+                if (!document.hidden) {void check();}
+            };
             const check = async () => {
-                if (stopped) {
-                    return;
-                }
+                if (stopped) {return;}
                 if (checking) {
                     checkAgain = true;
                     return;
@@ -159,38 +163,63 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
                 try {
                     do {
                         checkAgain = false;
+                        let failure: unknown;
                         for (const [path, state] of localFiles) {
-                            // Never poll untouched binary resources. Their first read establishes a revision.
-                            if (!isProjectTextFile(path) && !state.version) {continue;}
-                            const file = await state.handle.getFile();
-                            if (stopped) {return;}
-                            const version = fileVersion(file);
-                            if (version !== state.version) {
-                                state.version = version;
+                            try {
+                                // Never poll untouched binary resources. Their first read establishes a revision.
+                                if (!isProjectTextFile(path) && !state.version) {continue;}
+                                const previousVersion = state.version;
+                                const previousText = state.text;
+                                const file = await state.handle.getFile();
+                                if (stopped) {return;}
+                                const version = fileVersion(file);
+                                if (version === state.version) {continue;}
                                 if (!isProjectTextFile(path)) {
-                                    onResourceChange?.(projectFileFromHandle(state.handle, path, localFiles));
+                                    await onResourceChange?.(projectFileFromHandle(state.handle, path, localFiles));
+                                    state.version = version;
                                     continue;
                                 }
                                 const text = normalizeProjectText(await file.text());
                                 if (stopped) {return;}
+                                if (state.version !== previousVersion || state.text !== previousText) {
+                                    checkAgain = true;
+                                    continue;
+                                }
                                 if (text !== state.text) {
-                                    state.text = text;
                                     await onChange({ path, text });
                                 }
+                                // A concurrent save/read may already have advanced this file.
+                                if (state.version === previousVersion) {
+                                    state.text = text;
+                                    state.version = version;
+                                }
+                            } catch (error) {
+                                if (isProjectTextFile(path)) {state.version = '';}
+                                failure ??= error;
                             }
                         }
+                        if (failure !== undefined) {throw failure;}
                     } while (checkAgain && !stopped);
+                    globalThis.clearTimeout(retryTimer);
+                    retryTimer = undefined;
                 } catch (error) {
-                    if (!stopped) {onError(error);}
+                    if (!stopped) {
+                        if (pollTimer === undefined && retryTimer === undefined) {
+                            retryTimer = globalThis.setTimeout(() => {
+                                retryTimer = undefined;
+                                checkWhenVisible();
+                            }, 5000);
+                        }
+                        onError(error);
+                    }
                 } finally {
                     checking = false;
                 }
             };
             const startPolling = () => {
                 if (!stopped && pollTimer === undefined) {
-                    pollTimer = globalThis.setInterval(() => {
-                        if (!document.hidden) {void check();}
-                    }, 5000);
+                    pollTimer = globalThis.setInterval(checkWhenVisible, 5000);
+                    void check();
                 }
             };
             const Observer = (globalThis as typeof globalThis & {
@@ -198,17 +227,15 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
             }).FileSystemObserver;
             const observer = Observer ? new Observer(() => void check()) : undefined;
             if (observer) {
-                void observer.observe(directory, { recursive: true }).catch(startPolling);
+                void observer.observe(directory, { recursive: true }).then(check, startPolling);
             } else {
                 startPolling();
             }
-            const checkWhenVisible = () => {
-                if (!document.hidden) {void check();}
-            };
             document.addEventListener('visibilitychange', checkWhenVisible);
             return () => {
                 stopped = true;
                 observer?.disconnect();
+                globalThis.clearTimeout(retryTimer);
                 if (pollTimer !== undefined) {globalThis.clearInterval(pollTimer);}
                 document.removeEventListener('visibilitychange', checkWhenVisible);
             };

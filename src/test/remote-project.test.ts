@@ -6,6 +6,8 @@ import type { Server } from 'http';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
+import { mock } from 'node:test';
+import { setImmediate as settle } from 'node:timers/promises';
 import {
     createRemoteProject,
     loadRemoteProject,
@@ -116,79 +118,169 @@ suite('RemoteProject', () => {
         );
     });
 
-    test('receives SSE changes, catches up on reconnect, and rejects stale saves', async () => {
-        let text = 'Base';
-        let revision = 1;
-        let pendingManifest: Promise<Response> | undefined;
-        let events: EventTarget | undefined;
-        let eventSourceClosed = false;
+    test('observes SSE changes and recovers the latest content after failures or concurrent saves', async () => {
+        const globals = globalThis as unknown as Record<string, unknown>;
+        const previousDocument = globals.document;
+        const document = Object.assign(new EventTarget(), { hidden: false });
+        globals.document = document;
         const OriginalEventSource = globalThis.EventSource;
+        let events!: EventTarget;
+        let eventSourceClosed = false;
         globalThis.EventSource = class extends EventTarget {
-            constructor(_url: string | URL) {
-                super();
-                events = this;
-            }
+            constructor() { super(); events = this; }
             close() { eventSourceClosed = true; }
         } as unknown as typeof EventSource;
-        const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const url = String(input);
-            const headers = new Headers(init?.headers);
-            if (url.endsWith('/web-auth/session')) {
-                return Response.json({ csrfToken: 'test-csrf-token' });
+        let text = 'Base';
+        let revision = 1;
+        let failure: 'manifest' | 'read' | 'apply' | undefined;
+        let readGate: Promise<void> | undefined;
+        let finishRead: (() => void) | undefined;
+        let readSignal: AbortSignal | null | undefined;
+        let notesText = 'Notes';
+        let notesRevision = 1;
+        let requests = 0;
+        const changes: string[] = [];
+        const resources: string[] = [];
+        const errors: unknown[] = [];
+        let stop: (() => void) | undefined;
+        const fetcher: typeof fetch = async (input, init) => {
+            requests++;
+            if (String(input).endsWith('/web-auth/session')) {return Response.json({ csrfToken: 'test-csrf-token' });}
+            if (String(input).endsWith('/manifest')) {
+                if (failure === 'manifest') { failure = undefined; throw new Error('Temporary disconnect'); }
+                return Response.json({ rootPath: '/main.tex', files: ['/main.tex', '/notes.tex', '/main.pdf'],
+                    revisions: { '/main.tex': String(revision), '/notes.tex': String(notesRevision), '/main.pdf': String(revision) } });
             }
-            if (url.endsWith('/manifest')) {
-                if (pendingManifest) {return pendingManifest;}
-                return Response.json({ rootPath: '/main.tex', files: ['/main.tex', '/main.pdf'],
-                    revisions: { '/main.tex': String(revision), '/main.pdf': String(revision) } });
+            if (String(input).endsWith('/notes.tex')) {
+                return new Headers(init?.headers).get('If-None-Match') === `"notes-${notesRevision}"`
+                    ? new Response(null, { status: 304 })
+                    : new Response(notesText, { headers: { ETag: `"notes-${notesRevision}"` } });
             }
             if (init?.method === 'PUT') {
-                return new Response(text, { status: 412, headers: { ETag: `"${revision}"` } });
+                text = String(init.body); revision++;
+                return new Response(null, { status: 204, headers: { ETag: `"${revision}"` } });
             }
-            if (headers.get('if-none-match') === `"${revision}"`) {
-                return new Response(null, { status: 304, headers: { ETag: `"${revision}"` } });
-            }
-            return new Response(text, { headers: { ETag: `"${revision}"` } });
+            if (failure === 'read') { failure = undefined; throw new Error('Temporary disconnect'); }
+            const response = new Headers(init?.headers).get('If-None-Match') === `"${revision}"`
+                ? new Response(null, { status: 304 })
+                : new Response(text, { headers: { ETag: `"${revision}"` } });
+            const gate = readGate;
+            readSignal = init?.signal;
+            readGate = undefined;
+            await gate;
+            return response;
         };
-
         try {
             const project = await loadRemoteProject('paper', 'https://example.test/api/projects/', fetcher);
-            const file = project.files[0];
-            assert.equal(await file.readText?.(), 'Base');
-            const changes: string[] = [];
-            const resources: string[] = [];
-            let changed: (() => void) | undefined;
-            const stop = project.watchFiles?.(change => {
+            assert.equal(await project.files[0].readText?.(), 'Base');
+            mock.timers.enable({ apis: ['setTimeout'] });
+            stop = project.watchFiles!(change => {
+                if (failure === 'apply') { failure = undefined; throw new Error('Temporary update failure'); }
                 changes.push(change.text);
-                changed?.();
-            }, error => assert.fail(String(error)), file => resources.push(file.path));
-            for (const [type, content] of [['text', 'Changed externally'], ['manifest', 'Changed while disconnected']]) {
-                text = content;
-                revision += 1;
-                await new Promise<void>(resolve => {
-                    changed = resolve;
-                    events?.dispatchEvent(new MessageEvent(type, { data: JSON.stringify('/main.tex') }));
-                });
-            }
-            assert.deepEqual(changes, ['Changed externally', 'Changed while disconnected']);
+            }, error => errors.push(error), file => { resources.push(file.path); });
+            const notify = (type = 'text') => events.dispatchEvent(new MessageEvent(type, { data: '"/main.tex"' }));
+            notify();
+            events.dispatchEvent(new MessageEvent('resource', { data: '"/main.pdf"' }));
+            await settle();
+            assert.deepEqual(changes, [], 'An unchanged ETag must not reapply text');
             assert.deepEqual(resources, ['/main.pdf']);
-            events?.dispatchEvent(new MessageEvent('resource', { data: JSON.stringify('/main.pdf') }));
-            assert.deepEqual(resources, ['/main.pdf', '/main.pdf']);
-            await assert.rejects(async () => { await file.writeText?.('Local edit'); }, ProjectWriteConflictError);
-            let finishManifest!: (response: Response) => void;
-            pendingManifest = new Promise(resolve => {finishManifest = resolve;});
-            events?.dispatchEvent(new MessageEvent('manifest'));
-            stop?.();
-            finishManifest(Response.json({ rootPath: '/main.tex', files: ['/main.tex', '/main.pdf'],
-                revisions: { '/main.tex': 'closed', '/main.pdf': 'closed' } }));
+            for (const stage of ['manifest', 'read', 'apply'] as const) {
+                failure = stage;
+                text = `External ${stage}`;
+                revision++;
+                notify(stage === 'manifest' ? 'manifest' : 'text');
+                await settle();
+                assert.equal(changes.includes(text), false, 'The first attempt must fail');
+                const failedText = text;
+                text = `Newest ${stage}`;
+                revision++;
+                mock.timers.tick(1000);
+                await settle();
+                assert.equal(changes.at(-1), text, 'Retry must read the latest disk content even without another notification');
+                assert.equal(changes.includes(failedText), false, 'Retry must not replay the failed snapshot');
+            }
+            assert.equal(errors.length, 3);
+            const idleRequests = requests;
+            mock.timers.tick(60_000);
+            await settle();
+            assert.equal(requests, idleRequests, 'Successful recovery must stop retrying');
+
+            text = 'Changed in a background tab'; revision++;
+            document.hidden = true;
+            document.dispatchEvent(new Event('visibilitychange'));
+            await settle();
+            assert.equal(requests, idleRequests, 'Hiding the tab must not scan the project');
+            document.hidden = false;
+            document.dispatchEvent(new Event('visibilitychange'));
+            await settle();
+            assert.equal(changes.at(-1), text, 'Returning to the tab must catch up missed updates');
+
+            text = 'Unreadable main'; revision++; failure = 'read';
+            notesText = 'Updated notes'; notesRevision++;
+            notify('manifest');
+            await settle();
+            assert.ok(changes.includes(notesText), 'One failed file must not block other changed files');
+            mock.timers.tick(1000);
+            await settle();
+            assert.equal(changes.at(-1), text);
+
+            const appliedChanges = changes.length;
+            text = 'Snapshot before save'; revision++;
+            readGate = new Promise(resolve => { finishRead = resolve; });
+            notify();
+            await settle();
+            const main = project.files[0];
+            assert.equal(await main.readText?.(), text);
+            await main.writeText?.('Saved while reading', text);
+            finishRead!();
+            await settle();
+            assert.equal(changes.length, appliedChanges, 'An older in-flight read must not undo a successful save');
+            assert.equal(await main.readText?.(), 'Saved while reading');
+
+            text = 'Superseded snapshot'; revision++;
+            readGate = new Promise(resolve => { finishRead = resolve; });
+            notify();
+            await settle();
+            text = 'Newest during read'; revision++;
+            notify();
+            notify();
+            finishRead!();
+            await settle();
+            assert.deepEqual(changes.slice(appliedChanges), [text], 'New notifications must supersede the older in-flight snapshot');
+
+            text = 'Waiting for reconnect'; revision++; failure = 'read';
+            notify();
+            await settle();
+            text = 'Newest after reconnect'; revision++;
+            notify('manifest');
+            await settle();
+            assert.equal(changes.at(-1), text, 'Reconnection must resume immediately, without waiting for backoff');
+
+            text = 'Closed'; revision++; failure = 'read';
+            notify();
+            await settle();
+            readGate = new Promise(resolve => { finishRead = resolve; });
+            notify('manifest');
+            await settle();
+            stop();
+            assert.equal(readSignal?.aborted, true, 'Closing the watcher must cancel its in-flight request');
             assert.equal(eventSourceClosed, true);
-            text = 'Change after project close';
-            revision += 1;
-            events?.dispatchEvent(new MessageEvent('text', { data: JSON.stringify('/main.tex') }));
-            await new Promise(resolve => setTimeout(resolve, 0));
-            assert.deepEqual(changes, ['Changed externally', 'Changed while disconnected'], 'Closed projects must ignore later server events');
-            assert.deepEqual(resources, ['/main.pdf', '/main.pdf'], 'An in-flight manifest must not update a closed project');
+            const stoppedRequests = requests;
+            const stoppedChanges = [...changes];
+            finishRead!();
+            notify();
+            mock.timers.tick(60_000);
+            await settle();
+            assert.equal(requests, stoppedRequests, 'Closing a project must cancel recovery');
+            assert.deepEqual(changes, stoppedChanges, 'Closed projects must ignore in-flight and later updates');
         } finally {
+            finishRead?.();
+            stop?.();
+            mock.timers.reset();
             globalThis.EventSource = OriginalEventSource;
+            if (previousDocument === undefined) {delete globals.document;}
+            else {globals.document = previousDocument;}
         }
     });
+
 });

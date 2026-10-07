@@ -146,6 +146,9 @@ test('serves a writable project through the remote project API', async t => {
             assert.deepEqual(Object.keys(manifest.revisions), ['/figure.png', '/main.tex', '/sections/intro.tex']);
         });
         await t.test('notifies an external write through SSE without polling the manifest', async () => {
+            const manifestUrl = `${baseUrl}/api/projects/paper-one/manifest`;
+            const previousManifest = await (await authenticatedFetch(manifestUrl)).json();
+            await writeFile(join(projectRoot, 'main.tex'), 'Changed while disconnected');
             const response = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`, { signal: AbortSignal.timeout(5000) });
             assert.equal(response.status, 200);
             assert.match(response.headers.get('content-type'), /text\/event-stream/);
@@ -164,6 +167,9 @@ test('serves a writable project through the remote project API', async t => {
             };
             try {
                 assert.match(await readEvent(), /event: manifest/);
+                const reconnectedManifest = await (await authenticatedFetch(manifestUrl)).json();
+                assert.notEqual(reconnectedManifest.revisions['/main.tex'], previousManifest.revisions['/main.tex'],
+                    'Initial SSE notification must not reuse a manifest cached before disconnected edits');
                 await writeFile(join(projectRoot, 'main.tex'), 'External event');
                 assert.match(await readEvent(), /event: text\ndata:"\/main\.tex"/);
                 await writeFile(join(projectRoot, 'figure.png'), 'Updated image');
