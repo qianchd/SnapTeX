@@ -8,7 +8,7 @@ Use this edition only when project files must stay on the server. For GitHub Pag
 
 - Linux with Node.js 22 or later, npm, bash, curl, systemd, Nginx, and Certbot;
 - the `acl` package and permission to create a system service account;
-- a complete SnapTeX source tree;
+- a SnapTeX source checkout or source package from the deployment command below;
 - a projects directory whose direct children are named LaTeX projects;
 - a dedicated HTTPS origin such as `https://snaptex.example.com`.
 - for PDF compilation, either `latexmk` or `Rscript` with the R package `tinytex`. SyncTeX queries run locally in the browser and do not require the `synctex` CLI on the server.
@@ -70,13 +70,13 @@ The installer:
 6. atomically switches the runtime and checks `/healthz`;
 7. restores the previous runtime if deployment fails.
 
-For repeated development deployments from another machine, synchronize the current tracked and non-ignored working tree and invoke the same installer with:
+For repeated development deployments from another machine, upload the current server build inputs and invoke the same installer with:
 
 ```bash
 npm run web:deploy-server -- <ssh-host> </absolute/remote/source-path>
 ```
 
-The command uses the local SSH configuration, preserves the ignored remote `apps/web/server.env`, and contains no credentials or deployment-specific addresses.
+The command packages tracked and non-ignored build inputs as a compressed `.tar.gz`, excluding README recordings, the documentation site, other hosts, and unrelated development tests/tools. It preserves the demo, bundled SyncTeX parser, and server deployment tests. It uses the local SSH configuration, preserves the ignored remote `apps/web/server.env`, and contains no credentials or deployment-specific addresses.
 
 The production build minifies browser JavaScript and precompresses eligible text assets with Brotli and gzip. The Node service prefers Brotli, falls back to gzip, and serves the original file when neither encoding is accepted. It also supplies per-file ETags, `304 Not Modified` responses, immutable caching for content-versioned URLs, and revalidation caching for HTML and `service-worker.js`. API, authentication, and project-file responses remain `no-store`.
 

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,15 +42,20 @@ function capture(command, args) {
 }
 
 const temp = await mkdtemp(join(tmpdir(), 'snaptex-deploy-'));
-const archive = join(temp, 'source.tar');
+const archive = join(temp, 'source.tar.gz');
 const fileList = join(temp, 'files.txt');
-const remoteArchive = `/tmp/snaptex-${Date.now()}.tar`;
+const remoteArchive = `/tmp/snaptex-${Date.now()}.tar.gz`;
 
 try {
-    const files = (await capture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z']))
+    // Upload build inputs, not repository documentation, recordings, or other hosts.
+    const files = (await capture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--',
+        'package.json', 'package-lock.json', 'esbuild.js', 'tsconfig.json', 'LICENSE',
+        'src', 'apps/standalone', 'apps/web', 'demo', 'tools/icons/prepare-assets.mjs',
+        'media/icon.svg', 'media/preview-style.css', ':(exclude)src/test']))
         .toString('utf8').split('\0').filter(file => file && existsSync(join(repoRoot, file)));
     await writeFile(fileList, files.join('\n'));
-    await run('tar', ['-cf', archive, '-T', fileList]);
+    await run('tar', ['-czf', archive, '-T', fileList]);
+    console.log(`[SnapTeX] Uploading ${files.length} source files (${((await stat(archive)).size / 1024 / 1024).toFixed(2)} MiB).`);
     await run('scp', [archive, `${host}:${remoteArchive}`]);
 
     const script = `set -Eeuo pipefail
@@ -61,7 +66,7 @@ previous="\${root}.previous"
 cleanup() { rm -f "\$archive"; rm -rf "\$staging"; }
 trap cleanup EXIT
 mkdir -p "\$staging"
-tar -xf "\$archive" -C "\$staging"
+tar -xzf "\$archive" -C "\$staging"
 if [[ -f "\$root/apps/web/server.env" ]]; then
     mkdir -p "\$staging/apps/web"
     cp -p "\$root/apps/web/server.env" "\$staging/apps/web/server.env"

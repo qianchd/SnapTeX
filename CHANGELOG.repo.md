@@ -6,6 +6,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 - **Fixed**: Retained and retried external project updates after temporary network, file-read, or delivery failures instead of marking them as handled. Server projects catch up after reconnection or returning to the tab without restoring continuous manifest polling.
 - **Fixed**: Prevented stale reads and post-save metadata from hiding newer edits, caught changes made while local monitoring starts, and kept failed files from blocking other updates. Failed preview refreshes rebuild on retry without replacing the editor again; stalled remote sync reads time out and pending watcher requests are cancelled when closing a project.
+- **Improved**: Reduced remote deployment uploads by packaging only server build inputs in a gzip-compressed archive. Demo files, SyncTeX assets, server deployment tests, and the private remote configuration are preserved.
 
 ## [0.8.2] - 2026-10-05
 
