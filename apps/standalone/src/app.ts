@@ -10,6 +10,7 @@ import {
     isPdfFile,
     isTexFile,
     isProjectTextFile,
+    isUnavailableProjectFileError,
     normalizeBrowserPath,
     normalizeProjectText as normalizeEditorText,
     ProjectWriteConflictError,
@@ -80,6 +81,8 @@ function normalizeAutoSaveDelay(seconds: number): number {
     return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 60) : DEFAULT_STANDALONE_PREVIEW_SETTINGS.autoSaveDelaySeconds;
 }
 
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
 const flashEditorLineEffect = StateEffect.define<number | null>();
 const flashEditorLineField = StateField.define<DecorationSet>({
     create: () => Decoration.none,
@@ -116,7 +119,6 @@ export class StandaloneHost {
     private stopProjectWatch: (() => void) | undefined;
     private labels: string[] = [];
     private previewReady = false;
-    private previewRefreshPending = false;
     private pdfSyncHandler?: PdfSyncHandler;
     private editorVisible = true;
     private previewVisible = true;
@@ -186,11 +188,28 @@ export class StandaloneHost {
         await this.renderCurrentText();
         this.stopProjectWatch = project.watchFiles?.(
             change => this.queueProjectChange(change),
-            error => this.addDiagnostic(`Project sync failed: ${error instanceof Error ? error.message : String(error)}`),
-            file => {
-                this.fileProvider.setProjectFile(file);
+            error => this.addDiagnostic(`Project sync failed: ${errorMessage(error)}`),
+            file => this.queueProjectTask(async () => {
+                if (!this.fileProvider.wasResourceRequested(file.path)) {
+                    this.fileProvider.setProjectFile(file);
+                    return;
+                }
+                let uri: string | undefined;
+                try {
+                    uri = await this.fileProvider.refreshResource(file);
+                } catch (error) {
+                    if (!isUnavailableProjectFileError(error)) {throw error;}
+                    this.fileProvider.setProjectFile({ path: file.path });
+                    this.addDiagnostic(`Resource unavailable: ${file.path} (${error.message})`);
+                }
+                this.postToPreview({
+                    command: HostToPreviewCommand.ResourceChanged,
+                    path: normalizeBrowserPath(file.path).slice(1),
+                    baseDirectory: this.fileProvider.dir(this.rootUri).path.slice(1),
+                    uri
+                });
                 this.onResourceChange(file.path);
-            }
+            })
         );
         return rootPath;
     }
@@ -528,7 +547,6 @@ export class StandaloneHost {
             return false;
         }
         if (remoteText === baseText) {
-            if (this.previewRefreshPending) {await this.renderCurrentText();}
             return false;
         }
         // Snapshot the editor after the async module load, then merge and apply without yielding.
@@ -568,7 +586,7 @@ export class StandaloneHost {
         }
         this.autosaveTimer = window.setTimeout(() => {
             this.autosaveTimer = undefined;
-            void this.queueAutosave().catch(error => this.addDiagnostic(`Autosave failed: ${error instanceof Error ? error.message : String(error)}`));
+            void this.queueAutosave().catch(error => this.addDiagnostic(`Autosave failed: ${errorMessage(error)}`));
         }, this.settings.autoSaveDelaySeconds * 1000);
     }
 
@@ -821,22 +839,22 @@ export class StandaloneHost {
         }
 
         this.persistActiveEditorText();
-        const payload = await this.fileProvider.read(this.rootUri).then(rootText => this.updateService.render(this.rootUri, rootText, {
+        const rootText = await this.fileProvider.read(this.rootUri);
+        const resourceDiagnostics = new Set<string>();
+        const payload = await this.updateService.render(this.rootUri, rootText, {
             deferFullHtml: this.settings.virtualMode,
             backendMode: this.settings.backendMode,
-            transformHtml: html => this.fixHtmlPaths(html)
-        })).catch(error => {
+            transformHtml: html => this.fixHtmlPaths(html, message => resourceDiagnostics.add(message))
+        }).catch(error => {
             // No payload was delivered; the next attempt must rebuild the preview, not diff against it.
             this.updateService.resetState();
-            this.previewRefreshPending = true;
-            throw error;
+            this.addDiagnostic(`Preview rendering failed: ${errorMessage(error)}`);
         });
-        if (this.pdfSyncHandler) {return;}
+        if (!payload || this.pdfSyncHandler) {return;}
 
         this.labels = Object.keys(payload.numbering.labels).sort((a, b) => a.localeCompare(b));
-        this.replaceDiagnostics(this.updateService.getDiagnostics().map(diagnostic => diagnostic.message));
+        this.replaceDiagnostics([...this.updateService.getDiagnostics().map(diagnostic => diagnostic.message), ...resourceDiagnostics]);
         this.postToPreview({ command: HostToPreviewCommand.Update, payload });
-        this.previewRefreshPending = false;
     }
 
     private async handleBlockHtmlRequest(id: string, index: number, hash: string) {
@@ -858,29 +876,31 @@ export class StandaloneHost {
             return;
         }
 
-        const uri = this.resolveProjectResourceUri(pathText);
-        if (!uri) {
+        if (!this.resolveProjectResourceUri(pathText)) {
             this.postToPreview({ command: HostToPreviewCommand.PdfUri, id, error: 'PDF path is outside the project root' });
             return;
         }
-        const url = await this.fileProvider.getResourceUrl(uri);
-        if (!url) {
-            this.addDiagnostic(`Missing PDF: ${pathText}`);
-        }
-        this.postToPreview(url
-            ? { command: HostToPreviewCommand.PdfUri, id, path: pathText, uri: url }
-            : { command: HostToPreviewCommand.PdfUri, id, path: pathText, error: 'PDF not found' });
+        const resource = await this.readPreviewResource(pathText, 'PDF');
+        this.postToPreview({ command: HostToPreviewCommand.PdfUri, id, path: pathText, ...resource });
     }
 
-    private async fixHtmlPaths(html: string): Promise<string> {
-        return replaceLocalResourceUrls(html, async (path, attribute) => {
+    private async readPreviewResource(path: string, kind: 'PDF' | 'image', reportDiagnostic: (message: string) => void = message => this.addDiagnostic(message)): Promise<{ uri?: string; error?: string }> {
+        try {
             const uri = this.resolveProjectResourceUri(path);
             const url = uri && await this.fileProvider.getResourceUrl(uri);
-            if (!url) {
-                this.addDiagnostic(`${attribute === 'data-pdf-src' ? 'Missing PDF' : 'Missing image'}: ${path}`);
-            }
-            return url;
-        });
+            if (url) {return { uri: url };}
+            reportDiagnostic(`Missing ${kind}: ${path}`);
+            return { error: `${kind} not found` };
+        } catch (error) {
+            const message = `Failed to read ${kind}: ${path} (${errorMessage(error)})`;
+            reportDiagnostic(message);
+            return { error: message };
+        }
+    }
+
+    private async fixHtmlPaths(html: string, reportDiagnostic?: (message: string) => void): Promise<string> {
+        return replaceLocalResourceUrls(html, async (path, attribute) =>
+            (await this.readPreviewResource(path, attribute === 'data-pdf-src' ? 'PDF' : 'image', reportDiagnostic)).uri);
     }
 
     private resolveProjectResourceUri(relativePath: string): BrowserUri | undefined {

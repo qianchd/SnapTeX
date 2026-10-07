@@ -6,39 +6,17 @@ import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/brows
 import { BrowserWorkspaceStore } from '../../apps/web/src/indexeddb-project';
 import { createProjectZip } from '../../apps/standalone/src/project-archive';
 import { createDirectoryProject, type BrowserDirectoryHandle, type BrowserFileHandle } from '../../apps/web/src/local-project';
+import { installTestGlobals } from './test-helpers';
 
 suite('BrowserFileProvider', () => {
     async function withFakeIndexedDb<T>(callback: () => Promise<T>): Promise<T> {
-        const fake = await import('fake-indexeddb');
-        const names = [
-            'indexedDB',
-            'IDBCursor',
-            'IDBCursorWithValue',
-            'IDBDatabase',
-            'IDBFactory',
-            'IDBIndex',
-            'IDBKeyRange',
-            'IDBObjectStore',
-            'IDBOpenDBRequest',
-            'IDBRequest',
-            'IDBTransaction',
-            'IDBVersionChangeEvent'
-        ] as const;
-        const globalValues = globalThis as unknown as Record<string, unknown>;
-        const previous = new Map(names.map(name => [name, globalValues[name]]));
-        for (const name of names) {
-            globalValues[name] = fake[name];
-        }
+        const values = Object.entries(await import('fake-indexeddb'))
+            .filter(([name]) => name === 'indexedDB' || name.startsWith('IDB'));
+        const restore = installTestGlobals(Object.fromEntries(values));
         try {
             return await callback();
         } finally {
-            for (const name of names) {
-                if (previous.get(name) === undefined) {
-                    delete globalValues[name];
-                } else {
-                    globalValues[name] = previous.get(name);
-                }
-            }
+            restore();
         }
     }
 
@@ -152,7 +130,7 @@ suite('BrowserFileProvider', () => {
         const provider = new BrowserFileProvider();
         const revoked: string[] = [];
         const originalRevoke = URL.revokeObjectURL;
-        URL.revokeObjectURL = url => {revoked.push(String(url));};
+        URL.revokeObjectURL = url => {revoked.push(String(url)); originalRevoke(url);};
         try {
             provider.setProjectFiles([{ path: '/figure.png', blob: new Blob(['first']) }]);
             const uri = new BrowserUri('/figure.png');
@@ -162,12 +140,23 @@ suite('BrowserFileProvider', () => {
             assert.deepEqual(revoked, ['blob:first']);
             assert.equal(await provider.getResourceUrl(uri, () => 'blob:replacement'), 'blob:replacement');
 
+            await assert.rejects(provider.refreshResource({ path: uri.path, readBlob: async () => {throw new Error('Disconnected');} }), /Disconnected/);
+            assert.equal(await provider.getResourceUrl(uri), 'blob:replacement', 'A failed refresh must preserve the last usable resource');
+            let refreshReads = 0;
+            const refreshed = await provider.refreshResource({ path: uri.path, readBlob: async () => {
+                refreshReads++;
+                return new Blob(['refreshed']);
+            } });
+            assert.equal(await provider.getResourceUrl(uri), refreshed);
+            assert.equal(await (await provider.readBlob(uri)).text(), 'refreshed');
+            assert.equal(refreshReads, 1, 'URL creation and PDF/snapshot reads must reuse the bytes already read for a refresh');
+
             provider.setProjectFiles([{ path: '/other.png', blob: new Blob(['new project']) }]);
-            assert.deepEqual(revoked, ['blob:first', 'blob:replacement']);
+            assert.deepEqual(revoked, ['blob:first', 'blob:replacement', refreshed]);
             const other = new BrowserUri('/other.png');
             assert.equal(await provider.getResourceUrl(other, () => 'blob:other'), 'blob:other');
             provider.deleteProjectFile('/other.png');
-            assert.deepEqual(revoked, ['blob:first', 'blob:replacement', 'blob:other']);
+            assert.deepEqual(revoked, ['blob:first', 'blob:replacement', refreshed, 'blob:other']);
 
             let finishRead!: (blob: Blob) => void;
             provider.setProjectFile({ path: '/pending.png', readBlob: () => new Promise(resolve => { finishRead = resolve; }) });

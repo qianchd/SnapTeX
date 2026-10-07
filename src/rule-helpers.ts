@@ -402,7 +402,7 @@ export function renderIncludeGraphicsHtml(imgPath: string): string {
         const canvasId = `pdf-${Math.random().toString(36).slice(2, 11)}`;
         return `<canvas id="${canvasId}" data-req-path="${safePath}" style="width:100%; max-width:100%; display:block; margin:0 auto;"></canvas>`;
     }
-    return `<img src="LOCAL_IMG:${safePath}" style="max-width:100%; display:block; margin:0 auto;">`;
+    return `<img src="LOCAL_IMG:${safePath}" data-req-path="${safePath}" style="max-width:100%; display:block; margin:0 auto;">`;
 }
 
 export function normalizeMathEnvironmentForKatex(tex: string, envName?: string): string {

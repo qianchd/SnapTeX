@@ -16,6 +16,14 @@ export interface BrowserProjectTextChange {
     text: string;
 }
 
+/** A permanent file-access failure, not a transient read/transport error. */
+export class ProjectFileUnavailableError extends Error {}
+
+export function isUnavailableProjectFileError(error: unknown): error is Error {
+    return error instanceof ProjectFileUnavailableError ||
+        (error instanceof Error && ['NotFoundError', 'NotAllowedError', 'SecurityError'].includes(error.name));
+}
+
 export type PdfSyncQuery =
     | { direction: 'forward'; sourcePath: string; line: number; column: number }
     | { direction: 'inverse'; page: number; x: number; y: number };

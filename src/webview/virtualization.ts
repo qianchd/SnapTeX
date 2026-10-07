@@ -2,6 +2,7 @@
 /* eslint-disable curly */
 
 import { PREVIEW_RESIZE_ACTIVE_CLASS } from './viewport';
+import { getResourcePaths } from './resources';
 
 const BLOCK_VIRTUALIZATION_INITIAL_PRELOAD_MARGIN_VH = 120;
 const BLOCK_VIRTUALIZATION_BASE_PRELOAD_MARGIN_VH = 250;
@@ -21,11 +22,9 @@ export function parseFirstElementFromHtml(html) {
     return tempDiv.firstElementChild;
 }
 
-export function isElementWithinViewportMargins(element, margins) {
+export function isElementWithinViewportMargins(element, margin) {
     const rect = element.getBoundingClientRect();
-    const above = typeof margins === 'number' ? margins : margins.above;
-    const below = typeof margins === 'number' ? margins : margins.below;
-    return rect.bottom >= -above && rect.top <= window.innerHeight + below;
+    return rect.bottom >= -margin && rect.top <= window.innerHeight + margin;
 }
 
 /**
@@ -41,7 +40,7 @@ export class BlockVirtualizationController {
             this.enabled = false;
             this.fontSize = 16;
             this.contentHeightCache = new Map();
-            this.blockHtmlByShell = new WeakMap();
+            this.blockCacheByShell = new WeakMap();
             this.measurementHost = null;
             this.observedShells = new Set();
             this.resizeObserver = typeof ResizeObserver !== 'undefined'
@@ -71,7 +70,7 @@ export class BlockVirtualizationController {
         resetCaches() {
             this.disconnectShellObservers();
             this.resetHeightCache();
-            this.blockHtmlByShell = new WeakMap();
+            this.blockCacheByShell = new WeakMap();
         }
 
         cancelHeightMeasurement() {
@@ -84,10 +83,6 @@ export class BlockVirtualizationController {
         getBlockSourceKey(element) {
             if (!element) return '';
             return element.getAttribute('data-block-hash') || element.getAttribute('data-index') || '';
-        }
-
-        getBlockIndex(element) {
-            return element ? element.getAttribute('data-index') : null;
         }
 
         estimateBlockHeightFromHtml(html) {
@@ -155,13 +150,10 @@ export class BlockVirtualizationController {
             shell._snaptexAnchorIds = Array.isArray(anchors) ? anchors : [];
         }
 
-        getShellAnchors(shell) {
-            return Array.isArray(shell?._snaptexAnchorIds) ? shell._snaptexAnchorIds : [];
-        }
-
         findShellByAnchorId(anchorId) {
             if (!anchorId) return null;
-            return this.getShells().find(shell => this.getShellAnchors(shell).includes(anchorId)) || null;
+            return this.getShells().find(shell => Array.isArray(shell._snaptexAnchorIds)
+                && shell._snaptexAnchorIds.includes(anchorId)) || null;
         }
 
         getShellHeightBaseline(shell) {
@@ -193,10 +185,6 @@ export class BlockVirtualizationController {
 
         isShellAboveViewport(shell) {
             return shell.getBoundingClientRect().bottom <= 0;
-        }
-
-        wasShellAboveViewport(shell, previousHeight) {
-            return shell.getBoundingClientRect().top + previousHeight <= 0;
         }
 
         withViewportAnchorPreserved(callback, shells) {
@@ -259,7 +247,7 @@ export class BlockVirtualizationController {
                 const settled = this.hasMeasuredHeight(shell, measurementWidth);
                 if (preserveViewport
                     && previousHeight !== undefined
-                    && this.wasShellAboveViewport(shell, previousHeight)) {
+                    && shell.getBoundingClientRect().top + previousHeight <= 0) {
                     scrollDelta += nextHeight - previousHeight;
                 }
                 this.cacheBlockHeight(key, nextHeight, this.fontSize, measurementWidth, settled);
@@ -281,12 +269,12 @@ export class BlockVirtualizationController {
         }
 
         createShellForBlock(block) {
-            const index = this.getBlockIndex(block);
+            const index = block.getAttribute('data-index');
             const hash = block.getAttribute('data-block-hash') || '';
             const key = this.getBlockSourceKey(block);
             const html = block.outerHTML;
             const shell = this.createShell(index, hash, this.getCachedBlockHeight(key) ?? this.estimateBlockHeightFromHtml(html), this.getAnchorIdsFromBlock(block));
-            this.blockHtmlByShell.set(shell, html);
+            this.cacheBlockHtml(shell, html);
             return shell;
         }
 
@@ -313,7 +301,7 @@ export class BlockVirtualizationController {
             let htmlChars = 0;
             let htmlEntries = 0;
             for (const shell of this.getShells()) {
-                const html = this.blockHtmlByShell.get(shell);
+                const html = this.getBlockHtml(shell);
                 if (html) {
                     htmlEntries += 1;
                     htmlChars += html.length;
@@ -352,7 +340,6 @@ export class BlockVirtualizationController {
         mountShell(shell, onMissingHtml) {
             if (!this.enabled || this.getShellBlock(shell)) return null;
 
-            const key = this.getBlockSourceKey(shell);
             const html = this.getBlockHtml(shell);
             if (!html) {
                 if (onMissingHtml) { onMissingHtml(shell); }
@@ -361,7 +348,7 @@ export class BlockVirtualizationController {
 
             const block = parseFirstElementFromHtml(html);
             if (!block) return null;
-            const index = this.getBlockIndex(shell);
+            const index = shell.getAttribute('data-index');
             const hash = shell.getAttribute('data-block-hash');
             if (index !== null) { block.setAttribute('data-index', index); }
             if (hash) { block.setAttribute('data-block-hash', hash); }
@@ -432,9 +419,10 @@ export class BlockVirtualizationController {
                         this.unmountShell(shell);
                         block = null;
                     }
-                    if (!options.pruneHtmlCache || block || shell.getAttribute('data-html-request-id') || inRetainRange) return;
+                    if (options.pruneHtmlCache !== true || block || shell.getAttribute('data-html-request-id') || inRetainRange) return;
 
-                    this.blockHtmlByShell.delete(shell);
+                    const cached = this.blockCacheByShell.get(shell);
+                    if (cached) {cached.html = undefined;}
                 });
                 return mounted;
             };
@@ -468,12 +456,12 @@ export class BlockVirtualizationController {
             );
         }
 
-        storeBlockHtml(index, hash, html) {
-            const shell = this.findMatchingShell(index, hash);
-            if (!shell) return null;
-
-            this.blockHtmlByShell.set(shell, html);
-            return shell;
+        cacheBlockHtml(shell, html, storeHtml = true) {
+            const cached = this.blockCacheByShell.get(shell);
+            this.blockCacheByShell.set(shell, {
+                html: storeHtml ? html : cached?.html,
+                resourcePaths: getResourcePaths(html)
+            });
         }
 
         findMatchingShell(index, hash) {
@@ -483,7 +471,17 @@ export class BlockVirtualizationController {
         }
 
         getBlockHtml(shell) {
-            return this.blockHtmlByShell.get(shell);
+            return this.blockCacheByShell.get(shell)?.html;
+        }
+
+        getBlockResourcePaths(shell) {
+            return this.blockCacheByShell.get(shell)?.resourcePaths ?? [];
+        }
+
+        invalidateBlock(shell) {
+            const cached = this.blockCacheByShell.get(shell);
+            if (cached) {cached.html = undefined;}
+            this.forgetBlockHeight(shell);
         }
 
         ensureMeasurementHost(measurementWidth) {

@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { PageLayoutController, paginateBlockHeights, type PageMetrics } from '../webview/pagination';
 import { ViewportAnchorController } from '../webview/viewport';
 import { BlockVirtualizationController } from '../webview/virtualization';
+import { installTestGlobals } from './test-helpers';
 
 class FakeElement {
     private readonly classes: Set<string>;
@@ -51,30 +52,17 @@ suite('Paged preview layout', () => {
     }
 
     function withPaginationDom<T>(items: HTMLElement[], run: (controller: PageLayoutController) => T): T {
-        const globals = globalThis as unknown as Record<string, unknown>;
-        const names = ['HTMLElement', 'document', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame'];
-        const previous = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
         const body = pageItem() as unknown as FakeElement;
         const root = new FakeElement([], {}, 210);
         const parent = pageItem() as unknown as FakeElement;
         root.parentElement = parent;
         root.children.push(...items as unknown as FakeElement[]);
-        Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: FakeElement });
-        Object.defineProperty(globalThis, 'document', {
-            configurable: true,
-            value: { body, documentElement: pageItem() }
-        });
-        Object.defineProperty(globalThis, 'getComputedStyle', {
-            configurable: true,
-            value: () => ({ fontSize: '16px', getPropertyValue: () => '' })
-        });
-        Object.defineProperty(globalThis, 'requestAnimationFrame', {
-            configurable: true,
-            value: () => 1
-        });
-        Object.defineProperty(globalThis, 'cancelAnimationFrame', {
-            configurable: true,
-            value: () => undefined
+        const restore = installTestGlobals({
+            HTMLElement: FakeElement,
+            document: { body, documentElement: pageItem() },
+            getComputedStyle: () => ({ fontSize: '16px', getPropertyValue: () => '' }),
+            requestAnimationFrame: () => 1,
+            cancelAnimationFrame: () => undefined
         });
         const anchor = { preserve: (_elements: HTMLElement[], update: () => void) => update() };
         const controller = new PageLayoutController(root as unknown as HTMLElement, anchor as ViewportAnchorController);
@@ -83,11 +71,7 @@ suite('Paged preview layout', () => {
             return run(controller);
         } finally {
             controller.setEnabled(false);
-            for (const name of names) {
-                const descriptor = previous.get(name);
-                if (descriptor) {Object.defineProperty(globalThis, name, descriptor);}
-                else {delete globals[name];}
-            }
+            restore();
         }
     }
 
@@ -192,11 +176,16 @@ suite('Paged preview layout', () => {
         shells.set('1', shell('1'));
         shells.set('2', shell('2'));
 
-        virtualization.storeBlockHtml(1, 'same-hash', '<div data-index="1">first</div>');
-        virtualization.storeBlockHtml(2, 'same-hash', '<div data-index="2">second</div>');
+        virtualization.cacheBlockHtml(virtualization.findMatchingShell(1, 'same-hash'), '<div data-index="1">first</div>');
+        virtualization.cacheBlockHtml(virtualization.findMatchingShell(2, 'same-hash'), '<div data-index="2">second</div>');
 
         assert.match(virtualization.getBlockHtml(shells.get('1')), /first/);
         assert.match(virtualization.getBlockHtml(shells.get('2')), /second/);
+        virtualization.cacheBlockHtml(virtualization.findMatchingShell(1, 'same-hash'), '<img data-req-path="figures/a.png">', false);
+        virtualization.invalidateBlock(shells.get('1'));
+        assert.equal(virtualization.getBlockHtml(shells.get('1')), undefined);
+        assert.deepEqual(virtualization.getBlockResourcePaths(shells.get('1')), ['figures/a.png'],
+            'Resource references must survive HTML eviction so changed image heights can be invalidated');
         virtualization.observeShell(shells.get('1'));
         virtualization.observeShell(shells.get('2'));
         virtualization.resetCaches();
@@ -204,16 +193,15 @@ suite('Paged preview layout', () => {
         virtualization.observeShell(shells.get('1'));
         assert.equal(observations, 3, 'Reset must release shells so they can be observed again');
         assert.equal(virtualization.getBlockHtml(shells.get('1')), undefined);
+        assert.deepEqual(virtualization.getBlockResourcePaths(shells.get('1')), []);
     });
 
     test('preserves a mid-document anchor without scanning the offscreen prefix', () => {
-        const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
         let layoutShift = 0;
         let rectReads = 0;
         let scrollDelta = 0;
-        Object.defineProperty(globalThis, 'window', {
-            configurable: true,
-            value: {
+        const restore = installTestGlobals({
+            window: {
                 innerHeight: 800,
                 scrollY: 50_000,
                 scrollBy: (_left: number, top: number) => { scrollDelta = top; }
@@ -249,11 +237,7 @@ suite('Paged preview layout', () => {
             virtualization.withViewportAnchorPreserved(() => undefined, undefined);
             assert.equal(enumerations, 1, 'The document top needs no scroll compensation');
         } finally {
-            if (previousWindow) {
-                Object.defineProperty(globalThis, 'window', previousWindow);
-            } else {
-                delete (globalThis as { window?: unknown }).window;
-            }
+            restore();
         }
     });
 });

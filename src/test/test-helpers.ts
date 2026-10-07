@@ -113,3 +113,15 @@ export function resultBlockTexts(result: DocumentParseResult): string[] {
     return result.blockSpans.map(span => spanText(result.bodyText, span));
 }
 
+export function installTestGlobals(values: Record<string, unknown>): () => void {
+    const previous = new Map(Object.keys(values).map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+    for (const [name, value] of Object.entries(values)) {
+        Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+    }
+    return () => {
+        for (const [name, descriptor] of previous) {
+            if (descriptor) {Object.defineProperty(globalThis, name, descriptor);}
+            else {Reflect.deleteProperty(globalThis, name);}
+        }
+    };
+}

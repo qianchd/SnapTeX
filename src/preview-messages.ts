@@ -24,6 +24,7 @@ export const HostToPreviewCommand = {
     ScrollToBlock: 'scrollToBlock',
     PdfUri: 'pdfUri',
     BlockHtml: 'blockHtml',
+    ResourceChanged: 'resourceChanged',
     Config: 'config'
 } as const;
 
@@ -120,11 +121,19 @@ interface ConfigMessage {
     };
 }
 
+export interface ResourceChangedMessage {
+    command: typeof HostToPreviewCommand.ResourceChanged;
+    path: string;
+    baseDirectory: string;
+    uri?: string;
+}
+
 export type HostToPreviewMessage =
     | UpdateMessage
     | ScrollToBlockMessage
     | PdfUriMessage
     | BlockHtmlMessage
+    | ResourceChangedMessage
     | ConfigMessage;
 
 function isFiniteNumber(value: unknown): value is number {

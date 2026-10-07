@@ -7,6 +7,8 @@ import { PREVIEW_RESIZE_ACTIVE_CLASS, ViewportAnchorController } from './viewpor
 import { hasRenderedTikz, setTikzContainerState, TIKZ_BATCH_RENDER_TIMEOUT_MS, TIKZ_RENDER_DEBOUNCE_MS, TIKZ_SCRIPT_SELECTOR } from './tikz';
 import { HostToPreviewCommand, MAX_BLOCK_HTML_BATCH_SIZE, PreviewToHostCommand } from '../preview-messages';
 import { getPreviewBridge } from './bridge';
+import { refreshResourceElements } from './resources';
+import { resolveProjectResourcePath } from '../file-provider';
 const previewBridge = getPreviewBridge();
     const PREVIEW_LAYOUT_WIDTH_TOLERANCE = 0.01;
     const PREVIEW_RESIZE_SETTLE_DELAY_MS = 150;
@@ -508,18 +510,17 @@ const previewBridge = getPreviewBridge();
 
         bindEvents() {
             window.addEventListener('message', event => this.onMessage(event));
-            const deferHeightWarmup = () => this.deferHeightWarmup();
             const previewPane = document.getElementById('preview-pane');
             const isPreviewInput = event => !previewPane || (event.target instanceof Node && previewPane.contains(event.target));
             ['wheel', 'touchmove', 'pointerdown'].forEach(eventName => {
                 window.addEventListener(eventName, event => {
-                    deferHeightWarmup();
+                    this.deferHeightWarmup();
                     if (isPreviewInput(event)) this.beginUserScroll();
                 }, { passive: true });
             });
             window.addEventListener('keydown', event => {
                 if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
-                    deferHeightWarmup();
+                    this.deferHeightWarmup();
                     if (isPreviewInput(event)) this.beginUserScroll();
                 }
             });
@@ -737,6 +738,10 @@ const previewBridge = getPreviewBridge();
                     this.handleBlockHtml(event.data);
                     break;
 
+                case HostToPreviewCommand.ResourceChanged:
+                    this.handleResourceChange(event.data);
+                    break;
+
                 case HostToPreviewCommand.Config:
                     const config = event.data.config;
                     const styleChanged = this.applyPreviewStyle(config.style);
@@ -763,6 +768,35 @@ const previewBridge = getPreviewBridge();
                     }
                     this.updateVirtualizedBlocks({ allowUnmount: true });
                     break;
+            }
+        }
+
+        handleResourceChange(change) {
+            const blocks = refreshResourceElements(document, change);
+            for (const shell of this.virtualization.getShells()) {
+                if (this.virtualization.getBlockResourcePaths(shell).some(path =>
+                    resolveProjectResourcePath(change.baseDirectory, path) === change.path)) {
+                    blocks.add(shell);
+                }
+            }
+            let startIndex = Infinity;
+            let lastChangedIndex = -1;
+            for (const block of blocks) {
+                this.virtualization.invalidateBlock(block);
+                const attribute = block.getAttribute('data-index');
+                if (attribute === null) {continue;}
+                const index = Number(attribute);
+                startIndex = Math.min(startIndex, index);
+                lastChangedIndex = Math.max(lastChangedIndex, index);
+            }
+            if (lastChangedIndex < 0) {return;}
+            startIndex = Math.min(startIndex, this.heightWarmupCursor ?? Infinity);
+            lastChangedIndex = Math.max(lastChangedIndex, this.heightWarmupEndIndex ?? -1);
+            if (this.virtualization.isEnabled()) {
+                this.scheduleHeightWarmup(0, { startIndex, lastChangedIndex });
+            } else {
+                void Promise.all([...blocks].map(block => this.prepareBlockHeightResources(block, false)))
+                    .then(() => this.pagination.refresh());
             }
         }
 
@@ -1034,9 +1068,7 @@ const previewBridge = getPreviewBridge();
                 block => this.onVirtualBlockMounted(block),
                 shell => this.requestVirtualBlockHtml(shell),
                 {
-                    allowUnmount: options.allowUnmount !== false,
-                    phase: options.phase || 'normal',
-                    pruneHtmlCache: options.pruneHtmlCache === true,
+                    ...options,
                     preserveViewportAnchor: !this.pagination.isEnabled() || this.viewportAnchor.isPinned()
                 }
             );
@@ -1248,9 +1280,8 @@ const previewBridge = getPreviewBridge();
             this.debugStats.blockHtmlResponses += 1;
             this.debugStats.blockHtmlChars += htmlChars;
             this.debugStats.maxBlockHtmlChars = Math.max(this.debugStats.maxBlockHtmlChars, htmlChars);
-            const shell = pending.mountRequested
-                ? this.virtualization.storeBlockHtml(index, hash, message.html)
-                : this.virtualization.findMatchingShell(index, hash);
+            const shell = this.virtualization.findMatchingShell(index, hash);
+            if (shell) {this.virtualization.cacheBlockHtml(shell, message.html, pending.mountRequested);}
             if (shell?.getAttribute('data-html-request-id') === message.id) {
                 shell.removeAttribute('data-html-request-id');
             }
@@ -1839,7 +1870,7 @@ const previewBridge = getPreviewBridge();
                     targetY = sourceRect.top + window.scrollY - (window.innerHeight * viewRatio);
                 }
                 if (!sourceTarget && useAnchor && anchor) {
-                    const textTop = this.findTextOffsetInBlock(target, anchor);
+                    const textTop = this.findTextRangeInNode(target, anchor)?.getBoundingClientRect().top ?? null;
                     if (textTop !== null) { targetY = textTop + window.scrollY - (window.innerHeight * viewRatio); }
                 }
                 const currentY = window.scrollY;
@@ -2185,10 +2216,6 @@ const previewBridge = getPreviewBridge();
             }) || null;
         }
 
-        findTextOffsetInBlock(rootElement, text) {
-            const range = this.findTextRangeInNode(rootElement, text);
-            return range ? range.getBoundingClientRect().top : null;
-        }
     }
 
     new PreviewController();

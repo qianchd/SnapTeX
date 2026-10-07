@@ -129,6 +129,13 @@ test('serves a writable project through the remote project API', async t => {
             assert.equal(await readFile(join(outsideRoot, 'secret.txt'), 'utf8'), 'Secret');
             assert.equal((await authenticatedFetch(`${baseUrl}/api/projects`)).status, 200);
             if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+                const imagePath = join(projectRoot, 'figure.png');
+                await chmod(imagePath, 0);
+                try {
+                    const denied = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/figure.png`);
+                    assert.equal(denied.status, 403, 'Denied resource reads must not look like failed 200 transfers');
+                    assert.equal((await denied.json()).error, 'Permission denied.');
+                } finally {await chmod(imagePath, 0o600);}
                 const unreadableDirectory = join(projectRoot, 'unreadable');
                 await mkdir(unreadableDirectory);
                 await chmod(unreadableDirectory, 0);

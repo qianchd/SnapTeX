@@ -1,4 +1,4 @@
-import { isProjectFile, isProjectTextFile, normalizeBrowserPath, normalizeProjectText, ProjectWriteConflictError, type BrowserProject, type BrowserProjectFile } from '../../standalone/src/browser-project';
+import { isProjectFile, isProjectTextFile, isUnavailableProjectFileError, normalizeBrowserPath, normalizeProjectText, ProjectWriteConflictError, type BrowserProject, type BrowserProjectFile } from '../../standalone/src/browser-project';
 
 export interface BrowserFileHandle {
     kind: 'file';
@@ -45,12 +45,6 @@ async function ensureDirectoryPermission(directory: BrowserDirectoryHandle): Pro
     }
 }
 
-async function writeText(handle: BrowserFileHandle, text: string): Promise<void> {
-    const writable = await handle.createWritable();
-    await writable.write(text);
-    await writable.close();
-}
-
 function fileVersion(file: File): string {
     return `${file.size}:${file.lastModified}`;
 }
@@ -82,7 +76,9 @@ function projectFileFromHandle(
                 }
                 state.text = normalizeProjectText(text);
                 try {
-                    await writeText(handle, text);
+                    const writable = await handle.createWritable();
+                    await writable.write(text);
+                    await writable.close();
                     // Post-write metadata may already describe a newer external edit.
                     state.version = '';
                 } catch (error) {
@@ -94,9 +90,11 @@ function projectFileFromHandle(
         };
     }
     return { path, readBlob: async () => {
+        state.version ||= 'pending';
         const file = await handle.getFile();
+        const blob = await new Response(file).blob();
         state.version = fileVersion(file);
-        return file;
+        return blob;
     } };
 }
 
@@ -165,36 +163,43 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
                         checkAgain = false;
                         let failure: unknown;
                         for (const [path, state] of localFiles) {
+                            const textFile = isProjectTextFile(path);
                             try {
                                 // Never poll untouched binary resources. Their first read establishes a revision.
-                                if (!isProjectTextFile(path) && !state.version) {continue;}
+                                if (!textFile && !state.version) {continue;}
                                 const previousVersion = state.version;
                                 const previousText = state.text;
                                 const file = await state.handle.getFile();
                                 if (stopped) {return;}
                                 const version = fileVersion(file);
                                 if (version === state.version) {continue;}
-                                if (!isProjectTextFile(path)) {
-                                    await onResourceChange?.(projectFileFromHandle(state.handle, path, localFiles));
-                                    state.version = version;
-                                    continue;
-                                }
-                                const text = normalizeProjectText(await file.text());
+                                const text = textFile ? normalizeProjectText(await file.text()) : undefined;
+                                const blob = textFile ? undefined : await new Response(file).blob();
                                 if (stopped) {return;}
                                 if (state.version !== previousVersion || state.text !== previousText) {
                                     checkAgain = true;
                                     continue;
                                 }
-                                if (text !== state.text) {
-                                    await onChange({ path, text });
+                                if (text !== undefined) {
+                                    if (text !== state.text) {await onChange({ path, text });}
+                                } else {
+                                    await onResourceChange?.({ path, blob });
                                 }
                                 // A concurrent save/read may already have advanced this file.
                                 if (state.version === previousVersion) {
                                     state.text = text;
                                     state.version = version;
-                                }
+                                } else {checkAgain = true;}
                             } catch (error) {
-                                if (isProjectTextFile(path)) {state.version = '';}
+                                if (isUnavailableProjectFileError(error)) {
+                                    if (state.version !== 'unavailable') {
+                                        if (!textFile) {await onResourceChange?.({ path });}
+                                        else {onError(error);}
+                                        state.version = 'unavailable';
+                                    }
+                                    continue;
+                                }
+                                if (textFile) {state.version = '';}
                                 failure ??= error;
                             }
                         }
@@ -252,8 +257,7 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
             deleteFile: async path => {
                 const [parent, name] = await projectFileParent(directory, path);
                 await parent.removeEntry(name);
-                const normalizedPath = normalizeBrowserPath(path);
-                localFiles.delete(normalizedPath);
+                localFiles.delete(normalizeBrowserPath(path));
             }
         }
     };

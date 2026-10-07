@@ -5,8 +5,9 @@ import { EditorState, type StateEffect, type Transaction, type TransactionSpec }
 import { history, undo, undoDepth } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
-import { ProjectWriteConflictError, type BrowserProjectTextChange } from '../../apps/standalone/src/browser-project';
+import { ProjectFileUnavailableError, ProjectWriteConflictError, type BrowserProjectFile, type BrowserProjectTextChange } from '../../apps/standalone/src/browser-project';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage } from '../preview-messages';
+import { installTestGlobals } from './test-helpers';
 
 class TestEditorView {
     public state: EditorState;
@@ -46,9 +47,7 @@ class TestEditorView {
 const flushAsync = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function installWindow(messages: HostToPreviewMessage[]) {
-    const testGlobal = globalThis as unknown as { window: unknown };
-    const previousWindow = testGlobal.window;
-    testGlobal.window = {
+    return installTestGlobals({ window: {
         location: { origin: 'http://snaptex.test' },
         snaptexPreviewMessageQueue: [],
         setTimeout: globalThis.setTimeout.bind(globalThis),
@@ -56,10 +55,7 @@ function installWindow(messages: HostToPreviewMessage[]) {
         postMessage(message: HostToPreviewMessage) {
             messages.push(message);
         }
-    } as unknown as Window;
-    return () => {
-        testGlobal.window = previousWindow;
-    };
+    } });
 }
 
 async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMessage[], index = 0): Promise<string> {
@@ -140,36 +136,66 @@ suite('StandaloneHost', () => {
         }
     });
 
-    test('retries a failed preview refresh without reapplying the external editor change', async () => {
+    test('isolates unreadable images and PDFs from external text updates and lazy block replies', async () => {
         for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
-            const editor = new TestEditorView();
-            const messages: HostToPreviewMessage[] = [];
-            const restoreWindow = installWindow(messages);
-            const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined,
-                { autoSave: false, virtualMode: false, backendMode });
-            let receiveChange!: (change: BrowserProjectTextChange) => Promise<void> | void;
-            let failRead = true;
-            const text = '\\begin{document}\nUpdated text.\n\\includegraphics{image.png}\n\\end{document}';
-            try {
-                await host.loadProject({ files: [
-                    { path: '/main.tex', text: '\\begin{document}\nOriginal text.\n\\end{document}' },
-                    { path: '/image.png', readBlob: async () => {
-                        if (failRead) {failRead = false; throw new Error('Temporary image read failure');}
-                        return new Blob(['image']);
-                    } }
-                ], watchFiles: callback => {receiveChange = callback; return () => undefined;} });
-                await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
-                const previousUpdates = messages.length;
-                await assert.rejects(async () => receiveChange({ path: '/main.tex', text }), /Temporary image read failure/);
-                assert.equal(messages.length, previousUpdates, 'A failed render must not publish an incomplete payload');
-                const appliedState = editor.state;
-                await receiveChange({ path: '/main.tex', text });
-                const update = messages.at(-1);
-                assert.ok(update?.command === HostToPreviewCommand.Update && update.payload.type === 'full');
-                assert.match(update.payload.htmls?.join('') ?? '', /Updated text/);
-                assert.match(update.payload.htmls?.join('') ?? '', /src="blob:/);
-                assert.equal(editor.state, appliedState, 'Retrying the preview must not replace the editor again');
-            } finally {restoreWindow();}
+            for (const virtualMode of [false, true]) {
+                const editor = new TestEditorView();
+                const messages: HostToPreviewMessage[] = [];
+                const restoreWindow = installWindow(messages);
+                const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined,
+                    { autoSave: false, virtualMode, backendMode });
+                let receiveChange!: (change: BrowserProjectTextChange) => Promise<void> | void;
+                let receiveResource!: (file: BrowserProjectFile) => Promise<void> | void;
+                let failRead = true;
+                const image: BrowserProjectFile = { path: '/image.png', readBlob: async () => {
+                    if (failRead) {throw new TypeError('Temporary image read failure');}
+                    return new Blob(['image']);
+                } };
+                const text = '\\begin{document}\nUpdated text.\n\\includegraphics{image.png}\n\\includegraphics{good.png}\n\\end{document}';
+                try {
+                    await host.loadProject({ files: [
+                        { path: '/main.tex', text: '\\begin{document}\nOriginal text.\n\\end{document}' },
+                        image,
+                        { path: '/good.png', blob: new Blob(['good image']) },
+                        { path: '/broken.pdf', readBlob: async () => {throw new Error('PDF unreadable');} }
+                    ], watchFiles: (callback, _onError, onResourceChange) => {
+                        receiveChange = callback;
+                        receiveResource = onResourceChange!;
+                        return () => undefined;
+                    } });
+                    await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+                    await receiveChange({ path: '/main.tex', text });
+                    const update = messages.at(-1);
+                    assert.ok(update?.command === HostToPreviewCommand.Update);
+                    const html = virtualMode ? await requestBlockHtml(host, messages) : update.payload.htmls?.join('') ?? '';
+                    assert.match(html, /Updated text/);
+                    assert.match(html, /src=""/, 'An unreadable image must not prevent the other content from rendering');
+                    assert.match(html, /src="blob:/);
+                    assert.ok(host.getDiagnostics().some(message => message.includes('Failed to read image: image.png (Temporary image read failure)')));
+                    const appliedState = editor.state;
+                    const previousUpdates = messages.length;
+                    await receiveChange({ path: '/main.tex', text });
+                    assert.equal(messages.length, previousUpdates, 'Unchanged text must not retry image loading or rebuild the preview');
+                    await assert.rejects(async () => receiveResource(image), /Temporary image read failure/);
+                    assert.equal(messages.length, previousUpdates, 'A failed file read must remain pending, without changing DOM');
+                    failRead = false;
+                    await receiveResource(image);
+                    const resource = messages.at(-1);
+                    assert.ok(resource?.command === HostToPreviewCommand.ResourceChanged && resource.uri?.startsWith('blob:'));
+                    assert.equal(editor.state, appliedState, 'A binary resource update must not reset or edit the source');
+                    const recoveredHtml = await requestBlockHtml(host, messages);
+                    assert.doesNotMatch(recoveredHtml, /src=""/);
+                    await receiveResource({ path: '/image.png', readBlob: async () => {
+                        throw new ProjectFileUnavailableError('Image does not exist');
+                    } });
+                    const missing = messages.at(-1);
+                    assert.ok(missing?.command === HostToPreviewCommand.ResourceChanged && missing.uri === undefined);
+                    await receiveResource({ path: '/unused.png', readBlob: async () => assert.fail('Unrequested resources must remain lazy') });
+                    await host.handlePreviewMessage({ command: PreviewToHostCommand.RequestPdf, id: 'broken', path: 'broken.pdf' });
+                    const response = messages.at(-1);
+                    assert.ok(response?.command === HostToPreviewCommand.PdfUri && response.id === 'broken' && response.error);
+                } finally {restoreWindow();}
+            }
         }
     });
 

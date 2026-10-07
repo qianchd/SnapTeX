@@ -15,6 +15,7 @@ import {
     RemoteProjectNotFoundError
 } from '../../apps/web/src/remote-project';
 import { ProjectWriteConflictError } from '../../apps/standalone/src/browser-project';
+import { installTestGlobals } from './test-helpers';
 
 suite('RemoteProject', () => {
     test('reads and writes through the real server using session, CSRF, and revision checks', async () => {
@@ -82,7 +83,6 @@ suite('RemoteProject', () => {
     });
 
     test('distinguishes missing projects and can create them', async () => {
-        let created = false;
         let createRequests = 0;
         const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             if (String(input).endsWith('/web-auth/session')) {
@@ -90,11 +90,10 @@ suite('RemoteProject', () => {
             }
             const method = init?.method ?? 'GET';
             if (method === 'POST') {
-                created = true;
                 createRequests += 1;
                 return Response.json({ rootPath: '/main.tex', files: ['/main.tex'], revisions: { '/main.tex': '1' } }, { status: 201 });
             }
-            if (created) {
+            if (createRequests > 0) {
                 return Response.json({ rootPath: '/main.tex', files: ['/main.tex'], revisions: { '/main.tex': '1' } });
             }
             return Response.json({ code: 'PROJECT_NOT_FOUND', error: 'Project does not exist.' }, { status: 404 });
@@ -105,7 +104,6 @@ suite('RemoteProject', () => {
             RemoteProjectNotFoundError
         );
         const project = await createRemoteProject('missing', 'https://example.test/api/projects/', fetcher);
-        assert.equal(created, true);
         assert.equal(createRequests, 1);
         assert.equal(project.rootPath, '/main.tex');
     });
@@ -119,26 +117,26 @@ suite('RemoteProject', () => {
     });
 
     test('observes SSE changes and recovers the latest content after failures or concurrent saves', async () => {
-        const globals = globalThis as unknown as Record<string, unknown>;
-        const previousDocument = globals.document;
         const document = Object.assign(new EventTarget(), { hidden: false });
-        globals.document = document;
-        const OriginalEventSource = globalThis.EventSource;
         let events!: EventTarget;
         let eventSourceClosed = false;
-        globalThis.EventSource = class extends EventTarget {
-            constructor() { super(); events = this; }
-            close() { eventSourceClosed = true; }
-        } as unknown as typeof EventSource;
+        const restore = installTestGlobals({
+            document,
+            EventSource: class extends EventTarget {
+                constructor() { super(); events = this; }
+                close() { eventSourceClosed = true; }
+            }
+        });
         let text = 'Base';
         let revision = 1;
-        let failure: 'manifest' | 'read' | 'apply' | undefined;
+        let failure: 'manifest' | 'missing-project' | 'read' | 'apply' | 'resource' | 'resource-body' | 'missing-resource' | 'denied-resource' | undefined;
         let readGate: Promise<void> | undefined;
         let finishRead: (() => void) | undefined;
         let readSignal: AbortSignal | null | undefined;
         let notesText = 'Notes';
         let notesRevision = 1;
         let requests = 0;
+        let manifestRequests = 0;
         const changes: string[] = [];
         const resources: string[] = [];
         const errors: unknown[] = [];
@@ -147,7 +145,9 @@ suite('RemoteProject', () => {
             requests++;
             if (String(input).endsWith('/web-auth/session')) {return Response.json({ csrfToken: 'test-csrf-token' });}
             if (String(input).endsWith('/manifest')) {
+                manifestRequests++;
                 if (failure === 'manifest') { failure = undefined; throw new Error('Temporary disconnect'); }
+                if (failure === 'missing-project') {failure = undefined; return new Response(null, { status: 404 });}
                 return Response.json({ rootPath: '/main.tex', files: ['/main.tex', '/notes.tex', '/main.pdf'],
                     revisions: { '/main.tex': String(revision), '/notes.tex': String(notesRevision), '/main.pdf': String(revision) } });
             }
@@ -155,6 +155,19 @@ suite('RemoteProject', () => {
                 return new Headers(init?.headers).get('If-None-Match') === `"notes-${notesRevision}"`
                     ? new Response(null, { status: 304 })
                     : new Response(notesText, { headers: { ETag: `"notes-${notesRevision}"` } });
+            }
+            if (String(input).endsWith('/main.pdf')) {
+                if (failure === 'resource') {failure = undefined; throw new TypeError('Network disconnected');}
+                if (failure === 'resource-body') {
+                    failure = undefined;
+                    return new Response(new ReadableStream({ start: controller => controller.error(new TypeError('Transfer interrupted')) }));
+                }
+                if (failure === 'missing-resource' || failure === 'denied-resource') {
+                    const status = failure === 'missing-resource' ? 404 : 403;
+                    failure = undefined;
+                    return new Response(null, { status });
+                }
+                return new Response('PDF bytes');
             }
             if (init?.method === 'PUT') {
                 text = String(init.body); revision++;
@@ -173,17 +186,19 @@ suite('RemoteProject', () => {
         try {
             const project = await loadRemoteProject('paper', 'https://example.test/api/projects/', fetcher);
             assert.equal(await project.files[0].readText?.(), 'Base');
+            failure = 'resource';
+            await assert.rejects(() => project.files.find(file => file.path === '/main.pdf')!.readBlob!(), /Network disconnected/);
             mock.timers.enable({ apis: ['setTimeout'] });
             stop = project.watchFiles!(change => {
                 if (failure === 'apply') { failure = undefined; throw new Error('Temporary update failure'); }
                 changes.push(change.text);
-            }, error => errors.push(error), file => { resources.push(file.path); });
-            const notify = (type = 'text') => events.dispatchEvent(new MessageEvent(type, { data: '"/main.tex"' }));
+            }, error => errors.push(error), async file => {await file.readBlob?.(); resources.push(file.path);});
+            const notify = (type = 'text', path = '/main.tex') =>
+                events.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(path) }));
             notify();
-            events.dispatchEvent(new MessageEvent('resource', { data: '"/main.pdf"' }));
             await settle();
             assert.deepEqual(changes, [], 'An unchanged ETag must not reapply text');
-            assert.deepEqual(resources, ['/main.pdf']);
+            assert.deepEqual(resources, ['/main.pdf'], 'Watching must recover an initial failed lazy read without waiting for another file change');
             for (const stage of ['manifest', 'read', 'apply'] as const) {
                 failure = stage;
                 text = `External ${stage}`;
@@ -192,18 +207,38 @@ suite('RemoteProject', () => {
                 await settle();
                 assert.equal(changes.includes(text), false, 'The first attempt must fail');
                 const failedText = text;
+                const manifestsBeforeRetry = manifestRequests;
                 text = `Newest ${stage}`;
                 revision++;
                 mock.timers.tick(1000);
                 await settle();
                 assert.equal(changes.at(-1), text, 'Retry must read the latest disk content even without another notification');
                 assert.equal(changes.includes(failedText), false, 'Retry must not replay the failed snapshot');
+                if (stage !== 'manifest') {
+                    assert.equal(manifestRequests, manifestsBeforeRetry, 'A failed file must retry without rescanning the project manifest');
+                }
             }
             assert.equal(errors.length, 3);
+            for (const stage of ['resource', 'resource-body'] as const) {
+                const previousResources = resources.length;
+                failure = stage;
+                notify('resource', '/main.pdf');
+                await settle();
+                assert.equal(resources.length, previousResources, 'A network failure must not acknowledge unread resource bytes');
+                mock.timers.tick(1000);
+                await settle();
+                assert.equal(resources.length, previousResources + 1, 'A changed resource must recover through the existing watcher retry');
+            }
+            for (const stage of ['missing-resource', 'denied-resource', 'missing-project'] as const) {
+                failure = stage;
+                notify(stage === 'missing-project' ? 'manifest' : 'resource', '/main.pdf');
+                await settle();
+                const requestsBeforeWait = requests;
+                mock.timers.tick(60_000);
+                await settle();
+                assert.equal(requests, requestsBeforeWait, `${stage} must not start an automatic retry loop`);
+            }
             const idleRequests = requests;
-            mock.timers.tick(60_000);
-            await settle();
-            assert.equal(requests, idleRequests, 'Successful recovery must stop retrying');
 
             text = 'Changed in a background tab'; revision++;
             document.hidden = true;
@@ -277,9 +312,7 @@ suite('RemoteProject', () => {
             finishRead?.();
             stop?.();
             mock.timers.reset();
-            globalThis.EventSource = OriginalEventSource;
-            if (previousDocument === undefined) {delete globals.document;}
-            else {globals.document = previousDocument;}
+            restore();
         }
     });
 

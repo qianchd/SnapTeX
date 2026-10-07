@@ -1,8 +1,8 @@
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, watch } from 'node:fs';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, watch } from 'node:fs';
+import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -296,7 +296,6 @@ function createProjectWatchRegistry() {
         subscribe,
         close: () => {
             projects.forEach(project => project.close());
-            projects.clear();
         }
     };
 }
@@ -407,10 +406,6 @@ function etagMatches(value, etag) {
     return value === '*' || value?.split(',').some(candidate => candidate.trim().replace(/^W\//, '') === normalizedEtag);
 }
 
-function requestHasEtag(request, etag) {
-    return etagMatches(request.headers['if-none-match'], etag);
-}
-
 function textEtag(content) {
     return `"${createHash('sha256').update(content).digest('base64url')}"`;
 }
@@ -436,7 +431,7 @@ async function sendProjectTextFile(request, response, filePath) {
         'Content-Length': String(content.length),
         ETag: textEtag(content)
     };
-    if (requestHasEtag(request, headers.ETag)) {
+    if (etagMatches(request.headers['if-none-match'], headers.ETag)) {
         response.writeHead(304, headers);
         response.end();
         return;
@@ -477,7 +472,7 @@ async function sendFile(request, response, filePath, options = {}) {
     if (extension === '.svg') {
         response.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
     }
-    if (staticAsset && requestHasEtag(request, headers.ETag)) {
+    if (staticAsset && etagMatches(request.headers['if-none-match'], headers.ETag)) {
         response.writeHead(304, headers);
         response.end();
         return;
@@ -493,17 +488,19 @@ async function sendFile(request, response, filePath, options = {}) {
             break;
         }
     }
-    headers['Content-Length'] = String(content?.length ?? statSync(responsePath).size);
-    response.writeHead(200, headers);
-    if (headOnly) {
-        response.end();
-        return;
+    // Open before sending headers so missing/denied files are not reported as broken transfers.
+    const file = content ? undefined : await open(responsePath, 'r');
+    try {
+        headers['Content-Length'] = String(content?.length ?? (await file.stat()).size);
+        response.writeHead(200, headers);
+        if (headOnly || content) {
+            response.end(headOnly ? undefined : content);
+            return;
+        }
+        await pipeline(file.createReadStream({ autoClose: false }), response);
+    } finally {
+        await file?.close();
     }
-    if (content) {
-        response.end(content);
-        return;
-    }
-    await pipeline(createReadStream(responsePath), response);
 }
 
 async function handleProjectRequest(request, response, projectsRoot, manifestCache, projectWatches, projectTools) {
@@ -852,9 +849,10 @@ export function createSnapTeXWebServer(options = {}) {
     })().catch(error => {
         console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {
-            sendJson(response, error.message === 'Request body is too large.' ? 413 : 500, {
-                error: error.message === 'Request body is too large.' ? error.message : 'Internal server error.'
-            });
+            const status = isPermissionError(error) ? 403 : error.code === 'ENOENT' ? 404
+                : error.message === 'Request body is too large.' ? 413 : 500;
+            sendJson(response, status, { error: status === 403 ? 'Permission denied.' : status === 404 ? 'Not found.'
+                : status === 413 ? error.message : 'Internal server error.' });
         } else {
             response.destroy(error);
         }

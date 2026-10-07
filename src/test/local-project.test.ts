@@ -5,6 +5,7 @@ import { mock } from 'node:test';
 import { setImmediate as settle } from 'node:timers/promises';
 import { ProjectWriteConflictError } from '../../apps/standalone/src/browser-project';
 import { createDirectoryProject, type BrowserDirectoryHandle, type BrowserFileHandle } from '../../apps/web/src/local-project';
+import { installTestGlobals } from './test-helpers';
 
 class TestFileHandle implements BrowserFileHandle {
     kind = 'file' as const;
@@ -14,16 +15,20 @@ class TestFileHandle implements BrowserFileHandle {
     onWrite?: () => void;
     failNextRead = false;
     readGate?: Promise<void>;
+    missing = false;
 
     async getFile(): Promise<File> {
+        if (this.missing) {throw new DOMException('File does not exist', 'NotFoundError');}
         const content = this.content;
         const gate = this.readGate;
         this.readGate = undefined;
-        return { size: content.length, lastModified: this.modified, text: async () => {
+        const file = new File([content], this.name, { lastModified: this.modified });
+        file.text = async () => {
             if (this.failNextRead) { this.failNextRead = false; throw new Error('Temporary read failure'); }
             await gate;
             return content;
-        } } as File;
+        };
+        return file;
     }
 
     async createWritable() {
@@ -34,11 +39,15 @@ class TestFileHandle implements BrowserFileHandle {
     }
 }
 
+function openTestProject(...files: TestFileHandle[]) {
+    return createDirectoryProject({
+        kind: 'directory', name: 'project',
+        async *values() { yield* files; }
+    } as unknown as BrowserDirectoryHandle);
+}
+
 suite('Local browser project', () => {
     test('observes external edits, recovers from failures, and ignores its own saves', async () => {
-        const globals = globalThis as unknown as Record<string, unknown>;
-        const previousDocument = globals.document;
-        const previousObserver = globals.FileSystemObserver;
         let notifyObserver: () => void = () => {};
         const file = new TestFileHandle();
         const pdf = new TestFileHandle();
@@ -46,32 +55,34 @@ suite('Local browser project', () => {
         const notes = new TestFileHandle();
         notes.name = 'notes.tex';
         file.onWrite = () => notifyObserver();
-        globals.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
-        globals.FileSystemObserver = class {
-            constructor(callback: () => void) { notifyObserver = callback; }
-            async observe() {}
-            disconnect() {}
-        };
+        const restore = installTestGlobals({
+            document: { hidden: false, addEventListener() {}, removeEventListener() {} },
+            FileSystemObserver: class {
+                constructor(callback: () => void) { notifyObserver = callback; }
+                async observe() {}
+                disconnect() {}
+            }
+        });
 
-        const directory = {
-            kind: 'directory',
-            name: 'project',
-            async *values() { yield file; yield pdf; yield notes; }
-        } as unknown as BrowserDirectoryHandle;
         const changes: string[] = [];
         const errors: unknown[] = [];
         let failUpdate = false;
         let finishRead: (() => void) | undefined;
         let stop: (() => void) | undefined;
+        let resourceDelivered: () => void = () => {};
+        const waitForResourceChange = () => new Promise<void>(resolve => {
+            resourceDelivered = resolve;
+            notifyObserver();
+        });
 
         try {
-            const project = await createDirectoryProject(directory);
+            const project = await openTestProject(file, pdf, notes);
             file.content = 'Edited before watching'; file.modified++;
             const resources: string[] = [];
             stop = project.watchFiles!(change => {
                 if (failUpdate) { failUpdate = false; throw new Error('Temporary update failure'); }
                 changes.push(change.text);
-            }, error => errors.push(error), file => {resources.push(file.path);});
+            }, error => errors.push(error), file => {resources.push(file.path); resourceDelivered();});
             await settle();
             assert.deepEqual(changes, ['Edited before watching'], 'Starting the observer must catch edits made during project loading');
             await project.files[0].writeText?.('Saved locally');
@@ -87,9 +98,18 @@ suite('Local browser project', () => {
             assert.deepEqual(resources, [], 'Unopened resources must not be polled');
             await project.files.find(file => file.path === '/main.pdf')?.readBlob?.();
             pdf.modified++;
+            await waitForResourceChange();
+            assert.deepEqual(resources, ['/main.pdf']);
+            pdf.missing = true;
+            await waitForResourceChange();
+            assert.deepEqual(resources, ['/main.pdf', '/main.pdf'], 'Deleting a requested resource must notify the preview once');
             notifyObserver();
             await settle();
-            assert.deepEqual(resources, ['/main.pdf']);
+            assert.equal(resources.length, 2, 'A missing resource must not repeatedly refresh its failed DOM');
+            pdf.missing = false;
+            pdf.modified++;
+            await waitForResourceChange();
+            assert.equal(resources.length, 3, 'A new resource revision must trigger another refresh');
 
             const appliedChanges = changes.length;
             file.content = 'Snapshot before save'; file.modified++;
@@ -143,22 +163,13 @@ suite('Local browser project', () => {
             finishRead?.();
             stop?.();
             mock.timers.reset();
-            if (previousDocument === undefined) {delete globals.document;}
-            else {globals.document = previousDocument;}
-            if (previousObserver === undefined) {delete globals.FileSystemObserver;}
-            else {globals.FileSystemObserver = previousObserver;}
+            restore();
         }
     });
 
     test('rejects a local save when the file changed since its base was read', async () => {
         const file = new TestFileHandle();
-        const directory = {
-            kind: 'directory',
-            name: 'project',
-            async *values() { yield file; }
-        } as unknown as BrowserDirectoryHandle;
-
-        const project = await createDirectoryProject(directory);
+        const project = await openTestProject(file);
         const main = project.files[0];
         assert.equal(await main.readText?.(), 'Original');
         file.content = 'External edit';
@@ -174,13 +185,7 @@ suite('Local browser project', () => {
     test('compares local save bases without treating line-ending differences as edits', async () => {
         const file = new TestFileHandle();
         file.content = 'First\r\nSecond';
-        const directory = {
-            kind: 'directory',
-            name: 'project',
-            async *values() { yield file; }
-        } as unknown as BrowserDirectoryHandle;
-
-        const project = await createDirectoryProject(directory);
+        const project = await openTestProject(file);
         const main = project.files[0];
         const base = await main.readText?.();
         assert.equal(base, 'First\nSecond');

@@ -2,10 +2,12 @@ import {
     isPdfFile,
     isProjectFile,
     isProjectTextFile,
+    isUnavailableProjectFileError,
     isTexFile,
     normalizeBrowserPath,
     normalizeProjectText,
     ProjectWriteConflictError,
+    ProjectFileUnavailableError,
     type BrowserProject,
     type BrowserProjectFile
 } from '../../standalone/src/browser-project';
@@ -34,10 +36,11 @@ export class RemoteProjectAuthenticationError extends Error {
 
 function requestError(response: Response, method: string, url: string | URL): Error {
     if (response.status === 401) { return new RemoteProjectAuthenticationError(); }
-    if (response.status === 503) {
-        return new Error('The server cannot read this project. Ask the administrator to repair its permissions.');
-    }
-    return new Error(`${method} ${response.url || url} failed: ${response.status}`);
+    const ErrorType = [403, 404, 410].includes(response.status) ? ProjectFileUnavailableError : Error;
+    const message = response.status === 503
+        ? 'The server cannot read this project. Ask the administrator to repair its permissions.'
+        : `${method} ${response.url || url} failed: ${response.status}`;
+    return new ErrorType(message);
 }
 
 function remoteFileUrl(apiBaseUrl: string, path: string): string {
@@ -64,11 +67,8 @@ function withCsrf(fetcher: typeof fetch, apiBaseUrl: string): typeof fetch {
         if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
             return fetcher(input, { credentials: 'same-origin', ...init });
         }
-        csrfToken ??= fetcher(new URL('../../web-auth/session', apiBaseUrl), { credentials: 'same-origin' })
+        csrfToken ??= fetchOk(fetcher, new URL('../../web-auth/session', apiBaseUrl).toString())
             .then(async response => {
-                if (!response.ok) {
-                    throw requestError(response, 'GET', '/web-auth/session');
-                }
                 const value = await response.json() as { csrfToken?: unknown };
                 return typeof value.csrfToken === 'string' ? value.csrfToken : '';
             })
@@ -120,18 +120,17 @@ function readManifest(value: unknown): RemoteProjectManifest {
 
 function createRemoteProjectModel(projectName: string, baseUrl: string, manifest: RemoteProjectManifest, fetcher: typeof fetch): BrowserProject {
     const versions = new Map<string, { etag: string | null; text: string }>();
+    const pendingPaths = new Set<string>();
+    let requestSync: (() => void) | undefined;
     let currentManifest = manifest;
 
     const readText = async (path: string, conditional = false, signal?: AbortSignal): Promise<string | undefined> => {
         const url = remoteFileUrl(baseUrl, path);
         while (true) {
             const version = versions.get(path);
-            const headers = new Headers();
-            if (conditional && version?.etag) {
-                headers.set('If-None-Match', version.etag);
-            }
             const timeout = AbortSignal.timeout(PROJECT_SYNC_REQUEST_TIMEOUT_MS);
-            const response = await fetcher(url, { credentials: 'same-origin', headers,
+            const response = await fetcher(url, {
+                headers: conditional && version?.etag ? { 'If-None-Match': version.etag } : undefined,
                 signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
             if (response.status === 304) {return undefined;}
             if (!response.ok) {throw requestError(response, 'GET', url);}
@@ -143,7 +142,7 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
         }
     };
 
-    const createFile = (path: string): BrowserProjectFile => {
+    const createFile = (path: string, signal?: AbortSignal): BrowserProjectFile => {
         const url = remoteFileUrl(baseUrl, path);
         return isProjectTextFile(path)
             ? {
@@ -162,7 +161,6 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                     }
                     const response = await fetcher(url, {
                         method: 'PUT',
-                        credentials: 'same-origin',
                         headers: {
                             'Content-Type': 'text/plain; charset=utf-8',
                             'If-Match': version.etag
@@ -180,30 +178,27 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                     versions.set(path, { etag: response.headers.get('etag'), text });
                 }
             }
-            : { path, resourceUrl: url };
-    };
-    const postJson = async <T>(route: string, body: unknown): Promise<T> => {
-        const url = new URL(route, baseUrl).toString();
-        const response = await fetcher(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        const result = await response.json().catch(() => undefined) as (T & { error?: string }) | undefined;
-        if (!response.ok) {
-            throw new Error(result?.error ?? requestError(response, 'POST', url).message);
-        }
-        if (result === undefined) {
-            throw new Error(`POST ${url} returned invalid JSON.`);
-        }
-        return result;
+            : { path, resourceUrl: url, readBlob: async () => {
+                const timeout = AbortSignal.timeout(PROJECT_SYNC_REQUEST_TIMEOUT_MS);
+                try {
+                    return await (await fetchOk(fetcher, url, {
+                        signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+                    })).blob();
+                } catch (error) {
+                    // Watcher reads already return failures to its retry loop.
+                    if (!signal && !isUnavailableProjectFileError(error) && !(error instanceof RemoteProjectAuthenticationError)) {
+                        pendingPaths.add(path);
+                        requestSync?.();
+                    }
+                    throw error;
+                }
+            } };
     };
     return {
         name: projectName,
         rootPath: manifest.rootPath,
         files: manifest.files.map(path => createFile(path)),
         watchFiles: (onChange, onError, onResourceChange) => {
-            const pendingPaths = new Set<string>();
             const controller = new AbortController();
             let manifestPending = false;
             let syncing = false;
@@ -218,14 +213,16 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                         if (manifestPending) {
                             manifestPending = false;
                             const previousManifest = currentManifest;
-                            const response = await fetchOk(fetcher, new URL('manifest', baseUrl).toString(), {
+                            const manifest = await fetchOk(fetcher, new URL('manifest', baseUrl).toString(), {
                                 signal: AbortSignal.any([controller.signal, AbortSignal.timeout(PROJECT_SYNC_REQUEST_TIMEOUT_MS)])
+                            }).then(response => response.json()).then(readManifest).catch(error => {
+                                manifestPending = true;
+                                throw error;
                             });
-                            const manifest = readManifest(await response.json());
                             if (stopped) {return;}
                             currentManifest = manifest;
-                            for (const [path, revision] of Object.entries(manifest.revisions)) {
-                                if (revision === previousManifest.revisions[path]) {continue;}
+                            for (const path of new Set([...Object.keys(previousManifest.revisions), ...Object.keys(manifest.revisions)])) {
+                                if (manifest.revisions[path] === previousManifest.revisions[path]) {continue;}
                                 pendingPaths.add(path);
                             }
                         }
@@ -234,15 +231,19 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                             if (stopped) {return;}
                             pendingPaths.delete(path);
                             try {
-                                if (!currentManifest.files.includes(path)) {continue;}
+                                if (!currentManifest.files.includes(path)) {
+                                    if (!isProjectTextFile(path)) {await onResourceChange?.({ path });}
+                                    continue;
+                                }
                                 if (isProjectTextFile(path)) {
                                     const text = await readText(path, true, controller.signal);
                                     if (pendingPaths.has(path)) {versions.delete(path); continue;}
                                     if (!stopped && text !== undefined) {await onChange({ path, text });}
                                 } else {
-                                    await onResourceChange?.(createFile(path));
+                                    await onResourceChange?.(createFile(path, controller.signal));
                                 }
                             } catch (error) {
+                                if (isUnavailableProjectFileError(error)) {onError(error); continue;}
                                 pendingPaths.add(path);
                                 // A received ETag is not proof that the editor applied the update.
                                 versions.delete(path);
@@ -253,9 +254,8 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                     }
                     retryDelayMs = 1000;
                 } catch (error) {
-                    manifestPending = true;
                     if (!stopped) {
-                        if (!(error instanceof RemoteProjectAuthenticationError)) {
+                        if (!isUnavailableProjectFileError(error) && !(error instanceof RemoteProjectAuthenticationError)) {
                             retryTimer = globalThis.setTimeout(() => {
                                 retryTimer = undefined;
                                 void sync();
@@ -296,8 +296,12 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                     } catch (error) {onError(error);}
                 });
             }
+            requestSync = () => {void sync();};
+            if (pendingPaths.size > 0) {requestSync();}
             return () => {
                 stopped = true;
+                requestSync = undefined;
+                pendingPaths.clear();
                 controller.abort();
                 globalThis.clearTimeout(retryTimer);
                 globalThis.removeEventListener?.('online', resume);
@@ -320,7 +324,16 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
                 versions.delete(path);
             },
             compilePdf: async (rootPath, compiler) => {
-                const { path, syncPath } = await postJson<{ path: string; syncPath?: string }>('compile', { rootPath, compiler });
+                const url = new URL('compile', baseUrl).toString();
+                const response = await fetcher(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rootPath, compiler })
+                });
+                const result = await response.json().catch(() => undefined) as { path: string; syncPath?: string; error?: string } | undefined;
+                if (!response.ok) {throw new Error(result?.error ?? requestError(response, 'POST', url).message);}
+                if (!result) {throw new Error(`POST ${url} returned invalid JSON.`);}
+                const { path, syncPath } = result;
                 if (!isPdfFile(path)) {
                     throw new Error('The server returned an invalid PDF path.');
                 }
