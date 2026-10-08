@@ -82,6 +82,7 @@ function normalizeAutoSaveDelay(seconds: number): number {
 }
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+const conflictMarkerPattern = /^(?:<<<<<<< LOCAL|\|{7} BASE|=======|>>>>>>> REMOTE)$/m;
 
 const flashEditorLineEffect = StateEffect.define<number | null>();
 const flashEditorLineField = StateField.define<DecorationSet>({
@@ -492,7 +493,7 @@ export class StandaloneHost {
     private async writeCurrentText(retryAfterMerge = true): Promise<StandaloneSaveResult> {
         const text = this.editorView.state.doc.toString();
         const path = this.activeUri.path;
-        if (this.conflictedPaths.has(path) && text.includes('<<<<<<< LOCAL')) {
+        if (this.conflictedPaths.has(path) && conflictMarkerPattern.test(text)) {
             throw new Error(`Resolve the remote edit conflict markers in ${path} before saving.`);
         }
         let wroteToSource: boolean;
@@ -562,6 +563,8 @@ export class StandaloneHost {
             });
             merged = { text: result.result.join('\n'), conflict: result.conflict };
         }
+        // A later clean merge must not make existing unresolved conflict markers writable.
+        merged.conflict ||= this.conflictedPaths.has(path) && conflictMarkerPattern.test(merged.text);
         this.savedTexts.set(path, remoteText);
         this.fileProvider.setFile(uri, merged.text);
         this.updateDirtyState(path, merged.text);

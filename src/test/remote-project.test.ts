@@ -259,12 +259,21 @@ suite('RemoteProject', () => {
             await settle();
             assert.equal(changes.at(-1), text);
 
+            const main = project.files[0];
+            readGate = new Promise(resolve => { finishRead = resolve; });
+            notify();
+            await settle();
+            await main.writeText?.('Saved before delayed 304', text);
+            text = 'External after that save'; revision++;
+            finishRead!();
+            await settle();
+            assert.equal(changes.at(-1), text, 'A delayed 304 for the old base must not acknowledge a newer saved version');
+
             const appliedChanges = changes.length;
             text = 'Snapshot before save'; revision++;
             readGate = new Promise(resolve => { finishRead = resolve; });
             notify();
             await settle();
-            const main = project.files[0];
             assert.equal(await main.readText?.(), text);
             await main.writeText?.('Saved while reading', text);
             finishRead!();

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { realpathSync } from 'node:fs';
-import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { realpathSync, renameSync, symlinkSync } from 'node:fs';
+import { access, chmod, mkdtemp, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import test from 'node:test';
 import { writeCompressedAssets } from './build-static.mjs';
 import { createSnapTeXWebServer } from './server.mjs';
@@ -152,38 +153,216 @@ test('serves a writable project through the remote project API', async t => {
             assert.deepEqual(manifest.files, ['/figure.png', '/main.tex', '/sections/intro.tex']);
             assert.deepEqual(Object.keys(manifest.revisions), ['/figure.png', '/main.tex', '/sections/intro.tex']);
         });
-        await t.test('notifies an external write through SSE without polling the manifest', async () => {
+        await t.test('follows external file and directory replacements through SSE without polling', async () => {
             const manifestUrl = `${baseUrl}/api/projects/paper-one/manifest`;
             const previousManifest = await (await authenticatedFetch(manifestUrl)).json();
             await writeFile(join(projectRoot, 'main.tex'), 'Changed while disconnected');
-            const response = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`, { signal: AbortSignal.timeout(5000) });
+            const response = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`, { signal: AbortSignal.timeout(10_000) });
             assert.equal(response.status, 200);
             assert.match(response.headers.get('content-type'), /text\/event-stream/);
             const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
             let pending = '';
-            const readEvent = async () => {
-                while (!pending.includes('\n\n')) {
-                    const { value, done } = await reader.read();
-                    assert.equal(done, false, 'SSE must stay open until the change arrives');
-                    pending += value;
+            const readEvent = async (type, path) => {
+                while (true) {
+                    while (!pending.includes('\n\n')) {
+                        const { value, done } = await reader.read();
+                        assert.equal(done, false, 'SSE must stay open until the change arrives');
+                        pending += value;
+                    }
+                    const end = pending.indexOf('\n\n') + 2;
+                    const event = pending.slice(0, end);
+                    pending = pending.slice(end);
+                    if (!type || event.includes(`event: ${type}\ndata:${path === undefined ? '' : JSON.stringify(path)}`)) return event;
                 }
-                const end = pending.indexOf('\n\n') + 2;
-                const event = pending.slice(0, end);
-                pending = pending.slice(end);
-                return event;
             };
             try {
                 assert.match(await readEvent(), /event: manifest/);
                 const reconnectedManifest = await (await authenticatedFetch(manifestUrl)).json();
                 assert.notEqual(reconnectedManifest.revisions['/main.tex'], previousManifest.revisions['/main.tex'],
                     'Initial SSE notification must not reuse a manifest cached before disconnected edits');
-                await writeFile(join(projectRoot, 'main.tex'), 'External event');
-                assert.match(await readEvent(), /event: text\ndata:"\/main\.tex"/);
-                await writeFile(join(projectRoot, 'figure.png'), 'Updated image');
-                assert.match(await readEvent(), /event: resource\ndata:"\/figure\.png"/);
+                let writing = true;
+                const writes = (async () => {
+                    for (let edit = 0; edit < 12; edit++) {
+                        await writeFile(join(projectRoot, 'main.tex'), `Continuous edit ${edit}`);
+                        await new Promise(resolve => setTimeout(resolve, 25));
+                    }
+                    writing = false;
+                })();
+                try {
+                    await readEvent('text', '/main.tex');
+                    assert.equal(writing, true, 'Continuous writes must not indefinitely postpone SSE notifications');
+                } finally { await writes; }
+                await readEvent('text', '/main.tex');
+                const fileUrl = `${baseUrl}/api/projects/paper-one/files/main.tex`;
+                const currentFile = await authenticatedFetch(fileUrl);
+                assert.equal(await currentFile.text(), 'Continuous edit 11');
+                const saved = await authenticatedFetch(fileUrl, {
+                    method: 'PUT', headers: { 'If-Match': currentFile.headers.get('etag') }, body: 'Saved by web'
+                });
+                assert.equal(saved.status, 204);
+                await readEvent('text', '/main.tex');
+                assert.equal((await authenticatedFetch(fileUrl, { headers: { 'If-None-Match': saved.headers.get('etag') } })).status, 304);
+                await writeFile(join(projectRoot, 'main.tex'), 'External after web save');
+                await readEvent('text', '/main.tex');
+                assert.equal(await (await authenticatedFetch(fileUrl)).text(), 'External after web save');
+                for (const path of ['main.tex', 'sections/intro.tex', 'figure.png']) {
+                    const type = path.endsWith('.tex') ? 'text' : 'resource';
+                    await writeFile(join(projectRoot, `${path}.tmp`), 'Replacement');
+                    await rename(join(projectRoot, `${path}.tmp`), join(projectRoot, path));
+                    await readEvent(type, `/${path}`);
+                    for (let edit = 0; edit < 3; edit++) {
+                        await writeFile(join(projectRoot, path), `Rapid edit ${edit}`);
+                    }
+                    await readEvent(type, `/${path}`);
+                    const content = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/${path}`);
+                    assert.equal(await content.text(), 'Rapid edit 2');
+                }
+                await rm(join(projectRoot, 'sections/intro.tex'));
+                await readEvent('manifest');
+                await writeFile(join(projectRoot, 'sections/intro.tex'), 'Recreated');
+                await readEvent('manifest');
+                await writeFile(join(projectRoot, 'sections/intro.tex'), 'Edited after recreation');
+                await readEvent('text', '/sections/intro.tex');
+
+                await rename(join(projectRoot, 'sections'), join(projectRoot, '.sections-old'));
+                await mkdir(join(projectRoot, 'sections/nested'), { recursive: true });
+                await writeFile(join(projectRoot, 'sections/intro.tex'), 'Replacement directory');
+                await writeFile(join(projectRoot, 'sections/nested/deep.tex'), 'New nested file');
+                await readEvent('manifest');
+                assert.ok((await (await authenticatedFetch(manifestUrl)).json()).files.includes('/sections/nested/deep.tex'));
+                for (const path of ['sections/intro.tex', 'sections/nested/deep.tex']) {
+                    await writeFile(join(projectRoot, path), 'Edited after directory replacement');
+                    await readEvent('text', `/${path}`);
+                    assert.equal(await (await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/${path}`)).text(),
+                        'Edited after directory replacement');
+                }
             } finally {
                 await reader.cancel().catch(() => undefined);
+                if (await access(join(projectRoot, '.sections-old')).then(() => true, () => false)) {
+                    await rm(join(projectRoot, 'sections'), { recursive: true, force: true });
+                    await rename(join(projectRoot, '.sections-old'), join(projectRoot, 'sections'));
+                }
                 await writeFile(join(projectRoot, 'main.tex'), 'Original');
+                await writeFile(join(projectRoot, 'sections/intro.tex'), 'Intro');
+            }
+        });
+        await t.test('rejects changing text/resource reads and checks the disk version before replacement', async t => {
+            const filePath = join(projectRoot, 'main.tex');
+            const fileUrl = `${baseUrl}/api/projects/paper-one/files/main.tex`;
+            const handle = await open(filePath, 'r');
+            const prototype = Object.getPrototypeOf(handle);
+            await handle.close();
+            const originalStat = prototype.stat;
+            const originalRead = prototype.readFile;
+            const originalStream = prototype.createReadStream;
+            let changeDuringRead = true;
+            let changeBeforeCommit = false;
+            let changeDuringStream = true;
+            t.mock.method(prototype, 'stat', async function (...args) {
+                if (changeBeforeCommit) {
+                    changeBeforeCommit = false;
+                    assert.ok((await readdir(projectRoot)).some(name => name.startsWith('.snaptex-')));
+                    await writeFile(filePath, 'External before commit');
+                }
+                return originalStat.apply(this, args);
+            });
+            t.mock.method(prototype, 'readFile', async function (...args) {
+                const content = await originalRead.apply(this, args);
+                if (changeDuringRead) {
+                    changeDuringRead = false;
+                    await writeFile(filePath, 'External during read');
+                }
+                return content;
+            });
+            t.mock.method(prototype, 'createReadStream', function (...args) {
+                if (!changeDuringStream) return originalStream.apply(this, args);
+                changeDuringStream = false;
+                return Readable.from((async function* () {
+                    yield await readFile(join(projectRoot, 'figure.png'));
+                    await writeFile(join(projectRoot, 'figure.png'), 'New image');
+                })());
+            });
+            try {
+                assert.equal((await authenticatedFetch(fileUrl)).status, 503);
+                const current = await authenticatedFetch(fileUrl);
+                assert.equal(await current.text(), 'External during read');
+                changeBeforeCommit = true;
+                const save = await authenticatedFetch(fileUrl, {
+                    method: 'PUT', headers: { 'If-Match': current.headers.get('etag') }, body: 'Web edit'
+                });
+                assert.equal(save.status, 412);
+                assert.equal(await save.text(), 'External before commit');
+                assert.equal(await readFile(filePath, 'utf8'), 'External before commit');
+                await chmod(filePath, 0o444);
+                assert.equal((await authenticatedFetch(fileUrl, {
+                    method: 'PUT', headers: { 'If-Match': current.headers.get('etag') }, body: 'Stale edit'
+                })).status, 412);
+                assert.ok(!(await readdir(projectRoot)).some(name => name.startsWith('.snaptex-')));
+                const imageUrl = `${baseUrl}/api/projects/paper-one/files/figure.png`;
+                await assert.rejects(async () => (await authenticatedFetch(imageUrl)).blob(), TypeError);
+                assert.equal(await (await authenticatedFetch(imageUrl)).text(), 'New image');
+            } finally {
+                await chmod(filePath, 0o666);
+                await writeFile(filePath, 'Original');
+                await writeFile(join(projectRoot, 'figure.png'), 'image');
+            }
+        });
+        await t.test('closes backpressured SSE connections instead of buffering more notifications', async () => {
+            let reader;
+            let blockNotification;
+            const blocked = new Promise(resolve => { blockNotification = resolve; });
+            const blockWrites = (request, response) => {
+                if (!request.url.endsWith('/events')) return;
+                const write = response.write.bind(response);
+                response.write = (chunk, ...args) => {
+                    if (String(chunk).startsWith('event: text')) { blockNotification(response); return false; }
+                    return write(chunk, ...args);
+                };
+            };
+            server.on('request', blockWrites);
+            try {
+                const response = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/events`, { signal: AbortSignal.timeout(5000) });
+                reader = response.body.getReader();
+                await reader.read();
+                await writeFile(join(projectRoot, 'main.tex'), 'Notify slow reader');
+                assert.equal((await blocked).destroyed, true);
+            } finally {
+                server.off('request', blockWrites);
+                await reader?.cancel().catch(() => undefined);
+                await writeFile(join(projectRoot, 'main.tex'), 'Original');
+            }
+        });
+        await t.test('revalidates the project boundary after receiving file content', async () => {
+            const fileUrl = `${baseUrl}/api/projects/paper-one/files/sections/intro.tex`;
+            const file = await authenticatedFetch(fileUrl);
+            const outsideFile = join(outsideRoot, 'intro.tex');
+            await writeFile(outsideFile, 'Intro');
+            for (const [method, directory, url, status] of [
+                ['PUT', join(projectRoot, 'sections'), fileUrl, 404],
+                ['POST', join(projectRoot, 'sections'), fileUrl.replace('intro.tex', 'new.tex'), 403],
+                ['POST', projectRoot, fileUrl.replace('sections/intro.tex', 'new.tex'), 404]
+            ]) {
+                const backup = `${directory}-save`;
+                const replaceParent = (request) => {
+                    if (request.method !== method) return;
+                    request.once('end', () => {
+                        renameSync(directory, backup);
+                        symlinkSync(outsideRoot, directory, 'junction');
+                    });
+                };
+                server.on('request', replaceParent);
+                try {
+                    const save = await authenticatedFetch(url, {
+                        method, headers: { 'If-Match': file.headers.get('etag') }, body: 'Do not write outside'
+                    });
+                    assert.equal(save.status, status);
+                    assert.equal(await readFile(outsideFile, 'utf8'), 'Intro');
+                    assert.deepEqual((await readdir(outsideRoot)).sort(), ['intro.tex', 'secret.txt']);
+                } finally {
+                    server.off('request', replaceParent);
+                    await rm(directory);
+                    await rename(backup, directory);
+                }
             }
         });
         await t.test('compiles PDFs and serves SyncTeX only inside the authenticated project', async () => {
@@ -241,6 +420,7 @@ test('serves a writable project through the remote project API', async t => {
             assert.equal((await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
                 method: 'PUT', body: 'Unsafe update'
             })).status, 428);
+            if (process.platform !== 'win32') {await chmod(join(projectRoot, 'main.tex'), 0o660);}
             const saved = await authenticatedFetch(`${baseUrl}/api/projects/paper-one/files/main.tex`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'text/plain; charset=utf-8', 'If-Match': originalEtag },
@@ -249,6 +429,10 @@ test('serves a writable project through the remote project API', async t => {
             assert.equal(saved.status, 204);
             assert.ok(saved.headers.get('etag'));
             assert.equal(await readFile(join(projectRoot, 'main.tex'), 'utf8'), 'Updated');
+            if (process.platform !== 'win32') {
+                assert.equal((await stat(join(projectRoot, 'main.tex'))).mode & 0o777, 0o660,
+                    'An atomic save must preserve the original file permissions');
+            }
             const concurrentSaves = await Promise.all(['First writer', 'Second writer'].map(body => authenticatedFetch(
                 `${baseUrl}/api/projects/paper-one/files/main.tex`, {
                     method: 'PUT', headers: { 'If-Match': saved.headers.get('etag') }, body

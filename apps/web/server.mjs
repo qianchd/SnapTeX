@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, watch } from 'node:fs';
-import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -181,7 +181,8 @@ function isPermissionError(error) {
     return error?.code === 'EACCES' || error?.code === 'EPERM';
 }
 
-function listProjectFiles(root, directory = root) {
+function listProjectFiles(root, visitDirectory, directory = root) {
+    visitDirectory?.(directory);
     const files = [];
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
         if (entry.isSymbolicLink() || entry.name === 'node_modules' || entry.name.startsWith('.')) {
@@ -189,7 +190,7 @@ function listProjectFiles(root, directory = root) {
         }
         const path = join(directory, entry.name);
         if (entry.isDirectory()) {
-            files.push(...listProjectFiles(root, path));
+            files.push(...listProjectFiles(root, visitDirectory, path));
         } else if (entry.isFile() && projectFilePattern.test(entry.name)) {
             files.push(`/${relative(root, path).split(sep).join('/')}`);
         }
@@ -235,21 +236,40 @@ function createProjectWatchRegistry() {
         let project = projects.get(projectRoot);
         if (!project) {
             const listeners = new Set();
-            let knownFiles = new Set(listProjectFiles(projectRoot));
+            const directories = new Map();
+            let knownFiles;
+            let closed = false;
             let notifyTimer;
             let unknownChange = false;
             const pendingPaths = new Set();
             const fail = error => {
+                if (closed) return;
                 listeners.forEach(callback => callback({ kind: 'error', error }));
                 project.close();
             };
-            const watcher = watch(projectRoot, { recursive: true }, (_event, filename) => {
-                const path = filename && `/${String(filename).replaceAll('\\', '/')}`;
-                if (path && !projectFilePattern.test(path)) return;
-                if (path) pendingPaths.add(path);
-                else unknownChange = true;
-                clearTimeout(notifyTimer);
+            const onChange = (directory, event, filename) => {
+                if (closed) return;
+                if (directory === projectRoot && event === 'rename') {
+                    const stats = lstatSync(projectRoot, { bigint: true, throwIfNoEntry: false });
+                    const current = directories.get(projectRoot);
+                    if (!stats?.isDirectory() || stats.dev !== current.dev || stats.ino !== current.ino)
+                        throw new Error('Project directory was replaced.');
+                }
+                const filePath = filename && join(directory, String(filename));
+                const path = filePath && `/${relative(projectRoot, filePath).split(sep).join('/')}`;
+                if (path && hasDeniedPathSegment(path.slice(1))) return;
+                const directoryChange = filePath && (directories.has(filePath) ||
+                    (event === 'rename' && lstatSync(filePath, { throwIfNoEntry: false })?.isDirectory()));
+                if (directoryChange && event !== 'rename') return;
+                if (directoryChange || !path) {
+                    unknownChange = true;
+                } else if (projectFilePattern.test(path)) {
+                    pendingPaths.add(path);
+                } else return;
+                // A continuous stream of edits must not keep postponing the notification.
+                if (notifyTimer) return;
                 notifyTimer = setTimeout(() => {
+                    notifyTimer = undefined;
                     try {
                         const textPaths = [];
                         const resourcePaths = [];
@@ -258,14 +278,14 @@ function createProjectWatchRegistry() {
                             const exists = resolveProjectFile(projectRoot, path) !== undefined;
                             if (exists !== knownFiles.has(path)) {
                                 manifestChanged = true;
-                            } else if (exists && projectTextFilePattern.test(path)) {
-                                textPaths.push(path);
                             } else if (exists) {
-                                resourcePaths.push(path);
+                                (projectTextFilePattern.test(path) ? textPaths : resourcePaths).push(path);
                             }
+                            if (exists) knownFiles.add(path);
+                            else knownFiles.delete(path);
                         }
                         const event = manifestChanged ? { kind: 'manifest' } : { kind: 'files', textPaths, resourcePaths };
-                        if (manifestChanged) knownFiles = new Set(listProjectFiles(projectRoot));
+                        if (unknownChange) refreshDirectories();
                         unknownChange = false;
                         pendingPaths.clear();
                         listeners.forEach(callback => callback(event));
@@ -273,17 +293,38 @@ function createProjectWatchRegistry() {
                         fail(error);
                     }
                 }, 100);
-            });
-            let closed = false;
+            };
+            const refreshDirectories = () => {
+                const seen = new Set();
+                knownFiles = new Set(listProjectFiles(projectRoot, directory => {
+                    const stats = lstatSync(directory, { bigint: true });
+                    if (!stats.isDirectory()) throw new Error('Project directory is unavailable.');
+                    seen.add(directory);
+                    const current = directories.get(directory);
+                    if (current?.dev === stats.dev && current.ino === stats.ino) return;
+                    current?.watcher.close();
+                    // Watch directory entries, not file inodes that atomic saves replace.
+                    const watcher = watch(directory, (event, filename) => {
+                        try { onChange(directory, event, filename); } catch (error) { fail(error); }
+                    }).once('error', fail);
+                    directories.set(directory, { dev: stats.dev, ino: stats.ino, watcher });
+                }));
+                for (const [directory, entry] of directories) {
+                    if (seen.has(directory)) continue;
+                    entry.watcher.close();
+                    directories.delete(directory);
+                }
+            };
             project = { listeners, close: () => {
                 if (closed) return;
                 closed = true;
                 clearTimeout(notifyTimer);
-                watcher.close();
+                directories.forEach(entry => entry.watcher.close());
+                directories.clear();
                 projects.delete(projectRoot);
             } };
+            try { refreshDirectories(); } catch (error) { project.close(); throw error; }
             projects.set(projectRoot, project);
-            watcher.once('error', fail);
         }
         project.listeners.add(listener);
         return () => {
@@ -341,18 +382,43 @@ async function ensureProjectParent(projectRoot, filePath) {
     let directory = projectRoot;
     for (const part of relativePath.split(sep).slice(0, -1)) {
         directory = join(directory, part);
-        if (!existsSync(directory)) {
+        const stats = lstatSync(directory, { throwIfNoEntry: false });
+        if (!stats) {
             await mkdir(directory);
-        } else if (lstatSync(directory).isSymbolicLink() || !lstatSync(directory).isDirectory()) {
-            throw new Error('Project file parent is not a directory.');
+        } else if (!stats.isDirectory()) {
+            throw Object.assign(new Error('Project file parent is not a directory.'), { code: 'EPERM' });
         }
     }
 }
 
-async function replaceTextFile(filePath, text) {
+async function ensureProjectFileUnchanged(filePath, before) {
+    const after = await lstat(filePath, { bigint: true });
+    if (!after.isFile() || ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(key => before[key] !== after[key])) {
+        throw Object.assign(new Error('Project file changed while reading.'), { code: 'ESTALE' });
+    }
+}
+
+async function readProjectText(filePath) {
+    const file = await open(filePath, 'r');
+    try {
+        const before = await file.stat({ bigint: true });
+        const content = await file.readFile();
+        await ensureProjectFileUnchanged(filePath, before);
+        return content;
+    } finally {
+        await file.close();
+    }
+}
+
+async function replaceTextFile(filePath, text, expectedEtag) {
     const temporaryPath = join(dirname(filePath), `.snaptex-${randomBytes(12).toString('hex')}.tmp`);
     try {
-        await writeFile(temporaryPath, text, { encoding: 'utf8', flag: 'wx' });
+        const mode = (await lstat(filePath)).mode & 0o777;
+        await writeFile(temporaryPath, text, { encoding: 'utf8', flag: 'wx', mode });
+        await chmod(temporaryPath, mode);
+        // Check after preparing the replacement, not before its asynchronous write.
+        const currentContent = await readProjectText(filePath);
+        if (!etagMatches(expectedEtag, textEtag(currentContent))) return currentContent;
         await rename(temporaryPath, filePath);
     } finally {
         await unlink(temporaryPath).catch(() => undefined);
@@ -420,11 +486,13 @@ async function readJsonRequest(request) {
 }
 
 function sendSseEvent(response, event, data = '') {
-    response.write(`event: ${event}\ndata:${data}\n\n`);
+    const message = event ? `event: ${event}\ndata:${data}\n\n` : ': keepalive\n\n';
+    // Slow clients reconnect and reconcile instead of retaining an unbounded event buffer.
+    if (!response.destroyed && !response.write(message)) response.destroy();
 }
 
 async function sendProjectTextFile(request, response, filePath) {
-    const content = await readFile(filePath);
+    const content = await readProjectText(filePath);
     const headers = {
         'Content-Type': contentTypes.get(extname(filePath).toLowerCase()) ?? 'text/plain; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -491,13 +559,19 @@ async function sendFile(request, response, filePath, options = {}) {
     // Open before sending headers so missing/denied files are not reported as broken transfers.
     const file = content ? undefined : await open(responsePath, 'r');
     try {
-        headers['Content-Length'] = String(content?.length ?? (await file.stat()).size);
+        const stats = file && await file.stat({ bigint: true });
+        // Chunked project resources finish only after their source version is verified.
+        if (staticAsset || headOnly || content) headers['Content-Length'] = String(content?.length ?? stats.size);
         response.writeHead(200, headers);
         if (headOnly || content) {
             response.end(headOnly ? undefined : content);
             return;
         }
-        await pipeline(file.createReadStream({ autoClose: false }), response);
+        await pipeline(file.createReadStream({ autoClose: false }), response, { end: Boolean(staticAsset) });
+        if (!staticAsset) {
+            await ensureProjectFileUnchanged(filePath, stats);
+            response.end();
+        }
     } finally {
         await file?.close();
     }
@@ -600,7 +674,7 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
         // Reconnecting clients must see edits made while no watcher was subscribed.
         manifestCache.delete(projectRoot);
         sendSseEvent(response, 'manifest');
-        const heartbeat = setInterval(() => response.write(': keepalive\n\n'), 25_000);
+        const heartbeat = setInterval(() => sendSseEvent(response), 25_000);
         response.once('close', () => {
             clearInterval(heartbeat);
             unsubscribe();
@@ -686,9 +760,14 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
         return true;
     }
     if (newFilePath) {
+        const text = await readRequestText(request, maxWriteBytes);
+        if (resolveProjectDirectory(projectsRoot, projectName) !== projectRoot) {
+            sendJson(response, 404, { error: 'Project moved or became unavailable.' });
+            return true;
+        }
         await ensureProjectParent(projectRoot, newFilePath);
         try {
-            await writeFile(newFilePath, await readRequestText(request, maxWriteBytes), { encoding: 'utf8', flag: 'wx' });
+            await writeFile(newFilePath, text, { encoding: 'utf8', flag: 'wx' });
         } catch (error) {
             if (error?.code === 'EEXIST') {
                 sendJson(response, 409, { error: 'File already exists.' });
@@ -697,7 +776,7 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
             throw error;
         }
         manifestCache.delete(projectRoot);
-        response.writeHead(201, { ETag: textEtag(await readFile(newFilePath)) });
+        response.writeHead(201, { ETag: textEtag(text) });
         response.end();
         return true;
     }
@@ -725,19 +804,22 @@ async function handleProjectRequest(request, response, projectsRoot, manifestCac
         }
         const text = await readRequestText(request, maxWriteBytes);
         await queueFileWrite(projectTools.fileWrites, filePath, async () => {
-            const currentContent = await readFile(filePath);
-            const currentEtag = textEtag(currentContent);
-            if (!etagMatches(request.headers['if-match'], currentEtag)) {
+            // Uploading the body or waiting for another save may have changed the path.
+            if (resolveProjectFile(projectRoot, encodedFilePath) !== filePath) {
+                sendJson(response, 404, { error: 'Project file moved or became unavailable.' });
+                return;
+            }
+            const currentContent = await replaceTextFile(filePath, text, request.headers['if-match']);
+            if (currentContent !== undefined) {
                 response.writeHead(412, {
                     'Content-Type': 'text/plain; charset=utf-8',
                     'Cache-Control': 'no-store',
                     'Content-Length': String(currentContent.length),
-                    ETag: currentEtag
+                    ETag: textEtag(currentContent)
                 });
                 response.end(currentContent);
                 return;
             }
-            await replaceTextFile(filePath, text);
             manifestCache.delete(projectRoot);
             response.writeHead(204, { ETag: textEtag(text) });
             response.end();
@@ -847,12 +929,12 @@ export function createSnapTeXWebServer(options = {}) {
             staticAsset: true
         });
     })().catch(error => {
-        console.error('[SnapTeX Web] Request failed:', error);
+        if (error.code !== 'ESTALE') console.error('[SnapTeX Web] Request failed:', error);
         if (!response.headersSent) {
-            const status = isPermissionError(error) ? 403 : error.code === 'ENOENT' ? 404
+            const status = isPermissionError(error) ? 403 : error.code === 'ENOENT' ? 404 : error.code === 'ESTALE' ? 503
                 : error.message === 'Request body is too large.' ? 413 : 500;
             sendJson(response, status, { error: status === 403 ? 'Permission denied.' : status === 404 ? 'Not found.'
-                : status === 413 ? error.message : 'Internal server error.' });
+                : status === 413 ? error.message : status === 503 ? 'File changed while reading. Please retry.' : 'Internal server error.' });
         } else {
             response.destroy(error);
         }

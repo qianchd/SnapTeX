@@ -38,7 +38,7 @@ function requestError(response: Response, method: string, url: string | URL): Er
     if (response.status === 401) { return new RemoteProjectAuthenticationError(); }
     const ErrorType = [403, 404, 410].includes(response.status) ? ProjectFileUnavailableError : Error;
     const message = response.status === 503
-        ? 'The server cannot read this project. Ask the administrator to repair its permissions.'
+        ? 'The server could not read the latest project files. Please retry.'
         : `${method} ${response.url || url} failed: ${response.status}`;
     return new ErrorType(message);
 }
@@ -132,7 +132,10 @@ function createRemoteProjectModel(projectName: string, baseUrl: string, manifest
             const response = await fetcher(url, {
                 headers: conditional && version?.etag ? { 'If-None-Match': version.etag } : undefined,
                 signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
-            if (response.status === 304) {return undefined;}
+            if (response.status === 304) {
+                if (versions.get(path) !== version) {continue;}
+                return undefined;
+            }
             if (!response.ok) {throw requestError(response, 'GET', url);}
             const text = await response.text();
             // A save or another read may have completed while this response was in flight.

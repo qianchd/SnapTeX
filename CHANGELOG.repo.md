@@ -4,6 +4,8 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Fixed**: Kept remote file monitoring working across atomic saves and directory replacements without repeated full-directory scans. Continuous edits no longer postpone notifications indefinitely, and slow SSE clients reconnect instead of accumulating buffered events.
+- **Fixed**: Checked text and binary source versions after reads and the latest disk ETag before saving replacements; preserved original file modes, revalidated project boundaries after uploads, ignored stale conditional reads, and prevented unresolved conflict markers from becoming writable after later updates.
 - **Fixed**: Retained and retried external project updates after temporary network, file-read, or delivery failures instead of marking them as handled. Server projects catch up after reconnection or returning to the tab without restoring continuous manifest polling.
 - **Fixed**: Prevented stale reads and post-save metadata from hiding newer edits, caught changes made while local monitoring starts, and kept failed files from blocking other updates. Stalled remote sync reads time out and pending watcher requests are cancelled when closing a project.
 - **Fixed**: Refreshed embedded images/PDFs and their cached heights after external resource changes without resetting editor text/history. Temporary resource-read failures retry the latest file; missing files, denied access, and decoding/rendering failures do not trigger automatic retries. Removed preview-failure state from the text-delivery retry flow.

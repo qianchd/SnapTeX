@@ -232,6 +232,26 @@ suite('StandaloneHost', () => {
             assert.match(host.getDiagnostics().join('\n'), /conflict markers/i);
             await assert.rejects(() => host.saveCurrentText(), /Resolve the remote edit conflict markers/);
             assert.deepEqual(writes, []);
+
+            await receiveChange?.({ path: '/main.tex', text: 'Remote first\nMiddle\nNewest last' });
+            assert.match(editor.state.doc.toString(), /<<<<<<< LOCAL/);
+            assert.match(editor.state.doc.toString(), /Newest last/);
+            await assert.rejects(() => host.saveCurrentText(), /Resolve the remote edit conflict markers/);
+            assert.deepEqual(writes, [], 'A later non-conflicting edit must not make unresolved conflict markers writable');
+
+            for (const marker of ['<<<<<<< LOCAL', '||||||| BASE', '=======']) {
+                editor.replaceText(editor.state.doc.toString().replace(`${marker}\n`, ''));
+                host.handleEditorUpdate();
+                if (marker === '<<<<<<< LOCAL') {
+                    await receiveChange?.({ path: '/main.tex', text: 'Remote first\nMiddle\nLatest last' });
+                }
+                await assert.rejects(() => host.saveCurrentText(), /Resolve the remote edit conflict markers/);
+            }
+
+            editor.replaceText('Resolved first\nMiddle\nNewest last');
+            host.handleEditorUpdate();
+            await host.saveCurrentText();
+            assert.deepEqual(writes, ['Resolved first\nMiddle\nNewest last']);
         } finally {
             restoreWindow();
         }
