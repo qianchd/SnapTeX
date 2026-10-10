@@ -408,6 +408,10 @@ export class BlockVirtualizationController {
                     const inRetainRange = rect.bottom >= -retainMargin && rect.top <= window.innerHeight + retainMargin;
                     let block = this.getShellBlock(shell);
                     if (inMountRange) {
+                        // A retained block may still have the height lock from when it was above the viewport.
+                        if (block && rect.bottom > 0 && !Number.isFinite(shell._snaptexReservedHeight)) {
+                            this.unlockShellHeight(shell);
+                        }
                         if (!block) {
                             block = this.mountShell(shell, onMissingHtml);
                             if (block) {
@@ -529,6 +533,9 @@ export class BlockVirtualizationController {
                 if (!host.isConnected || measurementShell.parentElement !== host) return undefined;
                 const height = Math.ceil(Math.max(measurementShell.getBoundingClientRect().height, measurementShell.scrollHeight));
                 if (!shell.isConnected || this.getBlockSourceKey(shell) !== this.getBlockSourceKey(block)) return undefined;
+                if (this.getShellBlock(shell)) {
+                    return this.withViewportAnchorPreserved(() => this.refreshMountedShellHeight(shell));
+                }
                 const key = this.getBlockSourceKey(shell);
                 this.cacheBlockHeight(
                     key,

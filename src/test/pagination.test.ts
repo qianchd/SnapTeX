@@ -196,6 +196,65 @@ suite('Paged preview layout', () => {
         assert.deepEqual(virtualization.getBlockResourcePaths(shells.get('1')), []);
     });
 
+    test('keeps mounted content unclipped across scrolling and background measurement', async () => {
+        let top = -200;
+        let mounted = true;
+        const block = {
+            getAttribute: () => 'edited-block',
+            getBoundingClientRect: () => ({ height: 140 }),
+            scrollHeight: 140
+        };
+        const shell = {
+            isConnected: true,
+            style: { height: '4.76em', minHeight: '4.76em', overflow: 'hidden' },
+            getBoundingClientRect: () => ({ top, bottom: top + 100 }),
+            getAttribute: () => 'edited-block'
+        } as unknown as HTMLElement;
+        const host = {
+            isConnected: true,
+            style: { fontSize: '16px', width: '600px' },
+            replaceChildren: (child?: { parentElement: unknown }) => {if (child) {child.parentElement = host;}}
+        };
+        const restore = installTestGlobals({ window: { innerHeight: 800 }, document: {
+            createElement: () => ({
+                firstElementChild: block,
+                appendChild: () => undefined,
+                setAttribute: () => undefined,
+                getBoundingClientRect: () => ({ height: 48 }),
+                scrollHeight: 48
+            })
+        } });
+        try {
+            const virtualization = new BlockVirtualizationController({
+                getBoundingClientRect: () => ({ width: 600 })
+            } as HTMLElement, new ViewportAnchorController());
+            virtualization.setEnabled(true);
+            virtualization.getShells = () => [shell];
+            virtualization.getShellBlock = () => mounted ? block : null;
+            virtualization.ensureMeasurementHost = () => host;
+            virtualization.getMeasurementWidth = () => 600;
+            virtualization.withViewportAnchorPreserved = (update: () => number) => update();
+            const update = () => virtualization.updateMountedShells(undefined, undefined);
+            update();
+            assert.equal(shell.style.height, '4.76em', 'Keep offscreen scroll geometry');
+            top = 100;
+            update();
+            assert.deepEqual(shell.style, { height: '', minHeight: '', overflow: '' });
+
+            mounted = false;
+            virtualization.lockShellHeight(shell, 48);
+            const height = await virtualization.measureBlockHtml(shell, '<div>edited formula</div>', async () => {
+                mounted = true;
+                return true;
+            }, 600);
+            assert.equal(height, 140, 'The live DOM supersedes the smaller background measurement');
+            assert.equal(virtualization.getCachedBlockHeight('edited-block'), 140);
+            assert.deepEqual(shell.style, { height: '', minHeight: '', overflow: '' });
+        } finally {
+            restore();
+        }
+    });
+
     test('preserves a mid-document anchor without scanning the offscreen prefix', () => {
         let layoutShift = 0;
         let rectReads = 0;
