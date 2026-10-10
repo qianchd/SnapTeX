@@ -2,7 +2,7 @@
 
 import * as assert from 'assert';
 import { EditorState, type StateEffect, type Transaction, type TransactionSpec } from '@codemirror/state';
-import { history, undo, undoDepth } from '@codemirror/commands';
+import { history, redo, undo, undoDepth } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
 import { ProjectFileUnavailableError, ProjectWriteConflictError, type BrowserProjectFile, type BrowserProjectTextChange } from '../../apps/standalone/src/browser-project';
@@ -20,6 +20,8 @@ class TestEditorView {
     }
     get selectionAnchor() { return this.state.selection.main.anchor; }
     set selectionAnchor(anchor: number) { this.dispatch({ selection: { anchor } }); }
+
+    setState(state: EditorState) { this.state = state; }
 
     dispatch(update: TransactionSpec | Transaction) {
         const transaction = 'startState' in update ? update : this.state.update(update);
@@ -70,6 +72,51 @@ async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMes
 }
 
 suite('StandaloneHost', () => {
+    test('keeps batch replacement undo and redo isolated to each project file', async () => {
+        const editor = new TestEditorView();
+        const restoreWindow = installWindow([]);
+        const host = new StandaloneHost(editor as unknown as EditorView, '/main.tex', undefined, undefined, { autoSave: false });
+        const original = 'Appendix\nA old\nB old\nC old';
+        const command = (run: typeof undo) => run({ state: editor.state, dispatch: transaction => {
+            editor.dispatch(transaction);
+            host.handleEditorUpdate();
+        } });
+        let receiveChange!: (change: BrowserProjectTextChange) => Promise<void> | void;
+        try {
+            await host.loadProject({ files: [
+                { path: '/main.tex', text: 'Main text' },
+                { path: '/appendix.tex', text: original }
+            ], watchFiles: callback => { receiveChange = callback; return () => undefined; } });
+            const mainState = editor.state;
+            await host.openEditorFile('/main.tex');
+            assert.equal(editor.state, mainState, 'Opening the active file must not rebuild the editor');
+            await host.openEditorFile('/appendix.tex');
+            editor.dispatch({ changes: [11, 17, 23].map(from => ({ from, to: from + 3, insert: 'new' })) });
+            host.handleEditorUpdate();
+            editor.selectionAnchor = 14;
+            await host.openEditorFile('/main.tex');
+            assert.equal(command(undo), false, 'Main must not inherit appendix undo history');
+            assert.equal(editor.state.doc.toString(), 'Main text');
+            editor.replaceText('Edited main');
+            host.handleEditorUpdate();
+            await receiveChange({ path: '/appendix.tex', text: 'Heading\n' + original });
+            await host.openEditorFile('/appendix.tex');
+            assert.equal(editor.state.doc.toString(), 'Heading\nAppendix\nA new\nB new\nC new');
+            assert.equal(editor.selectionAnchor, 22, 'External edits map the inactive file selection');
+            assert.equal(command(undo), true);
+            assert.equal(editor.state.doc.toString(), 'Heading\n' + original);
+            assert.equal(command(redo), true);
+            assert.equal(editor.state.doc.toString(), 'Heading\nAppendix\nA new\nB new\nC new');
+            await host.openEditorFile('/main.tex');
+            assert.equal(command(undo), true);
+            assert.equal(editor.state.doc.toString(), 'Main text');
+            await host.loadProject({ files: [{ path: '/main.tex', text: 'Other project' }] });
+            assert.equal(command(undo), false, 'A different project must start with empty history');
+        } finally {
+            restoreWindow();
+        }
+    });
+
     test('saving and receiving a self-write preserve the editor selection and undo history', async () => {
         const editor = new TestEditorView();
         const restoreWindow = installWindow([]);
@@ -1006,6 +1053,7 @@ suite('StandaloneHost', () => {
             await host.openEditorFile('/main.tex');
             const updateCount = messages.filter(message => message.command === HostToPreviewCommand.Update).length;
             host.setPaneVisibility(false, true);
+            const cancelledBeforeScroll = cancelledEditorSyncs;
             await host.syncPreviewScroll(scroll.index, scroll.ratio);
 
             assert.equal(host.getActivePath(), '/chapter.tex');
@@ -1013,7 +1061,7 @@ suite('StandaloneHost', () => {
             assert.equal(editor.scrollDOM.scrollTop, 0);
             host.setPaneVisibility(true, true);
             assert.ok(editor.scrollDOM.scrollTop > 0);
-            assert.equal(cancelledEditorSyncs, 1);
+            assert.ok(cancelledEditorSyncs > cancelledBeforeScroll);
             assert.equal(writes, 0);
 
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLayoutChanged });
@@ -1043,10 +1091,11 @@ suite('StandaloneHost', () => {
             const scrollCount = () => messages.filter(message => message.command === HostToPreviewCommand.ScrollToBlock).length;
             assert.equal(scrollCount(), 1);
 
+            const cancelledBeforeScroll = cancelledSyncs;
             await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewScrollStarted });
             host.syncEditorSelection(2, 0, 'Second paragraph.');
             assert.equal(scrollCount(), 1);
-            assert.equal(cancelledSyncs, 1);
+            assert.equal(cancelledSyncs, cancelledBeforeScroll + 1);
 
             host.beginEditorInteraction();
             host.syncEditorSelection(2, 0, 'Second paragraph.');

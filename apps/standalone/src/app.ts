@@ -108,6 +108,8 @@ export class StandaloneHost {
     private readonly fileProvider = new BrowserFileProvider();
     private readonly updateService = new PreviewUpdateService(this.fileProvider);
     private readonly savedTexts = new Map<string, string>();
+    private readonly editorStates = new Map<string, EditorState>();
+    private readonly emptyEditorState: EditorState;
     private readonly dirtyPaths = new Set<string>();
     private readonly diagnostics = new Set<string>();
     private readonly conflictedPaths = new Set<string>();
@@ -142,6 +144,10 @@ export class StandaloneHost {
         private readonly cancelPendingEditorSync: () => void = () => undefined,
         private readonly onResourceChange: (path: string) => void = () => undefined
     ) {
+        this.emptyEditorState = editorView.state.update({
+            changes: { from: 0, to: editorView.state.doc.length, insert: '' },
+            annotations: Transaction.addToHistory.of(false)
+        }).state;
         this.rootUri = new BrowserUri(rootPath);
         this.activeUri = this.rootUri;
         this.settings = { ...DEFAULT_STANDALONE_PREVIEW_SETTINGS, ...settings };
@@ -173,6 +179,7 @@ export class StandaloneHost {
         this.pendingPreviewSync = undefined;
         this.previewControlsSync = false;
         this.savedTexts.clear();
+        this.editorStates.clear();
         this.dirtyPaths.clear();
         this.conflictedPaths.clear();
         this.rootUri = new BrowserUri(rootPath);
@@ -183,7 +190,7 @@ export class StandaloneHost {
         const text = await this.fileProvider.read(this.activeUri);
         await this.setProjectActivePath?.(this.activeUri.path);
         this.markSaved(this.activeUri.path, text);
-        this.replaceEditorText(text);
+        this.restoreEditorState(text);
         this.updateService.resetState();
         this.onStateChange();
         await this.renderCurrentText();
@@ -218,17 +225,19 @@ export class StandaloneHost {
     async openEditorFile(path: string, isCurrent: () => boolean = () => true) {
         await this.flushProjectWrites();
         if (!isCurrent()) {return;}
-        this.persistActiveEditorText();
         const targetUri = new BrowserUri(path);
+        if (targetUri.path === this.activeUri.path) {return;}
         const text = await this.fileProvider.read(targetUri);
         if (!isCurrent()) {return;}
         await this.setProjectActivePath?.(targetUri.path);
         if (!isCurrent()) {return;}
+        this.persistActiveEditorText();
+        this.editorStates.set(this.activeUri.path, this.editorView.state);
         this.activeUri = targetUri;
         if (!this.savedTexts.has(targetUri.path)) {
             this.markSaved(targetUri.path, text);
         }
-        this.replaceEditorText(text);
+        this.restoreEditorState(text);
         this.onStateChange();
     }
 
@@ -390,6 +399,7 @@ export class StandaloneHost {
         await this.projectOperations.deleteFile(normalizedPath);
         this.fileProvider.deleteProjectFile(normalizedPath);
         this.savedTexts.delete(normalizedPath);
+        this.editorStates.delete(normalizedPath);
         this.dirtyPaths.delete(normalizedPath);
         this.conflictedPaths.delete(normalizedPath);
         this.updateService.resetState();
@@ -398,7 +408,7 @@ export class StandaloneHost {
             await this.setProjectActivePath?.(this.rootUri.path);
             const text = await this.fileProvider.read(this.rootUri);
             if (!this.savedTexts.has(this.rootUri.path)) {this.markSaved(this.rootUri.path, text);}
-            this.replaceEditorText(text);
+            this.restoreEditorState(text);
         }
         this.onStateChange();
         await this.renderCurrentText();
@@ -443,21 +453,23 @@ export class StandaloneHost {
         };
     }
 
-    private replaceEditorText(text: string) {
-        const editorText = normalizeEditorText(text);
-        this.programmaticEditorUpdate = true;
-        try {
-            this.editorView.dispatch({
-                changes: { from: 0, to: this.editorView.state.doc.length, insert: editorText },
-                annotations: Transaction.addToHistory.of(false)
-            });
-        } finally {
-            this.programmaticEditorUpdate = false;
-        }
+    private restoreEditorState(text: string) {
+        // Reuse the editor configuration, not the previous file's undo history.
+        const state = this.editorStates.get(this.activeUri.path) ?? this.emptyEditorState.update({
+            changes: { from: 0, insert: normalizeEditorText(text) },
+            annotations: Transaction.addToHistory.of(false)
+        }).state;
+        this.editorStates.delete(this.activeUri.path);
+        this.cancelEditorToPreviewSync();
+        this.pendingEditorScroll = undefined;
+        this.editorFlashToken++;
+        this.editorView.setState(state.update({ effects: flashEditorLineEffect.of(null) }).state);
     }
 
-    private updateEditorText(text: string, buildPatch: typeof diffPatch) {
-        const document = this.editorView.state.doc;
+    private updateEditorText(path: string, text: string, buildPatch: typeof diffPatch) {
+        const state = path === this.activeUri.path ? this.editorView.state : this.editorStates.get(path);
+        if (!state) {return;}
+        const document = state.doc;
         const current = document.toString();
         const changes = buildPatch(current.match(/[^\n]*\n|[^\n]+/g) ?? [], text.match(/[^\n]*\n|[^\n]+/g) ?? [])
             .map(({ buffer1, buffer2 }) => {
@@ -476,10 +488,12 @@ export class StandaloneHost {
 
         this.programmaticEditorUpdate = true;
         try {
-            this.editorView.dispatch({
+            const transaction = state.update({
                 changes,
                 annotations: Transaction.addToHistory.of(false)
             });
+            if (path === this.activeUri.path) {this.editorView.dispatch(transaction);}
+            else {this.editorStates.set(path, transaction.state);}
         } finally {
             this.programmaticEditorUpdate = false;
         }
@@ -573,10 +587,8 @@ export class StandaloneHost {
         } else {
             this.conflictedPaths.delete(path);
         }
-        if (path === this.activeUri.path) {
-            this.updateEditorText(merged.text, diffPatch);
-            if (!merged.conflict && this.isDirty(path)) {this.scheduleAutosave();}
-        }
+        this.updateEditorText(path, merged.text, diffPatch);
+        if (path === this.activeUri.path && !merged.conflict && this.isDirty(path)) {this.scheduleAutosave();}
         this.onStateChange();
         await this.renderCurrentText();
         return merged.conflict;
