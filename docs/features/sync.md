@@ -52,6 +52,10 @@ During split-pane resizing or a preview layout update, synchronization pauses br
 
 Hover over a rendered `\ref`, `\eqref`, or supported citation link to preview its target in a tooltip. The tooltip includes the target block and neighboring blocks when available. Click the link to jump directly to the target in the preview.
 
+A stylus that supports hovering uses the same interaction: hover to preview, and tap the link to jump. Stylus hover depends on the device and browser reporting it.
+
+On a touchscreen, tap the link to open the tooltip. It stays open while you read or scroll it; tap outside it or use its close button to dismiss it. Use the arrow in its header to jump to the reference. The header and resize handles also support touch dragging.
+
 Virtual mode retains anchors even when target HTML is unmounted. The requested block is mounted before the jump or tooltip is shown.
 
 ## AST precision

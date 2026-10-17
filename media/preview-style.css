@@ -712,7 +712,7 @@ ol ol ol { list-style-type: lower-roman; }
 
     /* Sizing */
     width: max-content;
-    min-width: 300px;
+    min-width: min(300px, calc(100vw - 30px));
     max-width: 96vw;
     height: auto;
     max-height: 50vh;
@@ -741,6 +741,7 @@ ol ol ol { list-style-type: lower-roman; }
     background-color: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.1));
     border-bottom: 1px solid var(--vscode-widget-border, #dcdcdc);
     cursor: grab;
+    touch-action: none;
     user-select: none;
     flex-shrink: 0;
     border-radius: 8px 8px 0 0;
@@ -783,6 +784,18 @@ ol ol ol { list-style-type: lower-roman; }
     background-color: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
+.hover-tooltip .icon-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+@media (any-pointer: coarse) {
+    .hover-tooltip .icon-btn {
+        min-width: 34px;
+        min-height: 34px;
+    }
+}
+
 .pin-btn.active {
     color: var(--vscode-editor-background, white);
     background-color: var(--vscode-button-background, #007acc);
@@ -805,6 +818,7 @@ ol ol ol { list-style-type: lower-roman; }
 
 /* --- Resize Handles --- */
 .resize-handle-bottom {
+    touch-action: none;
     height: 8px;
     width: 100%;
     background: transparent;
@@ -818,10 +832,12 @@ ol ol ol { list-style-type: lower-roman; }
 }
 
 .resize-handle-right {
+    touch-action: none;
     position: absolute; right: 0; top: 0; bottom: 12px; width: 4px; background: transparent; cursor: ew-resize; z-index: 20;
 }
 
 .resize-handle-corner {
+    touch-action: none;
     position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; z-index: 20;
 }
 .resize-handle-corner::after {

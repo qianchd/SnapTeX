@@ -6,6 +6,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 - **Improved**: Opened large local folders without eagerly reading metadata for every text file. Directory discovery uses bounded concurrency and the same hidden-entry/`node_modules` exclusions as server projects. External-change checks now cover only accessed files, while unused notes remain available on demand; hidden Explorer trees no longer build DOM, and all folders start collapsed.
 - **Added**: A Web toolbar full-screen toggle.
+- **Improved**: Touch-operated reference tooltips with persistent previews, jump/close controls, and touch dragging/resizing. Hover-capable pens preview on hover and jump on tap, like a mouse.
 - **Fixed**: Released browser workspace database connections for upgrades from another window and surfaced project-opening progress/errors on the welcome page, including mobile layouts.
 - **Fixed**: Kept remote file monitoring working across atomic saves and directory replacements without repeated full-directory scans. Continuous edits no longer postpone notifications indefinitely, and slow SSE clients reconnect instead of accumulating buffered events.
 - **Fixed**: Checked text and binary source versions after reads and the latest disk ETag before saving replacements; preserved original file modes, revalidated project boundaries after uploads, ignored stale conditional reads, and prevented unresolved conflict markers from becoming writable after later updates.

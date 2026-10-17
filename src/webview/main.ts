@@ -9,6 +9,7 @@ import { HostToPreviewCommand, MAX_BLOCK_HTML_BATCH_SIZE, PreviewToHostCommand }
 import { getPreviewBridge } from './bridge';
 import { refreshResourceElements } from './resources';
 import { resolveProjectResourcePath } from '../file-provider';
+import { ArrowUpRight, Pin, X, createElement } from 'lucide';
 const previewBridge = getPreviewBridge();
     const PREVIEW_LAYOUT_WIDTH_TOLERANCE = 0.01;
     const PREVIEW_RESIZE_SETTLE_DELAY_MS = 150;
@@ -39,7 +40,22 @@ const previewBridge = getPreviewBridge();
         }
 
         bindGlobalEvents() {
-            document.body.addEventListener('mouseover', (e) => {
+            document.body.addEventListener('pointerdown', (e) => {
+                this.pointerType = e.pointerType;
+                const tooltip = this.activeTransientTooltip;
+                if (tooltip?.touchOpened && !tooltip.element.contains(e.target) && !tooltip.currentLink?.contains(e.target)) {
+                    tooltip.dispose();
+                }
+            });
+            document.body.addEventListener('click', (e) => {
+                if (!e.detail || this.pointerType !== 'touch') return;
+                const link = e.target.closest('a[href^="#"]');
+                if (!link || link.closest('.hover-tooltip:not(.pinned)')) return;
+                e.preventDefault();
+                this.onLinkEnter(link, e.clientY, true);
+            });
+            document.body.addEventListener('pointerover', (e) => {
+                if ((e.pointerType !== 'mouse' && e.pointerType !== 'pen') || e.buttons !== 0) return;
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
                     const parentTooltip = link.closest('.hover-tooltip');
@@ -50,7 +66,8 @@ const previewBridge = getPreviewBridge();
                 }
             });
 
-            document.body.addEventListener('mouseout', (e) => {
+            document.body.addEventListener('pointerout', (e) => {
+                if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
                 const link = e.target.closest('a');
                 if (link && link.getAttribute('href')?.startsWith('#')) {
                     if (this.activeTransientTooltip &&
@@ -63,12 +80,12 @@ const previewBridge = getPreviewBridge();
 
         }
 
-        onLinkEnter(link, anchorY) {
+        onLinkEnter(link, anchorY, touch = false) {
             if (!this.activeTransientTooltip || this.activeTransientTooltip.isPinned) {
                 this.activeTransientTooltip = new Tooltip(this);
             }
 
-            this.activeTransientTooltip.scheduleShow(link, anchorY);
+            this.activeTransientTooltip.scheduleShow(link, anchorY, touch);
         }
 
         onLinkLeave() {
@@ -96,12 +113,14 @@ const previewBridge = getPreviewBridge();
             this.contentContainer = this.element.querySelector('.tooltip-content');
             this.pinBtn = this.element.querySelector('.pin-btn');
             this.closeBtn = this.element.querySelector('.close-btn');
+            this.jumpBtn = this.element.querySelector('.jump-btn');
 
             this.resizeRight = this.element.querySelector('.resize-handle-right');
             this.resizeBottom = this.element.querySelector('.resize-handle-bottom');
             this.resizeCorner = this.element.querySelector('.resize-handle-corner');
 
             this.isPinned = false;
+            this.touchOpened = false;
             this.currentLink = null;
             this.anchorY = null;
             this.hideTimer = null;
@@ -109,6 +128,7 @@ const previewBridge = getPreviewBridge();
 
             this.isDragging = false;
             this.resizeState = null;
+            this.pointerId = null;
 
             this.bindEvents();
             this.bringToFront();
@@ -121,8 +141,9 @@ const previewBridge = getPreviewBridge();
                 <div class="tooltip-header">
                     <span class="drag-handle-icon">::::</span>
                     <div class="header-controls">
-                        <button class="icon-btn pin-btn" title="Pin / Unpin">📌</button>
-                        <button class="icon-btn close-btn" title="Close">✕</button>
+                        <button type="button" class="icon-btn jump-btn" title="Go to reference" aria-label="Go to reference"></button>
+                        <button type="button" class="icon-btn pin-btn" title="Pin / Unpin" aria-label="Pin / Unpin"></button>
+                        <button type="button" class="icon-btn close-btn" title="Close" aria-label="Close"></button>
                     </div>
                 </div>
                 <div class="tooltip-content"></div>
@@ -130,28 +151,36 @@ const previewBridge = getPreviewBridge();
                 <div class="resize-handle-bottom"></div>
                 <div class="resize-handle-corner"></div>
             `;
+            for (const [selector, icon] of [['.jump-btn', ArrowUpRight], ['.pin-btn', Pin], ['.close-btn', X]]) {
+                el.querySelector(selector).appendChild(createElement(icon, { 'aria-hidden': 'true' }));
+            }
             return el;
         }
 
         bindEvents() {
-            this.element.addEventListener('mouseenter', () => this.clearHideTimer());
-            this.element.addEventListener('mouseleave', () => this.startHideTimer());
+            this.element.addEventListener('pointerenter', () => this.clearHideTimer());
+            this.element.addEventListener('pointerleave', () => this.startHideTimer());
 
-            this.element.addEventListener('mousedown', () => this.bringToFront());
+            this.element.addEventListener('pointerdown', () => this.bringToFront());
 
             this.pinBtn.addEventListener('click', (e) => { e.stopPropagation(); this.togglePin(); });
             this.closeBtn.addEventListener('click', (e) => { e.stopPropagation(); this.dispose(); });
+            this.jumpBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.currentLink?.click();
+                if (!this.isPinned) this.dispose();
+            });
 
-            this.header.addEventListener('mousedown', (e) => this.startDrag(e));
+            this.header.addEventListener('pointerdown', (e) => {
+                if (e.isPrimary && e.button === 0 && !e.target.closest('button')) this.startDrag(e);
+            });
 
-            this.resizeBottom.addEventListener('mousedown', (e) => this.startResize(e, false, true));
-            this.resizeRight.addEventListener('mousedown', (e) => this.startResize(e, true, false));
-            this.resizeCorner.addEventListener('mousedown', (e) => this.startResize(e, true, true));
+            this.resizeBottom.addEventListener('pointerdown', (e) => this.startResize(e, false, true));
+            this.resizeRight.addEventListener('pointerdown', (e) => this.startResize(e, true, false));
+            this.resizeCorner.addEventListener('pointerdown', (e) => this.startResize(e, true, true));
 
-            this._onWindowMouseMove = (e) => this.onMouseMove(e);
-            this._onWindowMouseUp = (e) => this.onMouseUp(e);
-            window.addEventListener('mousemove', this._onWindowMouseMove);
-            window.addEventListener('mouseup', this._onWindowMouseUp);
+            this.element.addEventListener('pointermove', (e) => this.onPointerMove(e));
+            this.element.addEventListener('lostpointercapture', (e) => this.onPointerEnd(e));
         }
 
         bringToFront() {
@@ -170,6 +199,8 @@ const previewBridge = getPreviewBridge();
             } else {
                 this.pinBtn.classList.remove('active');
                 this.element.classList.remove('pinned');
+                this.manager.activeTransientTooltip?.dispose();
+                this.manager.activeTransientTooltip = this;
                 if (!this.element.matches(':hover')) {
                     this.startHideTimer();
                 }
@@ -181,8 +212,6 @@ const previewBridge = getPreviewBridge();
             this.clearHideTimer();
             this.currentLink = null;
             this.element.remove();
-            window.removeEventListener('mousemove', this._onWindowMouseMove);
-            window.removeEventListener('mouseup', this._onWindowMouseUp);
 
             if (this.manager.activeTransientTooltip === this) {
                 this.manager.activeTransientTooltip = null;
@@ -190,6 +219,8 @@ const previewBridge = getPreviewBridge();
         }
 
         startDrag(e) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            this.pointerId = e.pointerId;
             this.isDragging = true;
 
             this.ensureAbsolutePosition();
@@ -203,6 +234,9 @@ const previewBridge = getPreviewBridge();
         }
 
         startResize(e, dirX, dirY) {
+            if (!e.isPrimary || e.button !== 0) return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            this.pointerId = e.pointerId;
             this.ensureAbsolutePosition();
 
             const rect = this.element.getBoundingClientRect();
@@ -235,7 +269,8 @@ const previewBridge = getPreviewBridge();
             this.element.style.height = `${rect.height}px`;
         }
 
-        onMouseMove(e) {
+        onPointerMove(e) {
+            if (e.pointerId !== this.pointerId) return;
             if (this.isDragging) {
                 const x = e.clientX - this.dragOffset.x;
                 const y = e.clientY - this.dragOffset.y;
@@ -245,26 +280,34 @@ const previewBridge = getPreviewBridge();
             } else if (this.resizeState) {
                 const { startX, startY, startWidth, startHeight, dirX, dirY } = this.resizeState;
                 if (dirX) {
-                    this.element.style.width = `${Math.max(300, startWidth + (e.clientX - startX))}px`;
+                    this.element.style.width = `${Math.max(0, startWidth + (e.clientX - startX))}px`;
                 }
                 if (dirY) {
-                    this.element.style.height = `${Math.max(100, startHeight + (e.clientY - startY))}px`;
+                    this.element.style.height = `${Math.max(0, startHeight + (e.clientY - startY))}px`;
                 }
             }
         }
 
-        onMouseUp() {
+        onPointerEnd(e) {
+            if (e.pointerId !== this.pointerId) return;
+            this.pointerId = null;
             this.isDragging = false;
             this.resizeState = null;
             this.element.style.cursor = '';
         }
 
-        scheduleShow(link, anchorY) {
+        scheduleShow(link, anchorY, touch = false) {
+            this.touchOpened = touch;
             this.clearHideTimer();
+            this.cancelShow();
             if (this.currentLink === link && this.element.classList.contains('visible')) return;
 
-            if (this.showTimer !== null) clearTimeout(this.showTimer);
             this.anchorY = anchorY ?? null;
+
+            if (touch) {
+                this.onLinkEnter(link);
+                return;
+            }
 
             this.showTimer = setTimeout(() => {
                 this.showTimer = null;
@@ -291,7 +334,7 @@ const previewBridge = getPreviewBridge();
         }
 
         startHideTimer() {
-            if (this.isPinned) return;
+            if (this.isPinned || this.touchOpened) return;
 
             if (this.hideTimer !== null) clearTimeout(this.hideTimer);
             this.hideTimer = setTimeout(() => {
@@ -419,7 +462,7 @@ const previewBridge = getPreviewBridge();
             const viewportHeight = window.innerHeight;
             const margin = 15;
             const bounds = this.getTooltipBounds();
-            const maxWidth = Math.max(300, bounds.width - margin * 2);
+            const maxWidth = Math.min(window.innerWidth, bounds.width) - margin * 2;
             const verticalAnchor = anchorY ?? linkRect.top + linkRect.height / 2;
 
             this.element.style.maxWidth = `${maxWidth}px`;
@@ -1190,6 +1233,7 @@ const previewBridge = getPreviewBridge();
         }
 
         async onInternalLinkClick(event) {
+            if (event.defaultPrevented) return;
             const link = event.target.closest('a');
             const href = link?.getAttribute('href');
             if (!href || !href.startsWith('#') || href.length <= 1) return;
@@ -1780,6 +1824,7 @@ const previewBridge = getPreviewBridge();
         }
 
         onDoubleClick(event) {
+            if (event.target.closest('a, button, .hover-tooltip')) return;
             const block = event.target.closest('.latex-block');
             if (block) {
                 const index = block.getAttribute('data-index');

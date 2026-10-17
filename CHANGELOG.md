@@ -4,6 +4,8 @@ All notable changes to the "SnapTeX" extension will be documented in this file.
 
 ## Unreleased
 
+- **Improved**: Added touch-operated reference tooltips with jump controls and pointer-based dragging/resizing; hover-capable pens preview on hover and jump on tap.
+
 ## [0.8.2] - 2026-10-05
 
 - **Fixed**: Resolved project-relative image and PDF paths such as `../figures/a.pdf` from nested TeX roots while keeping resource access inside the opened workspace.
