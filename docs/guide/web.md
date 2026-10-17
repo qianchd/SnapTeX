@@ -85,6 +85,8 @@ The toolbar's full-screen button expands the workspace to fill the display. Use 
 
 An open server project receives Server-Sent Events (SSE) from a shared filesystem watcher, rather than polling its manifest. SnapTeX downloads changed text files conditionally using their ETags. Local folders use a browser filesystem observer when available, or check file metadata every five seconds while the tab is visible.
 
+Only files already opened or read by the preview are checked in local folders; unrelated notes and unused resources stay unread until needed. Opening a local folder still lists its filenames for Explorer, without loading every file's metadata or contents. Like server projects, local folder discovery skips hidden entries and `node_modules`; independent subdirectories are scanned with bounded concurrency. Explorer starts with all folders collapsed and creates file rows only while visible.
+
 Temporary failures do not discard pending changes: server reads retry with increasing delays, and local observer failures are retried while the tab is visible. Each retry reads the latest file content rather than replaying the failed snapshot. A failed file read retries that file without downloading the full project manifest again. Server reconnection, restored connectivity, or returning to the tab triggers a fresh revision check to catch up missed updates. Successful recovery stops retries; normal server synchronization remains notification-driven.
 
 Local monitoring also checks once after starting, to catch edits made during project loading. A failed file does not prevent other changed files from updating. Remote text and manifest reads have a 30-second timeout, and closing the project cancels outstanding watcher requests and retries.

@@ -52,20 +52,21 @@ function fileVersion(file: File): string {
 function projectFileFromHandle(
     handle: BrowserFileHandle,
     path: string,
-    localFiles: Map<string, LocalFile>
+    watchedFiles: Map<string, LocalFile>
 ): BrowserProjectFile {
-    const state: LocalFile = localFiles.get(path) ?? { handle, version: '' };
-    localFiles.set(path, state);
+    const state: LocalFile = watchedFiles.get(path) ?? { handle, version: '' };
     if (isProjectTextFile(path)) {
         return {
             path,
             readText: async () => {
+                watchedFiles.set(path, state);
                 const file = await handle.getFile();
                 const text = normalizeProjectText(await file.text());
                 state.version = fileVersion(file);
                 return state.text = text;
             },
             writeText: async (text, expectedText) => {
+                watchedFiles.set(path, state);
                 const currentFile = await handle.getFile();
                 const currentText = await currentFile.text();
                 const normalizedCurrent = normalizeProjectText(currentText);
@@ -90,7 +91,7 @@ function projectFileFromHandle(
         };
     }
     return { path, readBlob: async () => {
-        state.version ||= 'pending';
+        watchedFiles.set(path, state);
         const file = await handle.getFile();
         const blob = await new Response(file).blob();
         state.version = fileVersion(file);
@@ -104,19 +105,24 @@ export function fileInputPath(file: File): string {
 
 async function readDirectoryHandle(
     directory: BrowserDirectoryHandle,
-    localFiles: Map<string, LocalFile>,
-    prefix = ''
+    watchedFiles: Map<string, LocalFile>
 ): Promise<BrowserProjectFile[]> {
     const files: BrowserProjectFile[] = [];
-    for await (const entry of directory.values()) {
-        const path = `${prefix}/${entry.name}`;
-        if (entry.kind === 'directory') {
-            files.push(...await readDirectoryHandle(entry, localFiles, path));
-        } else if (isProjectFile(path)) {
-            files.push(projectFileFromHandle(entry, path, localFiles));
-        }
+    const pending = [{ directory, prefix: '' }];
+    while (pending.length > 0) {
+        await Promise.all(pending.splice(0, 4).map(async ({ directory, prefix }) => {
+            for await (const entry of directory.values()) {
+                if (entry.name.startsWith('.') || entry.name === 'node_modules') {continue;}
+                const path = `${prefix}/${entry.name}`;
+                if (entry.kind === 'directory') {
+                    pending.push({ directory: entry, prefix: path });
+                } else if (isProjectFile(path)) {
+                    files.push(projectFileFromHandle(entry, path, watchedFiles));
+                }
+            }
+        }));
     }
-    return files;
+    return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 async function projectFileParent(directory: BrowserDirectoryHandle, path: string, create = false): Promise<[BrowserDirectoryHandle, string]> {
@@ -134,11 +140,8 @@ async function projectFileParent(directory: BrowserDirectoryHandle, path: string
 /** Opens a writable browser directory as a shared SnapTeX project. */
 export async function createDirectoryProject(directory: BrowserDirectoryHandle): Promise<BrowserProject> {
     await ensureDirectoryPermission(directory);
-    const localFiles = new Map<string, LocalFile>();
-    const files = await readDirectoryHandle(directory, localFiles);
-    await Promise.all([...localFiles].filter(([path]) => isProjectTextFile(path)).map(async ([, state]) => {
-        state.version = fileVersion(await state.handle.getFile());
-    }));
+    const watchedFiles = new Map<string, LocalFile>();
+    const files = await readDirectoryHandle(directory, watchedFiles);
     return {
         name: directory.name,
         files,
@@ -162,11 +165,9 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
                     do {
                         checkAgain = false;
                         let failure: unknown;
-                        for (const [path, state] of localFiles) {
+                        for (const [path, state] of watchedFiles) {
                             const textFile = isProjectTextFile(path);
                             try {
-                                // Never poll untouched binary resources. Their first read establishes a revision.
-                                if (!textFile && !state.version) {continue;}
                                 const previousVersion = state.version;
                                 const previousText = state.text;
                                 const file = await state.handle.getFile();
@@ -250,14 +251,14 @@ export async function createDirectoryProject(directory: BrowserDirectoryHandle):
                 const [parent, name] = await projectFileParent(directory, path, true);
                 const handle = await parent.getFileHandle(name, { create: true });
                 const normalizedPath = normalizeBrowserPath(path);
-                const file = projectFileFromHandle(handle, normalizedPath, localFiles);
+                const file = projectFileFromHandle(handle, normalizedPath, watchedFiles);
                 await file.writeText?.(text);
                 return file;
             },
             deleteFile: async path => {
                 const [parent, name] = await projectFileParent(directory, path);
                 await parent.removeEntry(name);
-                localFiles.delete(normalizeBrowserPath(path));
+                watchedFiles.delete(normalizeBrowserPath(path));
             }
         }
     };

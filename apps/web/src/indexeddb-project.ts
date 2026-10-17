@@ -245,6 +245,7 @@ export class BrowserWorkspaceStore {
 
     constructor(private readonly databaseName = DEFAULT_DATABASE_NAME) {
         this.database = idb.then(({ openDB }) => openDB<WorkspaceDatabase>(databaseName, DATABASE_VERSION, {
+            blocking: () => { void this.close(); },
             upgrade(db, oldVersion, _newVersion, transaction) {
                 if (oldVersion < 1) {
                     db.createObjectStore('projects', { keyPath: 'id' });

@@ -1,7 +1,7 @@
 /// <reference types="mocha" />
 
 import * as assert from 'assert';
-import { chooseRootPath, createProjectTree, isProjectFile, isProjectTextFile, ProjectWriteConflictError, projectFolderPaths } from '../../apps/standalone/src/browser-project';
+import { chooseRootPath, createProjectTree, isProjectFile, isProjectTextFile, ProjectWriteConflictError } from '../../apps/standalone/src/browser-project';
 import { BrowserFileProvider, BrowserUri } from '../../apps/standalone/src/browser-file-provider';
 import { BrowserWorkspaceStore } from '../../apps/web/src/indexeddb-project';
 import { createProjectZip } from '../../apps/standalone/src/project-archive';
@@ -40,7 +40,6 @@ suite('BrowserFileProvider', () => {
         ];
 
         assert.equal(chooseRootPath(files), '/project/main.tex');
-        assert.deepEqual(projectFolderPaths(files.map(file => file.path)), ['/project', '/project/sections']);
         assert.deepEqual(createProjectTree(files.map(file => file.path)).children.map(node => [node.kind, node.path]), [
             ['folder', '/project']
         ]);
@@ -251,6 +250,8 @@ suite('BrowserFileProvider', () => {
                 const project = await store.open('legacy');
                 assert.equal(project.rootPath, '/paper.tex');
                 assert.equal(project.activePath, '/appendix.tex');
+                const upgraded = await openDB(databaseName, 5);
+                upgraded.close();
             } finally {
                 await store.deleteDatabase();
             }

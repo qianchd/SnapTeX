@@ -102,19 +102,6 @@ export function chooseRootPath(files: readonly BrowserProjectFile[]): string | u
         ?? texPaths[0];
 }
 
-export function projectFolderPaths(paths: readonly string[]): string[] {
-    const folders = new Set<string>();
-    for (const path of paths.map(normalizeBrowserPath)) {
-        const parts = path.split('/').filter(Boolean);
-        let currentPath = '';
-        for (let index = 0; index < parts.length - 1; index++) {
-            currentPath += `/${parts[index]}`;
-            folders.add(currentPath);
-        }
-    }
-    return [...folders].sort((a, b) => a.localeCompare(b));
-}
-
 export function createProjectTree(paths: readonly string[]): ProjectTreeNode {
     const root: ProjectTreeNode = { name: '', path: '/', kind: 'folder', children: [] };
     const folderByPath = new Map<string, ProjectTreeNode>([['/', root]]);

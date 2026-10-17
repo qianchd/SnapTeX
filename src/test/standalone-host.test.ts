@@ -5,6 +5,8 @@ import { EditorState, type StateEffect, type Transaction, type TransactionSpec }
 import { history, redo, undo, undoDepth } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { StandaloneHost } from '../../apps/standalone/src/app';
+import { BrowserWorkspaceStore } from '../../apps/web/src/indexeddb-project';
+import { createDirectoryProject, type BrowserDirectoryHandle } from '../../apps/web/src/local-project';
 import { ProjectFileUnavailableError, ProjectWriteConflictError, type BrowserProjectFile, type BrowserProjectTextChange } from '../../apps/standalone/src/browser-project';
 import { HostToPreviewCommand, PreviewToHostCommand, type HostToPreviewMessage } from '../preview-messages';
 import { installTestGlobals } from './test-helpers';
@@ -72,6 +74,56 @@ async function requestBlockHtml(host: StandaloneHost, messages: HostToPreviewMes
 }
 
 suite('StandaloneHost', () => {
+    test('opens local and imported projects and renders both backends without network access', async () => {
+        const indexedDb = await import('fake-indexeddb');
+        const restore = installTestGlobals({
+            ...Object.fromEntries(Object.entries(indexedDb).filter(([key]) => key === 'indexedDB' || key.startsWith('IDB'))),
+            fetch: () => assert.fail('Local projects must not request the network'),
+            document: { hidden: true, addEventListener() {}, removeEventListener() {} },
+            FileSystemObserver: class { async observe() {} disconnect() {} }
+        });
+        const messages: HostToPreviewMessage[] = [];
+        const restoreWindow = installWindow(messages);
+        const store = new BrowserWorkspaceStore(`snaptex-offline-${Date.now()}`);
+        const files = [
+            new File(['\\begin{document}\n\\input{body}\n\\end{document}'], 'main.tex'),
+            new File(['Offline text $x^2$.\n\\includegraphics{image.png}'], 'body.tex'),
+            new File(['image'], 'image.png')
+        ];
+        try {
+            const imported = await store.importFiles('Offline project', files.map(file => ({ path: `/${file.name}`, file })));
+            for (const backendMode of ['legacy', 'ast(experimental)'] as const) {
+                const host = new StandaloneHost(new TestEditorView() as unknown as EditorView, '/main.tex', undefined, undefined,
+                    { autoSave: false, virtualMode: false, backendMode });
+                const directory = {
+                    kind: 'directory', name: 'Offline project',
+                    async *values() {
+                        for (const file of files) {
+                            yield { kind: 'file', name: file.name, getFile: async () => file };
+                        }
+                    }
+                } as unknown as BrowserDirectoryHandle;
+                const project = await createDirectoryProject(directory);
+                await host.handlePreviewMessage({ command: PreviewToHostCommand.PreviewLoaded });
+                for (const source of [await store.restoreProjectState('offline-directory', project), await store.open(imported.id)]) {
+                    messages.length = 0;
+                    await host.loadProject(source);
+                    const update = [...messages].reverse().find(message => message.command === HostToPreviewCommand.Update);
+                    assert.ok(update?.command === HostToPreviewCommand.Update);
+                    const html = update.payload.htmls?.join('') ?? '';
+                    assert.match(html, /Offline text/);
+                    assert.match(html, /class="katex"/);
+                    assert.match(html, /src="blob:/);
+                    assert.deepEqual(host.getDiagnostics(), []);
+                }
+            }
+        } finally {
+            await store.deleteDatabase();
+            restoreWindow();
+            restore();
+        }
+    });
+
     test('keeps batch replacement undo and redo isolated to each project file', async () => {
         const editor = new TestEditorView();
         const restoreWindow = installWindow([]);

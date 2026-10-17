@@ -16,8 +16,10 @@ class TestFileHandle implements BrowserFileHandle {
     failNextRead = false;
     readGate?: Promise<void>;
     missing = false;
+    reads = 0;
 
     async getFile(): Promise<File> {
+        this.reads++;
         if (this.missing) {throw new DOMException('File does not exist', 'NotFoundError');}
         const content = this.content;
         const gate = this.readGate;
@@ -39,7 +41,7 @@ class TestFileHandle implements BrowserFileHandle {
     }
 }
 
-function openTestProject(...files: TestFileHandle[]) {
+function openTestProject(...files: (BrowserFileHandle | BrowserDirectoryHandle)[]) {
     return createDirectoryProject({
         kind: 'directory', name: 'project',
         async *values() { yield* files; }
@@ -47,6 +49,63 @@ function openTestProject(...files: TestFileHandle[]) {
 }
 
 suite('Local browser project', () => {
+    test('keeps thousands of unused Markdown files lazy while monitoring files once opened', async () => {
+        const main = new TestFileHandle();
+        const notes = Array.from({ length: 2000 }, (_, index) => {
+            const file = new TestFileHandle();
+            file.name = `note-${index}.md`;
+            return file;
+        });
+        let activeScans = 0;
+        let peakScans = 0;
+        const directories = ['reading', 'figures', 'sections', 'references'].map(name => ({
+            kind: 'directory', name,
+            async *values() {
+                peakScans = Math.max(peakScans, ++activeScans);
+                try {
+                    await settle();
+                    if (name === 'reading') {yield* notes;}
+                } finally {activeScans--;}
+            }
+        } as unknown as BrowserDirectoryHandle));
+        const excluded = ['.git', 'node_modules'].map(name => ({
+            kind: 'directory', name,
+            async *values() {assert.fail(`${name} must be skipped, as on the server`);}
+        } as unknown as BrowserDirectoryHandle));
+        let notify = () => {};
+        const restore = installTestGlobals({
+            document: { hidden: false, addEventListener() {}, removeEventListener() {} },
+            FileSystemObserver: class {
+                constructor(callback: () => void) { notify = callback; }
+                async observe() {}
+                disconnect() {}
+            }
+        });
+        const changes: string[] = [];
+        let stop: (() => void) | undefined;
+        try {
+            const project = await openTestProject(...directories, ...excluded, main);
+            assert.equal(project.files.length, 2001, 'Unused files must still be available in Explorer');
+            assert.ok(peakScans > 1 && peakScans <= 4, 'Independent directories must be scanned with bounded concurrency');
+            assert.equal(main.reads + notes.reduce((sum, file) => sum + file.reads, 0), 0,
+                'Opening a directory must enumerate names without reading each file');
+            await project.files.find(file => file.path === '/main.tex')?.readText?.();
+            stop = project.watchFiles!(change => { changes.push(change.path); }, error => {throw error;});
+            await settle();
+            assert.ok(notes.every(file => file.reads === 0));
+            await project.files.find(file => file.path === '/reading/note-0.md')?.readText?.();
+            notes[0].content = 'External note update'; notes[0].modified++;
+            main.content = 'External root update'; main.modified++;
+            notify();
+            await settle();
+            assert.deepEqual(changes.sort(), ['/main.tex', '/reading/note-0.md']);
+            assert.ok(notes.slice(1).every(file => file.reads === 0), 'Monitoring must leave unrelated notes unread');
+        } finally {
+            stop?.();
+            restore();
+        }
+    });
+
     test('observes external edits, recovers from failures, and ignores its own saves', async () => {
         let notifyObserver: () => void = () => {};
         const file = new TestFileHandle();
@@ -77,6 +136,9 @@ suite('Local browser project', () => {
 
         try {
             const project = await openTestProject(file, pdf, notes);
+            const main = project.files.find(file => file.path === '/main.tex')!;
+            await main.readText?.();
+            await project.files.find(file => file.path === '/notes.tex')?.readText?.();
             file.content = 'Edited before watching'; file.modified++;
             const resources: string[] = [];
             stop = project.watchFiles!(change => {
@@ -85,7 +147,7 @@ suite('Local browser project', () => {
             }, error => errors.push(error), file => {resources.push(file.path); resourceDelivered();});
             await settle();
             assert.deepEqual(changes, ['Edited before watching'], 'Starting the observer must catch edits made during project loading');
-            await project.files[0].writeText?.('Saved locally');
+            await main.writeText?.('Saved locally');
             await settle();
             assert.deepEqual(changes, ['Edited before watching']);
 
@@ -116,13 +178,13 @@ suite('Local browser project', () => {
             file.readGate = new Promise(resolve => {finishRead = resolve;});
             notifyObserver();
             await settle();
-            await project.files[0].writeText?.('Saved while reading');
+            await main.writeText?.('Saved while reading');
             finishRead!();
             await settle();
             assert.equal(changes.length, appliedChanges, 'An older in-flight read must not undo a successful save');
 
             file.onWrite = () => {file.content = 'External during save'; file.modified++;};
-            await project.files[0].writeText?.('Saved before external change');
+            await main.writeText?.('Saved before external change');
             file.onWrite = () => notifyObserver();
             notifyObserver();
             await settle();

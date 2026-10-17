@@ -10,7 +10,6 @@ import {
     isProjectFile,
     isTexFile,
     PDF_COMPILERS,
-    projectFolderPaths,
     type BrowserProject,
     type PdfCompiler,
     type ProjectTreeNode
@@ -252,6 +251,7 @@ function readControls() {
         editorFontFamilyInput: requireElement<HTMLInputElement>('editor-font-family-input'),
         themeSelect: requireElement<HTMLSelectElement>('theme-select'),
         welcomePage: requireElement('welcome-page'),
+        welcomeStatus: requireElement('welcome-status'),
         welcomeOpenFolderButton: requireElement('welcome-open-folder-button'),
         welcomeImportFolderButton: requireElement('welcome-import-folder-button'),
         welcomeOpenDemoButton: requireElement('welcome-open-demo-button'),
@@ -575,6 +575,8 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
 
 function setStatus(message: string): void {
     webControls.status.textContent = message;
+    webControls.welcomeStatus.textContent = message;
+    webControls.welcomeStatus.hidden = !message;
 }
 
 function reportFailure(action: string, error: unknown): void {
@@ -591,17 +593,18 @@ function reportCompileFailure(error: unknown): void {
 }
 
 async function loadProject(host: StandaloneHost, project: BrowserProject, historyId = project.id): Promise<void> {
+    setStatus('Opening project...');
     closePdfPreview();
+    expandedFolders.clear();
     const rootPath = await host.loadProject(project);
     activeHistoryId = historyId;
 
-    expandedFolders.clear();
-    projectFolderPaths(host.getProjectTextPaths()).forEach(path => expandedFolders.add(path));
     renderProjectState(host);
     setStatus(`Opened ${rootPath} (${project.files.length} files)`);
 }
 
 async function loadHistoryProject(host: StandaloneHost, project: BrowserProject, historyId: string): Promise<void> {
+    setStatus('Restoring project state...');
     await loadProject(host, await browserWorkspaces.restoreProjectState(historyId, project), historyId);
 }
 
@@ -634,6 +637,7 @@ function renderChromeState(host: StandaloneHost, projectOpen: boolean): void {
 }
 
 function renderProjectFiles(host: StandaloneHost): void {
+    if (explorerCollapsed) {return;}
     const rows = createProjectTree([...host.getProjectTextPaths(), ...host.getProjectPdfPaths()])
         .children
         .flatMap(node => renderProjectTreeNode(host, node, 0));
@@ -745,7 +749,9 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
     const pickerWindow = window as BrowserFilePickerWindow;
     if (pickerWindow.showDirectoryPicker) {
         const directory = await pickerWindow.showDirectoryPicker();
+        setStatus(`Reading ${directory.name}...`);
         const project = await createDirectoryProject(directory);
+        setStatus('Remembering local folder...');
         const historyId = await browserWorkspaces.rememberDirectory(directory);
         await loadHistoryProject(host, project, historyId);
         return;
@@ -755,6 +761,7 @@ async function openFolder(host: StandaloneHost, input: HTMLInputElement): Promis
 }
 
 async function importBrowserFiles(host: StandaloneHost, files: BrowserImportFile[], name: string): Promise<void> {
+    setStatus('Importing project into browser storage...');
     if (reimportWorkspaceId) {
         const projectId = reimportWorkspaceId;
         reimportWorkspaceId = undefined;
@@ -1048,6 +1055,11 @@ function setExplorerCollapsed(collapsed: boolean): void {
     const controls = webControls;
     controls.toggleExplorerButton.setAttribute('aria-expanded', String(!collapsed));
     controls.showExplorerToggle.checked = !collapsed;
+    if (collapsed) {
+        controls.projectFiles.replaceChildren();
+    } else if (window.snaptexStandaloneHost) {
+        renderProjectFiles(window.snaptexStandaloneHost);
+    }
 }
 
 function setDiagnosticsVisible(visible: boolean): void {
