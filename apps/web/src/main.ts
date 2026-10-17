@@ -3,7 +3,7 @@ import { PdfSync } from '../../standalone/src/pdf-sync';
 import type { PdfSyncQuery } from '../../standalone/src/browser-project';
 import { createProjectZip } from '../../standalone/src/project-archive';
 import type { BackendMode, PreviewLayoutMode, PreviewStyleSettings } from '../../../src/types';
-import { ChevronDown, ChevronLeft, ChevronRight, createElement } from 'lucide';
+import { ChevronDown, ChevronLeft, ChevronRight, Maximize, Minimize, createElement } from 'lucide';
 import {
     createProjectTree,
     isPdfFile,
@@ -226,6 +226,7 @@ function readControls() {
         pdfPreview: requireElement('pdf-preview'),
         pdfPreviewHost: requireElement('pdf-preview-host'),
         closePdfPreviewButton: requireElement<HTMLButtonElement>('close-pdf-preview'),
+        fullscreenButton: requireElement<HTMLButtonElement>('fullscreen-button'),
         setRootButton: requireElement<HTMLButtonElement>('set-root-button'),
         logoutButton: requireElement<HTMLButtonElement>('logout-button'),
         showExplorerToggle: requireElement<HTMLInputElement>('show-explorer-toggle'),
@@ -1106,6 +1107,21 @@ function syncSettingsControls(host: StandaloneHost): void {
 
 function bindProjectControls(host: StandaloneHost): void {
     const controls = webControls;
+    const updateFullscreenButton = (): void => {
+        const fullscreen = !!document.fullscreenElement;
+        const button = controls.fullscreenButton;
+        button.hidden = !document.fullscreenEnabled;
+        button.title = fullscreen ? 'Exit full screen' : 'Enter full screen';
+        button.setAttribute('aria-label', button.title);
+        button.setAttribute('aria-pressed', String(fullscreen));
+        button.replaceChildren(createElement(fullscreen ? Minimize : Maximize, { 'aria-hidden': 'true' }));
+    };
+    updateFullscreenButton();
+    document.addEventListener('fullscreenchange', updateFullscreenButton);
+    controls.fullscreenButton.addEventListener('click', () => {
+        const toggle = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+        void toggle.catch(error => reportFailure('Full screen', error));
+    });
     const supportsLocalFolderAccess = typeof (window as BrowserFilePickerWindow).showDirectoryPicker === 'function';
     controls.openFolderButton.hidden = !supportsLocalFolderAccess;
     controls.welcomeOpenFolderButton.hidden = !supportsLocalFolderAccess;

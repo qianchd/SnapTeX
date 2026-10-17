@@ -4,6 +4,7 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Added**: A Web toolbar full-screen toggle.
 - **Fixed**: Kept remote file monitoring working across atomic saves and directory replacements without repeated full-directory scans. Continuous edits no longer postpone notifications indefinitely, and slow SSE clients reconnect instead of accumulating buffered events.
 - **Fixed**: Checked text and binary source versions after reads and the latest disk ETag before saving replacements; preserved original file modes, revalidated project boundaries after uploads, ignored stale conditional reads, and prevented unresolved conflict markers from becoming writable after later updates.
 - **Fixed**: Retained and retried external project updates after temporary network, file-read, or delivery failures instead of marking them as handled. Server projects catch up after reconnection or returning to the tab without restoring continuous manifest polling.

@@ -79,6 +79,8 @@ The static build installs a service worker that caches application assets. Open 
 
 Remote server projects require a network connection to their server even when the application shell is cached.
 
+The toolbar's full-screen button expands the workspace to fill the display. Use it again, or press `Esc`, to leave full screen. The button is shown when the browser supports the Fullscreen API.
+
 ## Remote changes and conflicts
 
 An open server project receives Server-Sent Events (SSE) from a shared filesystem watcher, rather than polling its manifest. SnapTeX downloads changed text files conditionally using their ETags. Local folders use a browser filesystem observer when available, or check file metadata every five seconds while the tab is visible.
