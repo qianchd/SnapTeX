@@ -966,6 +966,11 @@ export class StandaloneHost {
     }
 }
 
+// Android EditContext can retain the previous file's input buffer after setState.
+class StandaloneEditorView extends EditorView {
+    static EDIT_CONTEXT = false;
+}
+
 export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): StandaloneHost {
     let host: StandaloneHost | undefined;
     const scheduleRender = debounce(() => {
@@ -1022,7 +1027,7 @@ export function createStandaloneSnapTeXApp(options: StandaloneAppOptions): Stand
         scheduleSelectionSync();
     };
 
-    const editorView = new EditorView({
+    const editorView = new StandaloneEditorView({
         parent: options.editorParent,
         state: EditorState.create({
             doc: options.initialText,
