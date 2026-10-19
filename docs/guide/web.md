@@ -79,6 +79,12 @@ The static build installs a service worker that caches application assets. Open 
 
 Remote server projects require a network connection to their server even when the application shell is cached.
 
+## Workspace layout
+
+The top toolbar stays hidden until you move a mouse or hover-capable pen over the top edge, or tap that edge with a finger. Mouse and pen hover menus close when you move away; touch-opened controls stay available until you tap outside. The same behavior applies on desktop, tablet, and phone layouts.
+
+Explorer floats above the workspace without resizing either panel. Collapsing an editor or preview panel leaves only its restore button at the edge, with no persistent divider line. The button dims when idle and changes vertical position about every 90 seconds to reduce static display exposure. Hovering, pressing, or focusing it restores its opacity and pauses movement; the system's reduced-motion preference disables movement.
+
 The toolbar's full-screen button expands the workspace to fill the display. Use it again, or press `Esc`, to leave full screen. The button is shown when the browser supports the Fullscreen API.
 
 ## Remote changes and conflicts

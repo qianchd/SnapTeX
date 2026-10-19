@@ -29,6 +29,7 @@ import {
     RemoteProjectNotFoundError
 } from './remote-project';
 import { PdfPreview } from './pdf-preview';
+import { bindToolbar } from './toolbar';
 
 
 interface BrowserFilePickerWindow extends Window {
@@ -378,6 +379,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     let previewScrollTop = 0;
     let lastSplitEditorWidth: number | undefined;
     let dragState: {
+        pointerId: number;
         editorLeft: number;
         availableWidth: number;
         minEditorWidth: number;
@@ -452,9 +454,10 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     };
 
     const startResize = (event: PointerEvent): void => {
-        if (paneLayout !== 'split' || event.target === restoreButton) {
+        if (paneLayout !== 'split' || dragState || !event.isPrimary || event.button !== 0) {
             return;
         }
+        splitter.setPointerCapture(event.pointerId);
         const shellRect = shell.getBoundingClientRect();
         const editorRect = editorPane.getBoundingClientRect();
         const availableWidth = shellRect.right - editorRect.left;
@@ -463,6 +466,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         const splitterWidth = cssNumber('--snaptex-web-splitter-width');
         lastSplitEditorWidth = Math.round(editorRect.width);
         dragState = {
+            pointerId: event.pointerId,
             editorLeft: editorRect.left,
             availableWidth,
             minEditorWidth,
@@ -476,19 +480,19 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
         document.body.style.setProperty('--snaptex-web-resize-indicator-left', `${editorRect.right}px`);
         getPreviewController()?.beginInteractiveResize();
 
-        splitter.setPointerCapture(event.pointerId);
         scheduleEditorWidth(event.clientX);
         event.preventDefault();
     };
 
     const endResize = (event: PointerEvent): void => {
         const state = dragState;
+        if (!state || event.pointerId !== state.pointerId) {return;}
         let nextLayout: PaneLayout = 'split';
         let nextEditorWidth: number | undefined;
-        if (state?.animationFrame !== undefined) {
+        if (state.animationFrame !== undefined) {
             window.cancelAnimationFrame(state.animationFrame);
         }
-        if (state && event.type !== 'pointercancel') {
+        if (event.type === 'pointerup') {
             const rawEditorWidth = event.clientX - state.editorLeft;
             state.nextWidth = clampedEditorWidth(event.clientX, state);
             const rawPreviewWidth = state.availableWidth - rawEditorWidth - state.splitterWidth;
@@ -533,6 +537,7 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
     });
     splitter.addEventListener('pointerup', endResize);
     splitter.addEventListener('pointercancel', endResize);
+    splitter.addEventListener('lostpointercapture', endResize);
     restoreButton.addEventListener('pointerdown', event => event.stopPropagation());
     restoreButton.addEventListener('click', () => {
         if (lastSplitEditorWidth !== undefined) {
@@ -1137,14 +1142,7 @@ function bindProjectControls(host: StandaloneHost): void {
     const supportsLocalFolderAccess = typeof (window as BrowserFilePickerWindow).showDirectoryPicker === 'function';
     controls.openFolderButton.hidden = !supportsLocalFolderAccess;
     controls.welcomeOpenFolderButton.hidden = !supportsLocalFolderAccess;
-    const toolbarMenus = Array.from(document.querySelectorAll<HTMLDetailsElement>('.toolbar-menu'));
-    const closeToolbarMenus = (except?: HTMLDetailsElement): void => {
-        for (const menu of toolbarMenus) {
-            if (menu !== except) {
-                menu.open = false;
-            }
-        }
-    };
+    bindToolbar(requireElement('web-toolbar'), requireElement('toolbar-hover-zone'));
     const bindToggleSetting = (input: HTMLInputElement, setting: BooleanPreviewSetting): void => {
         input.addEventListener('change', () => {
             host.updateSettings({ [setting]: input.checked } as Partial<StandalonePreviewSettings>);
@@ -1270,21 +1268,6 @@ function bindProjectControls(host: StandaloneHost): void {
         setTheme(controls.themeSelect.value as WebTheme);
         storeWebPreferences(host);
     });
-    for (const menu of toolbarMenus) {
-        menu.addEventListener('toggle', () => {
-            if (menu.open) {
-                closeToolbarMenus(menu);
-            }
-        });
-        menu.addEventListener('mouseleave', () => { menu.open = false; });
-    }
-    document.addEventListener('click', event => {
-        const target = event.target as Node | null;
-        if (target && !toolbarMenus.some(menu => menu.contains(target))) {
-            closeToolbarMenus();
-        }
-    });
-
     controls.openFileInput.addEventListener('change', () => {
         const file = controls.openFileInput.files?.[0];
         if (file) {

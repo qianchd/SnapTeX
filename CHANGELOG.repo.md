@@ -4,6 +4,8 @@ This file records changes across the SnapTeX repository, including the VS Code e
 
 ## Unreleased
 
+- **Improved**: Unified Web toolbar hover/tap activation across desktop and touch devices, made Explorer an overlay in all layouts, and replaced persistent collapsed-panel divider lines with dimmed, periodically repositioned restore buttons that pause during interaction and respect reduced-motion preferences.
+- **Fixed**: Cleared split-pane drag state when pointer capture is lost and ignored unrelated pointers, preventing interrupted gestures from leaving panel input disabled or unexpectedly collapsing a pane.
 - **Improved**: Opened large local folders without eagerly reading metadata for every text file. Directory discovery uses bounded concurrency and the same hidden-entry/`node_modules` exclusions as server projects. External-change checks now cover only accessed files, while unused notes remain available on demand; hidden Explorer trees no longer build DOM, and all folders start collapsed.
 - **Added**: A Web toolbar full-screen toggle.
 - **Improved**: Touch-operated reference tooltips with persistent previews, jump/close controls, and touch dragging/resizing. Hover-capable pens preview on hover and jump on tap, like a mouse.

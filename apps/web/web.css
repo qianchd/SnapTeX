@@ -12,7 +12,6 @@ body[data-pdf-open="true"] {
     --snaptex-web-editor-width: 60vw;
     --snaptex-web-min-editor-width: 280px;
     --snaptex-web-min-preview-width: 360px;
-    --snaptex-web-sidebar-width: 250px;
     --snaptex-web-splitter-width: 3px;
     --snaptex-web-collapse-distance: 120px;
     --snaptex-web-topbar-height: 30px;
@@ -232,33 +231,29 @@ body {
 }
 
 #app-shell {
-    min-height: 100vh;
+    min-height: 100dvh;
 }
 
 #workspace {
     display: grid;
-    grid-template-columns: var(--snaptex-web-sidebar-width) minmax(var(--snaptex-web-min-editor-width), var(--snaptex-web-editor-width)) var(--snaptex-web-splitter-width) minmax(0, 1fr);
-    grid-template-areas: "explorer editor splitter preview";
+    grid-template-columns: minmax(var(--snaptex-web-min-editor-width), var(--snaptex-web-editor-width)) var(--snaptex-web-splitter-width) minmax(0, 1fr);
+    grid-template-areas: "editor splitter preview";
     align-items: start;
-    min-height: 100vh;
+    min-height: 100dvh;
 }
 
 body[data-pane-layout="editor"] #workspace {
-    grid-template-columns: var(--snaptex-web-sidebar-width) minmax(0, 1fr) var(--snaptex-web-splitter-width) 0;
+    grid-template-columns: minmax(0, 1fr) 0 0;
 }
 
 body[data-pane-layout="preview"] #workspace {
-    grid-template-columns: var(--snaptex-web-sidebar-width) 0 var(--snaptex-web-splitter-width) minmax(0, 1fr);
+    grid-template-columns: 0 0 minmax(0, 1fr);
 }
 
 body[data-pane-layout="editor"] #preview-pane,
 body[data-pane-layout="preview"] #editor-pane,
 body[data-project-open="false"] :is(#editor-pane, #splitter, #preview-pane) {
     display: none;
-}
-
-body[data-explorer-collapsed="true"] {
-    --snaptex-web-sidebar-width: 0px;
 }
 
 #explorer-panel,
@@ -314,8 +309,7 @@ body[data-explorer-collapsed="true"] {
     background: var(--snaptex-toolbar-bg);
 }
 
-#toolbar-hover-zone:hover + #web-toolbar,
-#web-toolbar:hover {
+#web-toolbar.is-visible {
     transform: translateY(0);
 }
 
@@ -706,15 +700,18 @@ body[data-deployment-mode="server"] .remote-project-static-notice {
 }
 
 #explorer-panel {
-    grid-area: explorer;
-    position: sticky;
-    top: 0;
+    position: fixed;
+    z-index: 18;
+    top: var(--snaptex-web-topbar-height);
+    bottom: 0;
+    left: 0;
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    width: min(82vw, 320px);
     overflow: hidden;
     border-right: 1px solid var(--snaptex-border);
     background: var(--snaptex-panel-bg);
+    box-shadow: 10px 0 24px rgba(15, 23, 42, 0.18);
 }
 
 #welcome-page {
@@ -842,8 +839,7 @@ body[data-explorer-collapsed="true"] #explorer-panel {
     top: 0;
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    border-right: 1px solid var(--snaptex-border);
+    height: 100dvh;
 }
 
 #project-files {
@@ -962,7 +958,7 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     position: sticky;
     top: 0;
     z-index: 2;
-    height: 100vh;
+    height: 100dvh;
     cursor: col-resize;
     touch-action: none;
     background: var(--snaptex-border);
@@ -978,18 +974,31 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
 #restore-pane-button {
     position: absolute;
     top: 50%;
-    left: 50%;
+    left: 0;
     z-index: 3;
     width: 24px;
     height: 42px;
     padding: 0;
-    transform: translate(-50%, -50%);
+    transform: translateY(-50%);
     border: 1px solid var(--snaptex-border);
     border-radius: 5px;
     background: var(--snaptex-panel-bg);
     color: var(--snaptex-button-fg);
     box-shadow: 0 2px 7px rgba(15, 23, 42, 0.16);
     cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 140ms ease;
+    animation: snaptex-restore-pane-shift 270s steps(1) infinite;
+}
+
+@keyframes snaptex-restore-pane-shift {
+    0%, 100% { transform: translateY(-50%); }
+    33.333% { transform: translateY(calc(-50% - 5dvh)); }
+    66.667% { transform: translateY(calc(-50% + 5dvh)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #restore-pane-button { animation: none; }
 }
 
 #restore-pane-button svg {
@@ -997,7 +1006,9 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     height: 17px;
 }
 
-#restore-pane-button:hover {
+#restore-pane-button:is(:hover, :active, :focus) {
+    opacity: 1;
+    animation-play-state: paused;
     background: var(--snaptex-hover-bg);
     color: var(--snaptex-active-fg);
 }
@@ -1008,6 +1019,20 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
 }
 
 #restore-pane-button[hidden] {
+    display: none;
+}
+
+body[data-pane-layout="editor"] #restore-pane-button {
+    left: auto;
+    right: 0;
+}
+
+body:not([data-pane-layout="split"]) #splitter {
+    background: transparent;
+    cursor: default;
+}
+
+body:not([data-pane-layout="split"]) #splitter::before {
     display: none;
 }
 
@@ -1239,7 +1264,7 @@ body.is-resizing-split #preview-pane {
 #preview-pane[data-pdf-open="true"] {
     position: sticky;
     top: 0;
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
 }
 
@@ -1274,11 +1299,9 @@ body.is-resizing-split #preview-pane {
         --snaptex-web-editor-width: 55vw;
         --snaptex-web-min-editor-width: 220px;
         --snaptex-web-min-preview-width: 240px;
-        --snaptex-web-sidebar-width: 0px;
         --snaptex-web-topbar-height: 36px;
     }
 
-    #toolbar-hover-zone,
     .toolbar-paths,
     .toolbar-link,
     #offline-status {
@@ -1292,35 +1315,10 @@ body.is-resizing-split #preview-pane {
         min-height: 0;
         box-sizing: border-box;
         padding: 0 6px;
-        transform: none;
-    }
-
-    #workspace {
-        min-height: 100dvh;
-        box-sizing: border-box;
-        padding-top: var(--snaptex-web-topbar-height);
     }
 
     #snaptex-brand span:not(.snaptex-logo) {
         display: none;
-    }
-
-    #explorer-panel {
-        position: fixed;
-        z-index: 18;
-        top: var(--snaptex-web-topbar-height);
-        bottom: 0;
-        left: 0;
-        width: min(82vw, 320px);
-        height: auto;
-        border-right: 1px solid var(--snaptex-border);
-        box-shadow: 10px 0 24px rgba(15, 23, 42, 0.18);
-    }
-
-    #editor-pane,
-    #splitter {
-        top: var(--snaptex-web-topbar-height);
-        height: calc(100dvh - var(--snaptex-web-topbar-height));
     }
 
     .toolbar-menu-content {
@@ -1388,18 +1386,10 @@ body.is-resizing-split #preview-pane {
     #editor-pane {
         position: relative;
         top: auto;
-        height: calc(100dvh - var(--snaptex-web-topbar-height));
-        border-right: 0;
     }
 
     #preview-pane {
-        min-height: calc(100dvh - var(--snaptex-web-topbar-height));
-    }
-
-    #preview-pane[data-pdf-open="true"] {
-        top: var(--snaptex-web-topbar-height);
-        height: calc(100dvh - var(--snaptex-web-topbar-height));
-        min-height: 0;
+        min-height: 100dvh;
     }
 
     body[data-pane-layout="split"] #preview-pane {

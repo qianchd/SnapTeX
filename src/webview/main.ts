@@ -74,7 +74,7 @@ const previewBridge = getPreviewBridge();
                         this.activeTransientTooltip.element.contains(e.relatedTarget)) {
                         return;
                     }
-                    this.onLinkLeave();
+                    this.activeTransientTooltip?.onLinkLeave();
                 }
             });
 
@@ -86,12 +86,6 @@ const previewBridge = getPreviewBridge();
             }
 
             this.activeTransientTooltip.scheduleShow(link, anchorY, touch);
-        }
-
-        onLinkLeave() {
-            if (this.activeTransientTooltip) {
-                this.activeTransientTooltip.onLinkLeave();
-            }
         }
 
         getTopZIndex() {
@@ -276,7 +270,6 @@ const previewBridge = getPreviewBridge();
                 const y = e.clientY - this.dragOffset.y;
                 this.element.style.left = `${x}px`;
                 this.element.style.top = `${y}px`;
-                this.element.style.transform = 'none';
             } else if (this.resizeState) {
                 const { startX, startY, startWidth, startHeight, dirX, dirY } = this.resizeState;
                 if (dirX) {
