@@ -54,6 +54,7 @@ let explorerCollapsed = false;
 const expandedFolders = new Set<string>();
 const browserWorkspaces = new BrowserWorkspaceStore();
 let activeHistoryId: string | undefined;
+let projectNavigationProtected = false;
 const WEB_THEMES = ['light', 'dark', 'blue', 'rose', 'solarized-light', 'skyblue', 'github-light'] as const;
 type WebTheme = typeof WEB_THEMES[number];
 type BooleanPreviewSetting = 'livePreview' | 'autoScrollSync' | 'autoSave' | 'virtualMode' | 'debugMemory';
@@ -603,11 +604,25 @@ function reportCompileFailure(error: unknown): void {
     }
 }
 
+function protectProjectNavigation(): void {
+    if (projectNavigationProtected) {return;}
+    const history = window.history;
+    history.scrollRestoration = 'manual';
+    // A reload may leave an earlier project marker on the current entry.
+    history.replaceState(null, '');
+    history.pushState({ snaptexProject: true }, '');
+    window.addEventListener('popstate', event => {
+        if (!event.state?.snaptexProject) {history.forward();}
+    });
+    projectNavigationProtected = true;
+}
+
 async function loadProject(host: StandaloneHost, project: BrowserProject, historyId = project.id): Promise<void> {
     setStatus('Opening project...');
     closePdfPreview();
     expandedFolders.clear();
     const rootPath = await host.loadProject(project);
+    protectProjectNavigation();
     activeHistoryId = historyId;
 
     renderProjectState(host);
