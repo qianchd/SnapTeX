@@ -7,7 +7,8 @@ class ToolbarElement extends EventTarget {
     readonly classList = {
         values: new Set<string>(),
         add: (name: string) => this.classList.values.add(name),
-        remove: (name: string) => this.classList.values.delete(name)
+        remove: (name: string) => this.classList.values.delete(name),
+        contains: (name: string) => this.classList.values.has(name)
     };
     readonly menus: ToolbarElement[] = [];
     constructor(readonly parent?: ToolbarElement) {super();}
@@ -16,9 +17,10 @@ class ToolbarElement extends EventTarget {
     }
     querySelectorAll() {return this.menus;}
     emit(type: string, properties: Record<string, unknown> = {}) {
-        const event = new Event(type);
+        const event = new Event(type, { cancelable: true });
         for (const [name, value] of Object.entries(properties)) {Object.defineProperty(event, name, { value });}
         this.dispatchEvent(event);
+        return event;
     }
 }
 
@@ -62,6 +64,21 @@ suite('Web toolbar', () => {
             document.emit('click');
             assert.equal(visible(), false);
             assert.ok(menus.every(menu => !menu.open));
+            const content = new ToolbarElement(document);
+            for (const pointerType of ['mouse', 'pen', 'touch']) {
+                const down = document.emit('pointerdown', { pointerType, target: content, clientY: 43 });
+                const click = document.emit('click', { target: content, clientY: 45, detail: 1 });
+                assert.equal(visible(), pointerType === 'touch');
+                assert.equal(down.defaultPrevented, pointerType === 'touch', 'A toolbar tap must not focus the editor underneath');
+                assert.equal(click.defaultPrevented, pointerType === 'touch', 'Releasing just outside the activation area must not activate content underneath');
+            }
+            document.emit('click', { target: content, clientY: 30, detail: 1 });
+            assert.equal(visible(), false, 'Tapping content while the toolbar is open still dismisses it');
+            document.emit('click', { target: content, clientY: 30, detail: 1 });
+            assert.equal(visible(), false, 'A click without a fresh touch must not reopen the toolbar');
+            document.emit('pointerdown', { pointerType: 'touch', target: content, clientY: 44 });
+            document.emit('click', { target: content, clientY: 44, detail: 1 });
+            assert.equal(visible(), false, 'Touches below the activation area remain content interaction');
         } finally {restore();}
     });
 });

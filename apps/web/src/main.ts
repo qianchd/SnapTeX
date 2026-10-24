@@ -401,6 +401,12 @@ function enableSplitPaneResize(splitter: HTMLElement): void {
             Math.max(state.collapseDistance, clientX - state.editorLeft)
         ));
 
+    window.setInterval(() => {
+        if (!restoreButton.hidden) {
+            restoreButton.style.top = `${20 + Math.random() * 60}%`;
+        }
+    }, 90_000);
+
     const setPaneLayout = (layout: PaneLayout, notify = true): void => {
         if (portraitLayout.matches && paneLayout === 'preview' && layout !== 'preview') {
             previewScrollTop = window.scrollY;

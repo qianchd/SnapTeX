@@ -15,7 +15,6 @@ body[data-pdf-open="true"] {
     --snaptex-web-splitter-width: 3px;
     --snaptex-web-collapse-distance: 120px;
     --snaptex-web-topbar-height: 30px;
-    --snaptex-web-topbar-peek: 6px;
     --snaptex-web-topbar-hover-height: 13px;
     --snaptex-editor-font-size: 14px;
     --snaptex-editor-font-family: "Source Code Pro", "Operator Mono", "Hack", "SimHei", "黑体", monospace;
@@ -275,6 +274,7 @@ body[data-project-open="false"] :is(#editor-pane, #splitter, #preview-pane) {
     left: 0;
     z-index: 19;
     height: var(--snaptex-web-topbar-hover-height);
+    touch-action: manipulation;
 }
 
 #web-toolbar {
@@ -294,29 +294,15 @@ body[data-project-open="false"] :is(#editor-pane, #splitter, #preview-pane) {
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
     color: var(--snaptex-ui-fg);
     font-size: 13px;
+    opacity: 0;
     transform: translateY(-100%);
-    transition: transform 140ms ease;
+    transition: transform 140ms ease, opacity 140ms ease;
+    touch-action: manipulation;
 }
 
-#web-toolbar::after {
-    content: "";
-    position: absolute;
-    right: 0;
-    bottom: calc(-1 * var(--snaptex-web-topbar-peek));
-    left: 0;
-    height: var(--snaptex-web-topbar-peek);
-    border-bottom: 1px solid var(--snaptex-border);
-    background: var(--snaptex-toolbar-bg);
-}
-
-#web-toolbar.is-visible {
+#web-toolbar:is(.is-visible, :has(:focus-visible)) {
+    opacity: 1;
     transform: translateY(0);
-}
-
-@supports selector(:has(:focus-visible)) {
-    #web-toolbar:has(:focus-visible) {
-        transform: translateY(0);
-    }
 }
 
 .toolbar-group {
@@ -988,17 +974,6 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     cursor: pointer;
     opacity: 0.35;
     transition: opacity 140ms ease;
-    animation: snaptex-restore-pane-shift 270s steps(1) infinite;
-}
-
-@keyframes snaptex-restore-pane-shift {
-    0%, 100% { transform: translateY(-50%); }
-    33.333% { transform: translateY(calc(-50% - 5dvh)); }
-    66.667% { transform: translateY(calc(-50% + 5dvh)); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    #restore-pane-button { animation: none; }
 }
 
 #restore-pane-button svg {
@@ -1006,9 +981,8 @@ body[data-diagnostics-visible="true"] #project-diagnostics:not(:empty) {
     height: 17px;
 }
 
-#restore-pane-button:is(:hover, :active, :focus) {
+#restore-pane-button:is(:hover, :active, :focus-visible) {
     opacity: 1;
-    animation-play-state: paused;
     background: var(--snaptex-hover-bg);
     color: var(--snaptex-active-fg);
 }
