@@ -73,6 +73,7 @@ suite('Standalone web assets', () => {
 
         try {
             const indexHtml = await fetchText(baseUrl, '/');
+            assert.match(indexHtml, /<meta name="viewport" content="[^"]*viewport-fit=cover/);
             const tikzJaxUri = readDataAttribute(indexHtml, 'tikz-jax-js-uri');
             const tikzCssUri = readDataAttribute(indexHtml, 'tikz-jax-css-uri');
             const tikzBaseUri = tikzJaxUri.replace(/\/tikzjax\.js$/, '');

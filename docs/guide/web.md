@@ -93,6 +93,8 @@ The toolbar's full-screen button uses the browser's Fullscreen API to expand the
 
 Installed Android PWAs request fullscreen at launch; Windows, macOS, and Linux PWAs keep their standalone windows. iPhone and iPad installations also request fullscreen, but WebKit may retain system bars. The browser selects the manifest by operating system, not window size or touch-screen support. Launch-time fullscreen cannot be exited through the Fullscreen API. Existing installations may need a manifest update or reinstallation before their launch mode changes.
 
+The page requests edge-to-edge rendering with `viewport-fit=cover`, including the area around a camera cutout. Toolbar controls respect the device's safe-area insets without adding a permanent blank strip to the workspace. A browser or device policy may still restrict cutout access even when fullscreen is active.
+
 ## Remote changes and conflicts
 
 An open server project receives Server-Sent Events (SSE) from a shared filesystem watcher, rather than polling its manifest. SnapTeX downloads changed text files conditionally using their ETags. Local folders use a browser filesystem observer when available, or check file metadata every five seconds while the tab is visible.
