@@ -83,9 +83,15 @@ Remote server projects require a network connection to their server even when th
 
 The top toolbar stays hidden until you move a mouse or hover-capable pen over the top edge, or tap that edge with a finger. Mouse and pen hover menus close when you move away; touch-opened controls stay available until you tap outside. The same behavior applies on desktop, tablet, and phone layouts.
 
-Explorer floats above the workspace without resizing either panel. Collapsing an editor or preview panel leaves only its restore button at the edge, with no persistent divider line. The button dims when idle and changes vertical position about every 90 seconds to reduce static display exposure. Hovering, pressing, or focusing it restores its opacity and pauses movement; the system's reduced-motion preference disables movement.
+Finger taps can reveal the toolbar within the top 44 pixels; the mouse and pen hover region remains 13 pixels high.
 
-The toolbar's full-screen button expands the workspace to fill the display. Use it again, or press `Esc`, to leave full screen. The button is shown when the browser supports the Fullscreen API.
+While a project is open, ordinary Back navigation keeps the current workspace open without reloading it or resetting its scroll position. The web app also disables horizontal overscroll navigation in supporting browsers. Android may still display its system Back gesture animation.
+
+Explorer floats above the workspace without resizing either panel. Collapsing an editor or preview panel leaves only its restore button at the edge, with no persistent divider line. The button dims when idle and jumps to a random vertical position between 20% and 80% of the screen height about every 90 seconds to reduce static display exposure. Hovering, pressing, or keyboard focus restores its opacity without pausing position changes.
+
+The toolbar's full-screen button uses the browser's Fullscreen API to expand the workspace. Use it again, or press `Esc`, to leave full screen. It is available when the browser supports this API and the app is not already in launch-time fullscreen.
+
+Installed Android PWAs request fullscreen at launch; Windows, macOS, and Linux PWAs keep their standalone windows. iPhone and iPad installations also request fullscreen, but WebKit may retain system bars. The browser selects the manifest by operating system, not window size or touch-screen support. Launch-time fullscreen cannot be exited through the Fullscreen API. Existing installations may need a manifest update or reinstallation before their launch mode changes.
 
 ## Remote changes and conflicts
 

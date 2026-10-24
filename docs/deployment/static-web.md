@@ -31,7 +31,7 @@ Enable GitHub Pages with **GitHub Actions** as the source, then run **Deploy Sna
 Upload the contents of `dist-web/` without changing their relative layout. Configure the host to:
 
 - serve `index.html` at the deployment root;
-- preserve `service-worker.js`, `manifest.webmanifest`, `.nojekyll`, and compressed TikZ assets;
+- preserve `service-worker.js`, both `manifest*.webmanifest` files, `select-manifest.js`, `.nojekyll`, and compressed TikZ assets;
 - use correct MIME types for JavaScript modules, WebAssembly, gzip files, and web manifests;
 - serve over HTTPS outside localhost.
 

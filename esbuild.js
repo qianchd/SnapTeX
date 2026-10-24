@@ -242,6 +242,9 @@ function copyRuntimeAssets() {
     console.log("[build] Copying assets...");
     if (buildTarget !== 'vscode') {
         execFileSync(process.execPath, [path.join(ROOT, 'tools/icons/prepare-assets.mjs'), '--web']);
+        const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps/web/manifest.webmanifest'), 'utf8'));
+        fs.writeFileSync(path.join(ROOT, 'apps/web/manifest-mobile.webmanifest'),
+            `${JSON.stringify({ ...manifest, display: 'fullscreen' }, null, 2)}\n`);
     }
     copyKatexAssets();
     copyPdfAssets();

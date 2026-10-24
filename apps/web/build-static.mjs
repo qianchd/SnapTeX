@@ -21,6 +21,8 @@ const staticFiles = [
     ['media/webview-pdf.js', 'media/webview-pdf.js'],
     ['apps/web/index.html', 'index.html'],
     ['apps/web/manifest.webmanifest', 'manifest.webmanifest'],
+    ['apps/web/manifest-mobile.webmanifest', 'manifest-mobile.webmanifest'],
+    ['apps/web/select-manifest.js', 'select-manifest.js'],
     ['apps/web/web.css', 'web.css'],
     ['apps/web/preview-bridge.js', 'preview-bridge.js'],
     ['apps/web/register-service-worker.js', 'register-service-worker.js'],
@@ -55,7 +57,7 @@ function makeStaticIndex(source, deploymentMode, assetHashes) {
         .replace('</body>', '    <script src="register-service-worker.js"></script>\n</body>')
         .replace(/\b(href|src|data-[\w-]+)="([^"]+)"/g, (_match, attribute, path) => {
             const outputPath = outputAssetPath(path);
-            const hash = (attribute === 'href' || attribute === 'src') ? assetHashes[outputPath] : undefined;
+            const hash = (attribute === 'href' || attribute === 'src' || attribute === 'data-mobile-manifest') ? assetHashes[outputPath] : undefined;
             return `${attribute}="${hash ? `${outputPath}?v=${hash}` : outputPath}"`;
         });
 }
@@ -201,15 +203,17 @@ export function buildStaticWeb(options = {}) {
 
     const copiedAssets = listFiles(outDir);
     const copiedAssetHashes = assetHashesFor(outDir, copiedAssets);
-    const manifestPath = join(outDir, 'manifest.webmanifest');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    manifest.icons = manifest.icons.map(icon => {
-        const path = outputAssetPath(icon.src);
-        return { ...icon, src: versionedAsset(path, copiedAssetHashes) };
-    });
-    const manifestSource = `${JSON.stringify(manifest, null, 2)}\n`;
-    writeFileSync(manifestPath, manifestSource);
-    copiedAssetHashes['manifest.webmanifest'] = hashContent(manifestSource);
+    for (const name of ['manifest.webmanifest', 'manifest-mobile.webmanifest']) {
+        const manifestPath = join(outDir, name);
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        manifest.icons = manifest.icons.map(icon => {
+            const path = outputAssetPath(icon.src);
+            return { ...icon, src: versionedAsset(path, copiedAssetHashes) };
+        });
+        const manifestSource = `${JSON.stringify(manifest, null, 2)}\n`;
+        writeFileSync(manifestPath, manifestSource);
+        copiedAssetHashes[name] = hashContent(manifestSource);
+    }
     const indexPath = join(outDir, 'index.html');
     const indexSource = makeStaticIndex(readFileSync(indexPath, 'utf8'), deploymentMode, copiedAssetHashes);
     writeFileSync(indexPath, indexSource);

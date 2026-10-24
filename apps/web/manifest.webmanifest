@@ -2,6 +2,7 @@
   "name": "SnapTeX",
   "short_name": "SnapTeX",
   "description": "A browser-hosted LaTeX editor and live preview powered by SnapTeX.",
+  "id": ".",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

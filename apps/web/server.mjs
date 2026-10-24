@@ -23,6 +23,8 @@ const maxWriteBytes = 10 * 1024 * 1024;
 const sourceWebFiles = new Set([
     '/apps/web/index.html',
     '/apps/web/manifest.webmanifest',
+    '/apps/web/manifest-mobile.webmanifest',
+    '/apps/web/select-manifest.js',
     '/apps/web/preview-bridge.js',
     '/apps/web/web.css'
 ]);

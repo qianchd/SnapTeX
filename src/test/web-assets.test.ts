@@ -79,7 +79,7 @@ suite('Standalone web assets', () => {
             assert.equal(readDataAttribute(indexHtml, 'deployment-mode'), 'static');
 
             for (const asset of [
-                'index.html', 'manifest.webmanifest',
+                'index.html', 'manifest.webmanifest', 'manifest-mobile.webmanifest', 'select-manifest.js',
                 'demo/main.tex', 'demo/sections/project-editing.tex', 'demo/sample.bib', 'demo/frog.jpg',
                 'media/icon.svg', 'media/icon-pwa.svg',
                 'media/vendor/tikzjax/tex.wasm.gz',
@@ -87,7 +87,29 @@ suite('Standalone web assets', () => {
             ]) {
                 assert.ok(existsSync(join(build.outDir, asset)), `Missing static asset: ${asset}`);
             }
-            assert.match(indexHtml, /href="manifest\.webmanifest\?v=[a-f0-9]{12}"/);
+            const desktopManifest = indexHtml.match(/href="(manifest\.webmanifest\?v=[a-f0-9]{12})"/)?.[1];
+            assert.ok(desktopManifest);
+            const mobileManifest = readDataAttribute(indexHtml, 'mobile-manifest');
+            assert.match(mobileManifest, /^manifest-mobile\.webmanifest\?v=[a-f0-9]{12}$/);
+            const selector = await fetchText(baseUrl, '/select-manifest.js');
+            for (const [navigator, mobile] of [
+                [{ userAgent: 'Android', platform: 'Linux armv8l' }, true],
+                [{ userAgent: 'Linux', userAgentData: { platform: 'Android' } }, true],
+                [{ userAgent: 'iPhone', platform: 'iPhone' }, true],
+                [{ userAgent: 'iPad', platform: 'iPad' }, true],
+                [{ userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 5 }, true],
+                [{ userAgent: 'Windows NT', platform: 'Win32', maxTouchPoints: 10 }, false],
+                [{ userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 0 }, false],
+                [{ userAgent: 'Linux', platform: 'Linux x86_64', maxTouchPoints: 0 }, false]
+            ] as const) {
+                const baseURI = 'https://snaptex.test/SnapTeX/';
+                const link = { href: new URL(desktopManifest, baseURI).href, dataset: { mobileManifest } };
+                runInNewContext(selector, {
+                    navigator, URL,
+                    document: { baseURI, querySelector: () => link }
+                });
+                assert.equal(link.href, new URL(mobile ? mobileManifest : desktopManifest, baseURI).href);
+            }
             assert.match(indexHtml, /href="media\/icon\.svg\?v=[a-f0-9]{12}"/);
             assert.equal(indexHtml.match(/class="snaptex-logo"/g)?.length, 2);
             const webCss = await fetchText(baseUrl, '/web.css');
@@ -108,6 +130,9 @@ suite('Standalone web assets', () => {
             await fetchText(baseUrl, '/demo/sample.bib');
             await fetchBytes(baseUrl, '/demo/frog.jpg');
             const manifest = JSON.parse(await fetchText(baseUrl, '/manifest.webmanifest'));
+            assert.equal(manifest.display, 'standalone');
+            assert.equal(manifest.id, '.');
+            assert.deepEqual(JSON.parse(await fetchText(baseUrl, mobileManifest)), { ...manifest, display: 'fullscreen' });
             assert.equal(manifest.theme_color, indexHtml.match(/<meta name="theme-color" content="([^"]+)"/)?.[1]);
             assert.equal(manifest.background_color, manifest.theme_color);
             assert.deepEqual(
@@ -246,7 +271,7 @@ suite('Standalone web assets', () => {
                 respondWith: response => { cachedResponse = response as Promise<Response>; }
             });
             assert.equal(await (await cachedResponse)?.text(), readFileSync(join(build.outDir, 'index.html'), 'utf8'));
-            for (const asset of ['media/icon.svg', tikzJaxUri, 'media/vendor/tikzjax/tex.wasm.gz', 'media/vendor/pdfjs/pdf.mjs', 'demo/main.tex']) {
+            for (const asset of [desktopManifest, mobileManifest, 'select-manifest.js', 'media/icon.svg', tikzJaxUri, 'media/vendor/tikzjax/tex.wasm.gz', 'media/vendor/pdfjs/pdf.mjs', 'demo/main.tex']) {
                 handlers.get('fetch')?.({
                     request: { method: 'GET', mode: 'same-origin', url: new URL(asset, 'https://snaptex.test/app/').href },
                     respondWith: response => { cachedResponse = response as Promise<Response>; }

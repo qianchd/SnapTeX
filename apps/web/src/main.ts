@@ -1145,10 +1145,11 @@ function syncSettingsControls(host: StandaloneHost): void {
 
 function bindProjectControls(host: StandaloneHost): void {
     const controls = webControls;
+    const fullscreenDisplay = window.matchMedia('(display-mode: fullscreen)');
     const updateFullscreenButton = (): void => {
         const fullscreen = !!document.fullscreenElement;
         const button = controls.fullscreenButton;
-        button.hidden = !document.fullscreenEnabled;
+        button.hidden = !document.fullscreenEnabled || fullscreenDisplay.matches && !fullscreen;
         button.title = fullscreen ? 'Exit full screen' : 'Enter full screen';
         button.setAttribute('aria-label', button.title);
         button.setAttribute('aria-pressed', String(fullscreen));
@@ -1156,6 +1157,7 @@ function bindProjectControls(host: StandaloneHost): void {
     };
     updateFullscreenButton();
     document.addEventListener('fullscreenchange', updateFullscreenButton);
+    fullscreenDisplay.addEventListener('change', updateFullscreenButton);
     controls.fullscreenButton.addEventListener('click', () => {
         const toggle = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
         void toggle.catch(error => reportFailure('Full screen', error));
